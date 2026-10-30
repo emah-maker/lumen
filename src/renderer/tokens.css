@@ -16,6 +16,9 @@
   --fs-xs: 11px; --fs-sm: 12px; --fs-md: 13px; --fs-lg: 14px; --fs-xl: 16px;
   /* An AI diagram (svg-view.js) sits on a light panel in both themes: a model draws dark strokes. */
   --svg-panel: #fafbfc;
+  /* Spacing (padding, margin, gap): a 2 px unit, so --sp-N is N x 2 px. 2-4 inside a chip, 6-8 between siblings, 10-12 inside a card,
+     16-24 between sections, 32+ page margins. Nothing in between: an odd value (3, 5, 7, 9, 14, 18...) is a step off the scale. */
+  --sp-1: 2px; --sp-2: 4px; --sp-3: 6px; --sp-4: 8px; --sp-5: 10px; --sp-6: 12px; --sp-8: 16px; --sp-10: 20px; --sp-12: 24px; --sp-14: 28px; --sp-16: 32px; --sp-20: 40px; --sp-24: 48px;
   /* Hit targets: toolbar and tab buttons are 28-30; nothing clickable is under the WCAG 2.2 minimum of 24. */
   --hit: 28px; --hit-min: 24px;
   /* Surfaces and status colours that were hard-coded around the app. */

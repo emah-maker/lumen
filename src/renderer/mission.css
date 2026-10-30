@@ -1,15 +1,15 @@
 /* lumen://tasks (renderer/mission.js): the Bookmarks and Downloads pages' look (managers.css), with a card per approval. */
-.lede { margin: -10px 0 8px; color: var(--muted); }
-section h2 .count { margin-left: 6px; font-weight: 500; }
-.card { margin: 0 -10px 8px; padding: 10px 12px; border-radius: var(--r-lg); background: var(--field); }
+.lede { margin: calc(-1 * var(--sp-5)) 0 var(--sp-4); color: var(--muted); }
+section h2 .count { margin-left: var(--sp-3); font-weight: 500; }
+.card { margin: 0 calc(-1 * var(--sp-5)) var(--sp-4); padding: var(--sp-5) var(--sp-6); border-radius: var(--r-lg); background: var(--field); }
 .card .who { color: var(--muted); font-size: 12px; }
-.card .what { margin: 2px 0 0; font-weight: 600; overflow-wrap: anywhere; }
-.card .detail { display: block; margin: 2px 0 0; white-space: normal; overflow-wrap: anywhere; }
-.card .actions { opacity: 1; margin-top: 8px; flex-wrap: wrap; }
-.row .kind { flex: none; font-size: 11px; color: var(--muted); padding: 0 6px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--hairline); }
+.card .what { margin: var(--sp-1) 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.card .detail { display: block; margin: var(--sp-1) 0 0; white-space: normal; overflow-wrap: anywhere; }
+.card .actions { opacity: 1; margin-top: var(--sp-4); flex-wrap: wrap; }
+.row .kind { flex: none; font-size: 11px; color: var(--muted); padding: 0 var(--sp-3); border-radius: 4px; box-shadow: inset 0 0 0 1px var(--hairline); }
 .row .main { align-items: center; }
 .state-waiting-approval { color: var(--accent-text, var(--accent)); }
-.preview { display: block; margin: -4px 10px 6px; color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.empty { margin: 4px 0 0; }
-.card .args { margin: 6px 0 0; padding: 8px 10px; max-height: 220px; overflow: auto; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
-.card .tainted { margin: 6px 0 0; color: var(--danger); font-size: 12px; }
+.preview { display: block; margin: calc(-1 * var(--sp-2)) var(--sp-5) var(--sp-3); color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.empty { margin: var(--sp-2) 0 0; }
+.card .args { margin: var(--sp-3) 0 0; padding: var(--sp-4) var(--sp-5); max-height: 220px; overflow: auto; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card .tainted { margin: var(--sp-3) 0 0; color: var(--danger); font-size: 12px; }

@@ -52,13 +52,13 @@ const IN_PAGE = `(async () => {
   composer.style.display = ''; wide(); await frames(); await frames();
   out.restoredBare = h();
   set(''); await frames();
-  // wide -> narrow -> wide
+  // wide -> narrow -> wide (84 px: the text gets 64 px, past the composer's 12 + 8 px insets)
   const para = 'short text wraps when narrow';
   set(para); await frames(); out.paraWide = h();
-  narrow(90); await frames(); await frames(); out.paraNarrow = h();
+  narrow(84); await frames(); await frames(); out.paraNarrow = h();
   wide(); await frames(); await frames(); out.paraWideAgain = h();
   // typed while narrow (it wraps), then widened: the extra rows must go
-  narrow(90); set(para); await frames(); await frames(); out.setNarrow = h();
+  narrow(84); set(para); await frames(); await frames(); out.setNarrow = h();
   wide(); await frames(); await frames(); out.setNarrowThenWide = h();
   set(''); await frames();
   // an empty box (with its placeholder) narrow, and wide again

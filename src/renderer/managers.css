@@ -4,35 +4,36 @@
 html, body { margin: 0; background: var(--bg); color: var(--text); }
 body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; letter-spacing: -0.005em; }
 main { width: min(720px, 90vw); margin: 0 auto; padding: 56px 0 80px; }
-header { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; }
+header { display: flex; align-items: center; gap: var(--sp-6); margin: 0 0 var(--sp-8); }
 h1 { flex: 1; font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
-h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 28px 0 6px; }
-input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 12px; border: none; border-radius: var(--r-md); background: var(--field); color: var(--text); font: inherit; outline: none; transition: box-shadow var(--t-base) ease-out, background-color var(--t-base) ease-out; }
+h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: var(--sp-12) 0 var(--sp-3); }
+input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 var(--sp-6); border: none; border-radius: var(--r-md); background: var(--field); color: var(--text); font: inherit; outline: none; transition: box-shadow var(--t-base) ease-out, background-color var(--t-base) ease-out; }
 input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), var(--focus-ring); }
-input[type="search"] { height: 40px; padding: 0 14px; border-radius: var(--r-lg); font-size: 14px; }
-button { height: 28px; padding: 0 12px; border: none; border-radius: var(--r-sm); background: var(--field); color: var(--text); font: inherit; cursor: default; transition: background-color var(--t-fast) ease-out; }
+input[type="search"] { height: 40px; padding: 0 var(--sp-6); border-radius: var(--r-lg); font-size: 14px; }
+button { height: 28px; padding: 0 var(--sp-6); border: none; border-radius: var(--r-sm); background: var(--field); color: var(--text); font: inherit; cursor: default; transition: background-color var(--t-fast) ease-out; }
 button:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--hairline); }
 button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.primary { background: var(--accent-deep); color: var(--on-accent); }
 button:disabled { opacity: 0.45; }
-.row { position: relative; display: flex; align-items: center; gap: 6px; margin: 0 -10px; padding-right: 6px; border-radius: var(--r-md); transition: background-color var(--t-fast) ease-out; }
+.row { position: relative; display: flex; align-items: center; gap: var(--sp-3); margin: 0 calc(-1 * var(--sp-5)); padding-right: var(--sp-3); border-radius: var(--r-md); transition: background-color var(--t-fast) ease-out; }
 .row:hover, .row:focus-within { background: var(--hover); }
-.row a, .row .main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; padding: 7px 10px; border-radius: var(--r-md); color: var(--text); text-decoration: none; }
+.row a, .row .main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--sp-6); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-md); color: var(--text); text-decoration: none; }
 .title { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .host, .detail { flex: 1 1 0; min-width: 0; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.actions { flex: none; display: flex; gap: 4px; opacity: 0; transition: opacity var(--t-fast) ease-out; }
+.actions { flex: none; display: flex; gap: var(--sp-2); opacity: 0; transition: opacity var(--t-fast) ease-out; }
 .row:hover .actions, .row:focus-within .actions, .actions.always { opacity: 1; }
-.actions button { height: 24px; padding: 0 9px; font-size: 12px; }
-.bar { height: 3px; border-radius: 2px; background: var(--field); overflow: hidden; margin: 0 10px 6px; }
+.actions button { height: 24px; padding: 0 var(--sp-4); font-size: 12px; }
+.bar { height: 3px; border-radius: 2px; background: var(--field); overflow: hidden; margin: 0 var(--sp-5) var(--sp-3); }
 .bar > div { height: 100%; background: var(--accent); transition: width var(--t-base) ease-out; }
-form.edit { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px -10px 10px; padding: 12px; border-radius: var(--r-lg); background: var(--field); }
+form.edit { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); margin: var(--sp-3) calc(-1 * var(--sp-5)) var(--sp-5); padding: var(--sp-6); border-radius: var(--r-lg); background: var(--field); }
 form.edit .wide { grid-column: 1 / -1; }
-form.edit label { display: grid; gap: 4px; color: var(--muted); font-size: 12px; }
+form.edit label { display: grid; gap: var(--sp-2); color: var(--muted); font-size: 12px; }
 form.edit input { background: var(--surface); }
-form.edit .buttons { grid-column: 1 / -1; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+form.edit .buttons { grid-column: 1 / -1; display: flex; gap: var(--sp-4); justify-content: flex-end; align-items: center; }
 .error { color: var(--danger); margin-right: auto; }
-#status { min-height: 20px; margin: 8px 0 0; color: var(--muted); }
-.empty { color: var(--muted); margin-top: 40px; }
+#status { min-height: 20px; margin: var(--sp-4) 0 0; color: var(--muted); }
+.empty { color: var(--muted); margin-top: var(--sp-12); }
+#status:empty { margin: 0; } /* the live status line takes no room until it says something: the list starts where History's does */
 .state-failed { color: var(--danger); }
 section { animation: rise var(--t-smooth) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
@@ -41,18 +42,18 @@ section { animation: rise var(--t-smooth) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
 /* The Undo note after a removal (managers-toast.js). */
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 10px; max-width: min(520px, 90vw); padding: 8px 8px 8px 14px; border-radius: var(--r-lg); background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--hairline), 0 8px 24px rgba(0, 0, 0, 0.18); animation: toast-in var(--t-base) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: var(--sp-5); max-width: min(520px, 90vw); padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-6); border-radius: var(--r-lg); background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--hairline), 0 8px 24px rgba(0, 0, 0, 0.18); animation: toast-in var(--t-base) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .toast-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .toast button { flex: none; background: none; color: var(--accent-text); font-weight: 600; }
 .toast button:hover { background: var(--hover); box-shadow: none; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } }
-.more { display: block; margin: 12px auto 0; }
+.more { display: block; margin: var(--sp-6) auto 0; }
 /* The Reading list page: a site icon before each title, unread ones in bold with a dot, the Unread / All switch. */
-.segmented { display: flex; gap: 2px; padding: 2px; border-radius: var(--r-md); background: var(--field); }
+.segmented { display: flex; gap: var(--sp-1); padding: var(--sp-1); border-radius: var(--r-md); background: var(--field); }
 .segmented button { height: 24px; background: none; }
 .segmented button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline); }
 .site-icon { flex: none; width: 16px; height: 16px; align-self: center; border-radius: var(--r-xs); }
 .site-icon.letter { display: grid; place-items: center; background: var(--field); color: var(--muted); font-size: 10px; font-weight: 600; }
 .row.unread .title { font-weight: 600; }
-.row.unread a::before { content: ""; flex: none; width: 6px; height: 6px; align-self: center; margin-left: -4px; border-radius: 50%; background: var(--accent); }
+.row.unread a::before { content: ""; flex: none; width: 6px; height: 6px; align-self: center; margin-left: calc(-1 * var(--sp-2)); border-radius: 50%; background: var(--accent); }
 .row.read .title { color: var(--muted); }

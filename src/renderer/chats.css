@@ -1,7 +1,7 @@
 /* The sidebar's chat history list and usage line (renderer/chats.js). */
 
 .chat-usage {
-  padding: 0 20px 4px; font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); font-variant-numeric: tabular-nums;
+  padding: 0 var(--sp-10) var(--sp-2); font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -22,26 +22,26 @@
 @keyframes chat-list-in { from { opacity: 0; transform: translateY(-4px); } }
 @media (prefers-reduced-motion: reduce) { .chat-list { animation: none; } }
 
-.chat-list-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 8px 6px 20px; }
+.chat-list-head { display: flex; align-items: center; justify-content: space-between; padding: var(--sp-5) var(--sp-4) var(--sp-3) var(--sp-10); }
 .chat-list-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
 
-.chat-items { list-style: none; margin: 0; padding: 0 8px 16px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.chat-list-empty { margin: 8px 20px; font-size: 12px; color: var(--muted); }
+.chat-items { list-style: none; margin: 0; padding: 0 var(--sp-4) var(--sp-8); overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.chat-list-empty { margin: var(--sp-4) var(--sp-10); font-size: 12px; color: var(--muted); }
 
-.chat-item { position: relative; display: flex; align-items: center; gap: 2px; border-radius: var(--radius); }
+.chat-item { position: relative; display: flex; align-items: center; gap: var(--sp-1); border-radius: var(--radius); }
 .chat-item:hover, .chat-item:focus-within { background: color-mix(in srgb, var(--accent) 6%, var(--hover)); }
 .chat-item.current { background: var(--accent-soft); }
 
 .chat-open {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; text-align: left;
-  padding: 7px 4px 7px 12px; border: 0; background: none; color: inherit; font: inherit; border-radius: var(--radius); cursor: default;
+  padding: var(--sp-4) var(--sp-2) var(--sp-4) var(--sp-6); border: 0; background: none; color: inherit; font: inherit; border-radius: var(--radius); cursor: default;
 }
 .chat-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-meta { font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; }
 
 .chat-rename-input {
-  flex: 1; min-width: 0; margin: 4px 4px 4px 8px; padding: 5px 6px; font: inherit; font-size: 13px; color: var(--text);
-  background: var(--surface); border: 1px solid var(--accent); border-radius: 6px; outline: none;
+  flex: 1; min-width: 0; margin: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4); padding: var(--sp-2) var(--sp-3); font: inherit; font-size: 13px; color: var(--text);
+  background: var(--surface); border: 1px solid var(--accent); border-radius: var(--r-sm); outline: none;
 }
 .chat-rename-input:focus-visible { box-shadow: var(--focus-ring); }
 
@@ -63,20 +63,20 @@
 /* No hover (touch): the buttons are always there, and the title always leaves room. */
 @media (hover: none) { .chat-actions { opacity: 1; pointer-events: auto; } .chat-title { padding-right: min(var(--actions-w, 100px), 55%); } }
 /* Pinned chats: a small mark before the title; a search hit shows the words around the match under it. */
-.chat-item.pinned .chat-title::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.chat-item.pinned .chat-title::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: var(--sp-3); border-radius: 50%; background: var(--accent); vertical-align: 1px; }
 .chat-snippet { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.chat-views { display: flex; gap: 4px; margin: 0 8px 6px; }
+.chat-views { display: flex; gap: var(--sp-2); margin: 0 var(--sp-4) var(--sp-3); }
 .chat-view { flex: 1; height: 26px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default; }
 .chat-view.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .chat-view:focus-visible { outline: 2px solid var(--accent); }
 /* The Undo bar after a delete, fixed to the window so a redrawn list does not remove it. */
-.chat-undo-toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 8px 8px 8px 14px; border-radius: 10px; background: var(--surface-raised, var(--surface)); color: var(--text); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)), 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 13px; }
-.chat-undo-toast button { border: 0; border-radius: 6px; padding: 4px 10px; background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 600; cursor: default; }
+.chat-undo-toast { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9999; display: flex; align-items: center; gap: var(--sp-6); max-width: calc(100vw - 24px); padding: var(--sp-4) var(--sp-4) var(--sp-4) var(--sp-6); border-radius: 10px; background: var(--surface-raised, var(--surface)); color: var(--text); box-shadow: 0 0 0 0.5px var(--hairline, var(--border)), 0 6px 20px rgba(0, 0, 0, 0.25); font-size: 13px; }
+.chat-undo-toast button { border: 0; border-radius: var(--r-sm); padding: var(--sp-2) var(--sp-5); background: var(--accent-soft); color: var(--accent); font: inherit; font-weight: 600; cursor: default; }
 .chat-undo-toast button:focus-visible { outline: 2px solid var(--accent); }
 
 /* A chat left running, waiting for an OK, or finished and not seen yet (features/chat-runs.js chatBadge). */
 /* The same glyphs and colours as the tab strip's marks (app.js CHAT_MARKS): spinner, ring, check, "!". */
-.chat-badge { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -2px; color: var(--accent); }
+.chat-badge { display: inline-block; width: 12px; height: 12px; margin-right: var(--sp-3); vertical-align: -2px; color: var(--accent); }
 .chat-badge svg { display: block; width: 12px; height: 12px; overflow: visible; }
 .chat-badge .cm-spin { animation: chat-spin 0.8s linear infinite; transform-origin: 6px 6px; }
 .chat-badge .cm-still { display: none; }
@@ -87,13 +87,13 @@
 .chat-badge .cm-glyph { fill: none; stroke: var(--surface-raised, #fff); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 @keyframes chat-spin { to { transform: rotate(360deg); } }
 .chat-place { font-size: 11.5px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: normal; overflow-wrap: anywhere; } /* AA for small text on the row and the selected row */
-.chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.chat-place.here::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: var(--sp-2); border-radius: 50%; background: var(--accent); vertical-align: 1px; }
 .chat-open:focus-visible { outline: none; }
 .chat-item:has(.chat-open:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; } /* on the whole row (Stop included), not just the title button */ /* softer than the global ring: the row is already tinted */
 /* A waiting chat: "Stop waiting" is a small link on a line of its own, so the title keeps the whole row. */
 .chat-item:is(.has-queued, .has-running) { display: grid; grid-template-columns: 1fr; }
 .chat-item:is(.has-queued, .has-running) .chat-open { grid-column: 1; grid-row: 1; }
-.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: 0 0 8px 12px; padding: 4px 10px; min-height: 28px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 6px; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; cursor: default; }
+.chat-stop-wait { grid-column: 1; grid-row: 2; justify-self: start; margin: 0 0 var(--sp-4) var(--sp-6); padding: var(--sp-2) var(--sp-5); min-height: 28px; box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); border-radius: 6px; background: none; color: color-mix(in srgb, var(--accent) 60%, var(--text)); font: inherit; font-size: 11.5px; cursor: default; }
 .chat-stop-wait:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, var(--hover)); }
 .chat-stop-wait:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .chat-stop-wait:disabled { opacity: 0.7; }
@@ -111,9 +111,9 @@
 #chat-history[data-attention="approval"]::after { background: var(--warning); }
 
 /* A long history: grouped by when it was used, and searchable. */
-.chat-group { list-style: none; padding: 10px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
-.chat-group:first-child { padding-top: 4px; }
-.chat-search { display: block; width: calc(100% - 16px); margin: 0 8px 6px; height: 30px; padding: 0 10px; border: none; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; }
+.chat-group { list-style: none; padding: var(--sp-5) var(--sp-5) var(--sp-2); font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+.chat-group:first-child { padding-top: var(--sp-2); }
+.chat-search { display: block; width: calc(100% - 2 * var(--sp-4)); margin: 0 var(--sp-4) var(--sp-3); height: 30px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-md); background: var(--field); color: var(--text); font: inherit; font-size: 12.5px; }
 .chat-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* A finished chat not seen yet: a tint and a bar on the left (the hover and focus tint still show over it). */
@@ -121,16 +121,16 @@
 .chat-item.has-unread { box-shadow: inset 2px 0 0 var(--success); }
 /* High-contrast mode drops colours and shadows: the glyphs take the system colours and the unread bar becomes a border. */
 /* The "New in Lumen" card in the empty chat (renderer/offer-card.js): what is new and still off, one line each. */
-.offer-card { margin: 14px 0 0; padding: 10px 12px; border-radius: var(--r-lg); background: var(--field); text-align: left; }
-.offer-title { margin: 0 0 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
-.offer-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.offer-row { display: flex; align-items: center; gap: 10px; }
+.offer-card { margin: var(--sp-6) 0 0; padding: var(--sp-5) var(--sp-6); border-radius: var(--r-lg); background: var(--field); text-align: left; }
+.offer-title { margin: 0 0 var(--sp-3); color: var(--muted); font-size: 12px; font-weight: 600; }
+.offer-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-4); }
+.offer-row { display: flex; align-items: center; gap: var(--sp-5); }
 .offer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .offer-name { font-weight: 500; }
 .offer-desc { color: var(--muted); font-size: 12px; line-height: 1.4; }
-.offer-go { flex: none; padding: 4px 10px; border: none; border-radius: var(--r-md); background: var(--accent-deep); color: var(--on-accent); cursor: default; }
+.offer-go { flex: none; padding: var(--sp-2) var(--sp-5); border: none; border-radius: var(--r-md); background: var(--accent-deep); color: var(--on-accent); cursor: default; }
 .offer-go:disabled { opacity: 0.6; }
-.offer-foot { margin-top: 8px; display: flex; gap: 14px; font-size: 12px; }
+.offer-foot { margin-top: var(--sp-4); display: flex; gap: var(--sp-6); font-size: 12px; }
 .offer-foot .link-btn { color: var(--muted); }
 
 @media (forced-colors: active) {

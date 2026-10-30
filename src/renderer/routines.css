@@ -1,49 +1,49 @@
 /* Routines (renderer/routines.js): the Tasks panel's tabs, the Routines list, the editor's schedule
    fields, a routine's run history and "Save as routine" on a reply. Builds on tasks.css. */
 
-.task-tabs { display: flex; gap: 2px; margin: 0 16px 8px; padding: 2px; border-radius: var(--r-md); background: var(--field); }
+.task-tabs { display: flex; gap: var(--sp-1); margin: 0 var(--sp-8) var(--sp-4); padding: var(--sp-1); border-radius: var(--r-md); background: var(--field); }
 .task-tab {
-  flex: 1; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default;
+  flex: 1; padding: var(--sp-2) var(--sp-4); border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); font: inherit; font-size: 12px; cursor: default;
   transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
 }
 .task-tab[aria-selected="true"] { background: var(--surface-raised); color: var(--text); box-shadow: 0 0 0 1px var(--hairline); }
 .task-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 
-.routine-bar { display: flex; justify-content: flex-end; margin: 0 16px 6px; }
-.routine-item { display: flex; align-items: center; gap: 2px; padding-left: 12px; }
-.routine-item .task-row { flex: 1; min-width: 0; padding-left: 6px; }
+.routine-bar { display: flex; justify-content: flex-end; margin: 0 var(--sp-8) var(--sp-3); }
+.routine-item { display: flex; align-items: center; gap: var(--sp-1); padding-left: var(--sp-6); }
+.routine-item .task-row { flex: 1; min-width: 0; padding-left: var(--sp-3); }
 .routine-toggle { flex: none; margin: 0; accent-color: var(--accent); }
-.routine-run-now { flex: none; margin-right: 8px; padding: 2px 8px; font-size: 11px; }
-.routine-offline { margin: 0 20px 6px; font-size: 11px; }
+.routine-run-now { flex: none; margin-right: var(--sp-4); padding: var(--sp-1) var(--sp-4); font-size: 11px; }
+.routine-offline { margin: 0 var(--sp-10) var(--sp-3); font-size: 11px; }
 
-.routine-templates { margin: 8px 16px 4px; }
-.routine-templates h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
-.routine-templates, .routine-template-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.routine-templates { margin: var(--sp-4) var(--sp-8) var(--sp-2); }
+.routine-templates h3 { margin: 0 0 var(--sp-3); font-size: 12px; font-weight: 600; color: var(--muted); }
+.routine-templates, .routine-template-row { display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; }
 .routine-templates h3 { flex-basis: 100%; }
 .routine-template { font-size: 12px; }
-.routine-template-row { margin: 0 0 8px; }
+.routine-template-row { margin: 0 0 var(--sp-4); }
 
-.routine-days { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; padding: 0; border: 0; }
-.routine-days legend { margin-bottom: 4px; padding: 0; font-size: 12px; color: var(--muted); }
+.routine-days { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-3) 0; padding: 0; border: 0; }
+.routine-days legend { margin-bottom: var(--sp-2); padding: 0; font-size: 12px; color: var(--muted); }
 .routine-day { position: relative; display: inline-flex; }
 .routine-day input { position: absolute; opacity: 0; inset: 0; margin: 0; }
-.routine-day span { padding: 3px 7px; border-radius: var(--r-sm); background: var(--field); font-size: 12px; color: var(--muted); }
+.routine-day span { padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm); background: var(--field); font-size: 12px; color: var(--muted); }
 .routine-day input:checked + span { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 .routine-day input:focus-visible + span { box-shadow: var(--focus-ring); }
 .task-field input[type="time"] {
-  flex: none; padding: 5px 8px; font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm); outline: none;
+  flex: none; padding: var(--sp-2) var(--sp-4); font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm); outline: none;
 }
 .task-field input[type="time"]:focus-visible { border-color: var(--accent); box-shadow: var(--focus-ring); }
-.routine-next { margin: 4px 0 2px; }
-.task-routine-link { margin-top: 8px; font-size: 12px; }
+.routine-next { margin: var(--sp-2) 0 var(--sp-1); }
+.task-routine-link { margin-top: var(--sp-4); font-size: 12px; }
 
 .routine-history { list-style: none; margin: 0; padding: 0; font-size: 12px; color: var(--muted); }
-.routine-run summary { display: flex; gap: 8px; align-items: flex-start; padding: 3px 0; cursor: default; list-style: none; }
+.routine-run summary { display: flex; gap: var(--sp-4); align-items: flex-start; padding: var(--sp-2) 0; cursor: default; list-style: none; }
 .routine-run summary::-webkit-details-marker { display: none; }
 .routine-run summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-xs); }
-.routine-run summary .task-dot { margin-top: 5px; }
+.routine-run summary .task-dot { margin-top: var(--sp-2); }
 .routine-run[open] summary { color: var(--text); }
-.routine-result { margin: 4px 0 8px 16px; font-size: 13px; }
+.routine-result { margin: var(--sp-2) 0 var(--sp-4) var(--sp-8); font-size: 13px; }
 
 /* "Save as routine": beside Copy (and Regenerate, on the latest reply), shown the same way. */
 .msg.assistant .reply-routine {
@@ -56,20 +56,20 @@
 .msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
 
 /* One-click template cards, quiet hours and the "make this a routine?" offer above the message box. */
-.routine-template-list { list-style: none; margin: 0; padding: 0; flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; }
-.routine-template-card { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-md); background: var(--field); }
-.routine-template-card .task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.routine-template-list { list-style: none; margin: 0; padding: 0; flex-basis: 100%; display: flex; flex-direction: column; gap: var(--sp-3); }
+.routine-template-card { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--field); }
+.routine-template-card .task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .routine-template-add { flex: none; font-size: 12px; }
 .routine-template-conn { font-size: 11px; }
 .routine-template-conn.ready { color: var(--accent-text); }
-.routine-template-more { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px; }
-.routine-quiet { margin: 4px 16px 6px; font-size: 12px; }
+.routine-template-more { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.routine-quiet { margin: var(--sp-2) var(--sp-8) var(--sp-3); font-size: 12px; }
 .routine-quiet summary { cursor: default; color: var(--muted); }
 .routine-quiet summary:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--r-xs); }
-.routine-quiet-times { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
-.routine-quiet-times input[type="time"] { padding: 3px 6px; font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm); }
+.routine-quiet-times { display: flex; align-items: center; gap: var(--sp-3); margin: var(--sp-2) 0; }
+.routine-quiet-times input[type="time"] { padding: var(--sp-2) var(--sp-3); font: inherit; font-size: 12px; color: var(--text); background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm); }
 .routine-quiet-times input[type="time"]:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
-.routine-offer { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 0 0 6px; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.routine-offer { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); padding: 0 0 var(--sp-3); font-size: 12px; line-height: 1.4; color: var(--muted); }
 .routine-offer[hidden] { display: none; }
 .routine-offer-text { flex: 1 1 100%; }
-.routine-offer .btn { padding: 2px 8px; font-size: 12px; }
+.routine-offer .btn { padding: var(--sp-1) var(--sp-4); font-size: 12px; }

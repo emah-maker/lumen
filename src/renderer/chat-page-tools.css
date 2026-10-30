@@ -17,7 +17,7 @@ body.chat-page .cp-target { flex: 0 1 auto; max-width: 30%; }
 @container cpmain (max-width: 640px) { .cp-target { display: none; } }
 
 /* ---------- temporary chat ---------- */
-.cp-temp-badge { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--accent); background: var(--accent-soft); letter-spacing: 0.01em; }
+.cp-temp-badge { flex: none; padding: var(--sp-1) var(--sp-4); border-radius: 999px; font-size: 11px; font-weight: 600; color: var(--accent); background: var(--accent-soft); letter-spacing: 0.01em; }
 .cp-temp-badge[hidden] { display: none; }
 .cp-temp-note { margin: 0; padding: var(--cp-1) var(--cp-3); text-align: center; font-size: 12px; color: var(--muted); border-bottom: 1px dashed var(--border); }
 .cp-temp-note[hidden] { display: none; }
@@ -29,7 +29,7 @@ body.cp-temporary .composer { border: 1.5px dashed var(--accent); }
 
 /* "Move to project" */
 .cp-pj-pick, .cp-retry-menu { position: fixed; z-index: 90; min-width: 200px; max-width: 280px; max-height: 300px; overflow-y: auto; padding: var(--cp-1); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
-.cp-pj-pick-item, .cp-retry-item { display: flex; align-items: center; justify-content: space-between; gap: var(--cp-2); width: 100%; min-height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.cp-pj-pick-item, .cp-retry-item { display: flex; align-items: center; justify-content: space-between; gap: var(--cp-2); width: 100%; min-height: 32px; padding: 0 var(--sp-5); border: none; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .cp-pj-pick-item:hover, .cp-pj-pick-item:focus-visible, .cp-retry-item:hover, .cp-retry-item:focus-visible { outline: none; background: var(--hover); }
 .cp-pj-pick-item[aria-checked="true"]::after { content: '✓'; color: var(--accent); }
 .cp-pj-pick-item.none, .cp-pj-pick-item.new { color: var(--muted); }
@@ -41,7 +41,7 @@ body.cp-temporary .composer { border: 1.5px dashed var(--accent); }
 .msg.assistant:has(> .reply-regen) .reply-speak { right: 80px; opacity: 0.75; }
 .msg.assistant:hover .reply-speak, .msg.assistant:has(> .reply-regen):hover .reply-speak, .msg.assistant .reply-speak:focus-visible, .msg.assistant .reply-speak.on { opacity: 1; }
 .msg.assistant .reply-speak svg { width: 16px; height: 16px; }
-.msg.assistant .reply-speak:is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: 3px 8px; border-radius: 7px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+.msg.assistant .reply-speak:is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: var(--sp-1) var(--sp-4); border-radius: 7px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
 .reply-speak svg, .reply-retry svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 /* Retry with another model: in the corner row with Regenerate and Copy (right to left: Copy, Regenerate, Retry), the same size and spacing. */
 .msg.assistant .reply-retry { position: absolute; bottom: -24px; right: 52px; width: 28px; height: 26px; padding: 0; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--muted); opacity: 0; cursor: pointer; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
@@ -49,7 +49,7 @@ body.cp-temporary .composer { border: 1.5px dashed var(--accent); }
 .msg.assistant:hover .reply-retry, .msg.assistant:has(> .reply-regen):hover .reply-retry, .msg.assistant .reply-retry:focus-visible { opacity: 1; }
 .msg.assistant.reply-actions-only .reply-retry { position: static; opacity: 0.75; }
 .msg.assistant .reply-retry svg { width: 16px; height: 16px; }
-.msg.assistant .reply-retry:is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: 3px 8px; border-radius: 7px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
+.msg.assistant .reply-retry:is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: var(--sp-1) var(--sp-4); border-radius: 7px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
 .reply-speak:hover, .reply-retry:hover { background: var(--hover); color: var(--text); }
 .reply-speak.on { color: var(--accent); }
 .reply-speak:focus-visible, .reply-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -75,15 +75,15 @@ mark.cp-hit-word { background: var(--accent-soft); color: inherit; border-radius
 /* while dragging */
 body.cp-dragging, body.cp-dragging * { cursor: grabbing; user-select: none; }
 .chat-item.dragging, .cp-pj-chat.dragging { opacity: 0.5; }
-.cp-drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; display: flex; align-items: center; gap: var(--cp-2); max-width: 260px; padding: 6px 12px; border-radius: var(--r-lg); background: var(--surface-raised); color: var(--text); font-size: 13px; pointer-events: none; box-shadow: 0 0 0 1px var(--accent), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
+.cp-drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; display: flex; align-items: center; gap: var(--cp-2); max-width: 260px; padding: var(--sp-3) var(--sp-6); border-radius: var(--r-lg); background: var(--surface-raised); color: var(--text); font-size: 13px; pointer-events: none; box-shadow: 0 0 0 1px var(--accent), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
 .cp-drag-title { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.cp-drag-count { flex: none; min-width: 20px; padding: 0 6px; border-radius: var(--r-pill); background: var(--accent-deep); color: var(--paper, #fff); font-size: 12px; font-weight: 600; text-align: center; }
+.cp-drag-count { flex: none; min-width: 20px; padding: 0 var(--sp-3); border-radius: var(--r-pill); background: var(--accent-deep); color: var(--paper, #fff); font-size: 12px; font-weight: 600; text-align: center; }
 .cp-pj-item.drop-ok .cp-pj { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .cp-pj-item.drop-over .cp-pj { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
 .cp-pj-item.drop-same .cp-pj { opacity: 0.6; }
 .cp-pj-chats.drop-over { box-shadow: inset 0 -2px 0 var(--accent); background: var(--accent-soft); }
 .cp-pj-chats.drop-same { opacity: 0.6; }
-.cp-pj-none { position: sticky; bottom: 0; margin: var(--cp-1) 0 0; padding: 6px 10px; border: 1px dashed var(--border); border-radius: var(--r-md); background: var(--surface); color: var(--muted); font-size: 13px; text-align: center; }
+.cp-pj-none { position: sticky; bottom: 0; margin: var(--cp-1) 0 0; padding: var(--sp-3) var(--sp-5); border: 1px dashed var(--border); border-radius: var(--r-md); background: var(--surface); color: var(--muted); font-size: 13px; text-align: center; }
 .cp-pj-none.drop-over { border-style: solid; border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
 .cp-list .chat-items.drop-none { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent); border-radius: var(--r-md); }
 .cp-list .chat-items.drop-none.drop-over { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -93,7 +93,7 @@ body.cp-dragging, body.cp-dragging * { cursor: grabbing; user-select: none; }
 
 
 /* the project name in a project chat's header (chat-page.js); its page is chat-project-page.css */
-.cp-project-chip { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 9px; border: none; border-radius: 999px; font: inherit; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--field); cursor: pointer; }
+.cp-project-chip { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: var(--sp-1) var(--sp-4); border: none; border-radius: 999px; font: inherit; font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--field); cursor: pointer; }
 .cp-project-chip:hover { background: var(--hover); color: var(--text); }
 .cp-project-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cp-project-chip[hidden] { display: none; }

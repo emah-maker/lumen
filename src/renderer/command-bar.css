@@ -5,18 +5,18 @@
 .cmdbar-scrim { position: absolute; inset: 0; background: rgb(0 0 0 / 0.18); }
 .cmdbar-box {
   position: relative; display: flex; flex-direction: column; width: min(640px, calc(100vw - 32px)); max-height: min(540px, calc(100vh - 140px));
-  padding: 8px; border-radius: var(--r-xl); background: var(--surface-raised); color: var(--text);
+  padding: var(--sp-4); border-radius: var(--r-xl); background: var(--surface-raised); color: var(--text);
   box-shadow: 0 0 0 0.5px var(--border), 0 14px 36px -10px rgb(0 0 0 / calc(1.4 * var(--shadow-k)));
 }
 .cmdbar-box input {
-  flex: none; height: 38px; padding: 0 12px; border: none; border-radius: var(--r-md); background: var(--field);
+  flex: none; height: 38px; padding: 0 var(--sp-6); border: none; border-radius: var(--r-md); background: var(--field);
   color: var(--text); font: inherit; font-size: 15px; outline: none;
 }
 .cmdbar-box input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), var(--focus-ring); }
-.cmdbar-results { contain: layout paint style; list-style: none; margin: 6px 0 0; padding: 0; overflow-y: auto; min-height: 0; }
-.cmdbar-section { padding: 8px 8px 4px; font-size: 11px; font-weight: 600; color: var(--muted); }
-.cmdbar-empty { padding: 18px 8px; font-size: 13px; color: var(--muted); }
-.cmdbar-item { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: var(--r-sm); font-size: 13px; cursor: default; }
+.cmdbar-results { contain: layout paint style; list-style: none; margin: var(--sp-3) 0 0; padding: 0; overflow-y: auto; min-height: 0; }
+.cmdbar-section { padding: var(--sp-4) var(--sp-4) var(--sp-2); font-size: 11px; font-weight: 600; color: var(--muted); }
+.cmdbar-empty { padding: var(--sp-8) var(--sp-4); font-size: 13px; color: var(--muted); }
+.cmdbar-item { display: flex; align-items: center; gap: var(--sp-5); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); font-size: 13px; cursor: default; }
 .cmdbar-item.selected { background: var(--accent-soft); }
 .cmdbar-item.current .cmdbar-title { font-weight: 600; }
 .cmdbar-item[data-group="ask"] { color: var(--accent-text, var(--accent)); }

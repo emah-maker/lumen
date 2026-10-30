@@ -927,7 +927,7 @@
     if (!box) {
       box = el('div', { className: 'act-review' });
       box.setAttribute('role', 'group');
-      const after = card.el.querySelector(':scope > .act-many:not([hidden])') || card.status;
+      const after = card.el.querySelector(':scope > .act-many') || card.status; // (under the pills, shown or not: they belong to the status line above)
       after.after(box);
     }
     const last = r.rounds[r.rounds.length - 1];

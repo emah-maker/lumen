@@ -56,12 +56,12 @@
     #icon[hidden] { display: none; }
     #icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
     #text { min-width: 0; flex: 1; }
-    #title { margin: 0 0 3px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    #title { margin: 0 0 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
     #title[hidden] { display: none; }
     #message { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.4; overflow-wrap: anywhere; white-space: pre-wrap; }
     #detail { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
     #detail[hidden] { display: none; }
-    #fields { margin: 14px 0 0; display: flex; flex-direction: column; gap: 8px; }
+    #fields { margin: 16px 0 0; display: flex; flex-direction: column; gap: 8px; }
     #fields[hidden] { display: none; }
     .field { display: flex; flex-direction: column; gap: 4px; }
     .field-label { color: var(--muted); font-size: 12px; }
@@ -73,40 +73,40 @@
     }
     .field input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
     /* The device chooser (kind "devices", features/device-chooser.js): a list to pick one from, live as devices come and go. */
-    #devices { margin: 14px 0 0; max-height: 232px; overflow-y: auto; overscroll-behavior: contain; padding: 4px; border-radius: 10px; background: var(--field); outline: none; }
+    #devices { margin: 16px 0 0; max-height: 232px; overflow-y: auto; overscroll-behavior: contain; padding: 4px; border-radius: 10px; background: var(--field); outline: none; }
     #devices:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
     #devices[hidden], #devices-empty[hidden] { display: none; }
-    .device { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: default; }
+    .device { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: default; }
     .device + .device { margin-top: 2px; }
     .device:hover { background: var(--hover); }
     .device[aria-selected="true"] { background: var(--accent-deep); color: var(--on-accent); }
     .device .d-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     .device .d-id { flex: none; color: var(--muted); font: 11px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; letter-spacing: 0; }
     .device[aria-selected="true"] .d-id { color: rgba(255, 255, 255, 0.78); }
-    #devices-empty { margin: 14px 0 0; padding: 22px 12px; border-radius: 10px; background: var(--field); color: var(--muted); text-align: center; }
+    #devices-empty { margin: 16px 0 0; padding: 24px 12px; border-radius: 10px; background: var(--field); color: var(--muted); text-align: center; }
     .btn:disabled { opacity: 0.45; pointer-events: none; }
-    #checkbox-row { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; color: var(--muted); font-size: 13px; cursor: default; }
+    #checkbox-row { display: flex; align-items: center; gap: 8px; margin: 16px 0 0; color: var(--muted); font-size: 13px; cursor: default; }
     #checkbox-row[hidden] { display: none; }
     #checkbox-row input { accent-color: var(--accent); width: 14px; height: 14px; }
     /* Release notes (kind "notes", features/whats-new.js): a wider card, one section per version. */
     #card.wide { width: 560px; }
     #notes { margin: 12px 0 0; user-select: text; }
     #notes[hidden], #more[hidden], #notes-link[hidden] { display: none; }
-    .release + .release { margin-top: 14px; padding-top: 12px; border-top: 0.5px solid var(--border); }
+    .release + .release { margin-top: 16px; padding-top: 12px; border-top: 0.5px solid var(--border); }
     .release h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
     .release h3 .date { margin-left: 6px; color: var(--muted); font-weight: 400; }
-    .release ul { margin: 0; padding-left: 18px; }
+    .release ul { margin: 0; padding-left: 16px; }
     .release li, .release p { margin: 0 0 6px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
     .release p { color: var(--muted); }
-    .release code { font: 12px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; padding: 0 3px; border-radius: 4px; background: var(--field); }
+    .release code { font: 12px ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace; padding: 0 4px; border-radius: 4px; background: var(--field); }
     #more { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
     #notes-link { display: inline-block; margin: 10px 0 0; color: var(--accent-text); font-size: 13px; text-decoration: none; cursor: pointer; }
     #notes-link:hover { text-decoration: underline; }
     #notes-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
     #card.wide #checkbox-row { margin-top: 12px; }
-    #buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    #buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 16px; }
     .btn {
-      height: 30px; padding: 0 14px; border: none; border-radius: 8px; background: var(--field); color: var(--text);
+      height: 30px; padding: 0 12px; border: none; border-radius: 8px; background: var(--field); color: var(--text);
       font: inherit; font-weight: 500; letter-spacing: -0.003em; cursor: default;
       transition: background-color 120ms ease-out, transform 90ms ease-out, filter 120ms ease-out;
     }
