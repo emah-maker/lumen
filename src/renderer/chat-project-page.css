@@ -15,7 +15,7 @@
 .pjp-head-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cp-3); }
 .pjp-mark { flex: none; width: 56px; height: 56px; display: grid; place-items: center; border-radius: 16px; background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
 .pjp-mark .pjp-ic svg { width: 26px; height: 26px; stroke-width: 1.4; }
-.pjp-head-text { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pjp-head-text { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .pjp-title, .pjp-desc { width: 100%; box-sizing: border-box; margin-left: calc(-1 * var(--sp-5)); padding: 0 var(--sp-5); border: none; border-radius: 10px; background: transparent; color: var(--text); font: inherit; text-overflow: ellipsis; }
 .pjp-title { height: 42px; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
 .pjp-desc { height: 30px; font-size: 14.5px; color: var(--text-2, var(--muted)); }
@@ -92,7 +92,7 @@
 .pjp-cc-snip { flex: 1; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
 .pjp-cc-foot { display: flex; align-items: center; gap: var(--cp-2); font-size: 12px; color: var(--muted); }
 .pjp-cc-when { margin-left: auto; }
-.pjp-badge-live { display: inline-flex; align-items: center; gap: var(--sp-2); margin-right: var(--sp-3); padding: 1px var(--sp-4); border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-text, var(--accent)); font-size: 11.5px; font-weight: 500; }
+.pjp-badge-live { display: inline-flex; align-items: center; gap: var(--sp-2); margin-right: var(--sp-3); padding: var(--sp-px) var(--sp-4); border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent-text, var(--accent)); font-size: 11.5px; font-weight: 500; }
 .pjp-cc-foot .pjp-badge-live { margin-right: 0; }
 .pjp-badge-live.running::before, .pjp-badge-live.queued::before { content: ''; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid currentColor; border-top-color: transparent; animation: pjp-spin 0.9s linear infinite; }
 .pjp-badge-live.queued::before { animation: none; border-top-color: currentColor; opacity: 0.6; }
@@ -162,7 +162,7 @@ button.pjp-hit { cursor: pointer; }
 .pjp-list[hidden] { display: none; }
 .pjp-row { display: flex; align-items: center; gap: var(--cp-2); min-height: 40px; padding: var(--sp-2) var(--sp-3); margin-inline: calc(-1 * var(--sp-3)); border-radius: 10px; }
 .pjp-row:hover, .pjp-row:focus-within { background: var(--hover); }
-.pjp-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; text-align: left; }
+.pjp-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); text-align: left; }
 .pjp-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .pjp-row-text { font-size: 13px; line-height: 1.4; }
 .pjp-row-meta, .pjp-row-sum { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -177,10 +177,10 @@ button.pjp-hit { cursor: pointer; }
 .pjp-drop[hidden] { display: none; }
 .pjp-drop-title { font-size: 13px; font-weight: 500; }
 /* sources: files, pages and websites as one list; a panel for Add (a link, or tabs to tick) opens above it */
-.pjp-src-list { gap: 1px; }
+.pjp-src-list { gap: var(--sp-1); }
 .pjp-src { padding-right: var(--sp-1); }
 .pjp-src .pjp-row-main { flex: 1; min-width: 0; }
-.pjp-src .pjp-row-open { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; align-self: stretch; padding: 0; border: none; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.pjp-src .pjp-row-open { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: var(--sp-1); align-self: stretch; padding: 0; border: none; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .pjp-src .pjp-row-open:hover .pjp-row-name { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--text) 35%, transparent); }
 .pjp-src .pjp-row-open .pjp-row-name, .pjp-src .pjp-row-open .pjp-row-meta { max-width: 100%; }
 .pjp-fav { flex: none; width: 18px; height: 18px; margin: 0 var(--sp-4); border-radius: 4px; object-fit: contain; }

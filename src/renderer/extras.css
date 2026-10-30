@@ -29,7 +29,7 @@
 .page-context .pc-toggle {
   flex: none;
   border: 0;
-  padding: 1px var(--sp-3);
+  padding: var(--sp-px) var(--sp-3);
   border-radius: var(--r-sm);
   font: inherit;
   color: inherit;
@@ -213,12 +213,12 @@
 .plan-card .plan-title { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .plan-card .plan-steps { margin: 0; padding-left: var(--sp-12); display: flex; flex-direction: column; gap: var(--sp-2); }
 .plan-card .plan-steps li { overflow-wrap: anywhere; }
-.plan-card .plan-step-text[contenteditable] { display: inline-block; min-width: 4em; padding: 1px var(--sp-2); border-radius: var(--r-sm); background: var(--field); outline: none; }
+.plan-card .plan-step-text[contenteditable] { display: inline-block; min-width: 4em; padding: var(--sp-px) var(--sp-2); border-radius: var(--r-sm); background: var(--field); outline: none; }
 .plan-card .plan-step-text[contenteditable]:focus-visible { box-shadow: var(--focus-ring); }
 .plan-card .plan-risky { margin-left: var(--sp-3); padding: 0 var(--sp-3); border-radius: var(--r-xl); font-size: 11px; font-weight: 600; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger); }
 .plan-card .plan-sites { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .plan-card .plan-site-list { display: inline-flex; flex-wrap: wrap; gap: var(--sp-2); }
-.plan-card .plan-site { display: inline-flex; align-items: center; gap: var(--sp-1); padding: 1px var(--sp-3); border-radius: var(--r-xl); background: var(--hover); color: var(--text); font-family: var(--mono, monospace); }
+.plan-card .plan-site { display: inline-flex; align-items: center; gap: var(--sp-1); padding: var(--sp-px) var(--sp-3); border-radius: var(--r-xl); background: var(--hover); color: var(--text); font-family: var(--mono, monospace); }
 .plan-card .plan-site-x { display: none; padding: 0 var(--sp-1); border: none; background: none; color: var(--muted); font: inherit; cursor: pointer; }
 .plan-card.editing .plan-site-x { display: inline; }
 .plan-card .plan-note { font-size: 12px; color: var(--muted); }

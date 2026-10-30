@@ -23,7 +23,7 @@
 .slash-chip[hidden] { display: none; }
 .slash-chip-name { flex: none; font-weight: 600; color: var(--accent-text); }
 .slash-chip-hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.slash-chip-x { flex: none; border: 0; padding: 1px var(--sp-3); border-radius: var(--r-sm); font: inherit; color: var(--muted); background: transparent; }
+.slash-chip-x { flex: none; border: 0; padding: var(--sp-px) var(--sp-3); border-radius: var(--r-sm); font: inherit; color: var(--muted); background: transparent; }
 .slash-chip-x:hover { background: var(--hover); color: var(--text); }
 .slash-chip-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
@@ -47,14 +47,14 @@
 @keyframes btw-spin { to { transform: rotate(360deg); } }
 .btw-foot { margin-top: var(--sp-2); font-size: 11px; color: var(--muted); }
 .btw-foot[hidden] { display: none; }
-.btw-retry { border: 0; padding: 1px var(--sp-5); border-radius: var(--r-pill); font: inherit; color: var(--accent-text); background: var(--accent-soft); }
+.btw-retry { border: 0; padding: var(--sp-px) var(--sp-5); border-radius: var(--r-pill); font: inherit; color: var(--accent-text); background: var(--accent-soft); }
 .btw-retry:hover { filter: brightness(1.08); }
 .btw-retry:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* A skill's message: a small tag, what was typed after the command, and the full prompt on demand. */
 .msg.user[data-skill] { white-space: normal; }
 .skill-tag { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2) var(--sp-4); }
-.skill-badge { padding: 1px var(--sp-4); border-radius: var(--r-pill); font-size: 12px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); }
+.skill-badge { padding: var(--sp-px) var(--sp-4); border-radius: var(--r-pill); font-size: 12px; font-weight: 600; color: var(--accent-text); background: var(--accent-soft); }
 .skill-input { white-space: pre-wrap; word-wrap: break-word; }
 .skill-full { margin-top: var(--sp-3); font-size: 12px; color: var(--muted); }
 .skill-full summary { cursor: default; width: max-content; }

@@ -74,7 +74,7 @@
 /* A Word card without Word's window: the paragraphs around the last change, as a small page. */
 .act-page { box-sizing: border-box; width: 100%; height: 100%; overflow: hidden; padding: var(--sp-5) var(--sp-6); background: var(--surface, var(--bg)); color: var(--text); font: 11px/1.4 Georgia, 'Times New Roman', serif; }
 .act-page[hidden] { display: none; }
-.act-pg { padding: 1px var(--sp-2); margin: 1px 0; border-radius: 3px; overflow-wrap: anywhere; }
+.act-pg { padding: var(--sp-px) var(--sp-2); margin: var(--sp-1) 0; border-radius: var(--r-xs); overflow-wrap: anywhere; }
 .act-pg-h1 { font: 700 14px/1.3 var(--font, system-ui, sans-serif); margin-top: var(--sp-2); }
 .act-pg-h2 { font: 700 12.5px/1.3 var(--font, system-ui, sans-serif); margin-top: var(--sp-1); }
 .act-pg-h3 { font: 600 11.5px/1.3 var(--font, system-ui, sans-serif); }
@@ -133,7 +133,7 @@
 .act-list { margin-top: var(--sp-3); }
 .act-list .step { margin: var(--sp-2) 0; }
 .act-live { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.act-card { position: relative; }
+.act-card { position: relative; container: card / inline-size; } /* (its width comes from the chat column and --act-w, never from what is inside) */
 .pref-lite .act-card { animation: none; }
 @media (prefers-reduced-motion: reduce) { .act-card[data-state="working"] .act-icon, .act-card[data-state="helper"] .act-icon, .act-card[data-state="approval"] .act-icon { animation: none; } }
 /* The files the AI made: a name that opens the file, "Show in folder" beside it. */
@@ -155,7 +155,7 @@
 
 /* ---- [agents card] the subagents a reply started (renderer/agents-card.js): a row each, with a live clock, its tool calls and what it does now.
    As wide as the activity cards, so the two line up. */
-.agents-card { margin: var(--sp-8) 0; padding: var(--sp-6); border: 1px solid var(--border); border-radius: var(--r-xl); background: var(--surface-raised); display: flex; flex-direction: column; gap: var(--sp-5); color: var(--text); max-width: calc(var(--act-w, 340px) + 2 * var(--sp-6) + 2px); min-width: 0; box-sizing: border-box; animation: rise var(--t-smooth) var(--spring-smooth); }
+.agents-card { margin: var(--sp-8) 0; padding: var(--sp-6); border: 1px solid var(--border); border-radius: var(--r-xl); background: var(--surface-raised); display: flex; flex-direction: column; gap: var(--sp-5); color: var(--text); max-width: calc(var(--act-w, 340px) + 2 * var(--sp-6) + 2px); min-width: 0; box-sizing: border-box; animation: rise var(--t-smooth) var(--spring-smooth); container: card / inline-size; }
 .ag-head { display: flex; align-items: center; gap: var(--sp-5); min-width: 0; }
 .ag-icon { flex: none; width: var(--sp-16); height: var(--sp-16); border-radius: var(--r-md); display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); }
 .ag-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
@@ -173,8 +173,9 @@
 .ag-row[data-state="done"] .ag-dot::after { content: ""; position: absolute; left: 1px; top: -1px; box-sizing: border-box; width: 6px; height: 10px; border: solid var(--accent); border-width: 0 1.8px 1.8px 0; transform: rotate(45deg); } /* off-scale: a 6x10 check centred on the 8 px slot */ /* a check mark: done */
 .ag-row[data-state="failed"] .ag-dot { background: var(--danger); }
 .ag-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
-.ag-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-3); min-width: 0; }
-.ag-name { flex: 0 1 auto; font-weight: 600; min-width: min(12ch, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-line { display: flex; align-items: baseline; gap: var(--sp-1) var(--sp-3); min-width: 0; }
+@container card (max-width: 340px) { .ag-line { flex-direction: column; align-items: flex-start; } .ag-line > .ag-name { max-width: 100%; } }
+.ag-name { flex: 0 1 auto; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ag-bg { flex: none; padding: 0 var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); font-size: var(--fs-xs); line-height: 16px; }
 .ag-bg[hidden] { display: none; }
 .ag-now { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

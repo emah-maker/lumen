@@ -53,7 +53,7 @@
 .picker-section + .picker-section, .picker-item + .picker-section { margin-top: var(--sp-1); }
 .picker-count { font-weight: 500; font-variant-numeric: tabular-nums; opacity: 0.8; }
 
-.picker-item { position: relative; display: flex; flex-direction: column; gap: 1px; padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-14); border-radius: var(--r-sm); cursor: default; outline: none; }
+.picker-item { position: relative; display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-5) var(--sp-3) var(--sp-14); border-radius: var(--r-sm); cursor: default; outline: none; }
 .picker-item.active { background: var(--hover, rgb(127 127 127 / 0.14)); }
 .picker-line { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
 .picker-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

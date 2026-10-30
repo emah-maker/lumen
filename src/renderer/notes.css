@@ -18,7 +18,7 @@
 .nt-list { display: flex; flex-direction: column; gap: var(--sp-1); }
 .nt-row { border-radius: var(--radius); }
 .nt-row:hover, .nt-row:focus-within { background: color-mix(in srgb, var(--accent) 6%, var(--hover)); }
-.nt-open { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: var(--sp-4) var(--sp-6); border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: var(--radius); cursor: default; }
+.nt-open { display: flex; flex-direction: column; gap: var(--sp-1); width: 100%; padding: var(--sp-4) var(--sp-6); border: 0; background: none; color: inherit; font: inherit; text-align: left; border-radius: var(--radius); cursor: default; }
 .nt-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nt-meta { font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nt-undo { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin: 0 var(--sp-6) var(--sp-3) var(--sp-10); padding: var(--sp-2) var(--sp-4); border-radius: var(--r-md); background: var(--field); font-size: 12px; }

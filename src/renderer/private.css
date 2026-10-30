@@ -64,7 +64,7 @@ body:not(.mac) #strip { padding-right: calc(100vw - env(titlebar-area-x, 0px) - 
 .security svg { width: 13px; height: 13px; }
 .security.secure, .security.insecure, .security.broken, .security.mixed, .security.local { display: inline-flex; }
 .security.insecure, .security.broken { color: var(--p-warn); }
-#zoom { flex: none; border: 1px solid var(--p-line); background: transparent; border-radius: var(--r-lg); padding: 1px var(--sp-4); font-size: 11px; cursor: pointer; color: var(--p-muted); }
+#zoom { flex: none; border: 1px solid var(--p-line); background: transparent; border-radius: var(--r-lg); padding: var(--sp-px) var(--sp-4); font-size: 11px; cursor: pointer; color: var(--p-muted); }
 #zoom:hover { color: var(--on-accent); border-color: var(--p-accent); }
 
 #find { display: flex; align-items: center; gap: var(--sp-1); height: 30px; margin-right: var(--sp-2); padding: 0 var(--sp-1) 0 var(--sp-4); border: 1px solid var(--p-field-line); border-radius: var(--r-2xl); background: var(--p-field); }
