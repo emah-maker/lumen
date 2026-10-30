@@ -5526,7 +5526,7 @@ window.assistant.onEvent((event) => {
 
 
   const late = finishedTurn(event.runId);
-  if (late && /^(card_files|thumb|helper|agent|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
+  if (late && /^(card_files|thumb|helper|agent|skill|review|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId);
 
@@ -5676,6 +5676,12 @@ window.assistant.onEvent((event) => {
     case 'agent':
       agentEvent(turn, event);
       break;
+    case 'skill':
+      window.stepUI?.skill(turn, event);
+      break;
+    case 'review':
+      window.stepUI?.review(turn, event);
+      break;
     case 'helper_card':
       showHelperCard(event);
       break;
@@ -5824,6 +5830,8 @@ function lateCardEvent(t, event) {
     case 'thumb': window.stepUI?.thumb(t, event); break;
     case 'helper': window.stepUI?.helper(t, event); break;
     case 'agent': agentEvent(t, event); break;
+    case 'skill': window.stepUI?.skill(t, event); break;
+    case 'review': window.stepUI?.review(t, event); break;
     case 'tool': {
       const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
       const step = window.stepUI ? window.stepUI.add(t, { ...event, label: event.label || fallback }, { messages, append: (el) => append(el), task: lastAsk?.text, runId: event.runId, late: true }) : null;

@@ -126,6 +126,22 @@ const BUILTINS = [
     prompt: 'Watch the video in this tab. Call video_overview first (pass start and end if I name a stretch). From the contact sheet pick the moments that matter, then call video_frames on them (up to 8) to read detail. If the page text below has a transcript or captions, use it for what was said. Cite times as m:ss. Describe only what the frames show: when something is not visible or not covered, say so and never guess.',
     inputs: ['page'], mode: 'agent',
   },
+  // [review loop] One agent works, a separate reviewer rates it, until it meets a bar. The AI loads it on its own (autoUse) when a request asks for
+  // work held to a standard; the chat's card shows each round's score (review_round, ai/agent.js reviewRound).
+  {
+    name: 'review', title: 'Review until it\'s good', description: 'Improve a piece of work until a separate reviewer rates it at the bar (9/10 unless you say): /review the slides in my Quiz 6 folder.',
+    prompt: [
+      'Get this work to a set standard, checked by a separate reviewer each round: {{input}}',
+      '',
+      '1. The bar: the score the user asked for (for example 9/10); 9/10 when they named none. Write a short rubric for this kind of work (4 to 6 criteria, each one line). Use the same bar and rubric in every round.',
+      '2. The work: make it, or find the version that exists (a file, a page, a document).',
+      '3. Review it with a separate reviewer, never by rereading it yourself. With your own agents (Claude Code\'s Agent tool, Codex\'s and the like): start a NEW reviewer agent for every round, give it where the work is (full paths or links), the bar and the rubric, and tell it to be strict, to change nothing, and to answer with a score out of 10 (one decimal) and the fixes that would raise it most, in order. In a Lumen chat without agents of its own: the delegate tool, one helper, with the same brief.',
+      '4. Report the round: call review_round with the round number, the score, the bar, the rubric (round 1) and the top fixes. It shows the scores in the chat.',
+      '5. Below the bar: fix every point the reviewer raised (yourself, or a worker agent for a big piece), then go back to step 3 with a NEW reviewer. Stop when a round meets the bar, after 5 rounds, or when two rounds in a row gained less than 0.5 (then say what holds it back).',
+      '6. Reply: the final score against the bar, the scores by round (6.5 → 8 → 9.2), what changed, and anything left.',
+    ].join('\n'),
+    inputs: [], inputRequired: false, mode: 'agent', autoUse: true,
+  },
 ];
 const builtinId = (name) => `builtin:${name}`;
 
@@ -359,6 +375,23 @@ function claudeCodeSkill({ folder, skill }) {
 }
 
 // What use_skill hands the AI: the skill's instructions, its variables explained (the AI gets them with its tools).
+// [review loop] A request that asks for work held to a standard: a score out of 10, a separate reviewer, or improving something until it is good.
+// The chat then reminds the AI to load the review skill (ai/agent.js reviewHint). Plain questions about a score ("what was the 9/10 thing?") are rare
+// enough in a chat; the hint only names the skill, the AI still decides.
+const REVIEW_INTENT = [
+  /\b\d{1,2}(?:\.\d)?\s*\/\s*10\b/i, // 9/10, 8.5 / 10
+  /\bout of (?:10|ten)\b/i,
+  /\b(?:a |an |separate |second |another |independent )?reviewer\b/i,
+  /\b(?:keep|continue|go on)\s+(?:improving|polishing|iterating|refining|revising|reviewing|fixing)\b/i,
+  /\buntil\s+(?:it(?:'|’)?s|it is|they(?:'|’)?re|they are|the \w+ (?:is|are))\s+(?:good|great|perfect|right|solid|excellent|done|ready)\b/i,
+  /\b(?:rate|grade|score)\s+(?:it|them|this|these|the \w+|my \w+)\b.*\b(?:until|then (?:fix|improve))\b/i,
+];
+function reviewIntent(text) {
+  const t = String(text || '');
+  if (!t.trim() || /^\s*\/review\b/i.test(t)) return false; // (/review runs the skill itself)
+  return REVIEW_INTENT.some((re) => re.test(t));
+}
+
 function forAI(skill) {
   const vars = [...referencedVariables(skill.prompt)];
   const note = vars.length ? `\n\n(Placeholders such as ${vars.map((v) => `{{${v}}}`).join(', ')} stand for ${vars.map((v) => ({ content: 'the selected text or the page', page: 'the page', selection: 'the selected text', clipboard: 'the clipboard', tabs: 'tabs the user picked', input: 'what the user asked for', date: 'today\'s date', language: 'the user\'s language' }[v])).join(', ')}: use the request and your tools for them.)` : '';
@@ -560,7 +593,7 @@ function create(deps) {
     const want = String(input.name).trim().toLowerCase().replace(/^\/+/, '');
     const skill = list.find((s) => s.name === want);
     if (!skill) return `No skill named “${want.slice(0, 40)}” is available to you. Available: ${list.map((s) => s.name).join(', ') || 'none'}.`;
-    return { text: forAI(skill), skill: { id: skill.id, name: skill.name } };
+    return { text: forAI(skill), skill: { id: skill.id, name: skill.name, title: skill.title } };
   }
 
   const changed = () => deps.broadcast?.('skills:changed', store.list());
@@ -800,5 +833,6 @@ function create(deps) {
 
 module.exports = {
   create, createStore, createLearning, normalizeSkill, expand, preview, reviewImport, reviewSkillMd, claudeCodeSkill, forAI, exportText, requirements, takesInput, missingText,
+  reviewIntent, // [review loop]
   referencedVariables, slugify, nameTaken, uniqueName, BUILTINS, builtinId, MAX_PROMPT, MAX_SKILLS, MAX_IMPORT_BYTES, NAME_RE, VARIABLES, INPUTS, MODES, RESERVED, FORMAT,
 };

@@ -59,6 +59,15 @@ function cleanMeta(raw) {
       .map((a) => ({ id: a.id, desc: str(a.desc, 160), background: a.background === true, state: a.state, startedAt: num(a.startedAt), ...(num(a.endedAt) ? { endedAt: num(a.endedAt) } : {}), tools: num(a.tools), last: str(a.last, 160), ...(a.summary ? { summary: str(a.summary, 600) } : {}) }));
     if (agents.length) out.agents = agents;
   }
+  if (Array.isArray(raw.skills)) { // [skills] which skill the reply worked by
+    const skills = raw.skills.filter((x) => x && typeof x.name === 'string' && /^[\w:-]{1,64}$/.test(x.name)).slice(0, 4).map((x) => ({ name: x.name, title: typeof x.title === 'string' ? x.title.slice(0, 60) : x.name }));
+    if (skills.length) out.skills = skills;
+  }
+  if (raw.review && typeof raw.review === 'object' && Array.isArray(raw.review.rounds)) { // [review loop] the score track
+    const okNum = (v) => Number.isFinite(v) && v >= 0 && v <= 10;
+    const rounds = raw.review.rounds.filter((x) => x && Number.isInteger(x.round) && x.round > 0 && x.round <= 50 && okNum(x.score)).slice(0, 20).map((x) => ({ round: x.round, score: Math.round(x.score * 10) / 10, met: x.met === true }));
+    if (rounds.length && okNum(raw.review.bar)) out.review = { bar: Math.round(raw.review.bar * 10) / 10, title: typeof raw.review.title === 'string' ? raw.review.title.slice(0, 80) : '', rounds };
+  }
   if (Array.isArray(raw.written)) { const paths = [...new Set(raw.written.filter((p) => typeof p === 'string' && p && p.length <= 500 && !p.includes('\0')))].slice(0, MAX_WRITTEN); if (paths.length) out.written = paths; } // [activity cards] the files the AI wrote in the turn (paths only; main checks them again when the chat is opened and when one is clicked)
   if (typeof raw.task === 'string' && raw.task) out.task = raw.task.slice(0, 120);
   if (raw.thumb && typeof raw.thumb === 'object' && typeof raw.thumb.data === 'string' && raw.thumb.data.length <= THUMB_CHARS && /^[A-Za-z0-9+/=]+$/.test(raw.thumb.data)) out.thumb = { data: raw.thumb.data, ...(Number.isInteger(raw.thumb.tabId) && raw.thumb.tabId >= 0 && raw.thumb.tabId < 1e9 ? { tabId: raw.thumb.tabId } : {}), ...(typeof raw.thumb.s === 'string' && /^[0-9a-f]{8}$/.test(raw.thumb.s) ? { s: raw.thumb.s } : {}), ...(typeof raw.thumb.url === 'string' ? { url: raw.thumb.url.slice(0, 500) } : {}), ...(typeof raw.thumb.title === 'string' ? { title: raw.thumb.title.slice(0, 120) } : {}) };

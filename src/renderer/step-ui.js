@@ -195,6 +195,7 @@
     turn.cards ||= [];
     turn.cards.push(card);
     refreshCard(turn, card);
+    takePending(turn, card); // ([skills] [review loop] what came before the card)
     return card;
   }
   function stateOf(turn, card) {
@@ -898,7 +899,83 @@
     return true;
   }
 
-  // A thumbnail of the tab the AI works in: { data (base64 jpeg), url, title, tabId }.
+  // ---- [skills] [review loop] Which skill the reply works by (a chip under the card's title), and the review loop's rounds (a score track).
+  // A turn with no card yet keeps them until its card is made (pendingOf / takePending).
+  function cardOf(turn) { return liveCard(turn) || turn?.cards?.[turn.cards.length - 1] || null; }
+  function paintSkills(card) {
+    const names = card.skills || [];
+    let chip = card.el.querySelector('.act-skill');
+    if (!names.length) { if (chip) chip.hidden = true; return; }
+    if (!chip) { chip = el('div', { className: 'act-skill' }); card.el.querySelector('.act-titles').append(chip); }
+    chip.hidden = false;
+    chip.textContent = tr(names.length === 1 ? 'card.skill.one' : 'card.skill.other', { name: names.join(', ') });
+  }
+  function skill(turn, event) {
+    const title = String(event?.title || event?.name || '').slice(0, 60);
+    if (!turn || !title) return false;
+    const card = cardOf(turn);
+    if (!card) { ((turn.pending ||= {}).skills ||= []).push(title); return true; }
+    card.skills ||= [];
+    if (!card.skills.includes(title)) card.skills.push(title);
+    paintSkills(card);
+    return true;
+  }
+  function paintReview(card) {
+    const r = card.review;
+    if (!r || !r.rounds.length) return;
+    let box = card.el.querySelector(':scope > .act-review');
+    if (!box) {
+      box = el('div', { className: 'act-review' });
+      box.setAttribute('role', 'group');
+      const after = card.el.querySelector(':scope > .act-many:not([hidden])') || card.status;
+      after.after(box);
+    }
+    const last = r.rounds[r.rounds.length - 1];
+    box.dataset.met = last.met ? '1' : '';
+    const head = el('div', { className: 'rv-head' }, el('span', { className: 'rv-title', textContent: tr('card.review.title') }), el('span', { className: 'rv-bar', textContent: tr('card.review.bar', { bar: r.bar }) }));
+    if (r.title) head.append(el('span', { className: 'rv-what', textContent: r.title }));
+    const track = el('ol', { className: 'rv-track' });
+    for (const x of r.rounds) {
+      const li = el('li', { className: 'rv-round' + (x.met ? ' met' : '') });
+      li.title = tr('card.review.roundTitle', { round: x.round, score: x.score, bar: r.bar });
+      li.append(el('span', { className: 'rv-n', textContent: tr('card.review.round', { round: x.round }) }), el('span', { className: 'rv-score', textContent: String(x.score) }));
+      track.append(li);
+    }
+    const kids = [head, track];
+    if (!last.met && last.fixes?.length) {
+      const fixes = el('ul', { className: 'rv-fixes' });
+      for (const f of last.fixes.slice(0, 3)) fixes.append(el('li', { textContent: f }));
+      kids.push(el('div', { className: 'rv-fixes-head', textContent: tr('card.review.fixes') }), fixes);
+    }
+    box.replaceChildren(...kids);
+    box.setAttribute('aria-label', last.met ? tr('card.review.ariaMet', { score: last.score, bar: r.bar, rounds: r.rounds.length }) : tr('card.review.aria', { score: last.score, bar: r.bar, round: last.round }));
+  }
+  function review(turn, event) {
+    if (!turn || !Number.isFinite(event?.score) || !Number.isFinite(event?.bar)) return false;
+    const card = cardOf(turn);
+    if (!card) { ((turn.pending ||= {}).reviews ||= []).push(event); return true; }
+    addRound(card, event);
+    return true;
+  }
+  function addRound(card, event) {
+    const r = (card.review ||= { bar: event.bar, title: '', rounds: [] });
+    r.bar = event.bar;
+    if (event.title) r.title = String(event.title).slice(0, 80);
+    const round = { round: Number(event.round) || r.rounds.length + 1, score: event.score, met: event.met === true || event.score >= event.bar, fixes: Array.isArray(event.fixes) ? event.fixes.map(String).slice(0, 5) : [] };
+    const at = r.rounds.findIndex((x) => x.round === round.round);
+    if (at >= 0) r.rounds[at] = round; else r.rounds.push(round);
+    r.rounds.sort((a, b) => a.round - b.round);
+    paintReview(card);
+  }
+  // A card just made takes the skill and the rounds its turn heard before it existed.
+  function takePending(turn, card) {
+    const p = turn?.pending;
+    if (!p) return;
+    turn.pending = null;
+    for (const t of p.skills || []) { card.skills ||= []; if (!card.skills.includes(t)) card.skills.push(t); }
+    if (p.skills?.length) paintSkills(card);
+    for (const e of p.reviews || []) addRound(card, e);
+  }
   function thumb(turn, event) {
     const tab = { tabId: event.tabId ?? null, url: event.url || '', title: event.title || '' };
     const kind = event.kind || 'frame'; // 'frame' (a picture), 'pending' (the tab being acted on changed), 'site' (an address read with no tab)
@@ -1006,6 +1083,9 @@
     const filesCard = turn.cards[turn.cards.length - 1] || null; // (the card of the last step, as live: filesMade)
     if (filesCard && written.length) { filesCard.files = written.slice(0, 12); filesCard.file = filesCard.files[filesCard.files.length - 1]; renderFiles(filesCard); }
     for (const card of turn.cards) { card.running = 0; refreshCard(turn, card); }
+    const lastCard = turn.cards[turn.cards.length - 1] || null; // ([skills] [review loop] as the reply left them)
+    if (lastCard && Array.isArray(item.skills) && item.skills.length) { lastCard.skills = item.skills.map((s) => String(s?.title || s?.name || s)).filter(Boolean).slice(0, 4); paintSkills(lastCard); }
+    if (lastCard && item.review && Array.isArray(item.review.rounds)) for (const x of item.review.rounds) addRound(lastCard, { ...x, bar: item.review.bar, title: item.review.title });
     return out;
   }
 
@@ -1017,5 +1097,5 @@
     if (turn) (turn.noteRows ||= []).push(node);
     return false;
   }
-  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard };
+  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard, skill, review };
 })();

@@ -610,6 +610,30 @@ const SKILL_TOOL = {
   input_schema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
   eager_input_streaming: true,
 };
+// [review loop] One round of the review skill (features/skills.js 'review'): the reviewer's score against the bar, shown as a score track in the
+// chat's card ({ type: 'review' }, renderer/step-ui.js). Offered wherever use_skill is.
+const REVIEW_TOOL = {
+  name: 'review_round',
+  description: 'Report one round of a review loop (the review skill): the separate reviewer\'s score out of 10, the bar, and the fixes it asked for. The chat shows the scores round by round. Call it after every review.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      round: { type: 'integer', minimum: 1, description: 'This round\'s number, from 1.' },
+      score: { type: 'number', minimum: 0, maximum: 10, description: 'The reviewer\'s score out of 10.' },
+      bar: { type: 'number', minimum: 0, maximum: 10, description: 'The score the work must reach, out of 10.' },
+      title: { type: 'string', description: 'What is being reviewed, in a few words.' },
+      rubric: { type: 'array', items: { type: 'string' }, description: 'The criteria (round 1).' },
+      fixes: { type: 'array', items: { type: 'string' }, description: 'The fixes the reviewer asked for, most important first.' },
+    },
+    required: ['round', 'score', 'bar'],
+  },
+};
+const MAX_REVIEW_ROUNDS = 5;
+// [review loop] The request asks for work held to a standard and the review skill is listed to the AI: a one-line reminder after the message to load it
+// (features/skills.js reviewIntent). Never when the skill is not offered (switched off, or the AI may not use skills on its own).
+const reviewHint = (settings, text) => (/^- review:/m.test(skillsBlockOf(settings)) && require('../features/skills').reviewIntent(text)
+  ? '\nThis request asks for work held to a standard: call use_skill with name "review" first and follow it (a separate reviewer every round, review_round after each).\n'
+  : '');
 const skillsBlockOf = (settings) => (typeof settings?.skillsList === 'string' && settings.skillsList.startsWith('<skills>') ? settings.skillsList : '');
 // [engine parity] The system prompt of a sidebar CLI chat (Claude Code, Grok Build, Antigravity, Codex) before its engine's note: the API chats'
 // own, skills list included, since its use_skill is an extra of the run's MCP session (cliSkillToolDefs). A background task has neither.
@@ -688,6 +712,7 @@ const FILES_IN_APPS_NOTE = {
 };
 const withAppsNote = (tool, kind, mode) => (FILES_IN_APPS_NOTE[kind][mode] ? { ...tool, description: tool.description + FILES_IN_APPS_NOTE[kind][mode] } : tool);
 const OTHER_SKILL = slimTool(SKILL_TOOL); // [skills]
+const OTHER_REVIEW = slimTool(REVIEW_TOOL); // [review loop]
 const OTHER_PLAN = slimTool(planMode.PLAN_TOOL); // [plan mode]
 const OTHER_PARALLEL = slimTool(PARALLEL_TASKS_TOOL); // [acting helpers]
 const OTHER_MEMORY = slimTool(MEMORY_TOOL); // [memory]
@@ -1087,7 +1112,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : ''), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL, REVIEW_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -1111,6 +1136,7 @@ TOOL_SCHEMAS.word = WORD_TOOL.input_schema; // [word]
 TOOL_SCHEMAS.research_board = BOARD_TOOL.input_schema;
 TOOL_SCHEMAS.reading_list = READING_LIST_TOOL.input_schema; // [reading list]
 TOOL_SCHEMAS.use_skill = SKILL_TOOL.input_schema;
+TOOL_SCHEMAS.review_round = REVIEW_TOOL.input_schema; // [review loop]
 TOOL_SCHEMAS.propose_plan = planMode.PLAN_TOOL.input_schema; // [plan mode] offered only while planning (planning())
 TOOL_SCHEMAS.memory = MEMORY_TOOL.input_schema; // [memory]
 TOOL_SCHEMAS.project_files = PROJECT_TOOL.input_schema; // [project workspace]
@@ -1156,7 +1182,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files', 'review_round']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -1711,6 +1737,8 @@ function itemExtras(chatMessages, m, mi) {
   if (meta.written) { const rows = aiFiles.restoreWritten(meta.written); if (rows.length) out.written = rows; } // [activity cards] the files the turn wrote: rows for its Files card, ids of the file registry (never the stored paths)
   if (meta.cards) out.cards = true; // [activity cards] saved by a version that draws cards: its steps carry bounded, masked inputs
   if (meta.agents) out.agents = meta.agents; // [agents card] the reply's subagents
+  if (meta.skills) out.skills = meta.skills; // [skills] the skill the reply worked by
+  if (meta.review) out.review = meta.review; // [review loop] the reviewer's scores by round
   if (meta.touched) out.touched = meta.touched; // [activity cards] every tab the turn used, first touched first (the card's Tabs list)
   if (meta.thumb) out.thumb = meta.thumb; // [activity cards] the last frame of the tab the AI worked in
   if (meta.auto) out.auto = meta.auto;
@@ -2084,7 +2112,7 @@ class Agent {
       if (blocks.some((b) => b.type === 'text' && b.text?.trim()) || blocks.some((b) => b.type === 'generated_image' || b.type === 'ai_file')) { last = i; break; }
     }
     if (last < 0) return;
-    const patch = branches.cleanMeta({ tabs: this.tabsOfReply(messages[last], info), thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, touched: info.touched, written: info.written, cards: info.cards, task: info.task, auto: info.auto, agents: info.agents });
+    const patch = branches.cleanMeta({ tabs: this.tabsOfReply(messages[last], info), thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, touched: info.touched, written: info.written, cards: info.cards, task: info.task, auto: info.auto, agents: info.agents, skills: info.skills, review: info.review });
     if (patch) branches.setMeta(messages[last], patch);
   }
 
@@ -2513,7 +2541,7 @@ class Agent {
       ? `<browser_state>\nActive tab id: ${tab.id}\nThe tab shows a file on this computer. Its name, address and contents are not shared unless the user allows it (asking about "this" or "here" with the file open shows them a card).\n</browser_state>\n\n`
       : tab
       ? `<browser_state>\nActive tab id: ${tab.id}\nTitle: ${emlViewer.isViewerUrl(tab.webContents.getURL()) ? '(an email: its subject is in the content, not here)' : tab.webContents.getTitle()}\nURL: ${this.shownUrl(tab.webContents.getURL())}\n${tabOff ? `${manners.OFF_TAB_NOTE} You can read this tab, but tools that click, type, navigate or run scripts are refused there.\n` : ''}</browser_state>\n\n`
-      : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`).replace('</browser_state>', `${downloadsNote}${pictureNote}${fullPage ? FULL_PAGE_NOTE : ''}${planning ? planMode.PLAN_NOTE : ''}</browser_state>`);
+      : `<browser_state>${this.browser.noTabReason?.() || 'No tab open.'}</browser_state>\n\n`).replace('</browser_state>', `${downloadsNote}${pictureNote}${fullPage ? FULL_PAGE_NOTE : ''}${planning ? planMode.PLAN_NOTE : ''}${reviewHint(messages.settings, userText)}</browser_state>`); // ([review loop] with the other notes to the model: never shown in the user's bubble)
     let state = stateOf();
     const filesNote = uploadFiles.filesNote(extra.files); // [uploads] files attached in the composer: their names and refs (never their bytes)
     const attachedFiles = filesNote ? extra.files.length : 0;
@@ -5305,6 +5333,25 @@ ${prompt}` : prompt), historyImages: [] };
     if (refusal) throw new Error(refusal);
   }
 
+  // [review loop] One reviewer's verdict: drawn in the chat's card, and what to do next told back (go on, stop at the bar, or stop after the last round).
+  reviewRound(input = {}) {
+    const num = (v) => (typeof v === 'number' ? v : Number(v));
+    const score = num(input.score);
+    const bar = num(input.bar);
+    const round = Math.round(num(input.round));
+    if (!Number.isFinite(score) || score < 0 || score > 10) throw new Error('score must be a number from 0 to 10.');
+    if (!Number.isFinite(bar) || bar <= 0 || bar > 10) throw new Error('bar must be a number from 0 to 10.');
+    if (!Number.isInteger(round) || round < 1 || round > 50) throw new Error('round must be 1 or more.');
+    const lines = (v, n, len) => (Array.isArray(v) ? v : []).filter((x) => typeof x === 'string' && x.trim()).slice(0, n).map((x) => x.replace(/\s+/g, ' ').trim().slice(0, len));
+    const met = score >= bar - 1e-9;
+    const event = { type: 'review', round, score: Math.round(score * 10) / 10, bar: Math.round(bar * 10) / 10, met, fixes: lines(input.fixes, 5, 200), rubric: lines(input.rubric, 6, 120), title: typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim().slice(0, 80) : '' };
+    taskScope.getStore()?.gate?.emit?.(event);
+    const shown = `Round ${round}: ${event.score}/10 against a bar of ${event.bar}.`;
+    if (met) return `${shown} The bar is met: stop reviewing and reply with the final score and the scores by round.`;
+    if (round >= MAX_REVIEW_ROUNDS) return `${shown} That was round ${round}, the last one: stop, and reply with the scores by round and what still holds it back.`;
+    return `${shown} Below the bar: fix every point the reviewer raised, then review again with a NEW reviewer and report round ${round + 1}.`;
+  }
+
   proposePlan(input) {
     const scope = taskScope.getStore();
     if (!scope?.planMode) throw new Error('propose_plan is only for plan mode, which is off for this message. Go on with the task.');
@@ -6696,7 +6743,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
   // [engine parity] Two more extras of a CLI chat's run, as the API chats have them: use_skill when the chat's system prompt lists the user's
   // skills (cliSystemFor), and the tools of the MCP servers the user added (Settings → AI → MCP servers) that are running, where the chat's
   // project allows them. Their calls take the same approval path as an API chat's (allowExternal: a card per call unless always allowed).
-  cliSkillToolDefs(chat) { return skillsBlockOf(chat?.settings) && this.browser.skills ? [OTHER_SKILL] : []; }
+  cliSkillToolDefs(chat) { return skillsBlockOf(chat?.settings) && this.browser.skills ? [OTHER_SKILL, OTHER_REVIEW] : []; } // ([review loop] review_round with it)
   cliExternalToolDefs(chat) {
     try {
       const ext = this.browser.externalTools;
@@ -7882,9 +7929,11 @@ ${same}
       case 'use_skill': { // [skills] the skill's text (features/skills.js useForAI); it only adds instructions, never permissions
         if (!this.browser.skills) throw new Error('Skills are not available here.');
         const r = this.browser.skills.useForAI(input);
+        if (typeof r !== 'string' && r.skill) taskScope.getStore()?.gate?.emit?.({ type: 'skill', name: r.skill.name, title: r.skill.title || r.skill.name }); // (the card says which skill it works by)
         return typeof r === 'string' ? r : r.text;
       }
       case 'propose_plan': return this.proposePlan(input); // [plan mode]
+      case 'review_round': return this.reviewRound(input); // [review loop]
       case 'memory': return this.memoryTool(input); // [memory]
       case 'project_files': return this.projectFilesTool(input); // [project workspace]
       case 'notes': return this.notesTool(input); // [notes]
