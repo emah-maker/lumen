@@ -20,7 +20,7 @@ const KEPT = [
   'antigravityFullAccess', 'grokTerminal', 'grokWarmup', 'grokKeepConnected', 'codexKeepConnected', 'grokKeepIdleMinutes', 'researchTabs',
   'groupAiTabs', 'hideAiTabs', 'agentsNoAsk', 'askBeforeActing', 'bypassPermissions', 'aiPreferFractions', 'aiInstructionsOn', 'aiInstructionsAbout',
   'aiInstructionsStyle', 'planModeDefault', 'skillsAutoUse', 'skillsFromClaudeCode', 'skillsSuggest', 'aiMemory', 'aiMemoryChatSearch', 'aiHandsOff',
-  'sidebarNewChat', 'replySuggestions', 'chatAutocomplete', 'oneChatPerTab', 'chatAutoDeleteDays', 'aiStayOnMyTab', 'closeAiTabs', 'keepViewedAiTabs', 'dictationProvider', 'dictationAutoSend',
+  'sidebarNewChat', 'autoNewChat', 'replySuggestions', 'chatAutocomplete', 'oneChatPerTab', 'chatAutoDeleteDays', 'aiStayOnMyTab', 'closeAiTabs', 'keepViewedAiTabs', 'dictationProvider', 'dictationAutoSend',
   'translateNever', 'translateConsent', 'lastSeenVersion',
 ];
 const kept = new Set(KEPT);

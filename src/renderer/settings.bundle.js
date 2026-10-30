@@ -5036,6 +5036,7 @@ async function buildAi(card) {
   slots.get('ai-chat').group(tr('settings.ai.groupBrowser', 'Chat box')).append(
     toggle('planModeDefault', tr('settings.ai.planModeDefault', 'Start new chats in plan mode'), tr('settings.ai.planModeDefaultDesc', '')),
     toggle('sidebarNewChat', tr('settings.ai.sidebarNewChat', 'Sidebar button starts a new chat'), tr('settings.ai.sidebarNewChatDesc', 'Opening the sidebar starts an empty chat. Earlier chats, including other tabs’ chats, are in History.'), undefined, { fallback: true }),
+    toggle('autoNewChat', tr('settings.ai.autoNewChat', 'Start a new chat for a new topic'), tr('settings.ai.autoNewChatDesc', ''), undefined, { fallback: true }),
     toggle('replySuggestions', tr('settings.ai.replySuggestions', 'Suggest replies'), tr('settings.ai.replySuggestionsDesc', ''), undefined, { fallback: true }),
     toggle('chatAutocomplete', tr('settings.ai.autocomplete', 'Tab to finish what I’m typing'), tr('settings.ai.autocompleteDesc', ''), undefined, { fallback: true }),
     toggle('oneChatPerTab', tr('settings.ai.oneChatPerTab', 'One chat per tab'), tr('settings.ai.oneChatPerTabDesc', 'Off: when you switch to a tab with no chat of its own (a new tab, or one the AI opened), the sidebar keeps your chat, and your next message works in that tab. A tab that already has its own chat still shows it. On: every tab starts with an empty chat.')),

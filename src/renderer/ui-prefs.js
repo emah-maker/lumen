@@ -34,6 +34,7 @@
     if ('planModeDefault' in p && window.lumenPlanModeDefault !== (p.planModeDefault === true)) { window.lumenPlanModeDefault = p.planModeDefault === true; window.dispatchEvent(new Event('lumen:plan-default')); } // [plan mode] the composer's Plan chip in a new chat
     if ('preferFractions' in p) window.lumenPreferFractions = p.preferFractions === true; // [prefer fractions] markdown.js stacks a plain 3/4 in answers
     if ('sidebarNewChat' in p) window.lumenSidebarNewChat = p.sidebarNewChat !== false; // [sidebar new chat] app.js: the AI button opens on a new chat
+    if ('autoNewChat' in p) window.lumenAutoNewChat = p.autoNewChat !== false; // [new topic] chat-core.js askOnNewTopic: off keeps every message in the open chat
     if ('switchTiming' in p) window.lumenSwitchTiming = p.switchTiming === true; // [diagnostics] app.js reports when the strip drew a switch
   };
   // [look] The accent colour is not applied here: main.js injects its sheet into every page of Lumen's own, this one included (features/accent-css.js).
