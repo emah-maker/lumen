@@ -197,3 +197,23 @@
 .act-pill .act-dot { width: 6px; height: 6px; background: var(--accent); animation: act-pulse 1.1s ease-in-out infinite; }
 .act-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .act-pill .act-dot { animation: none; } }
+
+/* [skills] The skill the reply works by, under the card's title. */
+.act-skill { display: inline-block; margin-top: 3px; padding: 0 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 11px; line-height: 18px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-skill[hidden] { display: none; }
+/* [review loop] The reviewer's score each round against the bar (step-ui.js paintReview). */
+.act-review { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 8px; background: var(--bg); font-size: 12px; }
+.rv-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.rv-title { font-weight: 600; }
+.rv-bar { color: var(--muted); }
+.rv-what { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-track { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.rv-round { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.rv-round + .rv-round::before { content: "→"; margin: 0 4px 0 -10px; color: var(--muted); }
+.rv-n { color: var(--muted); font-size: 10.5px; }
+.rv-score { font-weight: 600; }
+.rv-round.met { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
+.rv-round.met .rv-score::after { content: " ✓"; }
+.rv-fixes-head { color: var(--muted); }
+.rv-fixes { margin: 0; padding-left: 18px; color: var(--text); }
+.rv-fixes li { margin: 1px 0; }

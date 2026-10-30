@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- A review skill: ask for work held to a standard ("keep improving it until it is 9/10", "have a separate reviewer rate it") and the AI works in rounds, with a fresh, strict reviewer agent scoring each round against the bar until it is met (at most 5 rounds). You can also start it with /review. The card shows the scores round by round (6.5 → 8 → 9.2 ✓) and what the reviewer still wants fixed.
+- The card says which skill the AI is working by.
 - One card per message: when Claude Code goes on by itself after a background agent finishes, its next steps continue in the same card instead of opening a second one under it. Browser and Computer cards are also the same width now.
 - Agents in the card: each agent Claude Code starts (in the background or one the reply waits for) is a row in the reply's card, with a live clock, how many tool calls it has made, what it is doing now, and its summary when it is done. The card keeps them when you reopen the chat.
 - When several things run at once (agents, and the AI's own command or page step), the card says "3 things at once" and shows what the reply itself is running as a pill under it.

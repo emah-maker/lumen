@@ -1820,7 +1820,7 @@ window.assistant.onEvent((event) => {
   // [background helpers] So do a helper's steps and its state, long after: a helper Claude Code ran in the background reports on the card of the reply
   // that started it ("Helper working" until it ends). Its own steps are flagged; a Lumen call it makes carries only the run's id.
   const late = finishedTurn(event.runId);
-  if (late && /^(card_files|thumb|helper|agent|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
+  if (late && /^(card_files|thumb|helper|agent|skill|review|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
@@ -1970,6 +1970,12 @@ window.assistant.onEvent((event) => {
     case 'agent': // [agents card] a subagent the reply started: its row on the reply's Agents card (agents-card.js)
       agentEvent(turn, event);
       break;
+    case 'skill': // [skills] the AI loaded a skill: the card says which (step-ui.js skill)
+      window.stepUI?.skill(turn, event);
+      break;
+    case 'review': // [review loop] a reviewer's score: the card's score track (step-ui.js review)
+      window.stepUI?.review(turn, event);
+      break;
     case 'helper_card': // [acting helpers] one compact card per helper that acts in a tab of its own (agent.js parallelTasks)
       showHelperCard(event);
       break;
@@ -2118,6 +2124,8 @@ function lateCardEvent(t, event) {
     case 'thumb': window.stepUI?.thumb(t, event); break;
     case 'helper': window.stepUI?.helper(t, event); break;
     case 'agent': agentEvent(t, event); break;
+    case 'skill': window.stepUI?.skill(t, event); break;
+    case 'review': window.stepUI?.review(t, event); break;
     case 'tool': {
       const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
       const step = window.stepUI ? window.stepUI.add(t, { ...event, label: event.label || fallback }, { messages, append: (el) => append(el), task: lastAsk?.text, runId: event.runId, late: true }) : null;
