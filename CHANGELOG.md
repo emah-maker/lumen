@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.85 (2026-10-30)
+
 - When several things run at once, the card's status line also names the newest step ("2 things at once · Reading the page"), so the pill shown while the card is scrolled away still says what just started. Lumen starts a little leaner: the address-bar and dark-page code load on first use, and the window's stylesheet is about 17 KB smaller. A chat left scrolled to the top stays at the top when you come back to its tab (it opened a little way down).
 - UI fixes from a full check of every screen: the "Using" chip under the chat box no longer shows a broken picture for a page with no icon, the downloads popup no longer shows a scrollbar for a single download, the full-page chat box shows the same clear focus ring as the sidebar, the tips on the new-tab page step aside while you pick a widget, Settings rows with nothing to set (Printing, Private windows) show what they are about, and the PDF viewer, downloads popup and widget panels use thin scrollbars.
 - More spacing polish: in the chat cards, agents are laid out the same way in every row (the Background tag goes under the name when the card is narrow), the composer's + button lines up with the text, and Stop turns into a round button in a narrow sidebar. The full-page chat list, the new-tab search box and favourites, the tab group labels and the Downloads page are evenly spaced too.
