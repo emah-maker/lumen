@@ -672,9 +672,27 @@ class ClaudeCodeEngine {
     } catch { /* the chat is gone */ }
   }
 
+  // [agents card] One subagent's state for the chat's Agents card ({ type: 'agent', ...HelperTracker.snapshot }), to the message that started it,
+  // however long after: where it reports is fixed when it starts.
+  sayAgent(proc, snap) {
+    if (!snap) return;
+    const to = proc.agentEmit ||= new Map();
+    let emit = to.get(snap.id);
+    if (!emit) { emit = proc.turn ? proc.sink?.emit : proc.watch?.active?.emit || proc.sink?.emit; if (emit) to.set(snap.id, emit); }
+    if (snap.state !== 'working') to.delete(snap.id);
+    try { emit?.({ type: 'agent', ...snap }); } catch { /* the chat is gone */ }
+  }
+
   helperLine(proc, msg) {
     const tracker = proc.helpers;
     const fed = tracker.feed(msg);
+    for (const a of fed.agents) this.sayAgent(proc, a); // (an agent's end first: the helper's end then saves the reply with it)
+    const ag = msg.type === 'assistant' ? tracker.agentOf(msg) : null;
+    if (ag) for (const b of Array.isArray(msg.message?.content) ? msg.message.content : []) {
+      if (b.type !== 'tool_use' || !b.id || (ag.ids ||= new Set()).has(b.id)) continue;
+      ag.ids.add(b.id);
+      this.sayAgent(proc, tracker.stepOf(ag, builtinLabel(b.name, b.input || {})));
+    }
     for (const h of fed.started) { h.emit = proc.sink?.emit || proc.watch?.active?.emit || null; this.sayHelper(h, 'working', tracker); }
     for (const h of fed.progress) { try { h.emit?.({ type: 'helper', id: h.id, state: 'progress', label: h.latest, count: tracker.count() }); } catch { /* gone */ } }
     for (const { helper: h, status } of fed.ended) { proc.helperEnded = true; this.sayHelper(h, status === 'completed' ? 'done' : status, tracker); }
@@ -733,7 +751,7 @@ class ClaudeCodeEngine {
     w.started = true;
     w.buffer.push(msg);
     clearTimeout(w.grace);
-    for (const { helper } of proc.helpers.endFallback()) this.sayHelper(helper, 'done', proc.helpers); // (a CLI that does not say when a helper ends: its own turn on the result does)
+    for (const { helper, agent } of proc.helpers.endFallback()) { this.sayAgent(proc, agent); this.sayHelper(helper, 'done', proc.helpers); } // (a CLI that does not say when a helper ends: its own turn on the result does)
     const go = w.onFollowUp;
     Promise.resolve().then(() => go({ proc })).catch(() => {}).finally(() => { if (proc.watch === w) this.endWatch(proc); });
   }
@@ -768,7 +786,7 @@ class ClaudeCodeEngine {
     this.watched.delete(proc);
     if (proc.watch === w) proc.watch = null;
     if (this.active === w.active) this.active = null;
-    for (const { helper } of proc.helpers.endAll('stopped')) this.sayHelper(helper, 'stopped', proc.helpers);
+    for (const { helper, agent } of proc.helpers.endAll('stopped')) { this.sayAgent(proc, agent); this.sayHelper(helper, 'stopped', proc.helpers); }
     this.helpersOver();
   }
 
@@ -1082,8 +1100,8 @@ class ClaudeCodeEngine {
     // [background helpers] Helpers still working after the reply (or one that ended while it was written: the CLI goes on with its result by itself): the
     // process is kept for them, and what they do goes on this message's card. Anything else that ends the turn ends them too.
     const hold = ok && !signal.aborted && !proc.exited && !stalled && !mcpDown && (proc.helpers.count() > 0 || proc.helperEnded === true);
-    proc.helpers.dropForeground();
-    if (!hold) for (const { helper } of proc.helpers.endAll('stopped')) this.sayHelper(helper, 'stopped', proc.helpers);
+    for (const a of proc.helpers.dropForeground()) this.sayAgent(proc, a);
+    if (!hold) for (const { helper, agent } of proc.helpers.endAll('stopped')) { this.sayAgent(proc, agent); this.sayHelper(helper, 'stopped', proc.helpers); }
     if (hold) this.holdForHelpers(proc, { active, onFollowUp });
     else { if (this.active?.tag === tag) this.active = null; this.helpersOver(); }
     if (ok) this.warmBlock = { until: 0, delay: 0 }; // a working CLI: pre-warming is worth trying again

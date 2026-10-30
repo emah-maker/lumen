@@ -1710,6 +1710,7 @@ function itemExtras(chatMessages, m, mi) {
   if (meta.task) out.task = meta.task; // [activity cards] the request in a few words, for the card's subtitle
   if (meta.written) { const rows = aiFiles.restoreWritten(meta.written); if (rows.length) out.written = rows; } // [activity cards] the files the turn wrote: rows for its Files card, ids of the file registry (never the stored paths)
   if (meta.cards) out.cards = true; // [activity cards] saved by a version that draws cards: its steps carry bounded, masked inputs
+  if (meta.agents) out.agents = meta.agents; // [agents card] the reply's subagents
   if (meta.touched) out.touched = meta.touched; // [activity cards] every tab the turn used, first touched first (the card's Tabs list)
   if (meta.thumb) out.thumb = meta.thumb; // [activity cards] the last frame of the tab the AI worked in
   if (meta.auto) out.auto = meta.auto;
@@ -2083,7 +2084,7 @@ class Agent {
       if (blocks.some((b) => b.type === 'text' && b.text?.trim()) || blocks.some((b) => b.type === 'generated_image' || b.type === 'ai_file')) { last = i; break; }
     }
     if (last < 0) return;
-    const patch = branches.cleanMeta({ tabs: this.tabsOfReply(messages[last], info), thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, touched: info.touched, written: info.written, cards: info.cards, task: info.task, auto: info.auto });
+    const patch = branches.cleanMeta({ tabs: this.tabsOfReply(messages[last], info), thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, touched: info.touched, written: info.written, cards: info.cards, task: info.task, auto: info.auto, agents: info.agents });
     if (patch) branches.setMeta(messages[last], patch);
   }
 
