@@ -64,7 +64,7 @@ body.chat-page .notice.model-switch::before, body.chat-page .notice.model-switch
 /* ---------- a search hit ---------- */
 .msg.cp-hit { animation: cp-hit 4.5s ease-out; }
 @keyframes cp-hit { 0%, 55% { box-shadow: 0 0 0 3px var(--accent-soft); } 100% { box-shadow: 0 0 0 3px transparent; } }
-mark.cp-hit-word { background: var(--accent-soft); color: inherit; border-radius: 3px; padding: 0 1px; }
+mark.cp-hit-word { background: var(--accent-soft); color: inherit; border-radius: var(--r-xs); padding: 0 var(--sp-px); }
 @media (prefers-reduced-motion: reduce) { .msg.cp-hit { animation: none; box-shadow: 0 0 0 3px var(--accent-soft); } .cp-pj-dialog { animation: none; } }
 
 /* ---------- drag chats into projects (renderer/chat-project-drag.js) ---------- */

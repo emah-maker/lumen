@@ -31,7 +31,7 @@ button.rs-title:hover { color: var(--accent-text); text-decoration: underline; }
 .rs-meta { margin: 0 0 var(--sp-2) var(--sp-14); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
 .rs-chips { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: var(--sp-2) 0 0 var(--sp-14); }
 .rs-chip {
-  display: inline-block; padding: 1px var(--sp-4); border-radius: var(--r-pill); font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap;
+  display: inline-block; padding: var(--sp-px) var(--sp-4); border-radius: var(--r-pill); font-size: 11px; line-height: 16px; font-weight: 500; white-space: nowrap;
   background: var(--field); color: var(--muted);
 }
 .rs-chip.good { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }

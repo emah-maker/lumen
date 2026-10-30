@@ -84,7 +84,18 @@ const lines = (f) => read(f).split('\n').map((text, i) => ({ text, n: i + 1 }));
     }
   }
   check('paddings, margins and gaps sit on the spacing scale (2 4 6 8 10 12 16 20 24 28 32 40 48)', offScale.length === 0, `${offScale.length}: ${offScale.slice(0, 8).join(' | ')}`);
-  const spaceTokens = ['step-ui.css', 'chat-actions.css', 'styles.css', 'settings.css', 'chat-page.css', 'managers.css'].filter((f) => !/var\(--sp-\d+\)/.test(read(f)));
+  // A 1 px nudge in the files that link tokens.css is var(--sp-px), so it reads as meant (a gap between siblings is never 1 px).
+  const rawPx = [];
+  for (const f of ['styles.css', 'step-ui.css', 'chat-actions.css', 'chats.css', 'chat-page.css', 'settings.css', 'managers.css', 'extras.css', 'picker.css', 'slash.css', 'tasks.css']) {
+    for (const { text, n } of lines(f)) {
+      if (/off-scale:|sr-only|clip:/.test(text)) continue; // (the visually-hidden pattern's 1 px box is not spacing)
+      for (const m of text.replace(/\/\*.*?\*\//g, '').matchAll(/(?<![\w-])(?:padding|margin|(?:row-|column-)?gap)(?:-[a-z]+)?\s*:\s*([^;}"]+)/g)) {
+        if (/\b1px\b/.test(m[1].replace(/(calc|min|max|clamp)\([^;]*\)/g, ''))) rawPx.push(`${f}:${n} ${m[0].trim().slice(0, 50)}`);
+      }
+    }
+  }
+  check('1 px spacing nudges are named (var(--sp-px)), not bare, in the files that link tokens.css', rawPx.length === 0, `${rawPx.length}: ${rawPx.slice(0, 6).join(' | ')}`);
+  const spaceTokens =['step-ui.css', 'chat-actions.css', 'styles.css', 'settings.css', 'chat-page.css', 'managers.css'].filter((f) => !/var\(--sp-\d+\)/.test(read(f)));
   check('the spacing tokens are used in the chat, its cards, the chrome, Settings and the manager pages', spaceTokens.length === 0, spaceTokens.join());
   check('tokens.css defines the spacing scale', ['--sp-1', '--sp-2', '--sp-3', '--sp-4', '--sp-5', '--sp-6', '--sp-8', '--sp-10', '--sp-12', '--sp-14', '--sp-16', '--sp-20', '--sp-24'].every((t) => new RegExp(`${t}:`).test(read('tokens.css'))), 'missing --sp-*');
 }

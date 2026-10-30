@@ -41,7 +41,7 @@ main.docx { display: flex; justify-content: center; padding: var(--sp-14) var(--
 /* ---- a workbook */
 main.xlsx { display: block; padding: 0; background: #fff; color: #1b1b1f; overflow: auto; height: calc(100vh - var(--hdr, 45px) - var(--tabs, 36px)); }
 .grid { border-collapse: separate; border-spacing: 0; font: 13px/1.35 Calibri, Carlito, "Segoe UI", Arial, sans-serif; table-layout: fixed; }
-.grid th, .grid td { box-sizing: border-box; height: 22px; padding: 1px var(--sp-3); border-right: 1px solid #e1e1e5; border-bottom: 1px solid #e1e1e5; overflow: hidden; text-overflow: clip; white-space: pre; vertical-align: bottom; background: #fff; }
+.grid th, .grid td { box-sizing: border-box; height: 22px; padding: var(--sp-px) var(--sp-3); border-right: 1px solid #e1e1e5; border-bottom: 1px solid #e1e1e5; overflow: hidden; text-overflow: clip; white-space: pre; vertical-align: bottom; background: #fff; }
 .grid td.wrap { white-space: pre-wrap; vertical-align: top; height: auto; }
 .grid td.num { text-align: right; }
 .grid th { position: sticky; top: 0; z-index: 1; background: #f3f3f5; color: #5a5a62; font-weight: 500; text-align: center; border-color: #d4d4d8; }

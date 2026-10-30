@@ -33,7 +33,7 @@ form.edit .buttons { grid-column: 1 / -1; display: flex; gap: var(--sp-4); justi
 .error { color: var(--danger); margin-right: auto; }
 #status { min-height: 20px; margin: var(--sp-4) 0 0; color: var(--muted); }
 .empty { color: var(--muted); margin-top: var(--sp-12); }
-#status:empty { margin: 0; } /* the live status line takes no room until it says something: the list starts where History's does */
+#status:empty { margin: 0; min-height: 0; } /* the live status line takes no room until it says something: the list starts where History's does */
 .state-failed { color: var(--danger); }
 section { animation: rise var(--t-smooth) cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
