@@ -4255,6 +4255,7 @@ function stashView(id) {
   if (!lazyItems && !pendingView && messages.clientHeight > 0 && messages.querySelector('.msg')) {
     const fromBottom = Math.round(messages.scrollHeight - messages.scrollTop - messages.clientHeight);
     if (fromBottom > 48) kept.fromBottom = fromBottom;
+    if (fromBottom > 48 && messages.scrollTop <= 4) kept.atTop = true;
     const open = [];
     foldables().forEach((el, i) => { if (el.tagName === 'DETAILS' ? el.open : el.getAttribute('aria-expanded') === 'true') open.push(i); });
     if (open.length) kept.open = open;
@@ -4280,7 +4281,7 @@ function takeStash() {
   viewStash.delete(key);
   if (kept.attachments?.length) attachments = [...kept.attachments, ...attachments].slice(0, MAX_ATTACH);
   if (kept.chips) window.tabsAsk?.restore?.(kept.chips);
-  if (kept.fromBottom !== undefined || kept.open) pendingView = { fromBottom: kept.fromBottom || 0, open: kept.open || null };
+  if (kept.fromBottom !== undefined || kept.open) pendingView = { fromBottom: kept.fromBottom || 0, atTop: Boolean(kept.atTop), open: kept.open || null };
 }
 
 
@@ -4305,8 +4306,8 @@ function applyView() {
   if (viewHidden() || !messages.clientHeight) return false;
   if (p.open) { pendingOpen = { idx: p.open, until: Date.now() + 4000 }; p.open = null; reopenCards(); }
   if (p.fromBottom > 0) {
-    const want = messages.scrollHeight - messages.clientHeight - p.fromBottom;
-    if (want < 0) { messages.scrollTop = 0; return false; }
+    const want = p.atTop ? 0 : messages.scrollHeight - messages.clientHeight - p.fromBottom;
+    if (want < 0 || (p.atTop && messages.scrollHeight <= messages.clientHeight)) { messages.scrollTop = 0; return false; }
     stuck = false;
     messages.scrollTop = want;
     jump.hidden = false;

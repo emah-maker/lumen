@@ -76,9 +76,9 @@ const cliJson = require('./ai/cli-json');
 cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }); // [cc settings] one-shot Claude Code runs follow Settings → AI too
 const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
-const omnibox = require('./browser/omnibox');
 // Optional features load on first use (startup stays lean).
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
+const omnibox = lazy(() => require('./browser/omnibox')); // (loaded on first use: typing in the address bar or a typed visit)
 const windowClose = lazy(() => require('./features/window-close')); // [window close] the last-tab rule and the window-events.jsonl breadcrumb
 let windowLog = null;
 const logWindowEvent = (entry) => { try { windowLog ||= windowClose.createLog({ dir: () => path.join(app.getPath('userData'), 'diagnostics'), version: app.getVersion() }); windowLog(entry); } catch { /* diagnostics only */ } };
@@ -5565,10 +5565,14 @@ const popupPartition = new WeakMap(); // a popup's page -> the research session 
 const identified = new WeakSet();
 
 const lightSchemes = new WeakMap(); // webContents -> its site-light update (main frame address)
-const HALF_DARK = require('./browser/half-dark');
+const HALF_DARK = lazy(() => require('./browser/half-dark')); // (loaded when a dark-theme page is first measured)
 let halfDarkStore = null;
-const halfDark = () => (halfDarkStore ||= HALF_DARK.createStore({ file: path.join(app.getPath('userData'), 'half-dark-sites.json') })); // the sites found with a half-built dark mode
-if (TEST) global.__halfDark = { ...HALF_DARK, store: halfDark }; // (tests read and measure with it)
+const halfDarkFile = () => path.join(app.getPath('userData'), 'half-dark-sites.json');
+const halfDark = () => (halfDarkStore ||= HALF_DARK.createStore({ file: halfDarkFile() })); // the sites found with a half-built dark mode
+// (no site kept yet and none saved: no page is light, and the module waits for the first page measured)
+let halfDarkSaved = null;
+const isHalfDarkLight = (u) => { if (!halfDarkStore && !(halfDarkSaved ??= fs.existsSync(halfDarkFile()))) return false; return halfDark().isLight(u); };
+if (TEST) Object.defineProperty(global, '__halfDark', { configurable: true, get: () => ({ ...require('./browser/half-dark'), store: halfDark }) }); // (tests read and measure with it)
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
   try {
@@ -5618,7 +5622,7 @@ function applyChromeIdentity(wc) {
   let lightUpdate = null; // (made on first need: once made it also clears the override when the theme turns light)
   const lightScheme = (url) => {
     if (!lightUpdate && !nativeTheme.shouldUseDarkColors) return;
-    lightUpdate ||= CHROME_IDENTITY.watcher((method, params) => send(method, params), () => nativeTheme.shouldUseDarkColors, (u) => halfDark().isLight(u));
+    lightUpdate ||= CHROME_IDENTITY.watcher((method, params) => send(method, params), () => nativeTheme.shouldUseDarkColors, (u) => isHalfDarkLight(u));
     lightUpdate(url);
   };
   lightSchemes.set(wc, lightScheme);
@@ -5627,7 +5631,7 @@ function applyChromeIdentity(wc) {
   let measuring = false;
   const measure = async () => {
     const url = wc.isDestroyed() ? '' : wc.getURL();
-    if (measuring || !url || !nativeTheme.shouldUseDarkColors || !halfDark().worthTrying(url)) return;
+    if (measuring || !/^https?:/i.test(url) || !nativeTheme.shouldUseDarkColors || !halfDark().worthTrying(url)) return; // (only a web page is measured: the New Tab page never loads the module)
     measuring = true;
     try {
       const probe = () => wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: HALF_DARK.PROBE }]).catch(() => null);

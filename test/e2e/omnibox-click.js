@@ -20,9 +20,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(800);
     const focused = () => ui.evaluate(() => document.activeElement?.id === 'address');
     const blur = async () => { await ui.evaluate(() => document.activeElement?.blur()); await sleep(100); };
-    const box = await ui.evaluate(() => { const r = document.getElementById('omnibox').getBoundingClientRect(); const a = document.getElementById('address').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, ax: a.x, aw: a.width }; });
+    const box = await ui.evaluate(() => { const r = document.getElementById('omnibox').getBoundingClientRect(); const a = document.getElementById('address').getBoundingClientRect(); const end = document.querySelector('#omnibox .omnibox-end').getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height, ax: a.x, aw: a.width, ex: end.x }; });
     const y = box.y + box.h / 2;
-    for (const [label, x] of [['the far left of the field', box.x + 6], ['left of the text', box.x + Math.max(8, (box.ax - box.x) / 2)], ['the far right of the field', box.x + box.w - 6], ['the middle of the text area', box.ax + box.aw / 2]]) {
+    for (const [label, x] of [['the far left of the field', box.x + 6], ['left of the text', box.x + Math.max(8, (box.ax - box.x) / 2)], ['the far right of the field (left of its buttons: Reload, the star and the rest sit at the right end, as in Chrome)', box.ex - 3], ['the middle of the text area', box.ax + box.aw / 2]]) {
       await blur();
       await ui.mouse.click(x, y);
       await sleep(150);
