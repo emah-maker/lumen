@@ -13340,7 +13340,7 @@ $('agent-stop')?.addEventListener('click', () => {
   chip.setAttribute('role', 'status');
   const label = Object.assign(document.createElement('span'), { className: 'pc-label', textContent: window.t('context.using') });
   const icon = Object.assign(document.createElement('img'), { className: 'pc-icon', alt: '' });
-  icon.onerror = () => { icon.hidden = true; };
+  icon.onerror = () => { icon.hidden = true; icon.dataset.failed = icon.getAttribute('src') || ''; };
   const title = Object.assign(document.createElement('span'), { className: 'pc-title' });
   const toggle = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-toggle' });
   const siteToggle = Object.assign(document.createElement('button'), { type: 'button', className: 'pc-toggle pc-site', hidden: true });
@@ -13384,7 +13384,7 @@ $('agent-stop')?.addEventListener('click', () => {
     label.textContent = include ? window.t('context.using') : window.t('context.notUsing');
     title.textContent = tab.title || tab.url;
     chip.title = include ? window.t('context.sent', { url: tab.url }) : window.t('context.notSent');
-    icon.hidden = !tab.favicon;
+    icon.hidden = !tab.favicon || icon.dataset.failed === tab.favicon;
     if (tab.favicon && icon.getAttribute('src') !== tab.favicon) icon.src = tab.favicon;
     toggle.textContent = include ? '×' : window.t('context.include');
     toggle.title = include ? window.t('context.stop') : window.t('context.send');

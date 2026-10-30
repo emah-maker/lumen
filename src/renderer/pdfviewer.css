@@ -24,7 +24,7 @@ button.primary { background: var(--accent-deep); color: var(--on-accent); }
 #findCount { color: var(--muted); font-variant-numeric: tabular-nums; min-width: 7em; }
 .check { display: flex; align-items: center; gap: var(--sp-2); color: var(--muted); }
 #stage { position: relative; flex: 1; min-height: 0; }
-#viewerContainer { position: absolute; inset: 0; overflow: auto; outline: none; background: var(--stage); }
+#viewerContainer { position: absolute; inset: 0; overflow: auto; outline: none; background: var(--stage); scrollbar-width: thin; scrollbar-color: var(--hairline) transparent; }
 .pdfViewer { padding: var(--sp-4) 0 var(--sp-12); }
 /* The pages stay unseen until the opening zoom is applied: pdf.js lays them out at a first scale and then at "Fit width", and a page seen at both is a layout shift. */
 #viewer:not(.sized) { visibility: hidden; }

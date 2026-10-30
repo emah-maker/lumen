@@ -508,7 +508,7 @@
     @media (prefers-reduced-motion: reduce) { .w-stack, .w-stack-dot, .w-stack-dot::before, .w-stack-nav { transition: none; } }
     body.calm .w-stack, body.calm .w-stack-dot, body.calm .w-stack-dot::before, body.calm .w-stack-nav { transition: none; }
     /* Edit stack: a small panel beside the card (Edit layout) */
-    .w-stack-panel { position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
+    .w-stack-panel { scrollbar-width: thin; scrollbar-color: var(--border) transparent; position: fixed; z-index: 30; width: 300px; max-height: min(80vh, 560px); overflow-x: hidden; overflow-y: auto; box-sizing: border-box; padding: 8px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 1px var(--border), 0 14px 40px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); text-shadow: none; font: 400 12.5px/1.4 system-ui, sans-serif; }
     .w-sp-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 4px 2px 8px; }
     .w-stack-panel h2 { margin: 0; font-size: 13px; font-weight: 600; }
     .w-stack-panel h3 { margin: 10px 0 2px; padding: 0 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
@@ -1085,7 +1085,7 @@
     .mu-ask .w-btn { margin: 0; flex: none; }
     /* The page's own add/edit dialog (renderer/newtab-setup.js). */
     .ws-back { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; background: rgba(0, 0, 0, 0.28); }
-    .ws-panel { width: min(420px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; padding: 16px 16px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 18px 50px rgba(0, 0, 0, 0.3); text-shadow: none; }
+    .ws-panel { scrollbar-width: thin; scrollbar-color: var(--border) transparent; width: min(420px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; padding: 16px 16px; border-radius: 16px; background: var(--bg); color: var(--text); box-shadow: 0 0 0 0.5px var(--border), 0 18px 50px rgba(0, 0, 0, 0.3); text-shadow: none; }
     body.on-media .ws-panel { background: #1c1c1e; --field: rgba(255, 255, 255, 0.1); }
     .ws-panel h2 { margin: 0 0 2px; font-size: 15px; color: var(--text); }
     .ws-field { display: flex; flex-direction: column; gap: 4px; }

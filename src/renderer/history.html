@@ -6,8 +6,6 @@
   <title data-i18n="historyPage.title">History</title>
   <link rel="stylesheet" href="tokens.css" />
   <style>
-    :root { --ring: rgba(0, 122, 255, 0.22); }
-    @media (prefers-color-scheme: dark) { :root { --ring: rgba(10, 132, 255, 0.35); } }
     html, body { margin: 0; background: var(--bg); color: var(--text); }
     body { font: 13px/1.5 -apple-system, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; letter-spacing: -0.005em; }
     main { width: min(720px, 90vw); margin: 0 auto; padding: 56px 0 80px; }
@@ -17,7 +15,7 @@
     #clear:hover { background: var(--hover); }
     #clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     input { width: 100%; box-sizing: border-box; height: 40px; padding: 0 var(--sp-6); border: none; border-radius: 10px; background: var(--field); color: var(--text); font: inherit; font-size: 14px; outline: none; transition: box-shadow 200ms ease-out, background-color 200ms ease-out; }
-    input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), 0 0 0 4px var(--ring); }
+    input:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), var(--focus-ring); } /* the ring every page uses (managers.css) */
     h2 { font-size: 12px; font-weight: 600; color: var(--muted); margin: var(--sp-12) 0 var(--sp-3); text-transform: none; }
     .row { position: relative; display: flex; align-items: center; margin: 0 calc(-1 * var(--sp-5)); border-radius: 8px; transition: background-color 120ms ease-out; }
     .row:hover, .row:focus-within { background: var(--hover); }

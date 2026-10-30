@@ -4556,10 +4556,11 @@ function infoButton(label, text) {
 }
 function row(label, desc, ...controls) {
   const long = typeof desc === 'string' && desc.length > INLINE_DESC && !INLINE_WARN.test(desc);
+  const bare = !controls.length;
   const el = h('div', { class: 'row' },
     h('div', { class: 'text' },
-      h('div', { class: 'head' }, h('span', { class: 'label', text: label }), long ? infoButton(label, desc) : null),
-      desc ? h('span', { class: `desc${long ? ' sr-only info-text' : ''}`, text: desc }) : null),
+      h('div', { class: 'head' }, h('span', { class: 'label', text: label }), long && !bare ? infoButton(label, desc) : null),
+      desc ? h('span', { class: `desc${long ? (bare ? ' clamp' : ' sr-only info-text') : ''}`, text: desc }) : null),
     controls.length ? h('div', { class: 'controls' }, controls) : null);
   el.dataset.search = `${label} ${desc || ''}`.toLowerCase();
   if (typeof desc === 'string' && desc.length > CLAMP_FROM && desc.length <= INLINE_DESC && !KEEP_WHOLE.test(desc)) el.querySelector('.desc').classList.add('clamp');
@@ -6917,7 +6918,7 @@ function alertLine(host, text) {
 
 async function buildQuick(card) {
   const engines = await S.ai.searchEngines();
-  const theme = select('theme', tr('settings.quick.theme', 'Theme'), null, [['system', tr('settings.theme.system', 'System')], ['light', tr('settings.theme.light', 'Light')], ['dark', tr('settings.theme.dark', 'Dark')]], { id: 'pref-theme-quick' });
+  const theme = select('theme', tr('settings.quick.theme', 'Theme'), 'Lumen and the websites you visit follow this (websites see it as prefers-color-scheme). Open Google results reload to match.', [['system', tr('settings.theme.system', 'System')], ['light', tr('settings.theme.light', 'Light')], ['dark', tr('settings.theme.dark', 'Dark')]], { id: 'pref-theme-quick' });
   theme.dataset.nosearch = '1';
   const engine = h('select', { id: 'pref-searchEngine', 'aria-label': tr('settings.search.label', 'Search engine'), onchange: (e) => S.ai.setSearchEngine(e.target.value) },
     engines.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === engines.searchEngine })));

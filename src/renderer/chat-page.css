@@ -186,7 +186,7 @@ body.chat-page .composer {
   transition: box-shadow var(--t-smooth) var(--ease-out), transform var(--t-smooth) var(--ease-out);
 }
 /* focus: a thin accent edge and a soft halo, not the sidebar's heavy ring */
-body.chat-page .composer:focus-within, body.chat-page .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--border)), 0 0 0 3px var(--accent-soft), 0 14px 32px -16px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); }
+body.chat-page .composer:focus-within, body.chat-page .composer:has(textarea:focus-visible) { box-shadow: 0 0 0 1px var(--border), var(--focus-ring), 0 14px 32px -16px rgb(0 0 0 / calc(0.7 * var(--shadow-k))); }
 /* the message box on its own row, roomy; the toolbar (+, model, mic, send) on the row under it */
 body.chat-page .composer textarea { flex: 1 1 100%; min-width: 0; font-size: 15px; line-height: 1.5; padding: var(--sp-2) 0; min-height: 64px; max-height: max(64px, 40vh); }
 body.chat-page .composer .dictation-bar { padding: 0 var(--cp-1); }

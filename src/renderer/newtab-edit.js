@@ -48,7 +48,7 @@
     .w-dock-row { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
     .w-dock.editing .w-dock-row { padding: 6px; border-radius: 16px; background: var(--bg); box-shadow: 0 0 0 1px var(--border), 0 8px 28px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
     .w-dock-hint, .w-firstrun { margin: 0; padding: 6px 12px; border-radius: 12px; background: var(--bg); color: var(--muted); font-size: 12px; line-height: 1.4; box-shadow: 0 0 0 1px var(--border), 0 6px 20px var(--shadow); -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5); }
-    .w-dock-hint[hidden], .w-firstrun[hidden], body.w-picking .w-dock-hint { display: none; }
+    .w-dock-hint[hidden], .w-firstrun[hidden], body.w-picking .w-dock-hint, body.w-picking .w-firstrun { display: none; }
     .w-stackhint { color: var(--text); }
     .w-firstrun { display: flex; align-items: center; gap: 8px; }
     .w-tb { appearance: none; position: static; display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 6px 13px; border: 0; border-radius: 999px; background: var(--card); color: var(--text);
