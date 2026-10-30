@@ -75,7 +75,6 @@ const DEFAULTS = {
   newTabFrequent: true,
   newTabPrivacy: true,
   newTabHiddenTiles: { favorites: [], frequent: [] }, // [newtab tiles] tiles the user removed from the new-tab page: favorite URLs, and frequently-visited hosts (the page's own Remove / Undo / Restore all); internal
-  newTabMusicReactive: false, // [look] Music-reactive home screen: the new-tab page's glow, wave and clock follow the sound Lumen's own tabs play (renderer/newtab-music-react.js)
   newTabWidgetsPacked: false, // [widgets] Keep widgets packed: cards slide up into gaps (off: a card stays in the cell it was put in)
   homeWidgetSizes: {}, // [widgets] the last size used per kind of widget (the default for a new one); internal
   weatherPlaces: [], // [widgets] places saved from weather widgets (features/weather-view.js); internal
@@ -589,7 +588,6 @@ function create(deps) {
       clockStyle: { style: p.newTabClockStyle, hours: p.newTabClockHours, seconds: p.newTabClockSeconds, date: p.newTabClockDate, card: p.newTabClockCard, shadow: p.newTabClockShadow, greeting: p.newTabGreetingFont },
       sections: { header: p.newTabHeader !== false, favorites: p.newTabFavorites, frequent: p.newTabFrequent, privacy: p.newTabPrivacy },
       widgetsPacked: p.newTabWidgetsPacked === true,
-      musicReactive: p.newTabMusicReactive === true,
       widgetGlass: p.newTabWidgetGlass,
       imageColors: image ? imageColorsFor(p.newTabImage) : [],
     };

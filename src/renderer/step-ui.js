@@ -870,6 +870,34 @@
     return true;
   }
   function refreshAll(turn) { for (const card of turn?.cards || []) refreshCard(turn, card); }
+  // [background helpers] Claude Code began a turn of its own on a helper's result while the reply before it still shows its card (its helpers
+  // work on, or it is simply the newest card in the chat): the new turn's steps go on in that card instead of a second card under it, and the
+  // two turns share the helpers, so the card says Working until the last of them is done. A card that something newer was drawn after is left.
+  // The card a turn's steps go in now. A carried turn's card can be drawn again under it (main re-sends the chat when the follow-up starts, and the
+  // reply before is drawn from what was saved): the newest card in the chat is that card, and the turn goes on in it.
+  function liveCard(turn) {
+    if (turn.card?.el.isConnected) return turn.card;
+    if (!turn.carried) return null;
+    const root = turn.working?.parentElement || document.getElementById('messages');
+    const all = root ? root.querySelectorAll(':scope > .act-card') : [];
+    const last = all[all.length - 1];
+    if (!last?._card) return null;
+    turn.card = last._card;
+    turn.cards = [last._card];
+    return last._card;
+  }
+  function carryOn(prev, turn) {
+    const card = prev?.cards?.[prev.cards.length - 1];
+    if (!card || !turn || turn.card || !card.el.isConnected) return false;
+    const cards = card.el.parentElement ? [...card.el.parentElement.querySelectorAll(':scope > .act-card, :scope > .helper-card, :scope > .approval')] : [];
+    if (cards[cards.length - 1] !== card.el) return false;
+    turn.card = card;
+    turn.cards = [card];
+    turn.carried = true;
+    turn.helpers = (prev.helpers ||= new Map());
+    turn.agents = (prev.agents ||= { card: null }); // ([agents card] one card for both turns' agents too)
+    return true;
+  }
 
   // ---- [skills] [review loop] Which skill the reply works by (a chip under the card's title), and the review loop's rounds (a score track).
   // A turn with no card yet keeps them until its card is made (pendingOf / takePending).

@@ -9,6 +9,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - One card per message: when Claude Code goes on by itself after a background agent finishes, its next steps continue in the same card instead of opening a second one under it. Browser and Computer cards are also the same width now.
 - Agents in the card: each agent Claude Code starts (in the background or one the reply waits for) is a row in the reply's card, with a live clock, how many tool calls it has made, what it is doing now, and its summary when it is done. The card keeps them when you reopen the chat.
 - When several things run at once (agents, and the AI's own command or page step), the card says "3 things at once" and shows what the reply itself is running as a pill under it.
+- Removed "React to music": the new-tab page and music cards no longer listen to the PC's sound.
 - The live Browser card in a chat keeps moving while the AI takes screenshots: each screenshot stopped its stream, so the card froze on one frame until the next step. AI screenshots of a tab the card is showing also come back at full size every time.
 - In a dark theme, any site whose dark mode is only half done (dark sections next to white cards, or text you can't read) now gets its light page automatically. Lumen checks the page itself instead of keeping a list of sites, switches only when the light page really reads better, and remembers the site for next time. Sites with a proper dark mode stay dark.
 

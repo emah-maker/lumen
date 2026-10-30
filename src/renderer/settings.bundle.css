@@ -578,9 +578,6 @@ details.disclosure > summary:focus-visible, details.adv-rows > summary:focus-vis
 details.disclosure > .list { margin: 0; padding: 4px 16px 14px; border-top: 1px solid var(--hairline); }
 .card > details.adv-rows { border-top: 1px solid var(--hairline); }
 .card > details.adv-rows:first-child { border-top: none; }
-.mr-preview { display: block; width: 100%; height: 140px; margin-top: 8px; border-radius: 10px; background: var(--card); box-shadow: 0 0 0 0.5px var(--border); }
-.mr-preview[hidden] { display: none; }
-.mr-preview-row { margin-top: 6px; }
 .ext-pin { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); flex: none; }
 .item.ext-sites-row { border-top: 0; padding-top: 0; flex-wrap: wrap; font-size: var(--fs-sm); }
 .ext-sites-row input[type=text] { min-width: 180px; }

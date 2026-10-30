@@ -76,21 +76,6 @@
          blur behind the cards below, left vertical bands on some graphics cards). */
     }
     @media (max-width: 760px) { #effect { opacity: 0.35; } }
-    /* [look] Music-reactive home screen (newtab-music-react.js; off by default). One canvas behind the content, drawn in the accent's tones: soft
-       dots that drift, burst on the beat, swirl and twinkle, and a glow that flows behind them. Its opacity is capped well under what would touch
-       the text's contrast and it is cut away to a tenth behind the content column (features/music-react.js DOT_CAP / FLOW_CAP / COLUMN_GAIN;
-       test/units/music-react-units.js works the worst case out). Frosted and Clear cards let the page show through, so there it is a little fainter still.
-       The clock card and the music cards grow by about one per cent on a beat. */
-    #mr-canvas { position: fixed; inset: 0; z-index: -1; width: 100vw; height: 100vh; pointer-events: none; }
-    body[data-wglass="frosted"] #mr-canvas, body[data-wglass="clear"] #mr-canvas { opacity: 0.25; }
-    body.mr-bg #clock-card { scale: calc(1 + var(--mr-beat, 0) * 0.012); }
-    /* [look] A music card that reacts ("React to music" in its own settings): its cover breathes on the beat (up to 4 %) and a faint accent glow rims
-       the card's edge (up to 7 % opacity, 11 % over a dark picture or gradient: features/music-react.js CARD_HALO_CAP, CARD_PULSE; the middle, where
-       the text is, stays clear). Opacity and scale only. */
-    .w-card[data-mreact="1"]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(farthest-corner at 50% 50%, transparent 58%, var(--accent) 100%); opacity: calc(var(--mr-halo, 0) * 0.07); }
-    body.on-media:not(.tone-light) .w-card[data-mreact="1"]::after { opacity: calc(var(--mr-halo, 0) * 0.11); }
-    .w-card[data-mreact="1"] .sp-art { scale: calc(1 + var(--mr-pulse, 0) * 0.04); }
-    @media (prefers-reduced-motion: reduce) { #mr-canvas { display: none; } body.mr-bg #clock-card, .w-card[data-mreact="1"] .sp-art { scale: none; } .w-card[data-mreact="1"]::after { display: none; } }
     /* Over an effect the search box, switch and cards are less see-through. */
     body.on-media.has-effect input:not(:focus) { background: rgba(28, 28, 32, 0.78); }
     body.on-media.has-effect .w-card, body.on-media.has-effect .privacy,
