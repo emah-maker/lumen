@@ -148,6 +148,7 @@ function createSession({ tools, callTool, enabled, onEvent, send, engine = null,
           {
             const served = listFor().map((t) => ({ name: t.name, description: t.description, inputSchema: withTabArg(t), ...(annotationsFor(t.name) ? { annotations: annotationsFor(t.name) } : {}) }));
             if (!session.engine) try { cacheTools?.(served); } catch {} // (an engine run's list carries its extra tools: not the list an outside agent gets)
+            session.served = new Set(served.map((t) => t.name)); // (what the client was given: features/ai-agents.js toolsMissing)
             return reply(id, { tools: served });
           }
         case 'tools/call': {
