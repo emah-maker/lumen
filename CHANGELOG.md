@@ -4,7 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The address bar fills in the rest of a site as you type, inside the box (the added part selected), for the sites you actually use: any site you have visited a few times, or typed into the address bar here or in Chrome, Edge or Firefox before you imported. It used to do that only for sites typed into Lumen itself, so most matches showed only in the list below. Backspace removes the filled-in part, Enter opens it, Escape puts back what you typed.
 - A Claude Code chat that turns to a Word file now gets Lumen's word tool, so it edits the document in Word instead of saying the tool is missing and falling back to PowerShell. A chat's warm Claude Code process only learns Lumen's tools when it starts, so when a chat needs one it was not given (the word tool, a project's files, a skill), its next message starts a new process that picks up the same conversation.
+
 ## 0.5.85 (2026-10-31)
 
 - The card that shows when you rest on a tab no longer slides over the tab as it appears.
