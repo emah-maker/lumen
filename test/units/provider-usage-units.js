@@ -96,7 +96,9 @@ module.exports = async function providerUsageUnits(check) {
   check('budget: 1500 + 600 of 2000 tokens is 105%: one notice naming the provider, a budget bar, and no second notice', /reached your daily OpenAI budget/.test(n1?.notice || '') && s.bars.openai.kind === 'budget' && Math.round(s.bars.openai.percent) === 100 && usage.record('openai', apiTurn(1, 0)) === null, JSON.stringify([n1, s.bars.openai]));
   const nb = usageLib.budgetStatus(records, { unit: 'usd', daily: 0.04, weekly: 0 }, NOW, 'openai');
   check('budget status: counts only that provider\'s turns today', nb.periods[0].used === 0.02 && Math.round(nb.periods[0].percent) === 50);
-  await new Promise((r) => setTimeout(r, 700)); // saved half a second after a change
+  // Saved half a second after a change, then written in the background: wait for the file to have all four turns (a slow CI disk takes longer than 0.7 s).
+  const savedTurns = () => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'usage.json'), 'utf8')).records.filter((r) => r.engine === 'openai').length; } catch { return -1; } };
+  for (const until = Date.now() + 10000; savedTurns() < 4 && Date.now() < until;) await new Promise((r) => setTimeout(r, 100));
   const again = usageLib.createUsage({ app: { getPath: () => dir, on: () => {} }, now: () => clockNow, claudeBin: async () => null });
   again.load();
   const s2 = await again.summary({ cached: true });
