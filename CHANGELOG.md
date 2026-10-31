@@ -6,6 +6,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## 0.5.85 (2026-10-31)
 
+- The card that shows when you rest on a tab no longer slides over the tab as it appears.
 - You can turn off the automatic new chat: Settings → AI → **Start a new chat for a new topic** (`autoNewChat`, on by default). Off, a message about something else stays in the chat you have open instead of moving to a new one.
 - A formula the AI types out instead of writing in math, like (C_Mg₂Pb − C₀) / (C_Mg₂Pb − C_α), is shown as a stacked fraction with real subscripts, with or without Prefer fractions. The AI is also told on every reply, not only with short answers on, to write math as typeset fractions and subscripts.
 - A new chat saved in a project no longer pauses the browser twice as long as one outside a project: moving a chat into a project writes the chat list a moment later instead of a second time at once, and a chat list held for an instant by another write is tried again instead of failing the save.
