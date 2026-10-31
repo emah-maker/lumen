@@ -5,7 +5,9 @@ const path = require('path');
 (async () => {
   // This test is about each Claude model's request shape, not connectivity, so give Anthropic a
   // (fake) key: the picker now only lists a provider's models once it's actually connected.
-  const app = await electron.launch({ args: [path.join(__dirname, '..', '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_API_KEY: 'sk-ant-test' } });
+  // (and hide the AI command-line tools installed on this machine, which would each add a provider and a provider Auto)
+  const noCli = path.join(require('os').tmpdir(), 'lumen-models-no-such-cli');
+  const app = await electron.launch({ args: [path.join(__dirname, '..', '..')], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_CLAUDE_BIN: noCli, LUMEN_CODEX_BIN: noCli, LUMEN_GROK_BIN: noCli, LUMEN_AGY_BIN: noCli } });
   const ui = await app.firstWindow();
   const errors = [];
   ui.on('pageerror', (e) => errors.push(e.message));

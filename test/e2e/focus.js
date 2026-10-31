@@ -127,9 +127,13 @@ const path = require('path');
   await inSettings("document.getElementById('focus-site-add').value = 'a b'; document.getElementById('focus-site-button').click(); true");
   await sleep(300);
   check('a made-up entry is not stored', await app.evaluate(() => global.__settings.backend.prefs().focusSites.join()) === 'blocked.test,study.test');
-  await inSettings("{ const i = document.getElementById('focus-phrase'); i.value = 'weekdays 7-9 pm'; document.getElementById('focus-phrase-add').click(); }; true");
+  // (a window that covers now would start focus and lock the lists, so on a weekday evening the test types the morning one)
+  const evening = new Date().getHours() >= 18 && new Date().getHours() < 22;
+  const phrase = evening ? 'weekdays 7-9 am' : 'weekdays 7-9 pm';
+  const [wantFrom, wantTo] = evening ? ['07:00', '09:00'] : ['19:00', '21:00'];
+  await inSettings(`{ const i = document.getElementById('focus-phrase'); i.value = '${phrase}'; document.getElementById('focus-phrase-add').click(); }; true`);
   const sched = await waitFor(() => app.evaluate(() => global.__settings.backend.prefs().focusSchedules).then((l) => l.length === 1 && l[0]));
-  check('a schedule typed in words ("weekdays 7-9 pm") is stored', Boolean(sched) && sched.days.join() === '1,2,3,4,5' && sched.from === '19:00' && sched.to === '21:00' && sched.on === true, JSON.stringify(sched));
+  check(`a schedule typed in words ("${phrase}") is stored`, Boolean(sched) && sched.days.join() === '1,2,3,4,5' && sched.from === wantFrom && sched.to === wantTo && sched.on === true, JSON.stringify(sched));
   check('...and listed', await waitFor(() => inSettings("document.getElementById('focus-schedules').textContent.includes('Weekdays')")));
   await inSettings("{ const i = document.getElementById('focus-phrase'); i.value = 'whenever'; document.getElementById('focus-phrase-add').click(); }; true");
   await sleep(400);
