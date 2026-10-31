@@ -92,8 +92,8 @@ Tests: `test/units/chrome-ux-units.js` (default match, address check, sentence-c
    host as before), or when the first row is only "search for ...": Enter on typed text still goes exactly where it did.
    Logic and tests: `chrome-helpers.js` `looksLikeAddress` / `defaultSuggestion`.
    **Replaced (2026-10-29):** Chrome does not do this, and it sent searches to pages that only matched the words. The first
-   row is now always what is in the field (the search for the text as typed, the URL, or a site completed in place, which only
-   a site typed before gets) and Enter goes to exactly that. Logic: `browser/omnibox.js`, `chrome-helpers.js` `enterAction`;
+   row is now always what is in the field (the search for the text as typed, the URL, or a site completed in place, which a site
+   typed before or visited at least twice gets, imported typed counts included) and Enter goes to exactly that. Logic: `browser/omnibox.js`, `chrome-helpers.js` `enterAction`;
    tests: `test/units/omnibox-units.js`, `test/e2e/omnibox-chrome.js`.
 7. **Private windows said "Not secure" for localhost. FIXED.** The private window's address-bar chip uses the same rule as a
    normal window: an `http` address on this computer shows the neutral "i" chip, "This page is on your own computer".

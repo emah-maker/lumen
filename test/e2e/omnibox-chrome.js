@@ -1,5 +1,5 @@
-// Typing in the address bar works as in Chrome, Edge and Firefox: no spellcheck or autocorrect, a site is completed in place only
-// when it was typed before, Backspace / Delete take the completion away, Enter goes to exactly what is shown, words are searched
+// Typing in the address bar works as in Chrome, Edge and Firefox: no spellcheck or autocorrect, a site is completed in place
+// when it was typed before or used often (not after one visit, not a built-in suggestion), Backspace / Delete take the completion away, Enter goes to exactly what is shown, words are searched
 // exactly as typed (never sent to a page that only matches them), the first row is always what was typed, the arrow keys move
 // through the rows and Escape puts the typed text back, Shift+Delete removes a History row, Ctrl+Enter adds www. and .com.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
@@ -65,7 +65,7 @@ const os = require('os');
   const clicked = await historyEntry(`${ip}/page-one`);
   check('a page only loaded (not typed) is in History without a typed count', Boolean(clicked) && !clicked.typed, JSON.stringify(clicked));
 
-  // ---- 2. inline completion only from a site typed before, as selected text after the caret
+  // ---- 2. inline completion from a site typed before, as selected text after the caret
   await typeIn('loc');
   const inline = await waitFor(async () => { const f = await field(); return f.value !== 'loc' && f; }, 3000);
   check('a typed site completes in place: what was typed, then the rest selected after the caret', inline && inline.value === `localhost:${port}` && inline.start === 3 && inline.end === inline.value.length, JSON.stringify(inline));
@@ -101,12 +101,42 @@ const os = require('os');
   check('Enter with the completion showing goes to that site', toCompleted === `${local}/`, toCompleted);
   await waitFor(async () => (await currentUrl()).startsWith(local), 5000);
 
-  // ---- 5. never from a site that was not typed: visited only, or a built-in suggestion
+  // ---- 5. a site used often fills the field too (as in Firefox and Edge), typed or not; one visit or a built-in suggestion does not
   await typeIn('127.0');
+  const visited = await waitFor(async () => { const f = await field(); return f.value !== '127.0' && f; }, 3000);
+  check('a site visited several times (never typed) completes in place, the rest selected', visited && visited.value === `127.0.0.1:${port}` && visited.start === 5 && visited.end === visited.value.length, JSON.stringify(visited || await field()));
+  await ui.keyboard.press('Escape');
+  await ui.keyboard.press('Escape');
+  await ui.evaluate(() => document.getElementById('address').focus());
+  await ui.keyboard.press('Control+A');
+  await ui.keyboard.type('127.0.0', { delay: 0 }); // (faster than the lists come back: the last one still fills the field)
+  const fast = await waitFor(async () => { const f = await field(); return f.value === `127.0.0.1:${port}` && f; }, 3000);
+  check('typing fast still ends with the completion in the field', Boolean(fast) && fast.start === 7, JSON.stringify(fast || await field()));
+  await ui.keyboard.press('Enter');
+  await waitFor(async () => (await currentUrl()).startsWith(ip), 5000);
+  check('…and Enter goes to that site', (await currentUrl()) === `${ip}/`, await currentUrl());
+  await typeIn('www.127.0');
+  const www = await waitFor(async () => { const f = await field(); return f.value !== 'www.127.0' && f; }, 3000);
+  check('a typed "www." is kept and the site still completes after it', www && www.value === `www.127.0.0.1:${port}` && www.start === 9, JSON.stringify(www || await field()));
+  await ui.keyboard.press('Escape');
+  const escaped = await field();
+  check('Escape takes the completion away and puts back what was typed', escaped.value === 'www.127.0', JSON.stringify(escaped));
+  await ui.keyboard.press('Escape');
+  await loadDirect(`http://127.0.0.2:${port}/once`); // another site, visited once
+  await loadDirect(`${ip}/page-two`);
+  await typeIn('127.0.0.2');
+  await listFor('127.0.0.2');
+  await sleep(300);
+  const once = await field();
+  check('a site visited once is not completed in place (it is a row in the list)', once.value === '127.0.0.2' && once.items.some((i) => i.go === `http://127.0.0.2:${port}/once`), JSON.stringify(once));
+  await ui.evaluate(() => document.getElementById('address').focus());
+  await ui.keyboard.press('Control+A');
+  await ui.evaluate(() => { const a = document.getElementById('address'); a.value = '127.0'; a.dispatchEvent(new InputEvent('input', { inputType: 'insertFromPaste', bubbles: true })); });
   await listFor('127.0');
   await sleep(300);
-  const notTyped = await field();
-  check('a site only visited (never typed) is not completed in place', notTyped.value === '127.0' && notTyped.start === 5, JSON.stringify(notTyped));
+  check('a paste is not completed (as in Chrome: it goes where it says)', (await field()).value === '127.0', JSON.stringify(await field()));
+  await ui.keyboard.press('Escape');
+  await ui.keyboard.press('Escape');
   await typeIn('you');
   await listFor('you');
   await sleep(300);
