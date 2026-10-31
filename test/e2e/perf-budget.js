@@ -74,7 +74,8 @@ const CEILING = { requireMs: 1000, modules: 341, preloadKB: 40, uiKB: 1000, idle
     check(`main.js requires take <= ${CEILING.requireMs} ms`, requireMs <= CEILING.requireMs, `${requireMs} ms`);
     const preloadKB = fs.statSync(path.join(root, 'src', 'preload', 'preload.bundle.js')).size / 1024;
     check(`preload.bundle.js <= ${CEILING.preloadKB} KB`, preloadKB <= CEILING.preloadKB, `${Math.round(preloadKB)} KB`);
-    const files = await ui.evaluate(() => [...document.scripts].map((s) => s.src).concat([...document.querySelectorAll('link[rel=stylesheet]')].map((l) => l.href)).filter(Boolean));
+    // (what startup loads: not the files an idle moment fetches afterwards, marked data-later, which can land before this look on a slow start)
+    const files = await ui.evaluate(() => [...document.querySelectorAll('script:not([data-later])')].map((s) => s.src).concat([...document.querySelectorAll('link[rel=stylesheet]:not([data-later])')].map((l) => l.href)).filter(Boolean));
     const uiKB = files.reduce((sum, u) => sum + fs.statSync(require('url').fileURLToPath(u)).size / 1024, 0);
     check(`browser UI scripts and styles <= ${CEILING.uiKB} KB`, uiKB <= CEILING.uiKB, `${Math.round(uiKB)} KB`);
     const intervals = await app.evaluate(() => global.__perf.intervals());

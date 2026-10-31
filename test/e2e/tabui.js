@@ -158,6 +158,7 @@ function toneWav() {
   await sleep(200);
   check('no card at once: it waits for the pointer to rest', (await cardState()) === null, JSON.stringify(await cardState()));
   check('then a card shows', await waitFor(async () => Boolean(await cardState()), 1500), 'never shown');
+  await ui.evaluate(() => Promise.all(document.querySelector('.tab-hover-card').getAnimations().map((a) => a.finished))); // (measured where it comes to rest)
   let card = await cardState();
   check('it has the page title and the site', card?.title === 'Page p1: a longer title for the hover card' && card?.host === `127.0.0.1:${server.address().port}`, JSON.stringify(card));
   check('it sits under the tab, lined up with it', card && Math.abs(card.left - tr.left) <= 1 && card.top >= tr.bottom, JSON.stringify({ card, tr }));

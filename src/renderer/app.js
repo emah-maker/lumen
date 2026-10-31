@@ -1571,6 +1571,7 @@ function placeHoverCard(el) {
   const y = Math.min(r.bottom + 4, viewport.getBoundingClientRect().top - hoverCardEl.offsetHeight - 2);
   hoverCardEl.style.left = `${Math.round(x)}px`;
   hoverCardEl.style.top = `${Math.round(y)}px`;
+  return Math.round(y) - r.bottom; // the gap under the tab
 }
 
 function showHoverCard(el) {
@@ -1584,8 +1585,9 @@ function showHoverCard(el) {
   const moving = !hoverCardEl.hidden;
   hoverCardEl.classList.toggle('moving', moving && !motionReduced()); // slides along the strip
   hoverCardEl.hidden = false;
-  placeHoverCard(el);
-  if (!moving) hoverCardEl.animate(motionReduced() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' });
+  const gap = placeHoverCard(el);
+  // (it drops in from no higher than the gap above it, so it never covers the tab on the way)
+  if (!moving) hoverCardEl.animate(motionReduced() ? [{ opacity: 0 }, { opacity: 1 }] : [{ opacity: 0, transform: `translateY(-${Math.max(0, Math.min(3, Math.floor(gap)))}px)` }, { opacity: 1, transform: 'none' }], { duration: 150, easing: 'ease-out' });
 }
 
 function hideHoverCard() {
@@ -2995,6 +2997,7 @@ function loadFilesPicker() {
   filesPickerLoad ||= new Promise((resolve) => {
     const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'files-picker.css' });
     const js = Object.assign(document.createElement('script'), { src: 'files-picker.js', onload: () => resolve(true), onerror: () => resolve(false) });
+    css.dataset.later = js.dataset.later = ''; // (not part of startup: test/e2e/perf-budget.js leaves it out of the UI size)
     document.head.append(css);
     document.body.append(js);
   });
