@@ -89,7 +89,14 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify({ enc: encrypt(text ?? JSON.stringify(data)) }));
-    fs.renameSync(tmp, file); // never a half-written file
+    // never a half-written file. The target can be held for a moment (a background write of the index reading it, a scanner: Windows),
+    // so a transient refusal is tried again briefly, as writeAtomicAsync does.
+    for (let attempt = 1; ; attempt++) {
+      try { fs.renameSync(tmp, file); return; } catch (err) {
+        if (!TRANSIENT_WRITE.has(err?.code) || attempt >= 4) { try { fs.rmSync(tmp, { force: true }); } catch { /* left for the next write */ } throw err; }
+        pause(5 * attempt);
+      }
+    }
   };
   // The same, without a pause of the main thread: a temp file under its own name, then one rename. Writes to one file go one after the
   // other (queued), never interleaved. `stillWanted()` is asked just before the rename: false drops the temp file (a newer write got there first).
@@ -719,11 +726,15 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     return true;
   }
   // Put a chat in a project (null: out of any). False for an unknown chat or project.
+  // The list is written in the background (writeIndexSoon), not at once: a new chat saved into a project (save, then this) would
+  // otherwise read, decrypt, encrypt and write the index twice on one turn of the main thread. flush() writes it when quitting.
   function setProject(chatId, projectId) {
     const entry = entryOf(chatId);
     if (!entry || entry.trashed || readIndex().degraded) return false;
-    if (projectId) { if (!projectById(projectId)) return false; entry.project = projectId; } else delete entry.project;
-    writeIndex();
+    if (projectId && !projectById(projectId)) return false;
+    if ((entry.project || null) === (projectId || null)) return true; // already there: nothing to write
+    if (projectId) entry.project = projectId; else delete entry.project;
+    writeIndexSoon(250); // (the next save's write carries it: saves in a row never race a background write of the list)
     return true;
   }
   // Several chats at once, in one write (drag and drop, "Move to project"). Moving is not activity: only the `project` field changes, never
