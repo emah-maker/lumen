@@ -18,10 +18,11 @@ function fakeChromeProfile() {
     other: { type: 'folder', children: [{ type: 'url', name: 'GitHub', url: 'https://github.com/' }] },
   } }));
   const db = new DatabaseSync(path.join(dir, 'History'));
-  db.exec('CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER, last_visit_time INTEGER, hidden INTEGER DEFAULT 0)');
+  db.exec('CREATE TABLE urls (id INTEGER PRIMARY KEY, url TEXT, title TEXT, visit_count INTEGER, typed_count INTEGER DEFAULT 0, last_visit_time INTEGER, hidden INTEGER DEFAULT 0)'); // (the Firefox one below has no typed column: both shapes are read)
   const chromeTime = (ms) => (BigInt(ms) + 11644473600000n) * 1000n; // µs since 1601
   const insert = db.prepare('INSERT INTO urls (url, title, visit_count, last_visit_time, hidden) VALUES (?, ?, ?, ?, ?)');
   insert.run('https://news.ycombinator.com/', 'Hacker News', 42, chromeTime(Date.UTC(2026, 8, 20)), 0);
+  db.exec("UPDATE urls SET typed_count = 6 WHERE url = 'https://news.ycombinator.com/'");
   insert.run('https://en.wikipedia.org/wiki/Web_browser', 'Web browser - Wikipedia', 3, chromeTime(Date.UTC(2026, 8, 19)), 0);
   insert.run('https://www.google.com/sorry/index?continue=x', 'Sorry', 1, chromeTime(Date.UTC(2026, 8, 18)), 0);
   insert.run('https://hidden.example/', 'Hidden', 1, chromeTime(Date.UTC(2026, 8, 18)), 1);
@@ -59,6 +60,9 @@ function fakeFirefoxProfile() {
   const settings = await ui.evaluate(() => window.assistant.getSettings());
   const suggestions = await ui.evaluate(() => window.browser.suggest('news.yc').then((r) => r.rows));
   check('imported history feeds address-bar suggestions', suggestions.some((s) => s.url === 'https://news.ycombinator.com/'), JSON.stringify(suggestions));
+  const typedIn = await app.evaluate(() => global.__managers.history().get('https://news.ycombinator.com/')?.typed);
+  const inlineHn = await ui.evaluate(() => window.browser.suggest('news.y').then((r) => r.inline));
+  check('Chrome\'s typed count comes along, so the site fills the address bar as you type it', typedIn === 6 && inlineHn?.text === 'news.ycombinator.com', JSON.stringify({ typedIn, inlineHn }));
   const captcha = await ui.evaluate(() => window.browser.suggest('google.com/sorry').then((r) => r.rows));
   check('CAPTCHA and hidden pages are not imported', !captcha.some((s) => s.url.includes('/sorry/')) && !(await ui.evaluate(() => window.browser.suggest('hidden.example').then((r) => r.rows))).length, JSON.stringify(captcha));
   const again = await app.evaluate((_e, dir) => global.__importBrowser('chrome', dir), chrome);

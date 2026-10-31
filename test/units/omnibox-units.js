@@ -22,7 +22,7 @@ assert.strictEqual(siteOf('http://localhost:3000/a'), 'localhost:3000');
 assert.strictEqual(siteOf('file:///c:/x.html'), '');
 assert.strictEqual(siteOf('not a url'), '');
 
-// ---- inline completion: only from a site typed before
+// ---- inline completion: from a site typed before or used often
 const now = Date.now();
 const entries = [
   { url: 'https://github.com/', title: 'GitHub', visits: 9, last: now, typed: 3 },
@@ -33,9 +33,15 @@ const entries = [
 ];
 assert.deepStrictEqual(inlineCompletion('git', entries), { text: 'github.com', url: 'https://github.com/' }, 'the site typed most wins, its host completed');
 assert.deepStrictEqual(inlineCompletion('gitl', entries), { text: 'gitlab.com', url: 'https://gitlab.com/' });
-assert.strictEqual(inlineCompletion('you', entries), null, 'a site never typed is never completed in place, however often it was visited');
-assert.strictEqual(inlineCompletion('y', [{ url: 'https://www.youtube.com/', title: 'YouTube', visits: 0, last: 0 }]), null, 'a built-in suggestion never fills the field');
-assert.strictEqual(inlineCompletion('git', entries.map((e) => ({ ...e, typed: 0 }))), null, 'nothing typed, nothing completed');
+assert.deepStrictEqual(inlineCompletion('yout', entries), { text: 'youtube.com', url: 'https://www.youtube.com/' }, 'a site used often fills the field though never typed (clicked to, imported), as in Firefox and Edge');
+assert.deepStrictEqual(inlineCompletion('www.yo', entries), { text: 'www.youtube.com', url: 'https://www.youtube.com/' });
+assert.strictEqual(inlineCompletion('y', [{ url: 'https://www.youtube.com/', title: 'YouTube', visits: 0, last: 0 }]), null, 'a built-in suggestion never visited never fills the field');
+assert.strictEqual(inlineCompletion('two.example/a', [{ url: 'https://two.example/ab', visits: 3, last: now }]), null, 'a page on a site only visited never stretches an address typed with a path');
+assert.strictEqual(inlineCompletion('once', [{ url: 'https://once.example/a', title: 'A', visits: 1, last: now }]), null, 'a site visited once does not fill the field');
+assert.deepStrictEqual(inlineCompletion('two', [{ url: 'https://two.example/a', visits: 1, last: now }, { url: 'https://two.example/b', visits: 1, last: now }]), { text: 'two.example', url: 'https://two.example/' }, 'visits to any of its pages add up');
+assert.deepStrictEqual(inlineCompletion('ty', [{ url: 'https://typed.example/', visits: 1, last: now, typed: 1 }]), { text: 'typed.example', url: 'https://typed.example/' }, 'typed once is enough');
+assert.deepStrictEqual(inlineCompletion('yo', [...entries, { url: 'https://yoga.example/', visits: 1, last: now - 5000, typed: 1 }]), { text: 'yoga.example', url: 'https://yoga.example/' }, 'a typed site comes before a more visited one never typed');
+assert.strictEqual(inlineCompletion('git', entries.map((e) => ({ ...e, typed: 0, visits: 1 })).filter((e) => !e.url.includes('/lumen/'))), null, 'nothing typed and one visit each: nothing completed');
 assert.strictEqual(inlineCompletion('GIT', entries).text, 'GIThub.com', 'what was typed stays as typed; only the rest is added');
 assert.deepStrictEqual(inlineCompletion('www.git', entries), { text: 'www.github.com', url: 'https://github.com/' }, 'a typed www. is kept');
 assert.deepStrictEqual(inlineCompletion('https://git', entries), { text: 'https://github.com', url: 'https://github.com/' });

@@ -5050,11 +5050,12 @@ function importBrowser(id, profilePath) {
     const entry = history.get(h.url);
     if (entry) {
       entry.visits = Math.max(entry.visits, h.visits);
+      if (h.typed > (entry.typed || 0)) entry.typed = h.typed;
       entry.last = Math.max(entry.last, h.last);
       if (!entry.title && h.title) entry.title = h.title;
       historyVersion++;
     } else {
-      history.set(h.url, { url: h.url, title: h.title, visits: h.visits, last: h.last });
+      history.set(h.url, { url: h.url, title: h.title, visits: h.visits, last: h.last, ...(h.typed > 0 ? { typed: h.typed } : {}) });
       addedHistory++;
       historyVersion++;
     }

@@ -170,10 +170,16 @@ function chromiumBookmarks(profile) {
 const chromiumTime = (t) => Number(BigInt(t) / 1000n) - 11644473600000;
 const bigRows = (stmt, ...args) => { stmt.setReadBigInts(true); return stmt.all(...args); };
 
+// How often a page was typed into that browser's address bar (Chrome's typed_count, Firefox's typed flag): the address bar
+// completes those sites in place (omnibox.inlineCompletion). Absent when 0.
+const typedOf = (r) => (Number(r.typed) > 0 ? { typed: Number(r.typed) } : {});
+// (an older or trimmed-down profile may not have that column: then nothing counts as typed)
+const typedColumn = (db, table, column) => (db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column) ? `${column} AS typed` : '0 AS typed');
+
 function chromiumHistory(profile) {
   return withDatabaseCopy(path.join(profile, 'History'), (db) => bigRows(db.prepare(
-    'SELECT url, title, visit_count AS visits, last_visit_time AS last FROM urls WHERE hidden = 0 ORDER BY last_visit_time DESC LIMIT ?',
-  ), MAX_HISTORY).filter((r) => isWorthImporting(r.url)).map((r) => ({ url: r.url, title: r.title || '', visits: Number(r.visits) || 1, last: chromiumTime(r.last) }))) || [];
+    `SELECT url, title, visit_count AS visits, ${typedColumn(db, 'urls', 'typed_count')}, last_visit_time AS last FROM urls WHERE hidden = 0 ORDER BY last_visit_time DESC LIMIT ?`,
+  ), MAX_HISTORY).filter((r) => isWorthImporting(r.url)).map((r) => ({ url: r.url, title: r.title || '', visits: Number(r.visits) || 1, ...typedOf(r), last: chromiumTime(r.last) }))) || [];
 }
 
 function firefoxData(profile) {
@@ -182,8 +188,8 @@ function firefoxData(profile) {
       "SELECT p.url AS url, COALESCE(b.title, p.title, '') AS title FROM moz_bookmarks b JOIN moz_places p ON b.fk = p.id WHERE b.type = 1 AND p.url LIKE 'http%' LIMIT ?",
     ).all(MAX_BOOKMARKS).map((r) => ({ url: r.url, title: r.title || '' })),
     history: bigRows(db.prepare(
-      "SELECT url, title, visit_count AS visits, last_visit_date AS last FROM moz_places WHERE visit_count > 0 AND url LIKE 'http%' ORDER BY last_visit_date DESC LIMIT ?",
-    ), MAX_HISTORY).filter((r) => isWorthImporting(r.url)).map((r) => ({ url: r.url, title: r.title || '', visits: Number(r.visits) || 1, last: Number(BigInt(r.last ?? 0) / 1000n) })),
+      `SELECT url, title, visit_count AS visits, ${typedColumn(db, 'moz_places', 'typed')}, last_visit_date AS last FROM moz_places WHERE visit_count > 0 AND url LIKE 'http%' ORDER BY last_visit_date DESC LIMIT ?`,
+    ), MAX_HISTORY).filter((r) => isWorthImporting(r.url)).map((r) => ({ url: r.url, title: r.title || '', visits: Number(r.visits) || 1, ...typedOf(r), last: Number(BigInt(r.last ?? 0) / 1000n) })),
   })) || { bookmarks: [], history: [] };
 }
 

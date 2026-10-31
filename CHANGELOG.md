@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- The address bar fills in the rest of a site as you type, inside the box (the added part selected), for the sites you actually use: any site you have visited a few times, or typed into the address bar here or in Chrome, Edge or Firefox before you imported. It used to do that only for sites typed into Lumen itself, so most matches showed only in the list below. Backspace removes the filled-in part, Enter opens it, Escape puts back what you typed.
 ## 0.5.85 (2026-10-31)
 
 - The card that shows when you rest on a tab no longer slides over the tab as it appears.
