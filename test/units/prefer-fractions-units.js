@@ -111,5 +111,16 @@ check('strings: setting and /fractions texts exist', ['settings.ai.preferFractio
 const docs = read('docs/settings.md');
 check('docs: a settings row and a changelog entry', /Prefer fractions/.test(docs) && /aiPreferFractions/.test(docs) && /Prefer fractions/.test(read('CHANGELOG.md'))); // (anywhere: a release cut moves the entry out of Unreleased)
 
+// ---- written-out formulas (always on): a bracket over a bracket the model typed instead of LaTeX
+const formulas = (s) => { const maths = []; return md.stackFormulas(s, maths).replace(/(\d+)/g, (_m, i) => `[${maths[i].tex}]`); };
+const lever = formulas('W_α = (C_Mg₂Pb − C₀) / (C_Mg₂Pb − C_α) = (81 − 45) / (81 − C_α) = 0.65');
+check('formulas: the lever rule with spaced slashes is two stacked fractions, the subscripted name before "=" in the first',
+  lever === `[W_{${B}alpha} = ${B}frac{C_{${B}mathrm{Mg_{2}Pb}} - C_{0}}{C_{${B}mathrm{Mg_{2}Pb}} - C_{${B}alpha}}] = [${B}frac{81 - 45}{81 - C_{${B}alpha}}] = 0.65`, lever);
+check('formulas: no spaces around the slash too', formulas('so (x+1)/(x−1) here') === `so [${B}frac{x+1}{x-1}] here`, formulas('so (x+1)/(x−1) here'));
+check('formulas: a side with no operator is left as written ("(yes) / (no)", "(a)/(b)")', formulas('pick (yes) / (no) or (a)/(b)') === 'pick (yes) / (no) or (a)/(b)');
+check('formulas: code and links are left as written', formulas('`(a+b)/(c+d)` and [(a+b)/(c+d)](https://x.test/(a+b)/(c+d))') === '`(a+b)/(c+d)` and [(a+b)/(c+d)](https://x.test/(a+b)/(c+d))');
+check('formulas: drawn with Prefer fractions off', /data-tex="[^"]*\\frac\{81 - 45\}/.test(md.render('= (81 − 45) / (81 − C_α)', { fractions: false })));
+check('prompt: every reply asks for LaTeX fractions and subscripts, not typed a/b (also without ADHD mode)', /- Math: LaTeX .*\\frac\{a\}\{b\}.*C_\{\\alpha\}.*not \\\(, a\/b or C_α/.test(agentLib.systemFor({ model: 'claude-opus-5' })));
+
 console.log(failures ? `\n${failures} failed` : '\nall passed');
 process.exit(failures ? 1 : 0);
