@@ -32,8 +32,9 @@ const readIndexFile = (dir) => JSON.parse(dec(JSON.parse(fs.readFileSync(path.jo
   const p = store.saveProject({ name: '  Thesis  ', instructions: 'Formal tone.' });
   check('a project is created with a cleaned name', p?.name === 'Thesis' && /^[a-f0-9]{16}$/.test(p.id) && p.instructions === 'Formal tone.', JSON.stringify(p));
   check('moving a chat in sets only its project field', store.setProject(hexId(1), p.id) && store.list().find((c) => c.id === hexId(1)).project === p.id && store.list().find((c) => c.id === hexId(2)).project === undefined);
+  store.flush(); // (a move is written in the background, like the open-chat pointer; quitting writes it)
   const disk = readIndexFile(dir);
-  check('the index keeps every chat, the open one and the projects', disk.chats.length === 2 && disk.current === hexId(2) && disk.projects.length === 1, JSON.stringify(disk));
+  check('the index keeps every chat, the open one and the projects', disk.chats.length === 2 && disk.current === hexId(2) && disk.projects.length === 1 && disk.chats.find((c) => c.id === hexId(1)).project === p.id, JSON.stringify(disk));
   const again = mk(dir);
   check('a new store reads the projects and the chat\'s project back', again.projects()[0].name === 'Thesis' && again.projectOf(hexId(1))?.instructions === 'Formal tone.' && again.projectOf(hexId(2)) === null);
   again.save(hexId(1), snap('more'));
@@ -101,6 +102,23 @@ const readIndexFile = (dir) => JSON.parse(dec(JSON.parse(fs.readFileSync(path.jo
   check('placeholders: no renderer script matches "{(w+)}" (a word character needs \\w)', bad.length === 0, JSON.stringify(bad));
 }
 
-fs.rmSync(root, { recursive: true, force: true });
-if (failures) { console.log(`\n${failures} failed`); process.exit(1); }
-console.log('\nall passed');
+// ---- a move is written in the background on its own (no flush): the save before it already wrote the list on this turn
+(async () => {
+  const dir = path.join(root, 'background');
+  fs.mkdirSync(dir, { recursive: true });
+  let writes = 0;
+  const store = createChatStore({ dir, encrypt: (t) => { writes++; return enc(t); }, decrypt: dec, now: () => ++clock });
+  const p = store.saveProject({ name: 'Later' });
+  const id = store.newId();
+  store.save(id, snap('into a project'));
+  writes = 0;
+  store.setProject(id, p.id);
+  check('moving a chat does not encrypt the list on the same turn', writes === 0, `${writes} writes`);
+  check('moving it to where it already is writes nothing', store.setProject(id, p.id) && writes === 0);
+  for (let i = 0; i < 50 && readIndexFile(dir).chats.find((c) => c.id === id)?.project !== p.id; i++) await new Promise((r) => setTimeout(r, 10));
+  check('the move reaches the disk by itself', readIndexFile(dir).chats.find((c) => c.id === id)?.project === p.id);
+
+  fs.rmSync(root, { recursive: true, force: true });
+  if (failures) { console.log(`\n${failures} failed`); process.exit(1); }
+  console.log('\nall passed');
+})();
