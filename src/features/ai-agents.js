@@ -158,7 +158,7 @@ function setupAiAgents(deps) {
   let claudeCodeDetail = null; // subscription label (e.g. 'enterprise'), when known
   const claudeCodeModule = () => require('../ai/claude-code');
   const newClaudeCode = (extra = {}) => new (claudeCodeModule().ClaudeCodeEngine)({
-    userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), gate: oneShotClaude() ? null : startHttpGate, keepAlive: !oneShotClaude(), spawn: cliSpawn(), onFresh: freshReads, ...extra,
+    userData: app.getPath('userData'), mcpCommand, ensureServer: () => startMcp(true), gate: oneShotClaude() ? null : startHttpGate, keepAlive: !oneShotClaude(), spawn: cliSpawn(), onFresh: freshReads, toolsMissing, ...extra,
   });
   // A new CLI process or session: the model no longer has its earlier page reads, so "unchanged since your
   // last read" would point at nothing (snapshot.js ReadCache); the cache is keyed by the new session too.
@@ -356,8 +356,10 @@ function setupAiAgents(deps) {
   // Lumen's local HTTP MCP server (mcp-http.js): Grok's tools and gate, and Claude Code's tools.
   // Only Lumen's own live engine runs are served (a token per run or CLI process).
   let grokGate = null;
+  let grokGateNow = null; // (the started gate, for toolsMissing)
   function startGrokGate() {
     grokGate ||= require('../automation/mcp-http').startHttp({ tools: deps.tools, extraTools: runTools, callTool: mcpCallTool, enabled: ownsSession, onEvent: mcpEvent, onTerminalApproval, terminalEnabled: () => readSettings().grokTerminal !== false })
+      .then((g) => (grokGateNow = g))
       .catch((err) => { grokGate = null; throw err; });
     return grokGate;
   }
@@ -374,6 +376,20 @@ function setupAiAgents(deps) {
   // [word] And the word tool, in a run whose chat is about a Word document (agent.js cliWordNote), so the model edits it in Word instead of writing scripts.
   // [cli helpers] The same runs are offered delegate where their engine has no subagent of its own that passes Lumen's approvals (agent.js cliHelperToolDefs).
   // [engine parity] And use_skill where the chat lists the user's skills, and the tools of the MCP servers the user added (agent.js cliSkillToolDefs, cliExternalToolDefs).
+  // [tools] The tools a chat's run gets that the CLI process `tag` was not given when it listed Lumen's tools (a kept process lists
+  // them once: the HTTP connection cannot tell it the list changed). claude-code.js turn starts a new process for the message then,
+  // resuming the chat's session, so a chat that turned to a Word file has the word tool instead of falling back to a shell script.
+  // Only tools that came since count (a tool gone needs no new process: a call to it is refused).
+  function toolsMissing(tag, chat) { // (a declaration: newClaudeCode above may run before this line)
+    if (!tag || !chat) return false;
+    try { // (never in a message's way: anything unknown is "nothing missing", the warm process is kept as before)
+      const open = [...(typeof grokGateNow?.sessions === 'function' ? grokGateNow.sessions() : []), ...(mcpServer?.sessions ? [...mcpServer.sessions] : [])];
+      const listed = open.find((s) => s?.session?.engine === tag)?.session.served;
+      if (!listed) return false;
+      const wanted = [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.wordTools?.(chat) || []), ...(deps.skillTools?.(chat) || []), ...(deps.mcpServerTools?.(chat) || [])];
+      return wanted.some((t) => t?.name && !listed.has(t.name));
+    } catch { return false; }
+  }
   const runTools = (session) => {
     if (!(session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)))) return [];
     const owner = engineForSession(session);

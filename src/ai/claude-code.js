@@ -362,7 +362,7 @@ class ClaudeCodeEngine {
   // watchdogMs / interruptMs: see WATCHDOG_MS / INTERRUPT_MS (0 turns the watchdog off). onFresh({ sessionId,
   // resume }): a new CLI process starts, so anything the model saw through the old one (snapshot.js's
   // repeat-read cache) no longer counts (features/ai-agents.js).
-  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, startWait = undefined, finalIdleMs = Number(process.env.LUMEN_CC_FINAL_IDLE_MS) || FINAL_IDLE_MS, interruptMs = INTERRUPT_MS, helperMaxMs = HELPER_MAX_MS, followUpGraceMs = FOLLOWUP_GRACE_MS, onFresh = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
+  constructor({ userData, mcpCommand, ensureServer, gate = null, keepAlive = true, idleMs = IDLE_MS, watchdogMs = WATCHDOG_MS, startupWatchdogMs = watchdogMs === WATCHDOG_MS ? STARTUP_WATCHDOG_MS : watchdogMs, slowStartMs = SLOW_START_MS, retryDelayMs = RETRY_DELAY_MS, startWait = undefined, finalIdleMs = Number(process.env.LUMEN_CC_FINAL_IDLE_MS) || FINAL_IDLE_MS, interruptMs = INTERRUPT_MS, helperMaxMs = HELPER_MAX_MS, followUpGraceMs = FOLLOWUP_GRACE_MS, onFresh = null, toolsMissing = null, prewarmIdleMs = PREWARM_IDLE_MS, warmBackoffMs = WARM_BACKOFF_MS, warmBackoffMaxMs = WARM_BACKOFF_MAX_MS, spawn: spawnChild = spawn, kill = killTree }) {
     this.kind = 'claudecode';
     this.prewarmIdleMs = prewarmIdleMs;
     this.warmBackoffMs = warmBackoffMs;
@@ -380,6 +380,7 @@ class ClaudeCodeEngine {
     this.watched = new Set(); // [background helpers] processes kept for helpers still working (holdForHelpers)
     this.afterHelpers = null; // [background helpers] what to do once none are (a side engine's end: features/ai-agents.js leaseEngine)
     this.onFresh = onFresh;
+    this.toolsMissing = toolsMissing; // (tag, chat) -> the chat needs a Lumen tool the process was not given (turn: a new process)
     this.gen = 0; // bumped by release(): a warm() started before it disposes its process when it lands
     this.spawn = spawnChild;
     this.kill = kill;
@@ -894,6 +895,9 @@ class ClaudeCodeEngine {
     // adopt: the process kept for its helpers (holdForHelpers), whose turn the CLI began by itself: this message reads it, and sends nothing.
     if (!adopt && !await this.ensureBin()) return notInstalled();
     userSettings = userSettings || Boolean(this.needUserSettings);
+    // [tools] A kept process was given Lumen's tools when it started: a chat that needs one it lacks (the word tool once the chat is
+    // about a Word file) gets a new process, resuming the same session (features/ai-agents.js toolsMissing).
+    try { if (!adopt && !fresh && this.proc && !this.proc.exited && this.toolsMissing?.(this.proc.tag, scope?.chat)) fresh = true; } catch {}
     const proc = adopt || await this.take({ sessionId, resume, systemPrompt, model, maxTurns, fullAccess, userSettings, effort, workDir }, { fresh, emit });
     if (!proc) return notInstalled();
     // The read cache is reset for a process only once a message uses it (spawnProc kept the args): a
