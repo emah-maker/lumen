@@ -144,8 +144,8 @@ function createAdblock(deps) {
     '#@##credential_picker_iframe',
     '#@#iframe[src^="https://accounts.google.com/gsi/"]',
   ];
-  // Added to every engine (patched in once, then kept): the sign-in exceptions, the human checks' (adblock-lists.js) and YouTube's extra hiding rules.
-  const ENGINE_PATCH = [...SIGN_IN_EXCEPTIONS, ...require('./adblock-lists').HUMAN_CHECK_EXCEPTIONS, ...youtube.YOUTUBE_FILTERS];
+  // Added to every engine (patched in once, then kept): the sign-in exceptions, the human checks' and site fixes (adblock-lists.js) and YouTube's extra hiding rules.
+  const ENGINE_PATCH = [...SIGN_IN_EXCEPTIONS, ...lists.HUMAN_CHECK_EXCEPTIONS, ...lists.SITE_FIXES, ...youtube.YOUTUBE_FILTERS];
   const LISTS_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   async function setup() {
     const { ElectronBlocker, fromElectronDetails } = require('@ghostery/adblocker-electron');

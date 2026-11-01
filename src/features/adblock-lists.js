@@ -110,4 +110,12 @@ const HUMAN_CHECK_EXCEPTIONS = [
   '@@/^https?:\\/\\/[^/]+\\/[A-Za-z0-9]{8}\\/(?:init\\.js|xhr\\/|captcha\\/)/$script,xhr,1p',
 ];
 
-module.exports = { CDN, CORE, SOURCE, HUMAN_CHECK_EXCEPTIONS, optionalLists, fetchSources, buildEngine, buildEngineOrFallback };
+// Sites whose player waits on scripts the privacy lists block, let through on that site only (features/adblock.js ENGINE_PATCH).
+// Paramount+: the page loads its Tealium tag (utag.js, which brings Adobe's alloy) only once OneTrust's consent check answers;
+// the lists block onetrust.com and stub utag.js, so alloy was never defined and the video player threw before it showed.
+const SITE_FIXES = [
+  '@@||onetrust.com^$domain=paramountplus.com',
+  '@@||tags.tiqcdn.com/utag/cbsi/$script,domain=paramountplus.com',
+];
+
+module.exports = { CDN, CORE, SOURCE, HUMAN_CHECK_EXCEPTIONS, SITE_FIXES, optionalLists, fetchSources, buildEngine, buildEngineOrFallback };
