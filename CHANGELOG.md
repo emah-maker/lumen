@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Sign in to a site with a second account, without a private window.** Right-click a tab, a page or a link → **Open with another account** to open it in **Account 2** (renameable, with a colored mark on the tab and its name in the address bar): its own cookies, logins and storage, kept apart from your main ones and kept across restarts. On sign-in pages that pick a remembered account (Microsoft sending portal.azure.com straight to your school's sign-in, Google, Apple, GitHub, Amazon), a bar offers **Use another account**, which opens the site in an account tab for a clean sign-in. Account tabs keep your extensions, the ad blocker, downloads, site permissions, and History (labeled with the account). Tests: `test/units/account-tabs-units.js`, `test/e2e/account-tabs.js`.
+
 ## 0.5.87 (2026-11-01)
 
 - Paramount+ videos play again. The ad blocker's lists blocked Paramount+'s cookie-consent check (OneTrust) and its tag script (Tealium), and the page loads its video player only after both, so a video page showed no player at all. Both are now let through on paramountplus.com only; its ads and trackers stay blocked, and the same requests stay blocked on every other site.

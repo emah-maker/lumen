@@ -50,7 +50,7 @@ function render() {
     a.href = e.url;
     const time = Object.assign(document.createElement('span'), { className: 'time', textContent: new Date(e.last).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) });
     const title = Object.assign(document.createElement('span'), { className: 'title', textContent: e.title || host(e.url) });
-    const where = Object.assign(document.createElement('span'), { className: 'host', textContent: host(e.url) });
+    const where = Object.assign(document.createElement('span'), { className: 'host', textContent: e.account ? `${host(e.url)} · ${e.account}` : host(e.url) }); // [account tabs] visited in an account tab
     a.append(time, title, where);
     const del = Object.assign(document.createElement('button'), { className: 'remove', type: 'button', title: t('historyPage.remove') });
     del.setAttribute('aria-label', t('historyPage.removeNamed', { name: e.title || host(e.url) }));
