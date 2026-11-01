@@ -138,8 +138,8 @@ function createDownloads(deps) {
     }
   }
 
-  function setup() {
-    deps.session.defaultSession.on('will-download', (event, item, contents) => {
+  function setup(ses = deps.session.defaultSession) { // ([account tabs] an account's session too: the same list)
+    ses.on('will-download', (event, item, contents) => {
       // [agent window] An outside agent's page (Claude Code's own window): nothing lands on the user's disk until they say yes. The file waits in a
       // temporary folder, paused, as a risky one does, and the question goes to the user's own window (askAboutAgent). No save dialog.
       const agent = deps.agentOf?.(contents) || '';

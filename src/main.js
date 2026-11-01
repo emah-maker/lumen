@@ -341,7 +341,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
-  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'phone:wifi-open', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act',
+  'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'phone:wifi-open', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act', 'account:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
   'tab:hover', 'tab:down', // the pointer resting on / pressing a tab: wakes a sleeping one ahead of the click
@@ -1188,22 +1188,26 @@ if (TEST) global.__notifyClick = { // chat notifications: tell(spec, kind) makes
   open: (url) => openTab(url).id, switchTab: (id) => switchTab(id), activeId: () => activeId, contentsOf: (id) => tabs.find((t) => t.id === id)?.view?.webContents.id ?? null };
 // Registered once the app (and so session.defaultSession) exists; a separate whenReady hook so it
 // doesn't touch the app's main startup sequence.
+// Lumen's preloads for web pages, in the main session and each account's ([account tabs] prepareAccountSession).
+const PAGE_PRELOADS = [
+  { id: 'lumen-page-dialogs', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') },
+  // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
+  { id: 'lumen-select-contrast', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') },
+  { id: 'lumen-page-first-keys', filePath: PAGE_FIRST_PRELOAD },
+  { id: 'lumen-error-page', filePath: path.join(__dirname, 'preload', 'error-preload.js') }, // the error page's strings (preload/error-preload.js)
+  { id: 'lumen-files-newtab', filePath: path.join(__dirname, 'preload', 'files-newtab-preload.js') }, // [files] the new-tab page's Files widget (features/files.js)
+  { id: 'lumen-newtab-ai', filePath: path.join(__dirname, 'preload', 'newtab-preload.js') }, // [newtab-images] the new-tab page's Ask AI hand-off (window.lumenNewtab)
+  { id: 'lumen-permissions', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }, // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
+  // [hide activity] Settings → Privacy and security: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
+  { id: 'lumen-hide-activity', filePath: hideActivity.PRELOAD },
+  { id: 'lumen-webauthn-gate', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }, // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
+  // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
+  { id: 'lumen-google-dark', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') },
+];
 app.whenReady().then(() => {
   pdfViewer.attachSession(session.defaultSession, pdfHandler);
-  session.defaultSession.registerPreloadScript({ id: 'lumen-page-dialogs', type: 'frame', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') });
-  // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
-  session.defaultSession.registerPreloadScript({ id: 'lumen-select-contrast', type: 'frame', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') });
-  session.defaultSession.registerPreloadScript({ id: 'lumen-page-first-keys', type: 'frame', filePath: PAGE_FIRST_PRELOAD });
-  session.defaultSession.registerPreloadScript({ id: 'lumen-error-page', type: 'frame', filePath: path.join(__dirname, 'preload', 'error-preload.js') }); // the error page's strings (preload/error-preload.js)
-  session.defaultSession.registerPreloadScript({ id: 'lumen-files-newtab', type: 'frame', filePath: path.join(__dirname, 'preload', 'files-newtab-preload.js') }); // [files] the new-tab page's Files widget (features/files.js)
-  session.defaultSession.registerPreloadScript({ id: 'lumen-newtab-ai', type: 'frame', filePath: path.join(__dirname, 'preload', 'newtab-preload.js') }); // [newtab-images] the new-tab page's Ask AI hand-off (window.lumenNewtab)
-  session.defaultSession.registerPreloadScript({ id: 'lumen-permissions', type: 'frame', filePath: path.join(__dirname, 'preload', 'permissions-preload.js') }); // pages read 'prompt' before a decision, as in Chrome (browser/site-permissions.js)
-  // [hide activity] Settings → Privacy and security: pages can't see you leave the tab, or the window's real size (features/hide-activity.js).
   hideActivity.installIpc(ipcMain, () => settingsBackend.prefs());
-  session.defaultSession.registerPreloadScript({ id: 'lumen-hide-activity', type: 'frame', filePath: hideActivity.PRELOAD });
-  session.defaultSession.registerPreloadScript({ id: 'lumen-webauthn-gate', type: 'frame', filePath: path.join(__dirname, 'preload', 'webauthn-preload.js') }); // passkeys through Windows' WebAuthn, or the API hidden (features/passkeys.js decides per frame)
-  // Google in a dark theme paints dark from the first frame (features/google-dark-preload.js).
-  session.defaultSession.registerPreloadScript({ id: 'lumen-google-dark', type: 'frame', filePath: path.join(__dirname, 'features', 'google-dark-preload.js') });
+  for (const p of PAGE_PRELOADS) session.defaultSession.registerPreloadScript({ type: 'frame', ...p });
   // The AI's hidden reader/search views (agent.js, partition 'claude-reader') load pages nobody
   // sees: they get no permissions at all (camera, location, notifications, …) and no downloads.
   const reader = session.fromPartition('claude-reader');
@@ -1245,10 +1249,11 @@ function ownPageMic(wc, permission, details) {
   return require('./ai/dictation').ownPageMic({ permission, mediaTypes: details?.mediaTypes, requestingUrl: details?.requestingUrl, pageUrl: wc.getURL(), isMainFrame: details?.isMainFrame, isOwnView, isOwnPage: own });
 }
 
-function setupPermissions() {
-  const ses = session.defaultSession;
-  settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
-  deviceGrants.load(settingsBackend.loadDeviceGrants());
+// [account tabs] An account's session gets the same handlers and the same remembered answers (`ses`); the loading and the IPC happen once.
+function setupPermissions(ses = session.defaultSession) {
+  const first = ses === session.defaultSession;
+  if (first) settingsBackend.loadPermissions(permissionDecisions); // [settings] decisions persist in settings.json
+  if (first) deviceGrants.load(settingsBackend.loadDeviceGrants());
   deviceChooser.install(ses, { store: deviceGrants });
 
   ses.setPermissionRequestHandler(async (wc, permission, callbackAsked, details) => {
@@ -1294,7 +1299,7 @@ function setupPermissions() {
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
     spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
-  SITE_PERMISSIONS.installIpc(ipcMain);
+  if (first) SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
 }
 
@@ -1968,13 +1973,14 @@ function noteTypedNav(target) {
   typedNav = site ? { site, at: Date.now() } : null;
 }
 
-function recordVisit(url, title) {
+function recordVisit(url, title, account = null) { // [account tabs] `account`: the account tab's id (History says which account the last visit was in)
   if (!isWebUrl(url) || isCaptchaPage(url) || !importer.isWorthImporting(url)) return; // same filter as imports
   const entry = history.get(url) || { url, title: '', visits: 0, last: 0 };
   entry.visits += 1;
   if (typedNav && Date.now() - typedNav.at < 60000 && omnibox.siteOf(url) === typedNav.site) { entry.typed = (entry.typed || 0) + 1; typedNav = null; }
   entry.last = Date.now();
   if (title) entry.title = title;
+  if (account) entry.account = account; else delete entry.account;
   history.set(url, entry);
   if (entry.visits >= 3) historyVersion++; // (only pages visited 3+ times are in frequentSites: others don't change it)
   saveHistorySoon();
@@ -2239,6 +2245,7 @@ function tabState() {
         sleeping: Boolean(t.frozen || t.placeholder), // asleep in freeze mode: paused, still loaded (tabSleep); or an unloaded tab showing its Reload page
         freedMb: sleepShowFreed() && t.placeholder ? t.freedMb || 0 : 0,
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
+        account: t.account ? accounts().badge(t.account) : null, // [account tabs] { id, name, color }: the strip's colored mark
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
         aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
@@ -2282,6 +2289,7 @@ function sendTabsBody(coalesced) {
   if (tabsBatch && curRec) { tabsBatched.add(curRec); return; }
   keepPinnedFirst();
   const state = tabState();
+  pushAccountUi(); // [account tabs] the address bar's account chip, the toolbar's extensions and the sign-in bar follow the tab in front
   if (!tabStripGate.shouldSend(curRec || tabStripGate, state, coalesced !== true)) return;
   if (!tabStripGate.repeated(curRec || tabStripGate)) ui()?.send('tabs', state);
   agentTargetHook?.();
@@ -2537,6 +2545,115 @@ function researchSession() {
 }
 const isolatedOf = (wc) => tabByContents(wc)?.isolated || null;
 
+// [account tabs] A tab with a second identity: its own saved session, kept apart from the main one (features/account-tabs.js,
+// loaded with the first account tab or sign-in page). Links, pop-ups and new tabs from it stay in it, as a research tab's do.
+const ACCOUNT_PARTITION = /^persist:lumen-account-(\d{1,3})$/;
+const accountOfPartition = (p) => { const id = Number(ACCOUNT_PARTITION.exec(String(p || ''))?.[1]); return id >= 2 ? id : null; };
+const tabPartition = (t) => t?.isolated || (t?.account ? `persist:lumen-account-${t.account}` : null);
+const partitionOf = (wc) => tabPartition(tabByContents(wc)) ?? popupPartition.get(wc) ?? null; // where a link opened from this page goes
+// The extensions instance for a page's session: the main one's, or its account's (none for research tabs and private windows).
+const extOf = (wc) => (!wc || wc.isDestroyed() || wc.session === session.defaultSession ? extensions : accountsRt?.extensionsFor(wc.session) || null);
+let accountsRt = null;
+function accounts() {
+  accountsRt ||= require('./features/account-tabs').createAccountTabs({
+    session, readAccounts: () => readSettings().accountTabs, writeAccounts: (list) => { writeSettings({ ...readSettings(), accountTabs: list }); sendTabs(); },
+    prepareSession: (ses) => prepareAccountSession(ses),
+    openTab: (url, { account, background } = {}) => openTab(url, { background, partition: `persist:lumen-account-${account}` }),
+    switchTab: (id) => switchTab(id), closeTab: (id) => closeTab(id), tabByContents: (wc) => tabByContents(wc), window: () => win,
+    extensionsSource: () => (extensions ? session.defaultSession : null),
+    extensionPreloads: [
+      ...['frame', 'service-worker'].map((type) => ({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') })),
+      { id: 'lumen-pdf-viewer', type: 'frame', filePath: path.join(__dirname, 'features', 'pdf-viewer-preload.js') },
+    ],
+  });
+  return accountsRt;
+}
+// Sign-in pages (features/account-tabs.js isSignInUrl has the list): a quick look first, so the module loads only for one of these.
+const SIGN_IN_HINT = /^https:\/\/(?:(?:login|accounts?|appleid|idmsa|signin|id|auth0?)\.[^/]+|(?:www\.)?(?:github\.com\/(?:login|session)|amazon\.[a-z.]+\/ap\/signin|dropbox\.com\/login|slack\.com\/signin))/i;
+function noteSignInPage(tab, url) {
+  const lib = SIGN_IN_HINT.test(url) ? require('./features/account-tabs') : null;
+  const on = Boolean(lib?.isSignInUrl(url));
+  const from = tab.signInFrom;
+  const next = on ? { url, start: lib.startSiteFor(url, from?.url, { recent: Boolean(from) && Date.now() - from.at < 20000 }) } : null;
+  if (!on) tab.signInDismissed = false; // (shown again on the next sign-in)
+  if ((tab.signIn?.start || null) === (next?.start || null) && Boolean(tab.signIn) === on) return;
+  tab.signIn = next;
+  if (tab.id === activeIdOf(tab.rec)) withWindow(tab.rec, pushAccountUi);
+}
+// One small state for the window's UI (renderer/account-tabs.js, loaded the first time it is not empty): the tab in front's account,
+// the session its toolbar's extension buttons are from, and the sign-in bar. Sent when it changes.
+function accountUiState() {
+  const tab = tabs.find((t) => t.id === activeId);
+  if (!alive(tab)) return null;
+  const account = tab.account ? accounts().badge(tab.account) : null;
+  let bar = null;
+  if (tab.signIn?.start && !tab.signInDismissed && !tab.isolated && !tab.rec?.agent) {
+    const nextId = accounts().otherThan(tab.account || null);
+    let host = '';
+    try { host = new URL(tab.signIn.start).hostname.replace(/^www\./, ''); } catch { /* none */ }
+    bar = { host, next: nextId ? accounts().badge(nextId)?.name || '' : '', main: Boolean(tab.account) && !nextId };
+  }
+  return account || bar ? { account, partition: account ? tabPartition(tab) : '', bar } : null;
+}
+function pushAccountUi() {
+  if (!curRec || (!accountsRt && !tabs.some((t) => t.account || t.signIn))) { if (curRec?.accountUiSent) { curRec.accountUiSent = ''; ui()?.send('account:state', null); } return; }
+  const state = accountUiState();
+  const key = JSON.stringify(state);
+  if (key === (curRec.accountUiSent || 'null')) return;
+  curRec.accountUiSent = key;
+  ui()?.send('account:state', state);
+}
+// "Use another account": the site that started the sign-in, in a new tab of the next account (made if there is none), right of this one.
+// From an account tab with no other account, the main session (null).
+function useAnotherAccount(tab, accountId) {
+  if (!alive(tab)) return;
+  const target = tab.signIn?.start || tabUrl(tab);
+  if (!isWebUrl(target)) return;
+  let id = accountId === undefined ? accounts().otherThan(tab.account || null) : accountId;
+  if (id === undefined || (id === null && !tab.account)) id = accounts().add()?.id ?? null;
+  if (id === tab.account) return;
+  tab.signInDismissed = true;
+  openTabWithAccount(tab, target, id, { focus: true });
+}
+// A tab in account `id` (null: the main session) next to `tab`, in its window.
+function openTabWithAccount(tab, url, id, { focus = true } = {}) {
+  const opened = withWindow(tab?.rec || curRec, () => openTab(url, { background: !focus, openerId: tab?.id ?? null, ...(id ? { partition: `persist:lumen-account-${id}` } : {}) }));
+  return opened;
+}
+// The "Open with another account" submenu: every account but the tab's own, the main one when the tab is an account tab, and a new account.
+function accountMenuItems(currentId, open) {
+  const list = (readSettings().accountTabs || []).length || accountsRt ? accounts().list() : [];
+  return [
+    ...(currentId ? [{ label: t('accounts.main'), click: () => open(null) }] : []),
+    ...list.filter((a) => a.id !== currentId).map((a) => ({ label: a.name, click: () => open(a.id) })),
+    ...(list.length ? [{ type: 'separator' }] : []),
+    { label: t('accounts.new'), enabled: list.length < require('./features/account-tabs').MAX_ACCOUNTS, click: () => { const a = accounts().add(); if (a) open(a.id); } },
+  ];
+}
+if (TEST) global.__accounts = { // test/e2e/account-tabs.js
+  add: (name) => accounts().add(name), list: () => accounts().list(), ui: () => accountUiState(),
+  open: (url, id) => openTab(url, { partition: id ? `persist:lumen-account-${id}` : null }).id,
+  tab: (id) => { const x = allTabsEverywhere().find((t) => t.id === id); return x ? { account: x.account || null, partition: alive(x) ? x.view.webContents.session === session.defaultSession ? 'default' : tabPartition(x) : tabPartition(x), sleeping: Boolean(x.sleeping) } : null; },
+  menu: (id) => (tabMenuTemplate(id).find((i) => i.label === t('accounts.openWith'))?.submenu || []).map((i) => i.label || '-'),
+  pick: (id, label) => (tabMenuTemplate(id).find((i) => i.label === t('accounts.openWith'))?.submenu || []).find((i) => i.label === label)?.click(),
+};
+// What the main session has for pages: Lumen's page preloads, the PDF viewer, permissions (the same remembered answers),
+// downloads (the same list), Safe Browsing and Focus mode, the ad blocker, the proxy and request headers, the Site activity list.
+function prepareAccountSession(ses) {
+  for (const p of PAGE_PRELOADS) ses.registerPreloadScript({ type: 'frame', ...p });
+  pdfViewer.attachSession(ses, pdfHandler);
+  setupPermissions(ses);
+  downloads.setup(ses);
+  siteActivity.watch(ses);
+  ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => mainFrameGate(details, callback));
+  settingsBackend.mirrorSession(ses);
+  adblock.attachSession(ses);
+  try { // spell check as the main session has it now
+    ses.setSpellCheckerEnabled(session.defaultSession.isSpellCheckerEnabled());
+    if (process.platform !== 'darwin') ses.setSpellCheckerLanguages(session.defaultSession.getSpellCheckerLanguages());
+  } catch { /* a language this session can't load: its default */ }
+}
+
 // `view`: a page that already exists (a window a page opened with window.open), adopted as this tab as it is.
 // ---- a new-tab page made ready before it is asked for: Ctrl+T shows one at once, as Chrome's spare renderer does.
 // One hidden page, loaded in the background; a new tab takes it and hands it its fresh data (the address's hash,
@@ -2722,7 +2839,7 @@ function leaveNewTabFor(tab, url) {
   });
   wc.on('did-stop-loading', () => { if (warmPending.has(wc)) revert(); }); // nothing committed: back to the new-tab page
   wc.once('destroyed', revert);
-  if (tab.id === activeId) syncExtensions(() => extensions?.selectTab(wc));
+  if (tab.id === activeId) syncExtensions(() => extOf(wc)?.selectTab(wc));
   sendTabs();
   return true;
 }
@@ -2748,7 +2865,7 @@ function finishLeaving(tab, keep = true) {
   out.view.webContents.once('destroyed', tab.onViewDestroyed);
   try { host?.contentView.removeChildView(failed); } catch {}
   try { failed.webContents.close(); } catch {}
-  if (host && rcAlive(tab.rec) && tab.rec.win === host) withWindow(tab.rec, () => { if (tab.id === activeId) syncExtensions(() => extensions?.selectTab(out.view.webContents)); layout(); sendTabs(); });
+  if (host && rcAlive(tab.rec) && tab.rec.win === host) withWindow(tab.rec, () => { if (tab.id === activeId) syncExtensions(() => extOf(out.view.webContents)?.selectTab(out.view.webContents)); layout(); sendTabs(); });
 }
 // Back, and whether there is one: past the first page of a tab that left the new-tab page (above), a new-tab page.
 function goBack(wc) {
@@ -2773,11 +2890,14 @@ function prepareAgentTab(wc) {
 function openTab(url = newTabUrl(), { background = false, openerId = null, groupId = null, settings = false, historyPage = false, managerPage = null, history = null, partition = null, view: adopted = null, openedBy = null } = {}) {
   const isolated = settings || historyPage || managerPage ? null : isolatedPartition(partition);
   if (isolated) researchSession();
-  const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
+  const account = settings || historyPage || managerPage || isolated ? null : accountOfPartition(partition); // [account tabs]
+  if (account) accounts().session(account);
+  const ownSession = isolated || (account ? `persist:lumen-account-${account}` : null); // (the spare and warm pages are the main session's)
+  const plainNewTab = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !ownSession && typeof url === 'string' && url.startsWith(NEW_TAB_URL);
   const spared = plainNewTab ? takeSpareNewTab() : null;
   const spare = spared?.view || null;
   if (plainNewTab) spareSoon();
-  const webPage = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !isolated && typeof url === 'string' && isWebUrl(url);
+  const webPage = !adopted && !settings && !historyPage && !managerPage && !history?.entries?.length && !ownSession && typeof url === 'string' && isWebUrl(url);
   const warm = webPage ? takeWarmTab() : null; // (its process is already up: see makeWarmTab)
   if (managerPage === 'chat') noteChatPage();
   const chatSpare = managerPage === 'chat' && !adopted && !history?.entries?.length && chatPage.isChatUrl(url) ? takeSpareChat() : null; // (a chat page that has already loaded)
@@ -2788,15 +2908,15 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(settings),
       ...(historyPage ? { preload: path.join(__dirname, 'preload', 'history-preload.js') } : {}),
       ...(managerPage ? { preload: managers.preloadFor(managerPage) } : {}), // the Bookmarks, Downloads or chat page
-      ...(isolated ? { partition: isolated } : {}),
+      ...(ownSession ? { partition: ownSession } : {}),
     },
   });
   // A new-tab page built from scratch (no spare ready): the theme's background until its first paint, not white.
-  if ((plainNewTab || settings || historyPage || managerPage) && !spare && !chatSpare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
+  if ((plainNewTab || settings || historyPage || managerPage || (account && typeof url === 'string' && url.startsWith(NEW_TAB_URL))) && !spare && !chatSpare && !adopted) { // (Lumen's own pages follow the theme; a web page's default is its own)
     try { view.setBackgroundColor(pageBackground()); } catch {} }
   if (plainNewTab) { try { view.setBackgroundColor(pageBackground()); } catch { /* gone */ } } // (a spare or adopted one too: made before the theme may have changed)
   const id = nextTabId++;
-  const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}) };
+  const tab = { id, view, rec: curRec, favicon: null, groupId: null, userRemoved: false, settings, lastActiveAt: Date.now(), ...(managerPage ? { managerPage } : {}), ...(isolated ? { isolated } : {}), ...(account ? { account } : {}) };
   if (openedBy && !curRec?.agent) manners.markOpened(tab, openedBy); // [ai manners] a tab the AI opened (an agent's own window is not marked: nothing there is the user's, so nothing is hidden or closed for them)
   if (curRec?.agent) tab.muted = true; // [agent window] no sound from the agent's window unless the user unmutes a tab
   tabs.push(tab);
@@ -2829,7 +2949,7 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
     // Adding or first loading the view may hand it the keyboard without an event we can see: look again as it settles.
     for (const ms of [0, 60, 300, 1000, 2500]) setTimeout(() => { if (tab.id !== activeId && alive(tab) && tab.view.webContents.isFocused()) tab.keepKeyboard?.(); }, ms).unref?.();
     const current = activeTab();
-    if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
+    if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extOf(current.webContents)?.selectTab(current.webContents)); // extensions never see research tabs
     sendTabs();
   } else {
     switchTab(id);
@@ -2872,7 +2992,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
         overrideBrowserWindowOptions: popupWindowOptions(),
         outlivesOpener: true,
         // No page yet means a person's Shift+click on a link, not a page's sign-in popup: it opens as a normal tab.
-        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tab.isolated, target, tab) : withWindow(tab.rec, () => openTab(target, { background: manners.isAiTab(tab), openerId: id, partition: tab.isolated, ...fromAiTab() })).webContents),
+        createWindow: (options) => (options?.webContents ? popupWindow(options, settings, tabPartition(tab), target, tab) : withWindow(tab.rec, () => openTab(target, { background: manners.isAiTab(tab), openerId: id, partition: tabPartition(tab), ...fromAiTab() })).webContents),
       };
     }
     // A tab. When a page's script asked for it (window.open), the page gets that new window back and it keeps
@@ -2890,14 +3010,14 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
         overrideBrowserWindowOptions: { webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false) } },
         createWindow: (options) => {
           const background = disposition === 'background-tab' || manners.isAiTab(tab);
-          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id, partition: tab.isolated, ...fromAiTab() })).webContents;
+          if (!options?.webContents) return withWindow(tab.rec, () => openTab(target, { background, openerId: id, partition: tabPartition(tab), ...fromAiTab() })).webContents;
           const view = new WebContentsView({ webContents: options.webContents });
-          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view, partition: tab.isolated, ...fromAiTab() }));
+          withWindow(tab.rec, () => openTab(target, { background, openerId: id, view, partition: tabPartition(tab), ...fromAiTab() }));
           return options.webContents;
         },
       };
     }
-    withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab' || manners.isAiTab(tab), openerId: id, partition: tab.isolated, ...fromAiTab() })); // a link from a research tab stays in its session
+    withWindow(tab.rec, () => openTab(target, { background: disposition === 'background-tab' || manners.isAiTab(tab), openerId: id, partition: tabPartition(tab), ...fromAiTab() })); // a link from a research tab (or an account tab) stays in its session
     return { action: 'deny' };
   });
   wc.on('enter-html-full-screen', () => { const side = Boolean(tab.split) && tab.id !== activeId && splitView()?.partner === tab; tab.fullscreen = true; if (side) switchTab(tab.id); else layout(); }); // ([split view] the other side of a pair going full screen comes to the front: it fills the window)
@@ -2992,6 +3112,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('responsive', () => { tab.hungAsked = false; });
   wc.on('did-navigate', (_e, url) => { if (!isErrorPage(url)) tab.lastUrl = url; });
   wc.on('did-navigate', () => { mediaPages.delete(wc); });
+  // [account tabs] Where a sign-in started (the page the tab was going to when a site sent it to sign in), and the "Use another account" bar on sign-in pages.
+  wc.on('did-start-navigation', (e) => { if (e.isMainFrame && !e.isSameDocument && isWebUrl(e.url) && !SIGN_IN_HINT.test(e.url)) tab.signInFrom = { url: e.url, at: Date.now() }; });
+  wc.on('did-navigate', (_e, url) => noteSignInPage(tab, url));
   wc.on('did-start-navigation', (e) => { if (tab.frozen && e.isMainFrame && !e.isSameDocument) { tab.frozen = false; tab.lastActiveAt = Date.now(); sendTabs(); } }); // a new document is not frozen // a new page starts without the camera or microphone
   wc.on('did-navigate', (_e, url) => {
     // The error page replaces the failed entry, so Back skips past it.
@@ -3002,7 +3125,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
       sendTabs();
       return;
     }
-    if (!tab.isolated) recordVisit(pdfViewer.pdfUrlOf(url) || url, wc.getTitle()); // research pages stay out of the user's History (a PDF in Lumen's viewer: its own address)
+    if (!tab.isolated) recordVisit(pdfViewer.pdfUrlOf(url) || url, wc.getTitle(), tab.account); // research pages stay out of the user's History (a PDF in Lumen's viewer: its own address)
     if (!tab.isolated) noteFileTab(tab, url); // [files] a local file opened in a tab goes on the Files list
     tab.lastVisitUrl = url;
     tab.pageText = ''; // a new page: its text arrives after it loads
@@ -3014,7 +3137,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
   wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
     if (!isMainFrame || url.split('#')[0] === (tab.lastVisitUrl || '').split('#')[0]) return;
     tab.lastVisitUrl = url;
-    if (!tab.isolated) recordVisit(url, wc.getTitle());
+    if (!tab.isolated) recordVisit(url, wc.getTitle(), tab.account);
   });
   wc.on('did-finish-load', () => readPageText(tab));
   pageTools.attach(tab);
@@ -3110,7 +3233,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     applyChromeIdentity(wc);
     siteSecurity.attachTab(wc); // mixed content, on the debugger session applyChromeIdentity opened
     safeBrowsing.attachTab(wc); // the warning page's "Visit this site" link
-    if (!tab.isolated) syncExtensions(() => extensions?.addTab(wc, win)); // extensions live in the profile's session: they don't see research tabs
+    if (!tab.isolated) syncExtensions(() => extOf(wc)?.addTab(wc, win)); // extensions live in the profile's session (and each account's): they don't see research tabs
     // (A popup it opens is given the same identity in popupWindow, before its first page loads.)
   }
   tab.askedUrl = typeof url === 'string' ? url : ''; // (what a first load was asked for: the saved session's address for it until it commits)
@@ -3247,14 +3370,15 @@ function wakeTab(tab, { placeholder = false } = {}) {
   if (!tab.sleeping) return;
   tab.lastActiveAt = Date.now(); // woken (even in the background): its idle clock starts again, so the next sweep doesn't put it straight back
   // A web page with no back/forward list to bring back (a tab restored from the last session) wakes in the warm view.
-  const warm = !placeholder && !tab.managerPage && !tab.isolated && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
+  if (tab.account) accounts().session(tab.account); // [account tabs] (a restored account tab: its session is made as it wakes)
+  const warm = !placeholder && !tab.managerPage && !tabPartition(tab) && !tab.sleepHistory?.entries?.length && isWebUrl(tab.sleepUrl || '') ? takeWarmTab() : null;
   if (tab.managerPage === 'chat') noteChatPage();
   const chatSpare = !placeholder && tab.managerPage === 'chat' && !tab.sleepHistory?.entries?.length && chatPage.isChatUrl(tab.sleepUrl || '') ? takeSpareChat() : null; // (a chat page that has already loaded)
   const view = warm || chatSpare || new WebContentsView({
     webPreferences: {
       sandbox: true, contextIsolation: true, nodeIntegration: false, ...settingsBackend.tabWebPreferences(false),
       ...(tab.managerPage ? { preload: managers.preloadFor(tab.managerPage) } : {}),
-      ...(tab.isolated ? { partition: tab.isolated } : {}), // a sleeping research tab wakes in the same session
+      ...(tabPartition(tab) ? { partition: tabPartition(tab) } : {}), // a sleeping research (or account) tab wakes in the same session
     },
   });
   tab.view = view;
@@ -3294,13 +3418,15 @@ function leavePlaceholder(tab) {
 }
 // Switching to an unloaded tab shows the Reload page (not the site) when the setting asks for it and the tab is an ordinary web page.
 const placeholderMode = () => tabSleep.normalize(readSettings()).onReturn === 'placeholder';
-const placeholderWanted = (tab) => placeholderMode() && Boolean(tab.sleeping) && !tab.isolated && !tab.managerPage && isWebUrl(tab.sleepUrl || '');
+const placeholderWanted = (tab) => placeholderMode() && Boolean(tab.sleeping) && !tabPartition(tab) && !tab.managerPage && isWebUrl(tab.sleepUrl || '');
 const isAsleep = (tab) => Boolean(tab && (tab.sleeping || tab.frozen || tab.placeholder));
 
 // A tab from the saved session that hasn't been opened yet: a sleeping tab (above) with no view,
 // which switchTab() wakes the first time it's shown. Starting Lumen loads only the active tab
 // instead of every tab of the last session at once.
-function addRestoredTab(url, title, favicon = null) {
+// [account tabs] A saved tab's account, if that account still exists (one removed comes back in the main session).
+const restoredPartition = (saved, i) => { const id = Number(saved.accounts?.[i]); return id >= 2 && (readSettings().accountTabs || []).some((a) => Number(a?.id) === id) ? `persist:lumen-account-${id}` : null; };
+function addRestoredTab(url, title, favicon = null, account = null) {
   // The new-tab page's cached copy (offline-safe, but kept only for favorites and frequent sites),
   // else the icon the tab showed when the session was saved.
   // (As a file in favicon-cache, not a data: address: that would ride along in every tab-strip update and save.)
@@ -3312,6 +3438,7 @@ function addRestoredTab(url, title, favicon = null) {
     userRemoved: false, settings: false, lastActiveAt: Date.now(),
     sleeping: true, sleepUrl: url, sleepTitle: title || hostOf(url) || 'New Tab', sleepHistory: null,
     ...(chatPage.isChatUrl(url) ? { managerPage: 'chat' } : {}), // wakes with the chat preload
+    ...(account ? { account } : {}), // [account tabs] wakes in its account's session
   };
   tabs.push(tab);
   return tab;
@@ -4001,7 +4128,7 @@ function switchTab(id, { wake = true } = {}) {
   adoptPreloaded(tab);
   tab.viewedAt = Date.now(); // which tab the user looked at last (the chat page's AI works in it)
   const current = activeTab();
-  if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extensions?.selectTab(current.webContents)); // extensions never see research tabs
+  if (current && !tabByContents(current.webContents)?.isolated) syncExtensions(() => extOf(current.webContents)?.selectTab(current.webContents)); // extensions never see research tabs
   dialogs.refresh(); // a dialog waiting for this tab comes up; the one for the tab left waits
   openForApproval(tab); // [sidebar per tab] a tab whose chat waits for an OK shows its sidebar
   if (!aiToolSwitch) { followTabChat(tab); shownPick = ownPickOfOpenChat(); announceModelIfChanged(); } // (the user went to this tab: the pickers show its chat's model; a window's refresh or focus does not change it)
@@ -4106,7 +4233,7 @@ function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
   const reopenUrl = isInternal(url) ? sessionFiles.savedUrl(url) : url; // (a file in its viewer reopens from the file's own address)
   if (reopenUrl && !tab.isolated) { // a research tab would reopen in the user's session with their cookies: not offered
     closedTabs.push(reopenUrl);
-    closedInfo.push(closedTabsKept.snapshot({ pinned: tab.pinned, groupId: tab.groupId, index, history: tab.pendingCloseHistory ?? navSnapshot(tab) }));
+    closedInfo.push({ ...closedTabsKept.snapshot({ pinned: tab.pinned, groupId: tab.groupId, index, history: tab.pendingCloseHistory ?? navSnapshot(tab) }), account: tab.account || null }); // [account tabs] reopens in its account
     tabTools.noteClosed(reopenUrl, alive(tab) ? tab.view.webContents.getTitle() : tab.sleepTitle); // for tab search
   }
   if (closedTabs.length > 50) { closedTabs.splice(0, closedTabs.length - 50); closedInfo.splice(0, closedInfo.length - 50); } // Reopen Closed Tab goes back 50
@@ -4829,6 +4956,7 @@ function tabMenuTemplate(id) {
       { label: t('menu.newTabRight'), click: () => newTabRightOf(id) },
       { label: t('menu.reload'), ...shortcutHint('CmdOrCtrl+R'), click: () => reloadTab(tab, { always: true }) },
       { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
+      ...(isWebUrl(url) && !tab.isolated && !tab.rec?.agent ? [{ label: t('accounts.openWith'), submenu: accountMenuItems(tab.account || null, (aid) => openTabWithAccount(tab, url, aid)) }] : []), // [account tabs]
       tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
       ...muteSite,
     ],
@@ -4923,7 +5051,7 @@ function navSnapshot(tab) {
 // and where it was in the strip (features/closed-tabs.js).
 function reopenClosedTab(url, info) {
   const plan = closedTabsKept.placement(info, { count: tabs.length, pinned: tabs.filter((t) => t.pinned).length, hasGroup: (gid) => tabGroups.groups.has(gid) });
-  const { id } = openTab(url, { ...(info?.history ? { history: info.history } : {}), ...(plan.groupId ? { groupId: plan.groupId } : {}) });
+  const { id } = openTab(url, { ...(info?.history ? { history: info.history } : {}), ...(plan.groupId ? { groupId: plan.groupId } : {}), ...(info?.account ? { partition: `persist:lumen-account-${info.account}` } : {}) });
   const tab = tabs.find((t) => t.id === id);
   if (!tab) return;
   if (plan.pinned) tab.pinned = true;
@@ -4964,7 +5092,7 @@ function duplicateTab(id) {
   if (!tab || tab.settings) return null;
   const history = navSnapshot(tab); // (null loads the URL instead)
   const url = tabUrl(tab) || newTabUrl();
-  const { id: newId } = openTab(url, { background: true, history, historyPage: url.startsWith(HISTORY_URL), managerPage: tab.managerPage || null, partition: tab.isolated });
+  const { id: newId } = openTab(url, { background: true, history, historyPage: url.startsWith(HISTORY_URL), managerPage: tab.managerPage || null, partition: tabPartition(tab) });
   const copy = tabs.find((t) => t.id === newId);
   copy.pinned = Boolean(tab.pinned);
   manners.keepOff(copy, manners.isKeptOff(tab)); // [ai off-tab] a copy of a tab kept off is kept off too
@@ -5156,7 +5284,8 @@ const fromHistoryPage = (event) => event.senderFrame === event.sender.mainFrame 
 ipcMain.handle('history:list', async (event) => {
   if (!fromHistoryPage(event)) return [];
   await historyReady;
-  return [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000).map(({ url, title, last }) => ({ url, title, last }));
+  const named = new Map((readSettings().accountTabs || []).map((a) => [Number(a?.id), String(a?.name || '')])); // [account tabs] the visit's account, by its name now
+  return [...history.values()].sort((a, b) => b.last - a.last).slice(0, 5000).map(({ url, title, last, account }) => ({ url, title, last, ...(named.get(account) ? { account: named.get(account) } : {}) }));
 });
 ipcMain.handle('history:manage', (event) => { if (fromHistoryPage(event)) openSettingsPage('privacy'); });
 ipcMain.handle('history:remove', async (event, url) => {
@@ -5576,7 +5705,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
     child.on('focus', () => { if (Date.now() > settle) mark.touched = true; });
     wc.on('before-input-event', (_e, input) => { if (input.type === 'keyDown' && !manners.isAgentInput(wc)) mark.touched = true; });
     child.once('closed', () => aiPopups.delete(child));
-  } else if (!partition) passkeyPopups.set(wc, child); // the user's own sign-in popup may use a passkey (passkeyContext)
+  } else if (!partition || accountOfPartition(partition)) passkeyPopups.set(wc, child); // the user's own sign-in popup may use a passkey (passkeyContext)
   popupPartition.set(wc, partition);
   if (!noIdentity) applyChromeIdentity(wc); // before anything loads
   if (!options?.webContents && url) wc.loadURL(url).catch(() => {}); // no page yet: it loads the address itself
@@ -5595,7 +5724,7 @@ function popupWindow(options, noIdentity = false, partition = null, url = null, 
   wc.on('before-input-event', (e, input) => { // Ctrl+W (Cmd+W) closes it, as it would a tab
     if (input.type === 'keyDown' && shortcutMod(input) && !input.alt && shortcutKey(input) === 'w') { e.preventDefault(); child.close(); }
   });
-  if (!partition) syncExtensions(() => { try { extensions?.addTab(wc, child); } catch {} }); // password managers can fill it
+  if (!partition || accountOfPartition(partition)) syncExtensions(() => { try { extOf(wc)?.addTab(wc, child); } catch {} }); // password managers can fill it
   const popupLimit = createBurstLimit();
   wc.setWindowOpenHandler(({ url, disposition }) => {
     if (!popupLimit.allow()) return { action: 'deny' };
@@ -5717,8 +5846,9 @@ function showContextMenu(wc, p) {
   if (p.linkURL && isWebUrl(p.linkURL)) {
     const link = linkMenu.linkItems(p, linkMenuDeps(wc));
     items.push(
-      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) },
+      { label: t('menu.openLinkNewTab'), click: () => openTab(p.linkURL, { background: true, openerId: tabByContents(wc)?.id, partition: partitionOf(wc) }) },
       ...link.open, // Open Link in New Window, … in Private Window
+      ...(tabByContents(wc) && !isolatedOf(wc) ? [{ label: t('accounts.openLinkWith'), submenu: accountMenuItems(tabByContents(wc).account || null, (aid) => openTabWithAccount(tabByContents(wc), p.linkURL, aid)) }] : []), // [account tabs]
       { type: 'separator' },
       ...link.save, // Save Link As…
       ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveLinkForLater'), click: () => saveForLaterUrl(p.linkURL, p.linkText) }]),
@@ -5733,11 +5863,11 @@ function showContextMenu(wc, p) {
     if (value) items.push({ label: t(mail ? 'menu.copyEmail' : 'menu.copyPhone'), click: () => { clipboard.writeText(value); toast(t(mail ? 'menu.emailCopied' : 'menu.phoneCopied')); } }, { type: 'separator' });
   }
   if (p.mediaType === 'image' && p.srcURL) {
-    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }) });
+    if (isWebUrl(p.srcURL)) items.push({ label: t('menu.openImageNewTab'), click: () => openTab(p.srcURL, { background: true, partition: partitionOf(wc) }) });
     const image = linkMenu.imageItems(p, linkMenuDeps(wc));
     items.push(...image.save, { label: t('menu.copyImage'), click: () => wc.copyImageAt(p.x, p.y) }, ...image.copy, { type: 'separator' }); // Save Image As…, Copy Image, Copy Image Address
   }
-  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: isolatedOf(wc) ?? popupPartition.get(wc) ?? null }), copy: (text) => clipboard.writeText(text) }));
+  items.push(...pageTools.videoMenuItems(wc, p, { openTab: (url) => openTab(url, { background: true, partition: partitionOf(wc) }), copy: (text) => clipboard.writeText(text) }));
   if (p.isEditable) {
     if (passwordsRt) items.push(...passwordsRt.contextMenuItems(tabByContents(wc), p)); // [passwords] Fill <username>, on a site with saved logins
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
@@ -5764,6 +5894,7 @@ function showContextMenu(wc, p) {
       items.push(
         { label: t('menu.savePageAs'), ...shortcutHint('CmdOrCtrl+S'), click: () => pageTools.savePage(wc).catch(() => {}) },
         ...(isolatedOf(wc) ? [] : [{ label: t('menu.saveForLater'), ...shortcutHint('CmdOrCtrl+Shift+Y'), click: () => saveForLater(tabByContents(wc)) }]),
+        ...(tabByContents(wc) && !isolatedOf(wc) ? [{ label: t('accounts.openWith'), submenu: accountMenuItems(tabByContents(wc).account || null, (aid) => openTabWithAccount(tabByContents(wc), wc.getURL(), aid)) }] : []), // [account tabs]
         { label: t('menu.print'), ...shortcutHint('CmdOrCtrl+P'), click: () => printTab(wc) },
         { label: t('menu.viewSource'), ...shortcutHint('CmdOrCtrl+U'), click: () => pageTools.viewSource(wc.getURL(), { session: wc.session, openerId: tabByContents(wc)?.id }) },
         { label: t('menu.screenshot'), ...shortcutHint('CmdOrCtrl+Shift+S'), click: () => takeScreenshot(wc) },
@@ -6775,7 +6906,7 @@ async function aiTabsClose(selector = {}, { auto = false } = {}) {
     if (alive(tab) && (await unsavedInputState(tab.view.webContents)) === 'yes') return keepTab(rec, tab); // (no answer from a hung or crashed page is not "holds text": it closes by the normal path, which force-closes a frozen page)
     // The page answered after a round trip: the user may have taken the tab, a run may have moved in, a chat may have bound it.
     if (!manners.isAiTab(tab) || tab.closing || !tabAnywhere(tab.id) || !aiTabSelect({ ...selector, auto, rec }).some((x) => x.tab === tab)) return { kept: false, skipped: true };
-    const item = { url: tabUrl(tab), partition: tab.isolated || null, rec, groupId: tab.groupId || null };
+    const item = { url: tabUrl(tab), partition: tabPartition(tab), rec, groupId: tab.groupId || null };
     return (await closeAiTab(rec, tab)) ? { item } : keepTab(rec, tab);
   }));
   await popups;
@@ -6952,6 +7083,7 @@ function sessionEntry() {
     active: Math.max(0, saved.findIndex((t) => t.id === activeId)),
     groupIds: saved.map((t) => t.groupId || null),
     pinned: saved.map((t) => Boolean(t.pinned)),
+    accounts: saved.map((t) => t.account || null), // [account tabs] which account's session a tab comes back in
     aiKeepOff: saved.map((t) => manners.isKeptOff(t)), // [ai off-tab] stays with the tab across a restart
     aiOpened: saved.map((t) => manners.savedMark(t)), // [ai manners] a tab the AI opened and the user has not taken over stays the AI's across a restart ({ chatId, at })
     chats: chatBind.snapshot(saved.map((t) => t.id)), // [chat per tab] which chat each tab shows (not re-run after a restart); a chat shown in several tabs is in each
@@ -7020,12 +7152,12 @@ function restoreTabsFrom(saved) {
     // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
     let tab;
     if (live.has(i)) {
-      const opened = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null });
+      const opened = openTab(url, { background: true, managerPage: chatPage.isChatUrl(url) ? 'chat' : null, partition: restoredPartition(saved, i) });
       if (i === active) activeTabId = opened.id;
       tab = tabs.find((t) => t.id === opened.id);
       if (saved.titles?.[i]) tab.pendingTitle = saved.titles[i]; // (shown until the page has its own: see the tab info's `pending`)
       if (!tab.favicon && saved.favicons?.[i]) tab.favicon = saved.favicons[i];
-    } else tab = addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i]);
+    } else tab = addRestoredTab(url, saved.titles?.[i], saved.favicons?.[i], accountOfPartition(restoredPartition(saved, i)));
     const groupId = saved.groupIds?.[i];
     if (groupId && tabGroups.groups.has(groupId)) tab.groupId = groupId;
     else tab.userRemoved = true; // restore the session as it was: don't regroup tabs left loose
@@ -7260,7 +7392,7 @@ function adoptTab(tab, index, show = true) {
   if (tab.view) {
     win.contentView.addChildView(tab.view);
     tab.view.setVisible(false);
-    if (!tab.isolated) syncExtensions(() => { try { extensions?.addTab(tab.view.webContents, win); } catch {} });
+    if (!tab.isolated) syncExtensions(() => { try { extOf(tab.view.webContents)?.addTab(tab.view.webContents, win); } catch {} });
   }
   if (!show) { sendTabs(); return; }
   switchTab(tab.id);
@@ -8509,6 +8641,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label });
     rec.splitKey = ''; // ([split view] the fresh page has no divider)
     tabStripGate.forget(rec); // (the fresh page has no strip: the next send goes out even if the state is what the old page had)
+    rec.accountUiSent = ''; // [account tabs] nor the account chip and bar
     sendTabs(); // a reload after a crash: bring the fresh UI up to date
     followFront({ push: false }); // [chat per tab] this window's tab's chat
     const items = agent.transcript();
@@ -8557,6 +8690,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     rec.uiLoaded = true;
     rec.splitKey = ''; // ([split view] the fresh page has no divider)
     tabStripGate.forget(rec); // (tabs restored while this page was still loading were sent to nowhere: the strip must still get its first state, even if it is the one the gate last recorded)
+    rec.accountUiSent = ''; // [account tabs] the same for the account chip and bar
     if (rec.agent) w.webContents.send('agent-window', { label: rec.agent.label }); // the badge that says whose window this is
     firstTabLoaded.then(() => { if (rcAlive(rec) && !rec.win.isDestroyed() && !rec.agent) withWindow(rec, () => { if (!suggestView) createSuggestView(); }); }); // (an agent's window never has an address bar typed in: its dropdown's renderer, ~110 MB, is made only if the user takes the window: address:touched)
     if (rec.prepared) {
@@ -10315,6 +10449,7 @@ const settingsBackend = settingsPage.create({
   history: () => history,
   saveHistory: saveHistorySoon,
   siteActivity,
+  accountSessions: () => (readSettings().accountTabs || []).map((a) => Number(a?.id)).filter((id) => id >= 2).map((id) => session.fromPartition(`persist:lumen-account-${id}`)), // [account tabs] cleared with the main session
   downloads: downloads.list,
   sendDownloads: downloads.send,
   permissionDecisions,
@@ -10868,6 +11003,28 @@ function toggleReaderActive() {
   return pageTools.toggleReader(tabs.find((t) => t.id === activeId && alive(t)));
 }
 ipcMain.on('page:reader', () => { toggleReaderActive(); });
+// [account tabs] The sign-in bar's buttons and the address bar's account chip (renderer/account-tabs.js). UI-only (UI_ONLY_IPC).
+ipcMain.on('account:act', (_e, action, arg) => {
+  const tab = tabs.find((x) => x.id === activeId && alive(x));
+  if (!tab) return;
+  const popup = (template) => Menu.buildFromTemplate(template).popup({ window: win, ...(arg && Number.isFinite(arg.x) && Number.isFinite(arg.y) ? { x: Math.round(arg.x), y: Math.round(arg.y) } : {}) });
+  if (action === 'use') useAnotherAccount(tab);
+  else if (action === 'choose') popup(accountMenuItems(tab.account || null, (aid) => useAnotherAccount(tab, aid)));
+  else if (action === 'dismiss') { tab.signInDismissed = true; pushAccountUi(); }
+  else if (action === 'rename' && tab.account && typeof arg === 'string') accounts().rename(tab.account, arg);
+  else if (action === 'menu' && tab.account) {
+    const account = accounts().get(tab.account);
+    if (!account) return;
+    const { COLORS } = require('./features/account-tabs');
+    popup([
+      { label: t('accounts.rename'), click: () => { if (curRec) curRec.accountUiSent = ''; ui()?.send('account:state', { ...accountUiState(), renaming: true }); } },
+      { label: t('accounts.color'), submenu: COLORS.map((color, i) => ({ label: t(`accounts.color${i + 1}`), type: 'radio', checked: account.color === color, click: () => accounts().recolor(account.id, color) })) },
+      { type: 'separator' },
+      { label: t('accounts.newTab', { name: account.name }), click: () => openTabWithAccount(tab, newTabUrl(), account.id) },
+      ...(isWebUrl(tabUrl(tab)) ? [{ label: t('accounts.openInMain'), click: () => openTabWithAccount(tab, tabUrl(tab), null) }] : []),
+    ]);
+  }
+});
 ipcMain.on('translate:act', (_e, action, arg) => translate.act(tabs.find((x) => x.id === activeId && alive(x)), String(action), typeof arg === 'string' ? arg : undefined));
 if (TEST) global.__translateLocal = () => translateLocal();
 if (TEST) global.__translate = { api: translate, tab: (id) => tabs.find((x) => x.id === id) };

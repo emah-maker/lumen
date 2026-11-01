@@ -138,6 +138,12 @@ Settings → Tabs and browsing → **Tab layout** lists the tabs down the left o
 
 Right-click a tab → **Open in split view** to show it next to the tab you are on, or drag a tab out of the strip and drop it on the right edge of the page. Drag the divider to resize (double-click for an even split); the button on the divider, or **Close split view** in the tab menu, ends it. The tab you clicked last is the one the address bar, the AI and the shortcuts use, so the AI can work in one side while you read the other. Split views are not kept across restarts.
 
+## Two accounts on one site (account tabs)
+
+A tab can sign in as someone else. Right-click a tab, a page or a link → **Open with another account** → **Account 2** (or **New account**). That tab gets its own cookies, logins and site storage, kept apart from your main ones and kept across restarts, so your school Microsoft account and your personal one can both stay signed in. Links, pop-ups and new tabs opened from it stay in the same account. Its tab has a short colored line, and the address bar names the account; click the name to rename it, change its color, open a new tab in it, or open the page in your main account.
+
+On a sign-in page (Microsoft, Google, Apple, GitHub, Amazon and others) that picks a remembered account for you, a bar offers **Use another account**: one click opens the site that sent you there (portal.azure.com, say) in an account tab, where the sign-in starts clean. The account tabs have the same extensions (a password manager signs in once per account), ad blocker, downloads list and site permissions as your main tabs, and their visits appear in History with the account's name. Accounts are listed in your profile's settings; their data stays on your computer.
+
 ## A real browser underneath
 
 ![Lumen's settings page](docs/media/settings.png)

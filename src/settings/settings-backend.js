@@ -1017,8 +1017,10 @@ function create(deps) {
       deps.saveHistory();
       done.history = removed;
     }
+    // [account tabs] Every account's session is cleared with the main one (deps.accountSessions).
+    const all = [ses(), ...(deps.accountSessions?.() || [])];
     if (cookies && !recent) {
-      await ses().clearStorageData({ storages: ['cookies', ...SITE_STORAGES] });
+      for (const s of all) await s.clearStorageData({ storages: ['cookies', ...SITE_STORAGES] });
       deps.siteActivity?.clear();
       done.cookies = true;
     } else if (cookies) {
@@ -1026,13 +1028,15 @@ function create(deps) {
       // origin, so a time range means: everything stored by the sites active in that range.
       const hosts = recent.hosts;
       let removed = 0;
-      for (const c of await ses().cookies.get({})) {
-        const d = String(c.domain || '').replace(/^\./, '').toLowerCase();
-        if (!hosts.some((h) => related(d, h))) continue;
-        const url = `${c.secure ? 'https' : 'http'}://${d}${c.path || '/'}`;
-        await ses().cookies.remove(url, c.name).then(() => { removed++; }, () => {});
+      for (const s of all) {
+        for (const c of await s.cookies.get({})) {
+          const d = String(c.domain || '').replace(/^\./, '').toLowerCase();
+          if (!hosts.some((h) => related(d, h))) continue;
+          const url = `${c.secure ? 'https' : 'http'}://${d}${c.path || '/'}`;
+          await s.cookies.remove(url, c.name).then(() => { removed++; }, () => {});
+        }
+        for (const origin of recent.origins) await s.clearStorageData({ origin, storages: SITE_STORAGES }).catch(() => {});
       }
-      for (const origin of recent.origins) await ses().clearStorageData({ origin, storages: SITE_STORAGES }).catch(() => {});
       deps.siteActivity?.forget(hosts);
       done.cookies = true;
       done.sites = hosts.length;
@@ -1040,7 +1044,7 @@ function create(deps) {
     }
     if (cache) {
       // Electron has no time range for the HTTP cache: it is cleared for all time.
-      await ses().clearCache();
+      for (const s of all) await s.clearCache();
       done.cache = true;
     }
     if (downloads) done.downloads = clearDownloads(since);
