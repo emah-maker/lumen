@@ -45,6 +45,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('every tile has a ⋮ button', (await home('document.querySelectorAll(".cell .tile-more").length')) === 11);
     check('the ⋮ button is hidden until hover or focus', (await home('getComputedStyle(document.querySelector(".cell .tile-more")).opacity')) === '0');
     await shot('tiles-before');
+    // A wide Favorites card keeps icon-sized columns: neighbours stay close instead of spreading across the card.
+    // (A fresh profile docks Favorites in the page; the grid is put in a 920px card container for the measure, then back.)
+    const spread = await home(`(async () => {
+      const grid = document.querySelector('.grid'); const home = grid.parentElement; const next = grid.nextSibling;
+      const card = Object.assign(document.createElement('div'), { className: 'w-card' });
+      card.style.cssText = 'position: fixed; left: 0; top: 0; width: 920px; height: 300px; container-type: size; container-name: card;';
+      card.append(grid); document.body.append(card);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const [a, b] = [...grid.querySelectorAll('.cell .tile')].map((t) => t.getBoundingClientRect());
+      home.insertBefore(grid, next); card.remove();
+      return { step: Math.round(b.x - a.x) };
+    })()`);
+    check('a wide Favorites card spaces icons about one tile apart, not across the card', spread.step <= 100, JSON.stringify(spread));
 
     // Hover shows the button (a real mouse move over the tile).
     const box = await home('(() => { const r = document.querySelector(".grid .cell").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()');
