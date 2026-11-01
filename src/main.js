@@ -1152,8 +1152,9 @@ function showToUser(event, req) {
 }
 // An extension content script's alert/confirm/prompt (browser/extension-dialogs.js): Lumen's dialog over the tab in front (the
 // one the user is working in), named after the extension, not the site. -> { accept, value }; a failure answers "cancel".
-const extDialogs = require('./browser/extension-dialogs');
-const extensionDialogs = extDialogs.createRegistry();
+// Loaded with the first extension (setupExtensions' extensionDialogsFor), not at startup: a profile with no extensions never needs it.
+let extDialogs = null;
+let extensionDialogs = null;
 async function showExtensionDialog(ask) {
   try {
     const owner = activeTab()?.webContents || null;
@@ -1621,18 +1622,25 @@ async function setupExtensions() {
   ses.extensions.loadExtension = async (dir, ...rest) => {
     if (typeof dir === 'string' && (Object.keys(readSettings().extensionSites || {}).length || fs.existsSync(path.join(dir, 'manifest.lumen-original.json')))) await extensionSites().applyToDir(dir, readSettings().extensionSites).catch(() => {});
     // Its content scripts' alert/confirm/prompt as Lumen's dialog (browser/extension-dialogs.js), after the narrowing above so the shim reaches the same sites.
-    if (typeof dir === 'string') await extensionDialogs.prepare(dir).catch(() => {});
+    if (typeof dir === 'string') await extensionDialogsFor().prepare(dir).catch(() => {});
     const ext = await loadRaw(dir, ...rest);
-    if (typeof dir === 'string') extensionDialogs.loaded(dir, ext);
+    if (typeof dir === 'string') extensionDialogsFor().loaded(dir, ext);
     return ext;
   };
-  ses.protocol.handle(extDialogs.SCHEME, async (req) => {
-    const origin = req.headers.get('origin');
-    const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', ...(origin ? { 'access-control-allow-origin': origin } : {}) };
-    const ask = req.method === 'POST' ? extDialogs.parseAsk(await req.text().catch(() => ''), extensionDialogs) : null;
-    if (!ask) return new Response('null', { status: 403, headers });
-    return new Response(JSON.stringify(await showExtensionDialog(ask)), { headers });
-  });
+  // The module, its registry and its scheme's handler, made with the first extension that loads (its shim asks only after that).
+  const extensionDialogsFor = () => {
+    if (extensionDialogs) return extensionDialogs;
+    extDialogs = require('./browser/extension-dialogs');
+    extensionDialogs = extDialogs.createRegistry();
+    ses.protocol.handle(extDialogs.SCHEME, async (req) => {
+      const origin = req.headers.get('origin');
+      const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', ...(origin ? { 'access-control-allow-origin': origin } : {}) };
+      const ask = req.method === 'POST' ? extDialogs.parseAsk(await req.text().catch(() => ''), extensionDialogs) : null;
+      if (!ask) return new Response('null', { status: 403, headers });
+      return new Response(JSON.stringify(await showExtensionDialog(ask)), { headers });
+    });
+    return extensionDialogs;
+  };
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
