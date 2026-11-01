@@ -1331,6 +1331,9 @@
       .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-inline: min(0px, calc((254px - 100%) / 6)); } /* four columns: (W - 4x56)/6 - 5 */
       .frequent { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
+    /* A wide Favorites card: six stretched columns left ~100px between 56px icons. Columns stay icon-sized instead,
+       as many as fit, so a wider card shows more favorites per row rather than wider gaps. */
+    @container card (min-width: 560px) { .grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); margin-inline: 0; } }
     /* [widget polish] One anatomy for every card, no native scrollbars, whole rows only. What fits is decided in
        newtab-widgets.js (settleCard); this is how it looks. Kept last so it wins over the per-widget rules above. */
     .fit-off { display: none !important; }
