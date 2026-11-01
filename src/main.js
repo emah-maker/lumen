@@ -1146,6 +1146,23 @@ function showToUser(event, req) {
   }
   } catch (err) { failed(err); }
 }
+// An extension content script's alert/confirm/prompt (browser/extension-dialogs.js): Lumen's dialog over the tab in front (the
+// one the user is working in), named after the extension, not the site. -> { accept, value }; a failure answers "cancel".
+const extDialogs = require('./browser/extension-dialogs');
+const extensionDialogs = extDialogs.createRegistry();
+async function showExtensionDialog(ask) {
+  try {
+    const owner = activeTab()?.webContents || null;
+    const title = `${ask.extension.name} says`;
+    if (ask.kind === 'prompt') {
+      const { response, values } = await dialogs.ask({ title, message: ask.message, fields: [{ name: 'value', value: ask.value }], buttons: [t('dialog.cancel'), t('dialog.ok')], defaultId: 1, cancelId: 0, owner });
+      return response === 1 && values ? { accept: true, value: String(values.value ?? '') } : { accept: false };
+    }
+    const buttons = ask.kind === 'confirm' ? [t('dialog.cancel'), t('dialog.ok')] : [t('dialog.ok')];
+    const { response } = await dialogs.showMessageBox(win, { title, message: ask.message, buttons, defaultId: buttons.length - 1, cancelId: 0, owner });
+    return { accept: ask.kind === 'confirm' ? response === 1 : true };
+  } catch (err) { console.error('[lumen] extension dialog:', err); return { accept: false }; }
+}
 // A site's notification clicked (page-dialogs-preload.js): its tab comes to the front, in whichever window holds it, like Chrome.
 ipcMain.on('page-notification:click', (event) => {
   const wc = event.sender;
@@ -1599,8 +1616,19 @@ async function setupExtensions() {
   const loadRaw = ses.extensions.loadExtension.bind(ses.extensions);
   ses.extensions.loadExtension = async (dir, ...rest) => {
     if (typeof dir === 'string' && (Object.keys(readSettings().extensionSites || {}).length || fs.existsSync(path.join(dir, 'manifest.lumen-original.json')))) await extensionSites().applyToDir(dir, readSettings().extensionSites).catch(() => {});
-    return loadRaw(dir, ...rest);
+    // Its content scripts' alert/confirm/prompt as Lumen's dialog (browser/extension-dialogs.js), after the narrowing above so the shim reaches the same sites.
+    if (typeof dir === 'string') await extensionDialogs.prepare(dir).catch(() => {});
+    const ext = await loadRaw(dir, ...rest);
+    if (typeof dir === 'string') extensionDialogs.loaded(dir, ext);
+    return ext;
   };
+  ses.protocol.handle(extDialogs.SCHEME, async (req) => {
+    const origin = req.headers.get('origin');
+    const headers = { 'content-type': 'application/json', 'cache-control': 'no-store', ...(origin ? { 'access-control-allow-origin': origin } : {}) };
+    const ask = req.method === 'POST' ? extDialogs.parseAsk(await req.text().catch(() => ''), extensionDialogs) : null;
+    if (!ask) return new Response('null', { status: 403, headers });
+    return new Response(JSON.stringify(await showExtensionDialog(ask)), { headers });
+  });
   // Before the extension library's own preload, which freezes `chrome` (see the preload's note).
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
