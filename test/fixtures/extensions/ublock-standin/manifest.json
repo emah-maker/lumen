@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "uBlock Origin Lite (test stand-in)",
+  "version": "1.0.0",
+  "description": "A fixture for test/e2e/ublock-mode.js: blocks /standin-ad.js with a declarativeNetRequest ruleset it turns on from its worker, as uBlock Origin Lite does, and has a toolbar popup.",
+  "permissions": ["declarativeNetRequest"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "uBlock stand-in" },
+  "declarative_net_request": { "rule_resources": [{ "id": "ads", "enabled": true, "path": "rules.json" }] }
+}

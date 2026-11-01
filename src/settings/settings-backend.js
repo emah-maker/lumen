@@ -110,6 +110,7 @@ const DEFAULTS = {
   focusSchedules: [], // [focus] recurring focus: { id, days, from, to, on } (features/focus.js)
   adblock: true,
   adblockAllow: [],
+  adBlocker: 'lumen', // [uBlock mode] lumen (the built-in blocker) | ublock (uBlock Origin Lite, the user's own extension; features/ublock-mode.js)
   permissionDefaults: {}, // permission -> 'ask' | 'block'
   downloadDir: '',
   projectsDir: '', // [projects] the folder new projects' folders are made in; empty: <Documents>Lumen Projects (main.js projectsParent)
@@ -350,6 +351,7 @@ function validate(key, value) {
     case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
     case 'focusSites': return require('../features/focus').cleanSites(value); // [focus]
     case 'focusSchedules': return require('../features/focus').cleanSchedules(value);
+    case 'adBlocker': return pick(value, ['lumen', 'ublock'], null);
     case 'adblockAllow':
       return Array.isArray(value) ? [...new Set(value.map((h) => String(h).trim().toLowerCase().replace(/^www\./, '')).filter((h) => /^[a-z0-9.-]+$/.test(h)))] : null;
     case 'permissionDefaults':
@@ -735,6 +737,8 @@ function create(deps) {
   // request is a single parse of the address and nothing else unless a setting or a rule above applies.
   function setupHeaders(target = ses()) {
     applyAcceptLanguage(target);
+    // [uBlock mode] a session where an extension blocks (features/ublock-mode.js) has no webRequest listener: Electron would turn its rules off.
+    if (deps.stepsAside?.(target)) { target.webRequest.onBeforeSendHeaders(null); return; }
     target.webRequest.onBeforeSendHeaders((details, callback) => {
       const p = hotPrefs();
       let headers = details.requestHeaders;
@@ -956,6 +960,12 @@ function create(deps) {
       await apply('bypassPermissions');
       return state();
     }
+    if (key === 'adBlocker') { // [uBlock mode] installs or removes uBlock Origin Lite, and moves Lumen's own hooks (main.js setAdBlocker)
+      const mode = validate(key, value);
+      if (mode === null || !deps.setAdBlocker) throw new Error(`Invalid value for ${key}`);
+      await deps.setAdBlocker(mode);
+      return state();
+    }
     if (process.env.CLAUDE_BROWSER_TEST && globalThis.__failPrefsSet === key) throw new Error('Test: the save failed'); // (a hidden e2e makes one save fail to see the page's error and the switch going back)
     if (!(key in DEFAULTS)) throw new Error(`Unknown setting: ${key}`);
     if ((key === 'focusSites' || key === 'focusSchedules') && deps.focusLocked?.()) throw new Error('Focus mode is on: its sites and schedules can be changed when it ends.'); // [focus] (editing the list is not a way out of a session)
@@ -1143,7 +1153,7 @@ function create(deps) {
   }
 
   // ---- extensions ----
-  const installedExtensions = () => ses().extensions.getAllExtensions().filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'));
+  const installedExtensions = () => ses().extensions.getAllExtensions().filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store') && !deps.lumenOwnExtension?.(ext)); // ([uBlock mode] not Lumen's own request rules)
   // Has a toolbar button (the extension library draws one for each extension whose manifest has an action): only these can be pinned.
   const hasAction = (ext) => { const a = ext.manifest.manifest_version === 3 ? ext.manifest.action : ext.manifest.manifest_version === 2 ? ext.manifest.browser_action : undefined; return typeof a === 'object' && a !== null; };
   // [extensions] Site access: offered when the extension has an id Lumen can keep (a Web Store install) and asks for all sites
@@ -1412,7 +1422,7 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, attachTab, pinExtension, syncExtensionPins, extensionsLoaded, listExtensions, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    prefs, set, state, start, refreshHeaders: () => setupHeaders(), attachTab, pinExtension, syncExtensionPins, extensionsLoaded, listExtensions, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
     clearData, uiPrefs, launched, newTabLook, reset,
   };

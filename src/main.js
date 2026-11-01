@@ -60,7 +60,7 @@ const editMenu = require('./browser/edit-menu'); // Cut / Copy / Paste (and Past
 // The extension libraries (electron-chrome-extensions, electron-chrome-web-store with its zip reader) load in setupExtensions,
 // after the first window is created, so their ~25 modules are not read before it; these two are used later, on a click or a test.
 const installExtension = (...args) => require('electron-chrome-web-store').installExtension(...args);
-const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args);
+const uninstallExtension = (...args) => require('electron-chrome-web-store').uninstallExtension(...args).then((out) => { afterUninstall(args[0]); return out; });
 const extensionSites = () => require('./browser/extension-sites'); // Settings → Extensions → Site access (loaded when an extension is loaded with sites saved, or one is changed)
 const { replyOnThrow } = require('./ai/page-debug');
 const { Agent, pageDebugShared, MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, validateInput: validateToolInput, transcriptFor } = require('./ai/agent');
@@ -1517,7 +1517,91 @@ const adblock = createAdblock({
   realUrl: (wc) => realUrl(wc),
   onResponseHeaders: (details) => settingsBackend.noteResponseHeaders(details),
   mainFrameGate: (details, callback) => mainFrameGate(details, callback), // pages, before they load (Focus mode, then Safe Browsing)
+  stepsAside: (ses) => mainStepsAside(ses), // [uBlock mode] no listener and no filtering on the main session
 });
+
+// ---------- uBlock mode (features/ublock-mode.js) ----------
+// Settings → Privacy and security → Ad blocker → uBlock Origin Lite: the user's own extension blocks on the main session. Electron applies its rules only
+// while that session has no session.webRequest listener, so Lumen's own (the blocker, the page gate, the request headers) step aside there.
+const ublockOn = () => (settingsCache || readSettings()).adBlocker === 'ublock';
+const mainStepsAside = (ses) => ses === session.defaultSession && ublockOn();
+// The main session's listeners, for the mode now chosen: none in uBlock mode; otherwise the gate until the blocker has loaded, the blocker's, the headers'.
+// Resolves once Lumen's own request rules for uBlock mode are in place (or gone).
+function applyBlockerHooks() {
+  const ses = session.defaultSession;
+  if (ublockOn()) require('./features/ublock-mode').clearListeners(ses);
+  else if (!adblock.ready()) ses.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => mainFrameGate(details, callback));
+  adblock.sync();
+  settingsBackend.refreshHeaders();
+  return syncRequestRulesSoon();
+}
+// What Lumen's request-headers listener and blocker did on the main session (Chrome hints, Do Not Track, GPC, third-party cookies, pings,
+// tracking parameters), as rules of Lumen's own small extension (features/ublock-helper.js): loaded in uBlock mode, removed otherwise.
+// The rules are written only when they change (a setting, the theme): a hidden page of that extension sets them, then closes.
+let requestRules = null; // the chain of syncs (one at a time)
+const syncRequestRulesSoon = () => { requestRules = (requestRules || Promise.resolve()).then(syncRequestRules).catch((err) => console.error('[lumen] request rules:', err?.message || err)); return requestRules; };
+async function syncRequestRules() {
+  const ses = session.defaultSession;
+  const H = require('./features/ublock-helper');
+  const userData = app.getPath('userData');
+  const loaded = ses.extensions.getAllExtensions().find((e) => H.isHelper(e, userData));
+  if (!ublockOn()) { if (loaded) { ses.extensions.removeExtension(loaded.id); fs.rmSync(path.join(userData, H.FOLDER, 'applied.json'), { force: true }); } return; } // (set again in full next time)
+  const rules = JSON.stringify(H.rulesFor(settingsBackend.prefs(), {
+    hints: { low: UA_HINT_HEADERS, high: uaHighEntropyHeaders(Object.keys(CHROME_IDENTITY.HIGH_ENTROPY)) },
+    dark: nativeTheme.shouldUseDarkColors,
+    tracking: require('./features/tracking-params').forRules(),
+  }));
+  const dir = H.writeFiles(userData);
+  const ext = loaded || await ses.extensions.loadExtension(dir);
+  const appliedFile = path.join(dir, 'applied.json'); // (the rules last set: a start-up with the same ones opens no page)
+  if (fs.readFileSync(appliedFile, { encoding: 'utf8', flag: 'a+' }) === rules) return;
+  const page = new BrowserWindow({ show: false, webPreferences: { session: ses } });
+  try {
+    await page.loadURL(`chrome-extension://${ext.id}/rules.html`);
+    const out = await page.webContents.executeJavaScript(`chrome.declarativeNetRequest.getDynamicRules().then((old) => chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: old.map((r) => r.id), addRules: ${rules} })).then(() => 'ok', (e) => String(e && e.message || e))`);
+    if (out === 'ok') fs.writeFileSync(appliedFile, rules); else console.error('[lumen] request rules refused:', out);
+  } finally {
+    if (!page.isDestroyed()) page.destroy();
+  }
+}
+// Settings → Privacy and security → Ad blocker (settings-backend.js set('adBlocker')): installs or removes uBlock Origin Lite and moves Lumen's hooks.
+async function setAdBlocker(mode) {
+  const ses = session.defaultSession;
+  await require('./features/ublock-mode').switchTo(mode, {
+    extensions: ses.extensions,
+    install: (id) => installExtension(id, { session: ses }),
+    uninstall: (id) => uninstallExtension(id, { session: ses }),
+    startWorker: (id) => ses.serviceWorkers.startWorkerForScope(`chrome-extension://${id}/`),
+    pin: (id) => settingsBackend.pinExtension(id, true),
+    readSettings, writeSettings,
+    applyHooks: applyBlockerHooks,
+    reloadPages: () => { reloadOpenPages().catch(() => {}); },
+  });
+}
+// Pages already open keep the network path they loaded with (Lumen's hooks, or none) until they load again: the awake web tabs with nothing
+// typed in them reload, so the blocker just chosen covers them. Sleeping tabs load with it when woken.
+async function reloadOpenPages() {
+  for (const rec of [...winRecs]) {
+    if (!rcAlive(rec) || isSpare(rec) || rec.agent) continue;
+    for (const tab of [...tabsOf(rec)]) {
+      if (!alive(tab) || isAsleep(tab) || tab.isolated || tab.settings) continue;
+      const wc = tab.view.webContents;
+      if (!isWebUrl(wc.getURL()) || wc.isCurrentlyAudible()) continue;
+      if ((await unsavedInputState(wc)) === 'no' && !wc.isDestroyed()) wc.reload();
+    }
+  }
+}
+// uBlock Origin Lite removed some other way (Settings → Extensions, the Extensions menu) in uBlock mode: Lumen's blocker takes over at once.
+function afterUninstall(id) {
+  if (!ublockOn() || id !== require('./features/ublock-mode').UBOL_ID) return;
+  ublockGone();
+  reloadOpenPages().catch(() => {});
+}
+// ...or never loaded this run: the setting goes back, and Lumen's hooks come back on the main session.
+function ublockGone() {
+  writeSettings({ ...readSettings(), adBlocker: 'lumen' });
+  applyBlockerHooks();
+}
 
 // ---------- private windows (features/private-window.js) ----------
 // Native dialogs there for permissions and downloads; Safe Browsing and certificate warnings use Lumen's
@@ -1702,6 +1786,13 @@ async function setupExtensions() {
       popup.show();
     }, 700));
   });
+  // [uBlock mode] once the store's install of uBlock Origin Lite has loaded: the rest of the switch (its worker, its button, Lumen steps aside).
+  let ublockFromStore = false;
+  ses.extensions.on('extension-loaded', (_e, ext) => {
+    if (!ublockFromStore || ext.id !== require('./features/ublock-mode').UBOL_ID) return;
+    ublockFromStore = false;
+    setAdBlocker('ublock').catch((err) => console.error('[lumen] uBlock mode failed:', err?.message || err));
+  });
   // Lists what it asks for (all sites, history, downloads, …) before anything is installed.
   const extensionAsks = (manifest) => {
     const lines = extensionPermissionLines(manifest);
@@ -1711,7 +1802,21 @@ async function setupExtensions() {
     session: ses,
     loadExtensions: false, // (loaded below: registered before the first tabs, their workers started after)
     autoUpdate: false, // (checked below, once they are loaded)
-    beforeInstall: async ({ localizedName, manifest }) => {
+    beforeInstall: async ({ id, localizedName, manifest }) => {
+      // [uBlock mode] uBlock Origin Lite from its store page: added as the ad blocker, the same switch as Settings → Ad blocker.
+      if (id === require('./features/ublock-mode').UBOL_ID && !ublockOn()) {
+        const { response } = await dialog.showMessageBox(win, {
+          type: 'question',
+          buttons: [t('dialog.cancel'), t('extension.ublock.button')],
+          defaultId: 1,
+          cancelId: 0,
+          message: t('extension.ublock.use', { name: localizedName }),
+          detail: t('extension.ublock.detail'),
+        });
+        if (response !== 1) return { action: 'deny' };
+        ublockFromStore = true;
+        return { action: 'allow' };
+      }
       if (isContentBlocker(manifest, localizedName)) {
         await dialog.showMessageBox(win, {
           type: 'info',
@@ -1752,6 +1857,9 @@ async function setupExtensions() {
     }
   })));
   perf.mark('extLoaded');
+  if (ublockOn()) syncRequestRulesSoon(); // [uBlock mode] Lumen's own request rules (loaded once the store's extensions are)
+  // [uBlock mode] chosen, but uBlock Origin Lite is gone (its folder removed, or it failed to load): Lumen's blocker, rather than none.
+  if (ublockOn() && !ses.extensions.getExtension(require('./features/ublock-mode').UBOL_ID)) ublockGone();
   settingsBackend.extensionsLoaded().catch(() => {}); // [extensions] the ones installed before pins existed start pinned
   // Store extensions' updates: looked for once the first tab has loaded, then every 5 hours, as the library did.
   const checkUpdates = () => updateExtensions(ses).catch((err) => console.error('[lumen] extension update check failed:', err?.message || err));
@@ -1791,9 +1899,11 @@ function reportIssueUrl() {
   return `https://github.com/emah-maker/lumen/issues/new?labels=bug&body=${encodeURIComponent(body)}`;
 }
 
+// [uBlock mode] Lumen's own request-rules extension (features/ublock-helper.js) is part of Lumen: never listed as one of the user's.
+const lumenOwnExtension = (ext) => ext?.manifest?.name === 'Lumen request rules' && require('./features/ublock-helper').isHelper(ext, app.getPath('userData'));
 function extensionsMenu() {
   const installed = session.defaultSession.extensions.getAllExtensions()
-    .filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'));
+    .filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store') && !lumenOwnExtension(ext));
   const buttons = new Map(settingsBackend.listExtensions().map((e) => [e.id, e]));
   const items = installed.map((ext) => ({
     label: ext.name,
@@ -1893,7 +2003,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.closeAiTabs'), enabled: aiTabSelect({}).length > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } }, // [ai manners]
         { label: t('menu.searchEngine'), submenu: searchEngineMenu() },
         { label: t('menu.import'), submenu: importMenu() },
-        { label: t('menu.adBlocker'), submenu: adblock.menu() },
+        { label: t('menu.adBlocker'), submenu: ublockOn() ? [{ label: t('adblock.ublock'), enabled: false }, { type: 'separator' }, { label: t('adblock.settings'), click: () => openSettingsPage('privacy-adblock') }] : adblock.menu() }, // [uBlock mode] its own button has the per-site controls
         { label: t('menu.extensions'), submenu: extensionsMenu() },
       ]),
       chunk([{ label: t('menu.settings'), accelerator: 'CmdOrCtrl+,', click: () => openSettingsPage() }]), // [settings]
@@ -5659,9 +5769,34 @@ function googleRefusedGuard(wc, { inTab = false, win: winOf = null } = {}) {
   wc.on('did-navigate', check);
   wc.on('did-navigate-in-page', check); // Google's sign-in moves between steps without full loads
 }
+// [uBlock mode] The page gate (Focus mode, then Safe Browsing) on the main session while uBlock Origin Lite blocks there, without session.webRequest
+// (one listener would turn its rules off): a page is stopped as its load starts and the block or warning page loads instead. Its request has gone out
+// by then, but the page is never shown. A Safe Browsing lookup that needs Google's answer holds the page until it comes, then loads it again.
+// (The stop waits a moment: wc.stop() inside did-start-navigation crashed Electron 44.)
+const gatePass = new WeakMap(); // web contents -> the address let through once (a held page, loaded again)
+function navigationGate(wc, url, isInPlace, isMainFrame) {
+  if (!isMainFrame || isInPlace || !/^https?:/i.test(url) || !mainStepsAside(wc.session)) return;
+  if (gatePass.get(wc) === url) { gatePass.delete(wc); return; }
+  const req = { url, resourceType: 'mainFrame', webContents: wc, method: 'GET' };
+  const stopThen = (fn) => setImmediate(() => { if (wc.isDestroyed()) return; wc.stop(); setImmediate(() => { if (!wc.isDestroyed()) fn(); }); }); // (a load started in the same turn as the stop was dropped)
+  if (focusCtl && focusCtl.gate(req, () => {})) {
+    stopThen(() => { const page = focusCtl.blockPage(wc, url, -20); if (page) wc.loadURL(page).catch(() => {}); });
+    return;
+  }
+  if (safeBrowsing.clearNow(url)) return;
+  stopThen(() => safeBrowsing.gate(req, (out) => {
+    if (wc.isDestroyed()) return;
+    if (out?.cancel) { const page = safeBrowsing.warningUrl(wc, url, -20); if (page) wc.loadURL(page).catch(() => {}); return; }
+    gatePass.set(wc, url);
+    wc.loadURL(url).catch(() => {});
+  }));
+}
+
 // A tab's page that fails to load: the Safe Browsing warning, the HTTPS-only page, the certificate warning or the
 // error page, in that order (normal tabs and private ones).
 function tabFailPage(wc) {
+  wc.on('did-start-navigation', (_e, url, isInPlace, isMainFrame) => navigationGate(wc, url, isInPlace, isMainFrame)); // [uBlock mode]
+  wc.on('did-redirect-navigation', (_e, url, isInPlace, isMainFrame) => navigationGate(wc, url, isInPlace, isMainFrame));
   wc.on('did-fail-load', (_e, code, description, failedUrl, isMainFrame) => {
     if (!isMainFrame || code === -3) return; // -3 = aborted, e.g. the user navigated away
     if (failedUrl.startsWith(ERROR_URL)) return; // the error page itself failed: an error page for it would fail the same way, over and over
@@ -6512,7 +6647,7 @@ scheduler.every('run-slots', 5000, () => { try { runSlots.sweep(); } catch { /* 
 const lastSidebar = {}; // [ai] which engines the model menu offers (Settings → AI → AI providers): the menu is rebuilt when one moves
 const SIDEBAR_KEYS = ['codexSidebar', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar'];
 let lastAutoDeleteDays = null; // [auto-delete chats] (null: not seen yet; the start-up sweep covers it)
-onSettingsWritten = (s) => { adblock.sync(); const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); { const was = lastAutoDeleteDays; lastAutoDeleteDays = Number(s.chatAutoDeleteDays) || 0; if (was !== null && lastAutoDeleteDays && lastAutoDeleteDays !== was) autoDeleteSoon(15000); } aiStatusSoon(); }; // ([auto-delete chats] a new number of days: a sweep soon)
+onSettingsWritten = (s) => { adblock.sync(); if (s.adBlocker === 'ublock') syncRequestRulesSoon(); /* [uBlock mode] a privacy setting changed: the rules follow */ const moved = SIDEBAR_KEYS.some((k) => { const first = !(k in lastSidebar); const was = lastSidebar[k]; lastSidebar[k] = s[k]; return !first && was !== s[k]; }); if (moved) { try { modelsChanged(); } catch { /* not set up yet */ } } if (s.maxChatRuns !== undefined && tabChatsLib.clampRuns(s.maxChatRuns) !== runSlots.limit) runSlots.setMax(s.maxChatRuns); { const was = lastAutoDeleteDays; lastAutoDeleteDays = Number(s.chatAutoDeleteDays) || 0; if (was !== null && lastAutoDeleteDays && lastAutoDeleteDays !== was) autoDeleteSoon(15000); } aiStatusSoon(); }; // ([auto-delete chats] a new number of days: a sweep soon)
 const shownChat = new WeakMap(); // a window's UI -> the chat its sidebar shows
 // ---------- [sidebar per tab] the sidebar is open or closed tab by tab (features/sidebar-tabs.js)
 // Each tab keeps its own answer, whatever chat it shows or shares: opening or closing the sidebar in one tab never opens or
@@ -8891,6 +9026,7 @@ const quitGuard = lazy(() => require('./features/quit-guard').createQuitGuard({ 
 let uiReady = false; // the window's UI has loaded and its tabs are open
 // The title bar buttons follow the theme (one listener for the app, not one per window reopened).
 nativeTheme.on('updated', () => {
+  if (ublockOn()) syncRequestRulesSoon(); // [uBlock mode] the color-scheme hint Google gets
   for (const w of webContentsModule.getAllWebContents()) { const update = lightSchemes.get(w); if (update && !w.isDestroyed()) update(w.getURL()); } // [site light] the theme changed
   for (const rec of winRecs) if (rcAlive(rec)) withWindow(rec, () => paintBackgrounds(rec)); // (the not-yet-painted area matches the page in the new theme)
   if (process.platform === 'darwin') return;
@@ -9814,6 +9950,7 @@ if (TEST) {
   global.__uninstallExtension = (id) => uninstallExtension(id, { session: session.defaultSession });
   global.__setExtensionSites = (id, sites, mode) => setExtensionSites(id, sites, mode);
   global.__isContentBlocker = isContentBlocker;
+  global.__ublock = { set: (mode) => setAdBlocker(mode), on: ublockOn, reloadOpenPages, rulesSettled: () => requestRules }; // (rulesSettled: the request rules' last sync, after a settings change)
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked, probe: adblock.probe };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };
   global.__recorder = { mp4: () => recordMp4, get: () => screenRecorder(), options: recordOptions, menu: () => recordMenu(activeTab()?.webContents), startTab: (opts) => screenRecorder().start({ kind: 'tab', wc: activeTab()?.webContents, ...opts }) }; // [screen recording]
@@ -10456,6 +10593,9 @@ const settingsBackend = settingsPage.create({
   deviceGrants, // [devices] declared with the permissions below (a getter would be needed if it were read before then)
   uninstallExtension,
   setExtensionSites,
+  stepsAside: (ses) => mainStepsAside(ses), // [uBlock mode] the request-headers listener steps aside on the main session
+  setAdBlocker: (mode) => setAdBlocker(mode), // [uBlock mode] Settings → Privacy and security → Ad blocker
+  lumenOwnExtension: (ext) => lumenOwnExtension(ext), // [uBlock mode] not in Settings → Extensions
   extensionSitesSaved: () => readSettings().extensionSites || {},
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
   openTab: (url) => openTab(url),
@@ -13697,7 +13837,9 @@ app.whenReady().then(async () => {
   loadHistory();
   // Until the ad blocker takes over onBeforeRequest (it sends pages to the same gate), or if it
   // fails to start, pages still go through Safe Browsing's check.
-  session.defaultSession.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => mainFrameGate(details, callback));
+  // [uBlock mode] none in uBlock mode: uBlock Origin Lite's rules apply only while the main session has no listener (applyBlockerHooks).
+  if (!ublockOn()) session.defaultSession.webRequest.onBeforeRequest(GATE_FILTER, (details, callback) => mainFrameGate(details, callback));
+  Object.defineProperty(session.defaultSession, 'lumenStepsAside', { get: ublockOn, configurable: true }); // (ai/page-debug.js records no network there)
   safeBrowsing.refresh().catch(() => {});
   startFocus(); // [focus] a session still running, or a schedule: the gate is up before the first page loads
   // Filter lists: from the cache they load in a moment, so tabs wait for them (restored tabs would

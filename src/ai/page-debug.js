@@ -54,6 +54,8 @@ function sourceName(source) {
 // Electron's resourceType -> the label shown and filtered on. webRequest does not tell fetch() from XMLHttpRequest (both are
 // 'xhr'), so the filters `xhr` and `fetch` mean the same thing.
 const TYPE_LABEL = { mainFrame: 'document', subFrame: 'document', stylesheet: 'css', script: 'script', image: 'image', font: 'font', object: 'object', xhr: 'xhr', ping: 'ping', cspReport: 'csp', media: 'media', webSocket: 'ws', other: 'other' };
+// DevTools' resource types as webRequest's (uBlock mode records requests from the Network domain).
+const CDP_TYPE = { Document: 'mainFrame', Stylesheet: 'stylesheet', Image: 'image', Media: 'media', Font: 'font', Script: 'script', XHR: 'xhr', Fetch: 'xhr', Ping: 'ping', CSPViolationReport: 'cspReport', WebSocket: 'webSocket' };
 const typeLabel = (resourceType) => TYPE_LABEL[resourceType] || String(resourceType || 'other').toLowerCase();
 
 // The address as shown: host + path, the query and fragment dropped (they often carry tokens and ids) unless asked for.
@@ -235,7 +237,10 @@ class PageDebug {
     this.keepPageOn(cap);
 
     const ses = (() => { try { return wc.session; } catch { return null; } })();
-    if (ses?.webRequest) this.join(ses, id, cap);
+    // [uBlock mode] a session whose extension blocks gets no webRequest listener (one turns its rules off, features/ublock-mode.js): the tab's own
+    // DevTools connection reports its requests instead.
+    if (ses?.lumenStepsAside) this.joinDevtools(wc, cap);
+    else if (ses?.webRequest) this.join(ses, id, cap);
     wc.once('destroyed', () => {
       cap.release({ settle: true }); // a closed tab answers its held dialog "no": the page's call never stays open
       this.heldCaps.delete(cap);
@@ -253,6 +258,26 @@ class PageDebug {
     if (cap.pageOnAt && t - cap.pageOnAt < 30000) return;
     cap.pageOnAt = t;
     try { Promise.resolve(cap.wc.debugger.sendCommand('Page.enable', {})).catch(() => {}); } catch { /* gone */ }
+  }
+
+  // [uBlock mode] The same records from the Network domain of the tab's debugger (attached for every tab's Chrome identity, main.js).
+  // The tab's own frame's requests; out-of-process frames' are not seen.
+  joinDevtools(wc, cap) {
+    let dbg;
+    try { dbg = wc.debugger; if (!dbg?.isAttached?.()) return; } catch { return; }
+    const status = new Map(); // request id -> { statusCode, fromCache }
+    const onMessage = (_e, method, p, sessionId) => {
+      if (sessionId || !p?.requestId) return;
+      if (method === 'Network.requestWillBeSent') {
+        if (p.redirectResponse) cap.requestEnd({ id: p.requestId, statusCode: p.redirectResponse.status });
+        if (/^(https?|wss?):/.test(p.request?.url || '')) cap.requestStart({ id: p.requestId, method: p.request.method, url: p.request.url, resourceType: CDP_TYPE[p.type] || 'other' });
+      } else if (method === 'Network.responseReceived') status.set(p.requestId, { statusCode: p.response?.status || 0, fromCache: Boolean(p.response?.fromDiskCache) });
+      else if (method === 'Network.loadingFinished') { if (cap.open.has(p.requestId)) cap.requestEnd({ id: p.requestId, ...status.get(p.requestId) }); status.delete(p.requestId); }
+      else if (method === 'Network.loadingFailed') { if (cap.open.has(p.requestId)) cap.requestEnd({ id: p.requestId }, p.errorText || 'failed'); status.delete(p.requestId); }
+    };
+    dbg.on('message', onMessage);
+    Promise.resolve(dbg.sendCommand('Network.enable', {})).catch(() => {});
+    wc.once('destroyed', () => { try { dbg.removeListener('message', onMessage); } catch { /* gone */ } });
   }
 
   // ---- session listeners (Electron keeps one per event: these three are free, see the file header)

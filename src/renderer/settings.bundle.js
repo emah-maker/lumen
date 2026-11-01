@@ -7058,13 +7058,42 @@ async function buildPrivacy(card) {
     h('button', { text: 'Remove', onclick: async () => { await save('adblockAllow', st.prefs.adblockAllow.filter((x) => x !== host)); renderAllow(); } })))
     : [h('span', { class: 'note', text: 'No sites. Ads are blocked everywhere.' })]));
   renderAllow();
-  slots.get('privacy-adblock').append(
+
+
+  const blockerNote = status('ad-blocker-status');
+  const blockerSel = h('select', { id: 'pref-adBlocker', 'aria-label': 'Ad blocker' },
+    h('option', { value: 'lumen', text: 'Lumen’s built-in blocker' }), h('option', { value: 'ublock', text: 'uBlock Origin Lite' }));
+  const ublockMode = () => st.prefs.adBlocker === 'ublock';
+  blockerSel.value = ublockMode() ? 'ublock' : 'lumen';
+  const ublockAbout = row('While uBlock Origin Lite is on', `It blocks in normal windows; its toolbar button pauses it on a site and opens its settings. Private windows keep Lumen’s blocker (extensions don’t run there). Lumen’s other protections keep working, with these differences: ${UBLOCK_DIFFERENCES.map((d) => d.charAt(0).toLowerCase() + d.slice(1, -1)).join('; ')}.`);
+  ublockAbout.id = 'ad-blocker-ublock-note';
+  ublockAbout.classList.add('warn');
+  const lumenRows = [
     toggle('adblock', 'Block ads and trackers', 'Built-in blocker using uBlock Origin-compatible filter lists.'),
     stackRow('Sites allowed to show ads', 'The blocker is off on these sites.', allowList,
       h('div', { class: 'controls' }, allowInput, h('button', {
         text: 'Add site',
         onclick: async () => { const host = allowInput.value.trim(); if (!host) return needSite(allowNote, allowInput); allowNote.textContent = ''; await save('adblockAllow', [...st.prefs.adblockAllow, host], allowInput); allowInput.value = ''; renderAllow(); },
       }), allowNote)),
+  ];
+  const paintBlocker = () => { for (const r of lumenRows) r.hidden = ublockMode(); ublockAbout.hidden = !ublockMode(); };
+  blockerSel.addEventListener('change', async () => {
+    const want = blockerSel.value;
+    if (want === 'ublock' && !(await confirmUblock())) { blockerSel.value = 'lumen'; return; }
+    blockerSel.disabled = true;
+    blockerNote.textContent = want === 'ublock' ? 'Installing uBlock Origin Lite…' : 'Removing uBlock Origin Lite…';
+    const saved = await save('adBlocker', want, blockerSel);
+    blockerSel.disabled = false;
+    blockerSel.value = ublockMode() ? 'ublock' : 'lumen';
+    blockerNote.textContent = saved ? (ublockMode() ? 'uBlock Origin Lite is on. Its button is in the toolbar.' : 'Lumen’s blocker is on.') : '';
+    paintBlocker();
+  });
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'adBlocker') { blockerSel.value = ublockMode() ? 'ublock' : 'lumen'; paintBlocker(); } });
+  paintBlocker();
+  slots.get('privacy-adblock').append(
+    withKeywords(row('Ad blocker', 'Lumen’s own blocker, or uBlock Origin Lite installed as an extension for you. Open pages reload with the one you choose.', blockerSel, blockerNote), 'ublock ublock origin lite extension'),
+    ublockAbout,
+    ...lumenRows,
   );
 
 
@@ -7862,6 +7891,29 @@ async function buildExtensions(card) {
 
 
 
+
+
+const UBLOCK_DIFFERENCES = [
+  "Safe Browsing and Focus mode stop a listed page as it starts loading: you see the warning or the block page, but the site has already received the request.",
+  "Only Google and YouTube get Chrome’s detailed version hints and the dark-mode hint; other sites that ask for them don’t.",
+  "The AI’s network log doesn’t see requests made inside embedded frames from other sites."
+];
+function confirmUblock() {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'confirm-dialog', id: 'ublock-confirm', 'aria-labelledby': 'ublock-confirm-title' },
+      h('h3', { id: 'ublock-confirm-title', text: 'Use uBlock Origin Lite?' }),
+      h('p', { text: 'Lumen installs it from the Chrome Web Store and turns its own blocker off in normal windows; private windows keep Lumen’s. Do Not Track, Global Privacy Control, third-party cookie blocking, tracking-link cleanup, Safe Browsing and Focus mode keep working, with these differences:' }),
+      h('ul', { id: 'ublock-confirm-list' }, UBLOCK_DIFFERENCES.map((d) => h('li', { text: d }))),
+      h('p', { class: 'note', text: 'You can switch back here at any time: Lumen removes it and turns its own blocker on again.' }),
+      h('form', { method: 'dialog', class: 'confirm-buttons' },
+        h('button', { value: 'cancel', id: 'ublock-confirm-cancel', text: 'Cancel', autofocus: true }),
+        h('button', { value: 'use', id: 'ublock-confirm-go', text: 'Use uBlock Origin Lite' })));
+    dlg.addEventListener('close', () => { const yes = dlg.returnValue === 'use'; dlg.remove(); resolve(yes); });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close('cancel'); });
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
 function confirmReset(areas) {
   return new Promise((resolve) => {
     const dlg = h('dialog', { class: 'confirm-dialog', id: 'reset-confirm', 'aria-labelledby': 'reset-confirm-title' },

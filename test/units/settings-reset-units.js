@@ -11,7 +11,7 @@ const inAreas = new Set(RS.AREAS.flatMap((a) => a.keys));
 // Every setting a reset leaves alone, named here so a new setting has to be put in an area or on this list.
 const KEPT = [
   'newTabHeader', 'newTabFavorites', 'newTabFrequent', 'newTabPrivacy', 'newTabHiddenTiles', 'newTabWidgetsPacked', 'homeWidgetSizes', 'weatherPlaces',
-  'weatherHere', 'weatherLocation', 'homeWidgets', 'extensionPins', 'focusSites', 'focusSchedules', 'adblockAllow', 'projectsDir', 'tabSleepNever',
+  'weatherHere', 'weatherLocation', 'homeWidgets', 'extensionPins', 'focusSites', 'focusSchedules', 'adblockAllow', 'adBlocker', 'projectsDir', 'tabSleepNever',
   'tabSleepSoon', 'maxSteps', 'aiSubagents', 'actingHelpers', 'aiSubagentModel', 'maxChatRuns', 'autoModel', 'autoCompact', 'autoExclude', 'imageGen',
   'usageBars', 'aiGapLog', 'autoFallback', 'aiSignedInSites', 'aiSharedFiles', 'connectorAlways', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar', 'aiEffort',
   'featureCardNever', 'featureOffersSeen', 'telegramChannel', 'telegramFiles', 'telegramSignedIn', 'bypassBackground',
@@ -29,7 +29,7 @@ check('scope: no key is listed that does not exist', [...inAreas, ...kept].every
 check('scope: no key is in two areas', RS.resetKeys().length === new Set(RS.resetKeys()).size);
 check('scope: the row text names every area, in order', RS.areaList() === 'appearance, search engine, startup, privacy, site permissions, languages and system settings', RS.areaList());
 check('scope: what the issue named stays (AI full-access flags, custom instructions, widgets, extension pins, allow-lists, Focus lists)',
-  ['claudeCodeFullAccess', 'grokBuildFullAccess', 'codexFullAccess', 'antigravityFullAccess', 'aiInstructionsOn', 'aiInstructionsAbout', 'homeWidgets', 'extensionPins', 'adblockAllow', 'tabSleepNever', 'focusSites', 'focusSchedules'].every((k) => kept.has(k)));
+  ['claudeCodeFullAccess', 'grokBuildFullAccess', 'codexFullAccess', 'antigravityFullAccess', 'aiInstructionsOn', 'aiInstructionsAbout', 'homeWidgets', 'extensionPins', 'adblockAllow', 'adBlocker', 'tabSleepNever', 'focusSites', 'focusSchedules'].every((k) => kept.has(k)));
 check('scope: search engine, site permissions and per-site zoom are in the reset', ['searchEngine', 'sitePermissions', 'deviceGrants', 'siteZoom'].every((k) => RS.resetKeys().includes(k)));
 
 let settings = {};
