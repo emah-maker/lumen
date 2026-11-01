@@ -1,6 +1,6 @@
 // What "Restore settings to their original defaults" resets, in one place: the row's text, the confirmation and the backend all read this.
 // Each area lists the settings.json keys it puts back to their defaults (`stored`: keys that are not in DEFAULTS).
-// Everything else is left alone: the AI page, widgets, Focus lists, allow-lists, extension pins, bookmarks, history, API keys and sign-ins.
+// Everything else is left alone: the AI page, widgets, Focus lists, allow-lists, extension pins, the ad blocker choice (it installs an extension), bookmarks, history, API keys and sign-ins.
 // test/units/settings-reset-units.js fails when a DEFAULTS key is in neither an area nor its list of kept settings, so a new setting has to be put somewhere.
 const AREAS = [
   { id: 'appearance', label: 'appearance', keys: [

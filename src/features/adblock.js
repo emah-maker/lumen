@@ -78,7 +78,8 @@ function pageMemo(decide, limit = 64) {
   return get;
 }
 
-// deps: { app, session, readSettings, writeSettings, activeContents, realUrl, isWebUrl, onResponseHeaders }
+// deps: { app, session, readSettings, writeSettings, activeContents, realUrl, isWebUrl, onResponseHeaders, stepsAside(ses) }
+// stepsAside(ses): true for a session where another blocker runs (uBlock mode's main session, features/ublock-mode.js): no listener and no filtering there.
 function createAdblock(deps) {
   let blocker = null;
   const blockedCount = new Map(); // webContents id -> requests blocked on the current page
@@ -94,10 +95,11 @@ function createAdblock(deps) {
     return memo.out;
   }
 
-  function on(pageUrl) {
+  function on(pageUrl, ses) {
     const { enabled, allow } = settings();
-    return enabled && !allow.has(hostOf(pageUrl));
+    return enabled && !allow.has(hostOf(pageUrl)) && !(ses && deps.stepsAside?.(ses));
   }
+  const senderSession = (event) => { try { return event.sender?.session; } catch { return undefined; } };
   // Whether requests from this page are filtered at all (on, and not a Google sign-in page): answered once per page URL
   // and settings state, not by parsing the page's URL for each of its requests.
   const pageDecisions = pageMemo((page) => on(page) && !googleAuth.isAuthUrl(page));
@@ -275,7 +277,7 @@ function createAdblock(deps) {
     const { parse } = require('tldts-experimental');
     // (The first assignment to returnValue sends the reply, so it is assigned exactly once.)
     const scriptletsFor = (event, url) => {
-      if (typeof url !== 'string' || !on(url) || isProviderUrl(url, true)) return [];
+      if (typeof url !== 'string' || !on(url, senderSession(event)) || isProviderUrl(url, true)) return [];
       const { hostname, domain } = parse(url);
       // (Scriptlets are chosen by host: remembered per host for this engine, so a page's many frames answer at once.)
       if (scriptletCache.engine !== engine) { scriptletCache.engine = engine; scriptletCache.map.clear(); }
@@ -301,7 +303,7 @@ function createAdblock(deps) {
     // here because adblock-preload.js already ran them, earlier.
     let cosmetics = blocker.onInjectCosmeticFilters;
     blocker.onInjectCosmeticFilters = async (event, url, msg) => {
-      if (!on(url) || isProviderUrl(url, true)) return undefined;
+      if (!on(url, senderSession(event)) || isProviderUrl(url, true)) return undefined;
       const sender = { insertCSS: (css, options) => event.sender.insertCSS(css, options), executeJavaScript: () => Promise.resolve() };
       return cosmetics({ frameId: event.frameId, processId: event.processId, sender }, url, msg);
     };
@@ -313,7 +315,7 @@ function createAdblock(deps) {
     blocker.onIsMutationObserverEnabled = async (event) => {
       let url = '';
       try { url = event.senderFrame?.url || event.sender?.getURL?.() || ''; } catch { /* a frame that is already gone */ }
-      if (!on(url) || isProviderUrl(url, true) || CHURNY_APPS.test(url)) return false;
+      if (!on(url, senderSession(event)) || isProviderUrl(url, true) || CHURNY_APPS.test(url)) return false;
       return watchDom(event);
     };
     let headers = blocker.onHeadersReceived;
@@ -333,16 +335,23 @@ function createAdblock(deps) {
   const extraSessions = new Set();
   // The two network listeners of a session (Electron keeps one per event, so they are replaced, not added to).
   // Requests: all of them while the blocker is on, only pages while it is off. Response headers: documents.
-  let requestsOn = null; // what wireRequests last set up
+  // A session where another blocker runs gets neither (removed: Electron would turn that blocker's rules off).
+  let requestsOn = null; // what wireRequests last set up (on, and whether the main session steps aside)
+  const wiring = () => `${settings().enabled}|${Boolean(deps.stepsAside?.(deps.session.defaultSession))}`;
   function wireRequests(ses) {
     const enabled = settings().enabled;
-    requestsOn = enabled;
+    requestsOn = wiring();
+    if (deps.stepsAside?.(ses)) {
+      ses.webRequest.onHeadersReceived(null);
+      ses.webRequest.onBeforeRequest(null);
+      return;
+    }
     ses.webRequest.onHeadersReceived(FILTER_DOCUMENTS, (details, callback) => blocker.onHeadersReceived(details, callback));
     ses.webRequest.onBeforeRequest(enabled ? FILTER_ALL : FILTER_PAGES, (details, callback) => blocker.onBeforeRequest(details, callback));
   }
-  // The blocker was switched on or off: the listeners follow (called when settings are written).
+  // The blocker was switched on or off, or uBlock mode changed: the listeners follow (called when settings are written).
   function sync() {
-    if (!blocker || requestsOn === settings().enabled) return;
+    if (!blocker || requestsOn === wiring()) return;
     for (const ses of [deps.session.defaultSession, ...extraSessions]) wireRequests(ses);
   }
   function enableIn(ses) {

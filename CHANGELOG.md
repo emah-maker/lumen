@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- You can use uBlock Origin Lite instead of Lumen’s ad blocker: Settings → Privacy and security → Ad blocker → uBlock Origin Lite. One choice installs it from the Chrome Web Store, pins its button to the toolbar (pause it on a site, open its settings) and turns Lumen’s blocker off, with no restart; open pages reload with it. Choosing Lumen’s blocker again removes it, and so does removing the extension any other way. Adding it from its store page does the same switch. Electron applies an extension’s filter lists only while Lumen adds no network hooks of its own, so while uBlock Origin Lite is on, Safe Browsing, Focus mode’s site blocking, Do Not Track, Global Privacy Control, third-party cookie blocking and the AI’s network log are off in normal windows; private windows keep Lumen’s blocker. (uBlock Origin itself is no longer on the Chrome Web Store, and it doesn’t run in Electron.)
+
 ## 0.5.87 (2026-11-01)
 
 - Paramount+ videos play again. The ad blocker's lists blocked Paramount+'s cookie-consent check (OneTrust) and its tag script (Tealium), and the page loads its video player only after both, so a video page showed no player at all. Both are now let through on paramountplus.com only; its ads and trackers stay blocked, and the same requests stay blocked on every other site.

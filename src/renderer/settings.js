@@ -2676,13 +2676,41 @@ async function buildPrivacy(card) {
     h('button', { text: 'Remove', onclick: async () => { await save('adblockAllow', st.prefs.adblockAllow.filter((x) => x !== host)); renderAllow(); } })))
     : [h('span', { class: 'note', text: 'No sites. Ads are blocked everywhere.' })]));
   renderAllow();
-  slots.get('privacy-adblock').append(
+  // [uBlock mode] Which blocker runs (features/ublock-mode.js). Choosing uBlock Origin Lite installs it from the Chrome Web Store and turns Lumen's off, in one step;
+  // choosing Lumen's removes it again. Lumen's own switch and allow list apply to Lumen's blocker only, so they hide while uBlock is chosen.
+  const blockerNote = status('ad-blocker-status');
+  const blockerSel = h('select', { id: 'pref-adBlocker', 'aria-label': 'Ad blocker' },
+    h('option', { value: 'lumen', text: 'Lumen’s built-in blocker' }), h('option', { value: 'ublock', text: 'uBlock Origin Lite' }));
+  const ublockMode = () => st.prefs.adBlocker === 'ublock';
+  blockerSel.value = ublockMode() ? 'ublock' : 'lumen';
+  const ublockAbout = row('While uBlock Origin Lite is on', 'uBlock Origin Lite blocks in normal windows; its toolbar button pauses it on a site and opens its settings. Private windows keep Lumen’s blocker (extensions don’t run there). While it is on, Safe Browsing, Focus mode’s site blocking, Do Not Track, Global Privacy Control, third-party cookie blocking and the AI’s network log are off in normal windows: an extension’s filter lists only work when Lumen adds no network hooks of its own.');
+  ublockAbout.id = 'ad-blocker-ublock-note';
+  ublockAbout.classList.add('warn');
+  const lumenRows = [
     toggle('adblock', 'Block ads and trackers', 'Built-in blocker using uBlock Origin-compatible filter lists.'),
     stackRow('Sites allowed to show ads', 'The blocker is off on these sites.', allowList,
       h('div', { class: 'controls' }, allowInput, h('button', {
         text: 'Add site',
         onclick: async () => { const host = allowInput.value.trim(); if (!host) return needSite(allowNote, allowInput); allowNote.textContent = ''; await save('adblockAllow', [...st.prefs.adblockAllow, host], allowInput); allowInput.value = ''; renderAllow(); },
       }), allowNote)),
+  ];
+  const paintBlocker = () => { for (const r of lumenRows) r.hidden = ublockMode(); ublockAbout.hidden = !ublockMode(); };
+  blockerSel.addEventListener('change', async () => {
+    const want = blockerSel.value;
+    blockerSel.disabled = true;
+    blockerNote.textContent = want === 'ublock' ? 'Installing uBlock Origin Lite…' : 'Removing uBlock Origin Lite…';
+    const saved = await save('adBlocker', want, blockerSel);
+    blockerSel.disabled = false;
+    blockerSel.value = ublockMode() ? 'ublock' : 'lumen'; // (not saved: back to what is in use)
+    blockerNote.textContent = saved ? (ublockMode() ? 'uBlock Origin Lite is on. Its button is in the toolbar.' : 'Lumen’s blocker is on.') : '';
+    paintBlocker();
+  });
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'adBlocker') { blockerSel.value = ublockMode() ? 'ublock' : 'lumen'; paintBlocker(); } });
+  paintBlocker();
+  slots.get('privacy-adblock').append(
+    withKeywords(row('Ad blocker', 'Lumen’s own blocker, or uBlock Origin Lite installed as an extension for you. Open pages reload with the one you choose.', blockerSel, blockerNote), 'ublock ublock origin lite extension'),
+    ublockAbout,
+    ...lumenRows,
   );
 
   // Site permissions

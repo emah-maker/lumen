@@ -235,7 +235,8 @@ class PageDebug {
     this.keepPageOn(cap);
 
     const ses = (() => { try { return wc.session; } catch { return null; } })();
-    if (ses?.webRequest) this.join(ses, id, cap);
+    // ([uBlock mode] not on a session whose extension blocks: one listener there turns its rules off, features/ublock-mode.js)
+    if (ses?.webRequest && !ses.lumenStepsAside) this.join(ses, id, cap);
     wc.once('destroyed', () => {
       cap.release({ settle: true }); // a closed tab answers its held dialog "no": the page's call never stays open
       this.heldCaps.delete(cap);
