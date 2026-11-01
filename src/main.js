@@ -225,6 +225,10 @@ app.userAgentFallback = require('./browser/chrome-identity').userAgent(process.p
 // Google's sign-in on other sites (One Tap, "Sign in with Google") uses FedCM when the browser says it is Chrome.
 // Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
 app.commandLine.appendSwitch('disable-features', 'FedCm');
+// Windows hands a playing video to a hardware overlay plane, which sits above everything else and ignores the page's clipping.
+// With Lumen's stacked page views (and a laptop's two GPUs) it came out as a gray rectangle over the page, in the wrong
+// place and bigger than the video (Muse's animated avatar). Videos are drawn by the compositor instead, as with any other content.
+if (process.platform === 'win32') app.commandLine.appendSwitch('disable-direct-composition-video-overlays');
 // Test runs are silent: no sound from pages (a YouTube test, a video on a test page) while someone works nearby.
 if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/e2e/tabui.js)
 
