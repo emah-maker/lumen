@@ -6,6 +6,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 - Paramount+ videos play again. The ad blocker's lists blocked Paramount+'s cookie-consent check (OneTrust) and its tag script (Tealium), and the page loads its video player only after both, so a video page showed no player at all. Both are now let through on paramountplus.com only; its ads and trackers stay blocked, and the same requests stay blocked on every other site.
 - Messages and questions from an extension's own scripts on a page (1Password's "isn't linked to a login ... Click OK to paste your password") now show as Lumen's dialog, named after the extension, instead of a grey Windows box titled "Lumen". A page cannot show one in an extension's name.
+- The reload button works again after you open a site from the new-tab page. The address bar kept its focus after a click in the page, so the buttons at its end (Reload, the star and the rest) stayed faded out and ignored clicks until you clicked somewhere else. A click into a page now finishes with the address bar, as in Chrome.
 
 ## 0.5.86 (2026-10-31)
 

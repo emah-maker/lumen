@@ -11304,6 +11304,9 @@ address.addEventListener('blur', () => {
   if (!addressDirty) showAddress();
 });
 window.addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus()) hideSuggestions(); }, 150));
+
+
+window.browser.onPageFocused?.(() => { if (document.activeElement === address) address.blur(); });
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.altKey && !isImeEnter(e)) {
     e.preventDefault();

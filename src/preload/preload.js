@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('browser', {
   addressTouched: () => ipcRenderer.send('address:touched'),
   prepareSettings: () => ipcRenderer.send('prepare-settings'), // [settings intent] the menu button was pressed: Settings starts loading
   onSuggestionPicked: on('suggest:picked'),
+  onPageFocused: on('page:focused'),
   // Tab search (Ctrl+Shift+A) and the tab strip's speaker button (features/tab-tools.js)
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),
   toggleAiOffTab: (id) => ipcRenderer.send('tab:ai-off', id), // [ai off-tab]
