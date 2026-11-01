@@ -47,6 +47,26 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   check('the id is 32 letters a to p, and none without a key', /^[a-p]{32}$/.test(id) && X.idOfKey(undefined) === null && X.idOfKey('') === null, id);
   check('BetterCampus has suggested sites (no school\'s own domain); others have none', same(X.suggestedSites('cndibmoanboadcifjkjbdpjgfedanolh'), ['instructure.com', 'bettercampus.com']) && same(X.suggestedSites(id), []), '');
 
+  // ---- all sites except these
+  check('"www." is the site itself: www.example.com covers example.com and its subdomains', same(X.patternsOf('www.example.com'), ['*://*.example.com/*']) && same(X.patternsOf('*.www.example.com'), ['*://*.example.com/*']) && same(X.patternsOf('www.com'), ['*://*.www.com/*']), JSON.stringify([X.patternsOf('www.example.com'), X.patternsOf('www.com')]));
+  check('saved values: a list is "only these", { except } is "all except these", nothing usable is all sites',
+    same(X.accessOf(['a.com']), { mode: 'only', sites: ['a.com'] }) && same(X.accessOf({ except: 'b.com, nope!' }), { mode: 'except', sites: ['b.com'] })
+    && same(X.accessOf(undefined), { mode: 'all', sites: [] }) && same(X.accessOf({ except: [] }), { mode: 'all', sites: [] }) && same(X.accessOf([]), { mode: 'all', sites: [] }), '');
+  check('what is saved for a mode', same(X.savedOf('except', ['B.com']), { except: ['b.com'] }) && same(X.savedOf('only', ['a.com']), ['a.com']) && same(X.savedOf(undefined, 'a.com'), ['a.com']) && X.savedOf('except', []) === null && X.savedOf('only', ['<all_urls>']) === null, '');
+  const withExcludes = { ...manifest, content_scripts: [...manifest.content_scripts, { matches: ['<all_urls>'], exclude_matches: ['https://bank.com/*'], js: ['x.js'] }, { js: ['no-matches.js'] }] };
+  const ex = X.excludeManifest(withExcludes, ['login.microsoftonline.com']);
+  const msft = '*://*.login.microsoftonline.com/*';
+  check('except: every content script (sweeping or narrow) gets the site in exclude_matches; matches are untouched',
+    ex.content_scripts.slice(0, 3).every((cs, i) => same(cs.exclude_matches, [msft]) && same(cs.matches, withExcludes.content_scripts[i].matches)), JSON.stringify(ex.content_scripts));
+  check('except: a script\'s own exclude_matches are kept, the site added after them', same(ex.content_scripts[3].exclude_matches, ['https://bank.com/*', msft]), JSON.stringify(ex.content_scripts[3]));
+  check('except: an entry without matches, host permissions and the input are left as they are', same(ex.content_scripts[4], { js: ['no-matches.js'] }) && same(ex.host_permissions, ['<all_urls>']) && !('exclude_matches' in withExcludes.content_scripts[0]), JSON.stringify(ex));
+  const exPage = { content_scripts: ex.content_scripts.slice(0, 1) };
+  check('except: the listed site and its subdomains get no script, every other site still does',
+    !mp.contentScriptsApply(exPage, 'https://login.microsoftonline.com/common/oauth2') && !mp.contentScriptsApply(exPage, 'https://x.login.microsoftonline.com/') && mp.contentScriptsApply(exPage, 'https://northeastern.instructure.com/courses') && mp.contentScriptsApply(exPage, 'https://microsoftonline.com/'), '');
+  const exWww = X.excludeManifest(manifest, ['www.bank.com']);
+  check('except: "www.bank.com" keeps it off bank.com and www.bank.com', !mp.contentScriptsApply({ content_scripts: exWww.content_scripts.slice(0, 1) }, 'https://bank.com/') && !mp.contentScriptsApply({ content_scripts: exWww.content_scripts.slice(0, 1) }, 'https://www.bank.com/login'), JSON.stringify(exWww.content_scripts[0]));
+  check('except: adding the same site twice does not repeat it, and no sites leaves the manifest as it is', same(X.excludeManifest(ex, ['login.microsoftonline.com']).content_scripts[0].exclude_matches, [msft]) && X.excludeManifest(manifest, []) === manifest && X.excludeManifest({ permissions: ['<all_urls>'] }, ['a.com']).content_scripts === undefined, '');
+
   // ---- on disk
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-sites-'));
   const file = path.join(dir, 'manifest.json');
@@ -62,6 +82,13 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   await X.applyToDir(dir, { other: ['x.com'] });
   check('all sites again: the shipped manifest is restored byte for byte', fs.readFileSync(file, 'utf8') === shipped, fs.readFileSync(file, 'utf8').slice(0, 200));
   check('all sites again: no original is left behind', !fs.existsSync(path.join(dir, X.ORIGINAL)), '');
+  await X.applyToDir(dir, { [id]: { except: ['login.microsoftonline.com'] } });
+  check('only these -> all except: rewritten from the original (sweeping patterns back, the site excluded)', same(read().content_scripts[0].matches, ['<all_urls>']) && same(read().content_scripts[0].exclude_matches, ['*://*.login.microsoftonline.com/*']) && same(read().host_permissions, ['<all_urls>']) && fs.existsSync(path.join(dir, X.ORIGINAL)), JSON.stringify(read()).slice(0, 300));
+  await X.applyToDir(dir, { [id]: ['instructure.com'] });
+  check('all except -> only these: no exclusion is left over', same(read().content_scripts[0].matches, ['*://*.instructure.com/*']) && !('exclude_matches' in read().content_scripts[0]), JSON.stringify(read().content_scripts[0]));
+  await X.applyToDir(dir, { [id]: { except: ['login.microsoftonline.com'] } });
+  await X.applyToDir(dir, {});
+  check('all except -> all sites: the shipped manifest is restored byte for byte, no original left', fs.readFileSync(file, 'utf8') === shipped && !fs.existsSync(path.join(dir, X.ORIGINAL)), fs.readFileSync(file, 'utf8').slice(0, 200));
   // An update lands as a new folder with its own manifest: it is narrowed the same way when it loads.
   const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-sites-'));
   fs.writeFileSync(path.join(dir2, 'manifest.json'), JSON.stringify({ ...manifest, key, version: '2' }));

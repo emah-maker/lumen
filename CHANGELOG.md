@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- An extension can now run on all sites except the ones you list: Settings > Extensions, "Runs on", "On all sites except these". A listed site (and its subdomains; "www.example.com" means example.com) gets none of the extension's page scripts, and it keeps running everywhere else. This keeps BetterCampus's full-page "unsaved theme" layer, which blocks every click, off a sign-in page such as login.microsoftonline.com. The extension can still see that site's network requests, since Chrome extensions have no way to leave a site out of those.
+
 ## 0.5.87 (2026-11-01)
 
 - Paramount+ videos play again. The ad blocker's lists blocked Paramount+'s cookie-consent check (OneTrust) and its tag script (Tealium), and the page loads its video player only after both, so a video page showed no player at all. Both are now let through on paramountplus.com only; its ads and trackers stay blocked, and the same requests stay blocked on every other site.

@@ -1,8 +1,11 @@
-// "Site access" for an extension, as in Chrome's extension menu: on all sites (as installed) or only on the sites listed.
+// "Site access" for an extension, as in Chrome's extension menu: on all sites (as installed), only on the sites listed, or
+// on all sites except the ones listed (BetterCampus's full-page "unsaved theme" layer once locked a Microsoft sign-in page).
 // A content script written for <all_urls> is injected into every page (BetterCampus's is a 5 MB script that costs ~50 ms
 // on each one), and a webRequest listener sees every request; Electron has no switch to hold either back, so the
 // restriction is made in the manifest the extension is loaded with: its sweeping patterns become the listed sites.
-// Narrow patterns (a script written for one site) stay as they are. The original manifest is kept beside it, so "all
+// Narrow patterns (a script written for one site) stay as they are. "All sites except" adds the listed sites to every
+// content script's exclude_matches instead (Chromium has no exclusion for host permissions, so those stay as shipped:
+// a listed site gets none of its scripts, but the extension may still see its requests). The original manifest is kept beside it, so "all
 // sites" restores it exactly and an update (a new folder with its own manifest) is narrowed the same way when it loads.
 const fs = require('fs');
 const path = require('path');
@@ -17,13 +20,26 @@ function patternsOf(entry) {
   const text = String(entry || '').trim().toLowerCase();
   if (!text || text.length > 200) return null;
   if (/^(\*|https?):\/\//.test(text)) return /^(\*|https?):\/\/[a-z0-9*.-]+(:\d+)?\/\S*$/.test(text) && !isBroad(text) ? [text] : null; // (a full match pattern is kept as typed)
-  const host = text.replace(/^\*\./, '').replace(/\/.*$/, '');
+  const host = text.replace(/^\*\./, '').replace(/\/.*$/, '').replace(/^www\.(?=[^.:]+\.)/, ''); // ("www.example.com" is the site example.com)
   if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d+)?$/.test(host)) return null;
   return text.startsWith('*.') || !host.includes(':') ? [`*://*.${host}/*`] : [`*://${host}/*`]; // "example.com" covers its subdomains, as Chrome's "on specific sites" does
 }
 
 // The saved list, cleaned: a short array of the entries that are sites.
 const cleanSites = (list) => [...new Set((Array.isArray(list) ? list : String(list || '').split(/[\s,;]+/)).map((s) => String(s).trim().toLowerCase()).filter((s) => s && patternsOf(s)))].slice(0, 50);
+
+// What is saved for an extension: a list of sites is "only these"; { except: [...] } is "all sites except these".
+function accessOf(saved) {
+  if (Array.isArray(saved)) { const sites = cleanSites(saved); return { mode: sites.length ? 'only' : 'all', sites }; }
+  const except = cleanSites(saved?.except);
+  return except.length ? { mode: 'except', sites: except } : { mode: 'all', sites: [] };
+}
+// What to save for a mode and the typed sites (null: nothing, all sites).
+function savedOf(mode, list) {
+  const sites = cleanSites(list);
+  if (!sites.length) return null;
+  return mode === 'except' ? { except: sites } : sites;
+}
 
 // The manifest with its sweeping content-script and host patterns swapped for the sites. A script that matched only
 // sweeping patterns takes the sites; one with a mix keeps its narrow ones and gains the sites.
@@ -40,6 +56,18 @@ function narrowManifest(manifest, sites) {
   if (Array.isArray(out.permissions) && out.permissions.some(isBroad)) out.permissions = swap(out.permissions); // (a manifest v2 extension lists its hosts among its permissions)
   return out;
 }
+
+// The manifest with the sites kept out of every content script, its own exclude_matches kept. Every script, not only the
+// sweeping ones, so a listed site gets none of them.
+function excludeManifest(manifest, sites) {
+  const patterns = [...new Set(cleanSites(sites).flatMap(patternsOf))];
+  if (!patterns.length || !manifest || typeof manifest !== 'object' || !Array.isArray(manifest.content_scripts)) return manifest;
+  const out = { ...manifest };
+  out.content_scripts = out.content_scripts.map((cs) => (cs && Array.isArray(cs.matches)
+    ? { ...cs, exclude_matches: [...new Set([...(Array.isArray(cs.exclude_matches) ? cs.exclude_matches : []), ...patterns])] } : cs));
+  return out;
+}
+const hasContentScripts = (manifest) => (manifest?.content_scripts || []).some((cs) => Array.isArray(cs?.matches) && cs.matches.length);
 
 // True when the manifest has anything sweeping to narrow (otherwise the setting would do nothing).
 const hasBroadAccess = (manifest) => [
@@ -69,8 +97,9 @@ async function applyToDir(dir, savedSites) {
   let source;
   try { source = JSON.parse((await fs.promises.readFile(hasOriginal ? original : file, 'utf8')).replace(/^\uFEFF/, '')); } catch { return null; }
   const id = idOfKey(source.key);
-  const sites = id ? cleanSites(savedSites?.[id]) : [];
-  const narrowed = sites.length && hasBroadAccess(source) ? narrowManifest(source, sites) : null;
+  const { mode, sites } = id ? accessOf(savedSites?.[id]) : { mode: 'all' };
+  const narrowed = mode === 'only' && hasBroadAccess(source) ? narrowManifest(source, sites)
+    : mode === 'except' && hasContentScripts(source) ? excludeManifest(source, sites) : null;
   if (narrowed) {
     if (!hasOriginal) await fs.promises.copyFile(file, original);
     await fs.promises.writeFile(file, JSON.stringify(narrowed));
@@ -80,4 +109,4 @@ async function applyToDir(dir, savedSites) {
   return source;
 }
 
-module.exports = { patternsOf, cleanSites, narrowManifest, hasBroadAccess, idOfKey, suggestedSites, applyToDir, isBroad, ORIGINAL };
+module.exports = { patternsOf, cleanSites, accessOf, savedOf, narrowManifest, excludeManifest, hasContentScripts, hasBroadAccess, idOfKey, suggestedSites, applyToDir, isBroad, ORIGINAL };
