@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- Paramount+ videos play again. The ad blocker's lists blocked Paramount+'s cookie-consent check (OneTrust) and its tag script (Tealium), and the page loads its video player only after both, so a video page showed no player at all. Both are now let through on paramountplus.com only; its ads and trackers stay blocked, and the same requests stay blocked on every other site.
 - Messages and questions from an extension's own scripts on a page (1Password's "isn't linked to a login ... Click OK to paste your password") now show as Lumen's dialog, named after the extension, instead of a grey Windows box titled "Lumen". A page cannot show one in an extension's name.
 
 ## 0.5.86 (2026-10-31)
