@@ -1266,12 +1266,15 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : ''].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : '', tab.account?.name].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]
   el.classList.toggle('split-left', tab.split === 'left'); // [split view] a pair is drawn as joined tabs
   el.classList.toggle('split-right', tab.split === 'right');
+  el.classList.toggle('acct', Boolean(tab.account)); // [account tabs] its account's color, as a short line (styles.css); the name is in its label
+  if (tab.account) el.style.setProperty('--acct', tab.account.color);
+  else el.style.removeProperty('--acct');
   el.dataset.chat = tab.chat || '';
   const chatMark = el.querySelector('.tab-chat-mark');
   if (chatMark && chatMark.dataset.state !== (tab.chat || '')) {
@@ -2995,31 +2998,25 @@ window.browser.onAttachImage?.(async (base64) => {
 
 // [files] The quick picker (Ctrl+Shift+F; files-picker.js and .css, 19 KB) is loaded in an idle moment after start, or by the first key that
 // asks for it, instead of being part of the bundle every window parses: the key opens it once it is there.
-let filesPickerLoad = null;
-function loadFilesPicker() {
-  filesPickerLoad ||= new Promise((resolve) => {
-    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'files-picker.css' });
-    const js = Object.assign(document.createElement('script'), { src: 'files-picker.js', onload: () => resolve(true), onerror: () => resolve(false) });
-    css.dataset.later = js.dataset.later = ''; // (not part of startup: test/e2e/perf-budget.js leaves it out of the UI size)
-    document.head.append(css);
-    document.body.append(js);
-  });
-  return filesPickerLoad;
-}
+// Parts of the window loaded after start (here and below): the stylesheet first, then the scripts in order. Resolves true once they ran.
+const laterLoads = {};
+const loadLater = (css, ...scripts) => (laterLoads[css] ||= new Promise((done) => {
+  const mark = (el) => { el.dataset.later = ''; return el; }; // (not part of startup: test/e2e/perf-budget.js leaves it out of the UI size)
+  document.head.append(mark(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: css })));
+  const next = (i) => (i === scripts.length ? done(true) : document.body.append(mark(Object.assign(document.createElement('script'), { src: scripts[i], onload: () => next(i + 1), onerror: () => done(false) }))));
+  next(0);
+}));
+const loadFilesPicker = () => loadLater('files-picker.css', 'files-picker.js');
 window.lumenFiles?.on('picker', () => loadFilesPicker().then((ok) => ok && window.filesPicker.open()));
 setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPicker, { timeout: 3000 }) : loadFilesPicker()), 2000);
 
+// [account tabs] The address bar's account chip and the "Use another account" bar (account-tabs.js and .css): loaded the first time main sends
+// a state for them (an account tab or a sign-in page in front), not part of the bundle.
+window.browser.onAccountState?.((st) => { if (st || laterLoads['account-tabs.css']) loadLater('account-tabs.css', 'account-tabs.js').then(() => window.accountTabs?.draw(st)); });
+
 // The command bar (Ctrl+K; command-bar.js, command-bar-match.js and .css): loaded by the first key that asks for it, not part of the bundle.
 // "Ask AI: ..." in it arrives here as an event and goes to the sidebar chat, like "Ask AI about this" on a selection.
-let commandBarLoad = null;
-function loadCommandBar() {
-  commandBarLoad ||= new Promise((resolve) => {
-    document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'command-bar.css' }));
-    const script = (src, onload) => document.body.append(Object.assign(document.createElement('script'), { src, onload, onerror: () => resolve(false) }));
-    script('command-bar-match.js', () => script('command-bar.js', () => resolve(true)));
-  });
-  return commandBarLoad;
-}
+const loadCommandBar = () => loadLater('command-bar.css', 'command-bar-match.js', 'command-bar.js');
 window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
 document.addEventListener('cmdbar:ask', (e) => {
   const text = String(e.detail || '').trim();

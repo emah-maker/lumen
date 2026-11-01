@@ -494,6 +494,7 @@ contextBridge.exposeInMainWorld('browser', {
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
   toggleReader: () => ipcRenderer.send('page:reader'),
   translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg),
+  onAccountState: on('account:state'), accountAct: (action, arg) => ipcRenderer.send('account:act', action, arg),
   passwordsAct: (action) => ipcRenderer.send('passwords:act', action),
   resetZoom: () => ipcRenderer.send('zoom:reset'),
   onDownloads: on('downloads'),

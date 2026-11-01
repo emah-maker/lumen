@@ -1027,8 +1027,10 @@ function create(deps) {
       deps.saveHistory();
       done.history = removed;
     }
+    // [account tabs] Every account's session is cleared with the main one (deps.accountSessions).
+    const all = [ses(), ...(deps.accountSessions?.() || [])];
     if (cookies && !recent) {
-      await ses().clearStorageData({ storages: ['cookies', ...SITE_STORAGES] });
+      for (const s of all) await s.clearStorageData({ storages: ['cookies', ...SITE_STORAGES] });
       deps.siteActivity?.clear();
       done.cookies = true;
     } else if (cookies) {
@@ -1036,13 +1038,15 @@ function create(deps) {
       // origin, so a time range means: everything stored by the sites active in that range.
       const hosts = recent.hosts;
       let removed = 0;
-      for (const c of await ses().cookies.get({})) {
-        const d = String(c.domain || '').replace(/^\./, '').toLowerCase();
-        if (!hosts.some((h) => related(d, h))) continue;
-        const url = `${c.secure ? 'https' : 'http'}://${d}${c.path || '/'}`;
-        await ses().cookies.remove(url, c.name).then(() => { removed++; }, () => {});
+      for (const s of all) {
+        for (const c of await s.cookies.get({})) {
+          const d = String(c.domain || '').replace(/^\./, '').toLowerCase();
+          if (!hosts.some((h) => related(d, h))) continue;
+          const url = `${c.secure ? 'https' : 'http'}://${d}${c.path || '/'}`;
+          await s.cookies.remove(url, c.name).then(() => { removed++; }, () => {});
+        }
+        for (const origin of recent.origins) await s.clearStorageData({ origin, storages: SITE_STORAGES }).catch(() => {});
       }
-      for (const origin of recent.origins) await ses().clearStorageData({ origin, storages: SITE_STORAGES }).catch(() => {});
       deps.siteActivity?.forget(hosts);
       done.cookies = true;
       done.sites = hosts.length;
@@ -1050,7 +1054,7 @@ function create(deps) {
     }
     if (cache) {
       // Electron has no time range for the HTTP cache: it is cleared for all time.
-      await ses().clearCache();
+      for (const s of all) await s.clearCache();
       done.cache = true;
     }
     if (downloads) done.downloads = clearDownloads(since);
@@ -1153,12 +1157,12 @@ function create(deps) {
   // Has a toolbar button (the extension library draws one for each extension whose manifest has an action): only these can be pinned.
   const hasAction = (ext) => { const a = ext.manifest.manifest_version === 3 ? ext.manifest.action : ext.manifest.manifest_version === 2 ? ext.manifest.browser_action : undefined; return typeof a === 'object' && a !== null; };
   // [extensions] Site access: offered when the extension has an id Lumen can keep (a Web Store install) and asks for all sites
-  // or is already narrowed; "sites" is what the user saved (empty: all sites, as installed).
+  // or is already narrowed; "sites" is what the user saved (empty: all sites, as installed), "siteMode" 'all', 'only' or 'except'.
   function siteAccess(ext) {
     const X = require('../browser/extension-sites');
-    const sites = (deps.extensionSitesSaved?.() || {})[ext.id] || [];
+    const { mode, sites } = X.accessOf((deps.extensionSitesSaved?.() || {})[ext.id]);
     const canNarrow = Boolean(X.idOfKey(ext.manifest.key)) && (sites.length > 0 || X.hasBroadAccess(ext.manifest));
-    return { canNarrow, sites, suggestedSites: canNarrow ? X.suggestedSites(ext.id) : [] };
+    return { canNarrow, siteMode: mode, sites, suggestedSites: canNarrow ? X.suggestedSites(ext.id) : [] };
   }
   function listExtensions() {
     const pinned = prefs().extensionPins.order;
@@ -1377,9 +1381,9 @@ function create(deps) {
       await deps.uninstallExtension(id, { session: ses() }).catch(() => {});
       return listExtensions();
     });
-    handle('prefs:extension-sites', async (id, sites) => { // [extensions] Settings → Extensions: Site access (an empty list is all sites)
+    handle('prefs:extension-sites', async (id, sites, mode) => { // [extensions] Settings → Extensions: Site access (an empty list is all sites; mode 'except': all but these)
       if (!EXT_ID.test(String(id))) throw new Error('Unknown extension');
-      await deps.setExtensionSites(String(id), sites);
+      await deps.setExtensionSites(String(id), sites, mode === 'except' ? 'except' : 'only');
       return listExtensions();
     });
     handle('prefs:extension-options', (id) => {

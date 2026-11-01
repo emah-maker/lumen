@@ -37,7 +37,10 @@ function withShim(manifest) {
     if (Array.isArray(manifest.content_scripts) && rest.length !== manifest.content_scripts.length) out.content_scripts = rest;
     return out;
   }
-  out.content_scripts = [{ matches, js: [SHIM], run_at: 'document_start', all_frames: true, match_about_blank: true }, ...rest];
+  // Sites every one of its scripts stays off (Site access "all sites except", browser/extension-sites.js) the shim stays off too.
+  const scripts = rest.filter((cs) => Array.isArray(cs?.matches));
+  const excluded = scripts.length ? scripts.map((cs) => (Array.isArray(cs.exclude_matches) ? cs.exclude_matches : [])).reduce((a, b) => a.filter((p) => b.includes(p))) : [];
+  out.content_scripts = [{ matches, ...(excluded.length ? { exclude_matches: excluded } : {}), js: [SHIM], run_at: 'document_start', all_frames: true, match_about_blank: true }, ...rest];
   return out;
 }
 

@@ -98,7 +98,8 @@ const SITE_BUDGET_MS = 25; // the same, with the extension held to a site the pa
     await sleep(1500);
     const back = manifestOf();
     const shipped = JSON.parse(fs.readFileSync(path.join(fixtureDir, 'manifest.json'), 'utf8'));
-    check('all sites again: the manifest is what the extension shipped, and no copy is left', JSON.stringify(back.content_scripts) === JSON.stringify(shipped.content_scripts) && JSON.stringify(back.host_permissions) === JSON.stringify(shipped.host_permissions) && !fs.readdirSync(extFolder()).includes('manifest.lumen-original.json'), JSON.stringify(back));
+    // (Lumen's dialog shim, browser/extension-dialogs.js, is added at every load: the extension's own scripts are what it shipped)
+    check('all sites again: the manifest is what the extension shipped, and no copy is left', JSON.stringify(back.content_scripts.filter((c) => !c.js.includes('lumen-dialogs.js'))) === JSON.stringify(shipped.content_scripts) && JSON.stringify(back.host_permissions) === JSON.stringify(shipped.host_permissions) && !fs.readdirSync(extFolder()).includes('manifest.lumen-original.json'), JSON.stringify(back));
     check('all sites again: it runs on the plain page', Boolean(await waitFor(() => marked(plain), 8000)), 'not marked');
     check('no UI errors', errors.length === 0, errors.join('; '));
   } finally {
