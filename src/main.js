@@ -3014,6 +3014,10 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     if (mouse.type !== 'mouseDown') return;
     if (!manners.isAgentInput(wc)) { manners.userInput.click(wc); userTookOver(tab); if (tab.split) activateSplitSide(tab); } // [ai manners] a click of the AI's own tool is not the user's // [split view] the side clicked is the one the toolbar, the AI and the shortcuts follow
     tab.showGuardUntil = 0;
+    // The user clicked into the page (a tile on the new-tab page, a link): the address bar is done (app.js 'page:focused'). Its field
+    // otherwise stayed :focus in the UI page, so the buttons at its end (Reload, the star...) stayed faded and unclickable.
+    // (Only a real click: Lumen focusing a page it just loaded must not pull the field away from someone typing a new address.)
+    if (!manners.isAgentInput(wc) && rcAlive(tab.rec)) withWindow(tab.rec, () => { if (tab.id === activeId) ui()?.send('page:focused'); });
   });
   // A page with a beforeunload handler: by default Electron blocks the close/navigation (this event
   // fires and, unless we call event.preventDefault() *now*, the unload stays prevented). We can't

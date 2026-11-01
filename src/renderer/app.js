@@ -2317,6 +2317,9 @@ address.addEventListener('blur', () => {
   if (!addressDirty) showAddress();
 });
 window.addEventListener('blur', () => setTimeout(() => { if (!document.hasFocus()) hideSuggestions(); }, 150));
+// The user clicked into the tab's page (a tile on the new-tab page, a link): the address bar is done, as in Chrome (main.js 'page:focused').
+// The field otherwise stayed :focus here, which keeps the buttons at its end (Reload, the star...) faded and unclickable.
+window.browser.onPageFocused?.(() => { if (document.activeElement === address) address.blur(); });
 address.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.altKey && !isImeEnter(e)) {
     e.preventDefault();

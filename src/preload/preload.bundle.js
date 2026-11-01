@@ -534,6 +534,7 @@ contextBridge.exposeInMainWorld('browser', {
   addressTouched: () => ipcRenderer.send('address:touched'),
   prepareSettings: () => ipcRenderer.send('prepare-settings'),
   onSuggestionPicked: on('suggest:picked'),
+  onPageFocused: on('page:focused'),
 
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),
   toggleAiOffTab: (id) => ipcRenderer.send('tab:ai-off', id),
