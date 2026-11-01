@@ -7852,15 +7852,27 @@ async function buildExtensions(card) {
   };
 
 
+
+
   const siteRow = (e) => {
-    const only = e.sites.length > 0;
-    const mode = h('select', { 'aria-label': `Where ${e.name} can run` }, h('option', { value: 'all', text: 'On all sites', selected: !only }), h('option', { value: 'some', text: 'Only on these sites', selected: only }));
-    const input = h('input', { type: 'text', class: 'grow', placeholder: 'instructure.com, your school’s Canvas domain', value: e.sites.join(', '), 'aria-label': `Sites ${e.name} can run on`, hidden: !only });
-    const save = async (sites) => render(await S.extensionSites(e.id, sites));
-    mode.addEventListener('change', () => { if (mode.value === 'all') save([]); else { input.hidden = false; input.focus(); } });
+    const was = e.siteMode === 'except' ? 'except' : e.sites.length ? 'some' : 'all';
+    const mode = h('select', { 'aria-label': `Where ${e.name} can run` }, [['all', 'On all sites'], ['some', 'Only on these sites'], ['except', 'On all sites except these']].map(([value, text]) => h('option', { value, text, selected: value === was })));
+    const input = h('input', { type: 'text', class: 'grow', value: e.sites.join(', '), hidden: was === 'all' });
+    const label = () => {
+      input.placeholder = mode.value === 'except' ? 'login.microsoftonline.com, sites to keep it off' : 'instructure.com, your school’s Canvas domain';
+      input.setAttribute('aria-label', mode.value === 'except' ? `Sites ${e.name} stays off` : `Sites ${e.name} can run on`);
+    };
+    label();
+    const save = async (sites) => render(await S.extensionSites(e.id, sites, mode.value === 'except' ? 'except' : 'only'));
+    mode.addEventListener('change', () => {
+      label();
+      if (mode.value === 'all') { save([]); return; }
+      if (was !== 'all' && mode.value !== was) input.value = '';
+      input.hidden = false; input.focus();
+    });
     input.addEventListener('change', () => save(input.value.split(/[\s,;]+/).filter(Boolean)));
-    const suggest = e.suggestedSites.length ? h('button', { text: 'Use suggested sites', hidden: !only, title: e.suggestedSites.join(', '), onclick: () => save(e.suggestedSites) }) : null;
-    mode.addEventListener('change', () => { if (suggest) suggest.hidden = mode.value === 'all'; });
+    const suggest = e.suggestedSites.length ? h('button', { text: 'Use suggested sites', hidden: was !== 'some', title: e.suggestedSites.join(', '), onclick: () => save(e.suggestedSites) }) : null;
+    mode.addEventListener('change', () => { if (suggest) suggest.hidden = mode.value !== 'some'; });
     return h('div', { class: 'item ext-sites-row' }, h('span', { class: 'note', text: 'Runs on' }), mode, input, suggest);
   };
   const render = (items) => { shownItems = items; list.replaceChildren(...(items.length ? items.flatMap((e) => [h('div', { class: 'item' },
