@@ -1147,12 +1147,12 @@ function create(deps) {
   // Has a toolbar button (the extension library draws one for each extension whose manifest has an action): only these can be pinned.
   const hasAction = (ext) => { const a = ext.manifest.manifest_version === 3 ? ext.manifest.action : ext.manifest.manifest_version === 2 ? ext.manifest.browser_action : undefined; return typeof a === 'object' && a !== null; };
   // [extensions] Site access: offered when the extension has an id Lumen can keep (a Web Store install) and asks for all sites
-  // or is already narrowed; "sites" is what the user saved (empty: all sites, as installed).
+  // or is already narrowed; "sites" is what the user saved (empty: all sites, as installed), "siteMode" 'all', 'only' or 'except'.
   function siteAccess(ext) {
     const X = require('../browser/extension-sites');
-    const sites = (deps.extensionSitesSaved?.() || {})[ext.id] || [];
+    const { mode, sites } = X.accessOf((deps.extensionSitesSaved?.() || {})[ext.id]);
     const canNarrow = Boolean(X.idOfKey(ext.manifest.key)) && (sites.length > 0 || X.hasBroadAccess(ext.manifest));
-    return { canNarrow, sites, suggestedSites: canNarrow ? X.suggestedSites(ext.id) : [] };
+    return { canNarrow, siteMode: mode, sites, suggestedSites: canNarrow ? X.suggestedSites(ext.id) : [] };
   }
   function listExtensions() {
     const pinned = prefs().extensionPins.order;
@@ -1371,9 +1371,9 @@ function create(deps) {
       await deps.uninstallExtension(id, { session: ses() }).catch(() => {});
       return listExtensions();
     });
-    handle('prefs:extension-sites', async (id, sites) => { // [extensions] Settings → Extensions: Site access (an empty list is all sites)
+    handle('prefs:extension-sites', async (id, sites, mode) => { // [extensions] Settings → Extensions: Site access (an empty list is all sites; mode 'except': all but these)
       if (!EXT_ID.test(String(id))) throw new Error('Unknown extension');
-      await deps.setExtensionSites(String(id), sites);
+      await deps.setExtensionSites(String(id), sites, mode === 'except' ? 'except' : 'only');
       return listExtensions();
     });
     handle('prefs:extension-options', (id) => {

@@ -1621,7 +1621,8 @@ async function setupExtensions() {
   const { ElectronChromeExtensions } = require('electron-chrome-extensions');
   const { installChromeWebStore, loadAllExtensions, updateExtensions } = require('electron-chrome-web-store');
   const { extensionPermissionLines } = require('./browser/extension-permissions');
-  // Site access: an extension saved as "only these sites" loads with its sweeping patterns narrowed to them (see browser/extension-sites.js).
+  // Site access: an extension saved as "only these sites" loads with its sweeping patterns narrowed to them, one saved as "all sites
+  // except these" with them excluded from its content scripts (see browser/extension-sites.js).
   // Every load goes through here: start-up, an install, the library's updates. Nothing is read when no extension has sites saved.
   const loadRaw = ses.extensions.loadExtension.bind(ses.extensions);
   ses.extensions.loadExtension = async (dir, ...rest) => {
@@ -1758,12 +1759,12 @@ async function setupExtensions() {
   setInterval(checkUpdates, 5 * 60 * 60 * 1000).unref?.();
 }
 
-// Settings → Extensions → Site access: saves the sites (none: all sites, as installed) and loads the extension again with them.
-// Pages already open keep what they had until they reload.
-async function setExtensionSites(id, list) {
-  const sites = extensionSites().cleanSites(list);
+// Settings → Extensions → Site access: saves the sites (none: all sites, as installed), as "only these" or, with mode 'except',
+// "all sites except these", and loads the extension again with them. Pages already open keep what they had until they reload.
+async function setExtensionSites(id, list, mode) {
+  const value = extensionSites().savedOf(mode, list);
   const saved = { ...(readSettings().extensionSites || {}) };
-  if (sites.length) saved[id] = sites; else delete saved[id];
+  if (value) saved[id] = value; else delete saved[id];
   writeSettings({ ...readSettings(), extensionSites: saved });
   const ses = session.defaultSession;
   const ext = ses.extensions.getExtension(id);
@@ -9811,7 +9812,7 @@ if (TEST) {
   global.__zoomBy = (step) => zoomBy(activeTab()?.webContents, step);
   global.__installExtension = (id) => installExtension(id, { session: session.defaultSession });
   global.__uninstallExtension = (id) => uninstallExtension(id, { session: session.defaultSession });
-  global.__setExtensionSites = (id, sites) => setExtensionSites(id, sites);
+  global.__setExtensionSites = (id, sites, mode) => setExtensionSites(id, sites, mode);
   global.__isContentBlocker = isContentBlocker;
   global.__adblock = { ready: adblock.ready, blocked: adblock.blocked, probe: adblock.probe };
   global.__downloads = { list: () => downloads.list.map((d) => ({ ...d })), menu: () => downloads.menu(), panel: () => downloadsView?.webContents, panelList: () => downloads.panelList(), show: (anchor) => showDownloadsPanel(anchor), hide: hideDownloadsPanel, visible: () => Boolean(downloadsView?.getVisible()) };

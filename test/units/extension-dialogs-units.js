@@ -28,6 +28,15 @@ assert.deepStrictEqual(reachOf({ ...narrow, permissions: ['scripting'] }), ['htt
 assert.deepStrictEqual(reachOf({ manifest_version: 2, permissions: ['tabs', 'http://*/*', 'storage'] }), ['http://*/*'], 'manifest v2 host permissions count');
 pass('the shim reaches only the sites the extension can already run scripts on');
 
+// Site access "all sites except" (browser/extension-sites.js) excludes a site from every script: the shim stays off it too,
+// but only from what all of them exclude (a site one script still runs on keeps the shim).
+const msft = '*://*.login.microsoftonline.com/*';
+const kept = { ...op, content_scripts: [{ matches: ['<all_urls>'], exclude_matches: [msft], js: ['a.js'] }, { matches: ['https://*.x.com/*'], exclude_matches: ['https://bank.com/*', msft], js: ['b.js'] }] };
+assert.deepStrictEqual(withShim(kept).content_scripts[0].exclude_matches, [msft], 'the site every script excludes');
+assert.deepStrictEqual(withShim(withShim(kept)).content_scripts[0].exclude_matches, [msft], 'loaded again: the same');
+assert.ok(!('exclude_matches' in withShim({ ...kept, content_scripts: [kept.content_scripts[0], { matches: ['<all_urls>'], js: ['c.js'] }] }).content_scripts[0]), 'one script without it: no exclusion');
+pass('the shim stays off a site every one of the extension\'s scripts is kept off');
+
 const none = { manifest_version: 3, name: 'Theme', permissions: ['storage'] };
 assert.deepStrictEqual(withShim(none), none, 'an extension that runs nothing on pages is left alone');
 const stale = { ...none, content_scripts: [{ matches: ['<all_urls>'], js: [SHIM] }] };
