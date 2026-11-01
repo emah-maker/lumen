@@ -61,7 +61,7 @@
       if (save && value && value !== account.name) act('rename', value);
     };
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); done(true); } // (not while an IME is composing)
+      if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); done(true); } // (renderer/ime.js: not the Enter that picks an IME's text)
       if (e.key === 'Escape') { e.preventDefault(); done(false); }
     });
     input.addEventListener('blur', () => done(true));
