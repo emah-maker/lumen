@@ -1149,7 +1149,7 @@ function create(deps) {
   }
 
   // ---- extensions ----
-  const installedExtensions = () => ses().extensions.getAllExtensions().filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store'));
+  const installedExtensions = () => ses().extensions.getAllExtensions().filter((ext) => ext.manifest.name && !ext.id.startsWith('chrome-web-store') && !deps.lumenOwnExtension?.(ext)); // ([uBlock mode] not Lumen's own request rules)
   // Has a toolbar button (the extension library draws one for each extension whose manifest has an action): only these can be pinned.
   const hasAction = (ext) => { const a = ext.manifest.manifest_version === 3 ? ext.manifest.action : ext.manifest.manifest_version === 2 ? ext.manifest.browser_action : undefined; return typeof a === 'object' && a !== null; };
   // [extensions] Site access: offered when the extension has an id Lumen can keep (a Web Store install) and asks for all sites

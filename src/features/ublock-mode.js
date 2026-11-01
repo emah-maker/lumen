@@ -39,7 +39,7 @@ async function switchTo(mode, deps) {
     await Promise.resolve(deps.pin(UBOL_ID)).catch(() => {}); // its button in the toolbar: pause on a site, its popup
   }
   deps.writeSettings({ ...deps.readSettings(), adBlocker: mode });
-  deps.applyHooks();
+  await deps.applyHooks(); // (Lumen's own request rules too, before pages reload)
   // (A removal that fails leaves an extension whose rules don't apply: Lumen's hooks are back on the session.)
   if (mode === 'lumen' && deps.extensions.getExtension(UBOL_ID)) await Promise.resolve(deps.uninstall(UBOL_ID)).catch((err) => console.error('[lumen] uBlock Origin Lite removal failed:', err?.message || err));
   deps.reloadPages();

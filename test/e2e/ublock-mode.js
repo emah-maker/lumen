@@ -53,7 +53,11 @@ const { buildCrx } = require('../fixtures/extensions/build-crx');
     return id;
   };
   const inTab = (id, code) => app.evaluate(async (_e, [i, c]) => { try { return await global.__settings.contents(i).executeJavaScript(c, true); } catch (err) { return 'ERROR ' + (err?.message || err); } }, [id, code]);
-  const choose = (sid, value) => inTab(sid, `(() => { const s = document.getElementById('pref-adBlocker'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); return true; })()`);
+  // (uBlock Origin Lite first shows what differs while it is on: confirmed here; ublock-rebuilt.js checks the list and Cancel)
+  const choose = async (sid, value) => {
+    await inTab(sid, `(() => { const s = document.getElementById('pref-adBlocker'); s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change')); return true; })()`);
+    if (value === 'ublock') { await waitFor(() => inTab(sid, "Boolean(document.getElementById('ublock-confirm-go'))").then((v) => v === true), 5000); await inTab(sid, "document.getElementById('ublock-confirm-go').click(); true"); }
+  };
   const note = (sid) => inTab(sid, "document.getElementById('ad-blocker-status').textContent");
   // A fresh web tab on the test page; resolves with what happened to its ad script.
   const adOutcome = async () => {

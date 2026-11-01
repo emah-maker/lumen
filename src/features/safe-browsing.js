@@ -305,9 +305,10 @@ function createSafeBrowsing(deps) {
   // Loads the stored lists once, off the main thread's critical path (fs.promises). Never rejects:
   // a missing, partial or damaged file is ignored and that list is fetched again in full.
   let loading = null;
+  let loaded = false;
   function load() {
     if (!loading) {
-      loading = loadFromDisk().catch(() => {}).then(() => { deps.onChange?.(); });
+      loading = loadFromDisk().catch(() => {}).then(() => { loaded = true; deps.onChange?.(); });
     }
     return loading;
   }
@@ -515,6 +516,25 @@ function createSafeBrowsing(deps) {
     }, () => callback({}));
   }
 
+  // [uBlock mode] main.js's navigation gate asks this first, at once: true when the page is surely not listed (no list prefix matches it and no
+  // remembered full hash), so only a possible match is held for gate()'s lookup. Lists not loaded yet: not sure (gate() waits for them).
+  function clearNow(url) {
+    if (!active()) return true;
+    if (!loaded) { load(); return false; }
+    if (!lists.size) return true; // (none downloaded: gate() lets every page through too)
+    const c = canonicalize(url);
+    if (!c || !/^https?:\/\//.test(c.url) || isLocal(c.host)) return true;
+    const now = Date.now();
+    for (const e of expressions(c)) {
+      const f = sha256(e);
+      const hit = cache.get(f.subarray(0, 4).toString('base64'));
+      if (hit && hit.expires > now) { if (hit.full.has(f.toString('base64'))) return false; continue; }
+      const n = f.readUInt32BE(0);
+      for (const l of lists.values()) if (has(l.prefixes, n)) return false;
+    }
+    return true;
+  }
+
   // did-fail-load of a tab: the warning page's address when this module cancelled the load.
   function warningUrl(wc, failedUrl, code) {
     const f = flagged.get(wc.id);
@@ -546,7 +566,7 @@ function createSafeBrowsing(deps) {
     return Promise.resolve();
   }
 
-  return { gate, check, warningUrl, attachTab, status, refresh, sync, ready: load, stop: () => clearTimeout(timer) };
+  return { gate, check, clearNow, warningUrl, attachTab, status, refresh, sync, ready: load, stop: () => clearTimeout(timer) };
 }
 
 function describe(threat) {

@@ -49,4 +49,14 @@ function strip(url) {
   return url.slice(0, q) + (kept.length ? `?${kept.join('&')}` : '') + (hash === -1 ? '' : url.slice(hash));
 }
 
-module.exports = { strip };
+// [uBlock mode] The same list for declarativeNetRequest (features/ublock-helper.js), which matches sites by domain, not by pattern:
+// BY_HOST's and LEAVE's patterns as the domains they stand for (test/units/ublock-helper-units.js checks each against its pattern).
+const AMAZON = ['amazon.com', 'amazon.co.uk', 'amazon.de', 'amazon.fr', 'amazon.it', 'amazon.es', 'amazon.ca', 'amazon.co.jp', 'amazon.in', 'amazon.com.au', 'amazon.com.br', 'amazon.com.mx', 'amazon.nl', 'amazon.se', 'amazon.pl', 'amazon.sg', 'amazon.ae', 'amazon.sa', 'amazon.com.tr', 'amazon.com.be'];
+const BY_HOST_DOMAINS = [['youtube.com', 'youtu.be'], ['spotify.com'], ['instagram.com'], ['twitter.com', 'x.com'], ['tiktok.com'], AMAZON, ['linkedin.com']];
+const forRules = () => ({
+  everywhere: [...EVERYWHERE],
+  byHost: BY_HOST.map(([, names], i) => ({ domains: BY_HOST_DOMAINS[i], names: [...names] })),
+  leaveDomains: ['accounts.google.com', 'login.microsoftonline.com', 'appleid.apple.com', 'paypal.com', 'stripe.com'],
+});
+
+module.exports = { strip, forRules, BY_HOST, LEAVE, PREFIXES };
