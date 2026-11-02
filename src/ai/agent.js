@@ -3962,7 +3962,7 @@ ${prompt}` : prompt), historyImages: [] };
         const a = m[key];
         if (a && a.ref && frames.decodeId(a.ref)) {
           const box = await this.annotateBoxOf(wc, a.ref).catch(() => null);
-          m[key] = box ? { box } : null;
+          m[key] = box ? { box: annotate.offsetBox(box, a) } : null;
         }
       }
     }
@@ -3992,7 +3992,7 @@ ${prompt}` : prompt), historyImages: [] };
         if (!a) continue;
         if (a.text) { missing.push(`marks[${i}] ${m.type}: text targets need the page overlay`); ok = false; } else if (a.ref) {
           const box = await this.annotateBoxOf(wc, a.ref).catch(() => null);
-          if (box) out[key] = { box }; else { missing.push(`marks[${i}] ${m.type}: element ${a.ref} is gone or not visible`); ok = false; }
+          if (box) out[key] = { box: annotate.offsetBox(box, a) }; else { missing.push(`marks[${i}] ${m.type}: element ${a.ref} is gone or not visible`); ok = false; }
         }
       }
       if (ok) marks.push(out);
@@ -5076,7 +5076,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
       if (name === 'hover') return 'Pointing at an element';
-      if (name === 'annotate') return input.clear === true && !input.marks?.length ? 'Clearing the drawings' : `Drawing ${Array.isArray(input.marks) ? input.marks.length : 0} mark${input.marks?.length === 1 ? '' : 's'} on ${quote(String(this.taskTab()?.title || this.taskTab()?.webContents?.getTitle?.() || 'the page').slice(0, 40))}`;
+      if (name === 'annotate') return input.clear === true && !input.marks?.length ? 'Clearing the drawings' : Array.isArray(input.marks) && input.marks.length && input.marks.every((m) => m?.type === 'write') ? `Writing on ${quote(String(this.taskTab()?.title || this.taskTab()?.webContents?.getTitle?.() || 'the page').slice(0, 40))}` : `Drawing ${Array.isArray(input.marks) ? input.marks.length : 0} mark${input.marks?.length === 1 ? '' : 's'} on ${quote(String(this.taskTab()?.title || this.taskTab()?.webContents?.getTitle?.() || 'the page').slice(0, 40))}`;
       if (name === 'upload_file') return this.uploadLabel(input);
       if (name === 'click_at') return 'Clicking a spot on the page';
       if (name === 'drag') return 'Dragging on the page';

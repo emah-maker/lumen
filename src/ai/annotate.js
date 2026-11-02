@@ -1,7 +1,9 @@
 // ---------- the AI's annotate tool: draw on the page to explain it ----------
 // A teacher drawing on the screen: box / circle / arrow / highlight / label / step / spotlight / underline marks,
 // pinned to an element (a read_page / find id, or `text:…`) so they follow it on scroll and resize, or to a spot of
-// the latest screenshot (viewport px, anchored to the page where it was drawn).
+// the latest screenshot (viewport px, anchored to the page where it was drawn). With a target, x,y,w,h and points are
+// offsets inside it (element space). `write` puts text on the page (an answer in a blank, a note in a margin) in a
+// handwriting or print font fitted to its box; `fill` fills a box, circle or path; curve:false draws a shape exact.
 //
 // Where marks are drawn (agent.js annotateTool picks one):
 //   web page, slide viewer   an overlay in the tab, built by overlayMain() in Claude's isolated world: a closed shadow
@@ -18,15 +20,17 @@
 const MAX_MARKS = 20; // per call
 const MAX_TOTAL = 30; // on the page at once (the oldest go)
 const MAX_TEXT = 80;
+const MAX_WRITE = 400; // a write mark's text (lines split on \n)
+const MAX_LINES = 16;
 const MAX_SECONDS = 600;
-const TYPES = ['box', 'circle', 'arrow', 'highlight', 'label', 'step', 'spotlight', 'underline', 'strike', 'bracket', 'check', 'cross', 'redact', 'callout', 'path'];
-const MAX_POINTS = 120;
+const TYPES = ['box', 'circle', 'arrow', 'highlight', 'label', 'step', 'spotlight', 'underline', 'strike', 'bracket', 'check', 'cross', 'redact', 'callout', 'path', 'write'];
+const MAX_POINTS = 400;
 const COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'black', 'white'];
 const COORD_LIMIT = 20000;
 
 const TOOL = {
   name: 'annotate',
-  description: 'Draw on the page to explain it. marks:[{type:box|circle|arrow|highlight|label|step|spotlight|underline|strike|bracket|check|cross|redact|callout|path, target:id|text:…, x,y,w,h, to, points, text, color, width/opacity/curve}]. Screenshot/find first; number steps like your answer. clear:true removes.',
+  description: 'Draw on the page to explain it. marks:[{type:box|circle|arrow|highlight|label|step|spotlight|underline|strike|bracket|check|cross|redact|callout|path|write, target:id|text:…, x,y,w,h, to, points, text, color, fill, font, width/opacity/curve}]. Screenshot/find first; number steps like your answer.',
   input_schema: {
     type: 'object',
     properties: {
@@ -96,19 +100,37 @@ function shotScaleOf(view, size, zoom = 1) {
 // A length (w, h) of the screenshot in CSS px.
 const shotLen = (v, scale, axis) => (scale && scale.css ? v * scale.css[axis] : shotToCss(v, scale));
 // A position of the screenshot in CSS px of the viewport NOW: the page may have scrolled since (scale.now = the scroll at the call).
+// An offset inside a target: screenshot px when there is a screenshot, else CSS px (no scroll in it: it moves with the element).
+const offLen = (v, scale, axis) => (scale ? shotLen(v, scale, axis) : v);
 const shotPos = (v, scale, axis) => shotLen(v, scale, axis) - (scale && scale.css && scale.scroll && scale.now ? scale.now[axis] - scale.scroll[axis] : 0);
 
 // The anchor a mark or an arrow's `to` names: an element / text, or a box in viewport CSS px (w, h may be 0: a point).
-// -> { ref } | { text } | { box: { x, y, w, h } } | null
+// A target with x,y (w,h) is a box inside that element: offsets from its top-left corner (element space).
+// -> { ref } | { text } | { ref | text, off: { x, y, w, h } } | { box: { x, y, w, h } } | null
 function anchorOf(o, scale, where) {
   if (!o || typeof o !== 'object') return null;
-  if (o.target !== undefined && o.target !== null && o.target !== '') return parseTarget(o.target, where);
   const x = num(o.x), y = num(o.y);
+  if (o.target !== undefined && o.target !== null && o.target !== '') {
+    const t = parseTarget(o.target, where);
+    if (x === null || y === null) return t;
+    const w = num(o.w), h = num(o.h);
+    return { ...t, off: { x: offLen(x, scale, 'x'), y: offLen(y, scale, 'y'), w: w && w > 0 ? offLen(w, scale, 'x') : 0, h: h && h > 0 ? offLen(h, scale, 'y') : 0 } };
+  }
   if (x === null || y === null) return null;
   if (!scale) throw new Error(`${where}: x,y need a screenshot of this tab first (they are pixels of it), or use target.`);
   const w = num(o.w), h = num(o.h);
   return { box: { x: shotPos(x, scale, 'x'), y: shotPos(y, scale, 'y'), w: w && w > 0 ? shotLen(w, scale, 'x') : 0, h: h && h > 0 ? shotLen(h, scale, 'y') : 0 } };
 }
+
+// A write mark given as a point: the box its text takes at 18 CSS px. The overlay fits the text to its box, so the size is
+// kept as the box and follows a zoom. The width is a guess the overlay corrects by measuring.
+const WRITE_PX = 18;
+function writeSize(text) {
+  const lines = text.split('\n');
+  return { w: Math.max(1, ...lines.map((l) => l.length)) * WRITE_PX * 0.56, h: lines.length * WRITE_PX * 1.25 };
+}
+// "print" / "typed" / "sans" / "serif" / "mono" / a font name like Arial -> print; anything else (or nothing) -> handwriting.
+const fontOf = (v) => (/print|typ|sans|serif|mono|arial|helvetica|times|neat|plain|computer/i.test(String(v || '')) ? 'print' : 'hand');
 
 // Checks and normalises a call. scale: { ratio, zoom } of the latest screenshot (null: none taken).
 // -> { clear, marks: [{ type, at, to, text, color }], seconds, dropped, usesRefs, usesText, usesBox }; throws a message for the model.
@@ -126,30 +148,45 @@ function normalize(input, scale = null) {
     const where = `marks[${i}]`;
     if (!m || typeof m !== 'object' || !TYPES.includes(m.type)) throw new Error(`${where}: type must be one of ${TYPES.join(', ')}.`);
     if (m.color !== undefined && !COLORS.includes(m.color)) throw new Error(`${where}: color must be one of ${COLORS.join(', ')}.`);
+    if (m.fill !== undefined && m.fill !== null && m.fill !== false && !COLORS.includes(m.fill)) throw new Error(`${where}: fill must be one of ${COLORS.join(', ')}.`);
     let at = anchorOf(m, scale, where);
     let pts = null;
-    if (m.type === 'path') { // a freehand stroke: its points are kept as fractions of their bounding box, and the box is the anchor
+    const along = m.type === 'arrow' && Array.isArray(m.points) && m.points.length >= 2; // an arrow drawn along points (a curve, a detour)
+    if (m.type === 'path' || along) { // a freehand stroke: its points are kept as fractions of their bounding box, and the box is the anchor
       const raw = Array.isArray(m.points) ? m.points.slice(0, MAX_POINTS) : [];
       const xy = raw.map((p) => (Array.isArray(p) ? [num(p[0]), num(p[1])] : [null, null])).filter((p) => p[0] !== null && p[1] !== null);
       if (xy.length < 2) throw new Error(`${where}: a path needs points: [[x,y], …] (at least 2, screenshot px).`);
-      if (!scale) throw new Error(`${where}: points need a screenshot of this tab first (they are pixels of it).`);
-      const px = xy.map((p) => ({ x: shotPos(p[0], scale, 'x'), y: shotPos(p[1], scale, 'y') }));
+      const inside = at && !at.box ? at : null; // with a target: the points are offsets inside that element
+      if (!scale && !inside) throw new Error(`${where}: points need a screenshot of this tab first (they are pixels of it), or a target (then they are px inside it).`);
+      const px = xy.map((p) => (inside ? { x: offLen(p[0], scale, 'x'), y: offLen(p[1], scale, 'y') } : { x: shotPos(p[0], scale, 'x'), y: shotPos(p[1], scale, 'y') }));
       const x0 = Math.min(...px.map((p) => p.x)), y0 = Math.min(...px.map((p) => p.y));
       const bw = Math.max(1, Math.max(...px.map((p) => p.x)) - x0), bh = Math.max(1, Math.max(...px.map((p) => p.y)) - y0);
       pts = px.map((p) => [(p.x - x0) / bw, (p.y - y0) / bh]);
-      at = { box: { x: x0, y: y0, w: bw, h: bh } };
+      const box = { x: x0, y: y0, w: bw, h: bh };
+      at = inside ? { ...(inside.ref ? { ref: inside.ref } : { text: inside.text }), off: box } : { box };
     }
-    const to = m.to === undefined ? null : anchorOf(m.to, scale, `${where}.to`);
-    if (m.to !== undefined && !to) throw new Error(`${where}.to needs a target, or x and y.`);
+    const to = m.to === undefined || along ? null : anchorOf(m.to, scale, `${where}.to`);
+    if (m.to !== undefined && !to && !along) throw new Error(`${where}.to needs a target, or x and y.`);
     if (!at && !(m.type === 'arrow' && to)) throw new Error(`${where}: say where: target (element id or "text:…"), or x and y of the screenshot.`);
     if (m.type === 'arrow' && !to && !at) throw new Error(`${where}: an arrow needs a target or x,y, and usually to.`);
-    const text = m.text === undefined || m.text === null ? '' : String(m.text).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, MAX_TEXT);
+    const write = m.type === 'write';
+    const text = m.text === undefined || m.text === null ? '' : write
+      ? String(m.text).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]+/g, ' ').split('\n').map((l) => l.replace(/\s+$/, '')).slice(0, MAX_LINES).join('\n').replace(/^\n+|\n+$/g, '').slice(0, MAX_WRITE)
+      : String(m.text).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, MAX_TEXT);
+    if (write && !text.trim()) throw new Error(`${where}: a write mark needs text (\\n for a new line).`);
+    const point = (b) => b && !b.w && !b.h;
+    const autoSized = write && at && (point(at.box) || point(at.off));
+    if (autoSized && at.box) at.box = { ...at.box, ...writeSize(text) }; // a point: the text at 18 px, its top-left there
+    if (autoSized && at.off) at.off = { ...at.off, ...writeSize(text) };
     for (const a of [at, to]) { if (a?.ref) out.usesRefs = true; if (a?.text) out.usesText = true; if (a?.box) out.usesBox = true; }
     const mark = { type: m.type, at, to, text, color: m.color || null };
     if (pts) mark.pts = pts;
     if (typeof m.width === 'number' && Number.isFinite(m.width)) mark.width = Math.max(1, Math.min(12, m.width));
     if (typeof m.opacity === 'number' && Number.isFinite(m.opacity)) mark.opacity = Math.max(0.1, Math.min(1, m.opacity));
     if (typeof m.curve === 'boolean') mark.curve = m.curve;
+    if (m.fill && COLORS.includes(m.fill)) mark.fill = m.fill;
+    if (write) mark.font = fontOf(m.font);
+    if (write && autoSized) mark.auto = true; // sized by its height only, never wrapped
     out.marks.push(mark);
   });
   return out;
@@ -176,7 +213,7 @@ function overlayMain(spec, env) {
     red: ['#d92d20', '#ff6a5f'], orange: ['#e8590c', '#ff9f43'], yellow: ['#f5c400', '#ffd60a'], green: ['#1a9d4a', '#3ddc84'],
     blue: ['#1a6ef0', '#5aa9ff'], purple: ['#7a3ff2', '#b388ff'], pink: ['#e0399a', '#ff7ac6'], black: ['#111111', '#f2f2f2'], white: ['#ffffff', '#ffffff'],
   };
-  const DEFAULT = { box: 'red', circle: 'red', arrow: 'red', underline: 'red', strike: 'red', highlight: 'yellow', label: 'blue', step: 'blue', spotlight: 'white', bracket: 'blue', check: 'green', cross: 'red', redact: 'black', callout: 'blue', path: 'red' };
+  const DEFAULT = { box: 'red', circle: 'red', arrow: 'red', underline: 'red', strike: 'red', highlight: 'yellow', label: 'blue', step: 'blue', spotlight: 'white', bracket: 'blue', check: 'green', cross: 'red', redact: 'black', callout: 'blue', path: 'red', write: 'blue' };
   let dark = false;
   try { dark = Boolean(win.matchMedia && win.matchMedia('(prefers-color-scheme: dark)').matches); } catch { dark = false; }
   let still = false;
@@ -363,6 +400,20 @@ function overlayMain(spec, env) {
   // anchor -> { rects(): [] | null, tok?, frozen: anchor }
   const resolve = (a) => {
     if (!a) return null;
+    if ((a.off || a.rel) && (a.ref || a.text)) { // a box inside an element: kept as fractions of the element's box (it scales with a zoom)
+      const base = resolve(a.ref ? { ref: a.ref } : { text: a.text });
+      const rs0 = base && base.rects();
+      if (!rs0 || !rs0.length) return null;
+      const b0 = bounds(rs0), o = a.off;
+      const rel = a.rel || (b0.w > 0 && b0.h > 0 ? { fx: o.x / b0.w, fy: o.y / b0.h, fw: o.w / b0.w, fh: o.h / b0.h } : { px: o });
+      const rects = () => {
+        const rs = base.rects();
+        if (!rs || !rs.length) return null;
+        const b = bounds(rs);
+        return [rel.px ? { x: b.x + rel.px.x, y: b.y + rel.px.y, w: rel.px.w, h: rel.px.h } : { x: b.x + rel.fx * b.w, y: b.y + rel.fy * b.h, w: rel.fw * b.w, h: rel.fh * b.h }];
+      };
+      return { rects, frozen: { ...base.frozen, rel }, scroll: base.scroll };
+    }
     if (a.tok) { const t = a.tok; return { rects: () => { const r = space.locate(t); return r ? [r] : null; }, frozen: a, scroll: space.reveal ? () => space.reveal(t) : undefined }; }
     if (a.box) { const tok = space.capture(a.box); if (tok.el && board && board.state && board.state.observer) { try { board.state.observer.observe(tok.el); } catch { /* not observable */ } } return { rects: () => { const r = space.locate(tok); return r ? [r] : null; }, frozen: { tok: { ...tok } } }; }
     if (a.ref) { const rects = () => refRects(a.ref); if (!rects()) return null; return { rects, frozen: a, scroll: () => { const e = win.__claudeEls[a.ref - 1].el; if (e.scrollIntoView) e.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } }; }
@@ -483,7 +534,7 @@ function overlayMain(spec, env) {
     const view = makeView(m, at, to, index);
     if (!view) { missing.push(`marks[${i}] ${m.type}: nothing to draw`); return; }
     state.views.push(view);
-    frozen.push({ type: m.type, at: at ? at.frozen : null, to: to ? to.frozen : null, text: m.text, color: m.color, pts: m.pts, width: m.width, opacity: m.opacity, curve: m.curve });
+    frozen.push({ type: m.type, at: at ? at.frozen : null, to: to ? to.frozen : null, text: m.text, color: m.color, pts: m.pts, width: m.width, opacity: m.opacity, curve: m.curve, fill: m.fill, font: m.font, auto: m.auto });
   });
   if (scrollOnce) { try { scrollOnce(); } catch { /* no scroll */ } }
   // Over the cap: the oldest marks go.
@@ -494,7 +545,7 @@ function overlayMain(spec, env) {
 
   // ---- one mark
   function makeView(m, at, to, index) {
-    const c = colorOf(m.color, m.type);
+    const c = colorOf(m.color || (m.type !== 'write' && m.fill) || null, m.type); // a filled shape is outlined in its fill colour unless told
     const rnd = makeRng(state.seed * 131 + index * 977 + m.type.length);
     state.seed++;
     const delay = Math.min(index, 5) * 110;
@@ -513,15 +564,29 @@ function overlayMain(spec, env) {
     const rectsOf = (a) => (a ? a.rects() : null);
     const view = { type: m.type, remove: () => parts.forEach((p) => { try { p.remove(); } catch { /* gone */ } }), update: () => {} };
 
+    // A fill under a shape: translucent, or solid with opacity (fill:white, opacity:1 covers what is under it).
+    const fillOf = () => {
+      if (!m.fill) return null;
+      const e = add('path', { fill: colorOf(m.fill, m.type).hex, 'fill-opacity': m.opacity ? 1 : 0.35, stroke: 'none' });
+      popIn(e);
+      return e;
+    };
     if (m.type === 'box' || m.type === 'circle') {
-      const set = stroke(4);
+      const exact = Boolean(m.fill) || m.curve === false; // no hand-drawn wobble or padding: the exact box, or the ellipse in it
+      const fillEl = fillOf();
+      const set = stroke(exact ? 3 : 4);
       view.update = () => {
         const rs = rectsOf(at);
         if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
         parts.forEach((p) => p.setAttribute('visibility', 'visible'));
-        const b = sized(bounds(rs), 40);
+        const b = sized(bounds(rs), exact ? 12 : 40);
         const r = makeRng(index * 977 + 13);
-        set(m.type === 'box' ? rectPath(b, 5, r) : ellipsePath(b, r));
+        const rx = b.w / 2, ry = b.h / 2, cx = b.x + rx, cy = b.y + ry;
+        const d = !exact ? (m.type === 'box' ? rectPath(b, 5, r) : ellipsePath(b, r))
+          : m.type === 'box' ? `M${f(b.x)} ${f(b.y)}H${f(b.x + b.w)}V${f(b.y + b.h)}H${f(b.x)}Z`
+            : `M${f(cx - rx)} ${f(cy)}A${f(rx)} ${f(ry)} 0 1 0 ${f(cx + rx)} ${f(cy)}A${f(rx)} ${f(ry)} 0 1 0 ${f(cx - rx)} ${f(cy)}Z`;
+        set(d);
+        if (fillEl) fillEl.setAttribute('d', d);
       };
       if (m.text) addCallout(view, m, at, c, delay, add, popIn, rectsOf);
     } else if (m.type === 'underline' || m.type === 'strike') {
@@ -580,7 +645,7 @@ function overlayMain(spec, env) {
         setA(ring, { x: f(x), y: f(y), width: f(w), height: f(h), rx: r });
       };
       if (m.text) addCallout(view, m, at, c, delay, add, popIn, rectsOf);
-    } else if (m.type === 'arrow') {
+    } else if (m.type === 'arrow' && !m.pts) {
       const body = stroke(4);
       const head = stroke(4);
       view.update = (s) => {
@@ -617,15 +682,97 @@ function overlayMain(spec, env) {
         head(`M${f(p1.x)} ${f(p1.y)}L${f(tip.x)} ${f(tip.y)}L${f(p2.x)} ${f(p2.y)}`);
       };
       if (m.text) addCallout(view, m, at || to, c, delay, add, popIn, rectsOf, true);
-    } else if (m.type === 'path') {
+    } else if (m.type === 'path' || m.type === 'arrow') { // (an arrow here is one along points)
       if (!m.pts || m.pts.length < 2) return null;
-      const set = stroke(4);
+      const fillEl = fillOf(); // a filled path is closed
+      const set = stroke(m.width ? m.width : m.curve === false ? 3 : 4);
+      const head = m.type === 'arrow' ? stroke(m.width || 4) : null;
       view.update = () => {
         const rs = rectsOf(at);
         if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
         parts.forEach((p) => p.setAttribute('visibility', 'visible'));
         const b = bounds(rs); // the stroke scales with the element it was drawn on
-        set(smooth(m.pts.map((p) => ({ x: b.x + p[0] * b.w, y: b.y + p[1] * b.h }))));
+        const p = m.pts.map((q) => ({ x: b.x + q[0] * b.w, y: b.y + q[1] * b.h }));
+        // curve:false: straight segments through the exact points (a polyline, a polygon); else a smooth curve through them
+        const d = (m.curve === false ? p.map((q, i) => `${i ? 'L' : 'M'}${f(q.x)} ${f(q.y)}`).join('') : smooth(p)) + (fillEl ? 'Z' : '');
+        set(d);
+        if (fillEl) fillEl.setAttribute('d', d);
+        if (head) { // the head points along the last segment (a smooth curve leaves its last point that way too)
+          const tip = p[p.length - 1];
+          let k = p.length - 2;
+          while (k > 0 && Math.hypot(tip.x - p[k].x, tip.y - p[k].y) < 2) k--;
+          const ang = Math.atan2(tip.y - p[k].y, tip.x - p[k].x);
+          const hl = clampN((m.width || 4) * 3.5, 9, 26);
+          head(`M${f(tip.x - Math.cos(ang - 0.45) * hl)} ${f(tip.y - Math.sin(ang - 0.45) * hl)}L${f(tip.x)} ${f(tip.y)}L${f(tip.x - Math.cos(ang + 0.45) * hl)} ${f(tip.y - Math.sin(ang + 0.45) * hl)}`);
+        }
+      };
+      if (m.text) addCallout(view, m, { rects: () => { const rs = rectsOf(at); if (!rs || !rs.length) return null; const b = bounds(rs), q = m.pts[0]; return [{ x: b.x + q[0] * b.w, y: b.y + q[1] * b.h, w: 0, h: 0 }]; } }, c, delay, add, popIn, rectsOf, true);
+    } else if (m.type === 'write') {
+      const hand = m.font !== 'print';
+      const family = hand ? "'Segoe Print','Ink Free','Bradley Hand','Comic Sans MS','Chalkboard SE',cursive" : "system-ui,-apple-system,'Segoe UI',Roboto,Arial,sans-serif";
+      const back = m.fill ? add('rect', { fill: colorOf(m.fill, 'write').hex, 'fill-opacity': m.opacity ? 1 : 0.92, rx: 2 }) : null; // fill: a card behind the text (white covers what was there)
+      const text = add('text', { fill: c.hex, 'font-family': family, 'font-weight': hand ? 400 : 500, 'paint-order': 'stroke', 'stroke-linejoin': 'round', ...(m.fill ? {} : { stroke: c.halo, 'stroke-opacity': c.haloOpacity * 0.8 }) });
+      if (back) popIn(back);
+      play(text, [{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], { duration: Math.min(1400, 180 + m.text.length * 22), delay, fill: 'backwards', easing: 'linear' }); // written left to right
+      const given = m.text.split('\n');
+      // Width of a line at 100 px: measured where the engine can (getComputedTextLength), else a per-font estimate.
+      const widths = new Map();
+      const probe = live && typeof text.getComputedTextLength === 'function' ? el('text', { 'font-family': family, 'font-weight': hand ? 400 : 500, 'font-size': 100, visibility: 'hidden' }, board.markLayer) : null;
+      if (probe) parts.push(probe);
+      const at100 = (s) => {
+        if (!widths.has(s)) {
+          let w = 0;
+          if (probe) { try { probe.textContent = s; w = probe.getComputedTextLength(); } catch { w = 0; } }
+          widths.set(s, w > 0 ? w : s.length * (hand ? 58 : 53));
+        }
+        return widths.get(s);
+      };
+      const wrapTo = (maxW, size) => {
+        if (!(maxW > 0) || m.auto) return given;
+        const out = [];
+        for (const line of given) {
+          let cur = '';
+          for (const word of line.split(/ +/)) {
+            const next = cur ? `${cur} ${word}` : word;
+            if (cur && (at100(next) * size) / 100 > maxW) { out.push(cur); cur = word; } else cur = next;
+          }
+          out.push(cur);
+        }
+        return out.slice(0, 16);
+      };
+      // The largest size (up to the cap) at which the text fits the box: wrapped to its width, all lines in its height.
+      let first = null, fitted = null;
+      const fit = (b) => {
+        const cap = 28 * (first ? b.h / first.h : 1); // the cap grows with a zoom, so a zoomed box keeps the same look
+        if (m.auto) return { size: b.h / (given.length * 1.25), lines: given };
+        let size = Math.max(6, Math.min(cap, b.h / (given.length * 1.2)));
+        let lines = wrapTo(b.w, size);
+        for (let i = 0; i < 40 && size > 6; i++) {
+          const wide = Math.max(...lines.map((l) => (at100(l) * size) / 100));
+          if (lines.length * size * 1.2 <= b.h + 0.5 && wide <= b.w + 0.5) break;
+          size *= 0.93;
+          lines = wrapTo(b.w, size);
+        }
+        return { size, lines };
+      };
+      let spans = [];
+      view.update = () => {
+        const rs = rectsOf(at);
+        if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
+        parts.forEach((p) => { if (p !== probe) p.setAttribute('visibility', 'visible'); });
+        const b = bounds(rs);
+        if (!first) first = { w: b.w, h: b.h };
+        const key = `${f(b.w)},${f(b.h)}`;
+        if (!fitted || fitted.key !== key) fitted = { key, ...fit(b) };
+        const { size, lines } = fitted;
+        const textH = lines.length * size * 1.2;
+        const top = m.auto ? b.y : textH >= b.h * 0.6 ? b.y + (b.h - textH) / 2 : b.y + Math.min(size * 0.2, (b.h - textH) / 2);
+        const x = b.x + (m.auto ? 0 : Math.min(3, b.w * 0.02));
+        setA(text, { x: f(x), y: f(top + size * 0.95), 'font-size': f(size), 'stroke-width': f(Math.max(1.5, size * 0.16)) });
+        while (spans.length < lines.length) spans.push(el('tspan', {}, text));
+        while (spans.length > lines.length) spans.pop().remove();
+        spans.forEach((t, i) => { t.textContent = lines[i]; setA(t, { x: f(x), y: f(top + size * 0.95 + i * size * 1.2) }); });
+        if (back) setA(back, { x: f(b.x - 2), y: f(Math.min(b.y, top) - 1), width: f(Math.max(b.w, Math.max(...lines.map((l) => (at100(l) * size) / 100)) + 6) + 4), height: f(Math.max(b.h, textH) + 2) });
       };
     } else if (m.type === 'bracket') {
       const set = stroke(3.5);
@@ -869,6 +1016,13 @@ function staticSvg(marks, { w, h, image }) {
   return { svg, missing: out.missing, drawn: out.drawn };
 }
 
+// An element's box (from rectScript) with the anchor's offsets inside it applied: where a mark in element space goes when it is
+// drawn where the element is now (embedded frames, the screenshot path).
+function offsetBox(box, a) {
+  if (!box || !a || !a.off) return box;
+  return { x: box.x + a.off.x, y: box.y + a.off.y, w: a.off.w, h: a.off.h };
+}
+
 // What the model is told.
 function resultText({ drawn, added, missing, dropped, where, seconds, steps }) {
   const parts = [`Drew ${added} mark${added === 1 ? '' : 's'} on ${where}${drawn > added ? ` (${drawn} on the page now)` : ''}. The user sees them over the page${seconds ? ` for ${seconds} s` : ' until they click "Clear drawings" or press Esc'}.`];
@@ -878,4 +1032,4 @@ function resultText({ drawn, added, missing, dropped, where, seconds, steps }) {
   return parts.join(' ');
 }
 
-module.exports = { MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, shotScaleOf, normalize, choosePath, overlayMain, viewerSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, resultText };
+module.exports = { MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_WRITE, MAX_POINTS, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, shotScaleOf, normalize, choosePath, overlayMain, viewerSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, offsetBox, resultText };
