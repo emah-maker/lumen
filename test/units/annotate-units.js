@@ -472,7 +472,7 @@ withTimers(() => {
     const pts = [[100, 100], [150, 140], [200, 100], [250, 140]];
     const m = annotate.normalize({ marks: [{ type: 'path', points: pts }] }, { ratio: 1, zoom: 1 }).marks[0];
     check('path: points become fractions of their bounding box, which is the anchor', J(m.at.box) === J({ x: 100, y: 100, w: 150, h: 40 }) && m.pts.length === 4 && m.pts[0][0] === 0 && m.pts[3][0] === 1 && m.pts[1][1] === 1, J(m));
-    check('path: needs 2+ points and a screenshot; capped at 120 points', /needs points/.test(throws(() => annotate.normalize({ marks: [{ type: 'path', points: [[1, 1]] }] }, { ratio: 1, zoom: 1 }))) && /screenshot/.test(throws(() => annotate.normalize({ marks: [{ type: 'path', points: [[1, 1], [2, 2]] }] }, null))) && annotate.normalize({ marks: [{ type: 'path', points: Array.from({ length: 300 }, (_, i) => [i, i % 7]) }] }, { ratio: 1, zoom: 1 }).marks[0].pts.length === 120);
+    check('path: needs 2+ points and a screenshot (or a target); capped at 400 points', /needs points/.test(throws(() => annotate.normalize({ marks: [{ type: 'path', points: [[1, 1]] }] }, { ratio: 1, zoom: 1 }))) && /screenshot/.test(throws(() => annotate.normalize({ marks: [{ type: 'path', points: [[1, 1], [2, 2]] }] }, null))) && annotate.MAX_POINTS === 400 && annotate.normalize({ marks: [{ type: 'path', points: Array.from({ length: 900 }, (_, i) => [i, i % 7]) }] }, { ratio: 1, zoom: 1 }).marks[0].pts.length === 400);
     const d = pathOf(draw([{ type: 'path', points: pts }]));
     check('path: a smooth stroke through the points', /^M100 100C/.test(d) && /250 140$/.test(d), d);
     // anchored to an element: it scales with the element's box
@@ -501,6 +501,83 @@ withTimers(() => {
     check('every new type draws and takes the palette', ['strike', 'bracket', 'check', 'cross', 'redact'].every((t) => annotate.COLORS.every((c) => draw([{ type: t, ...box, color: c }]).drawn === 1)));
     check('schema: a compact tool (one type enum + shared options), the new types are in it, and validation accepts them', ['strike', 'bracket', 'check', 'cross', 'redact', 'callout', 'path'].every((t) => annotate.TYPES.includes(t)) && ['width', 'opacity', 'curve', 'points'].every((k) => annotate.TOOL.input_schema.properties.marks.items.properties[k]) && validateInput('annotate', { marks: [{ type: 'path', points: [[1, 2], [3, 4]], width: 3, opacity: 0.5 }, { type: 'arrow', target: '1', curve: false }] }) === null);
   }
+}
+
+// ---- writing on the page, element space, exact and filled shapes, arrows along points
+{
+  const S = { ratio: 1, zoom: 1 };
+  const one = (m, scale = S) => annotate.normalize({ marks: [m] }, scale).marks[0];
+  // arguments
+  check('write: a known type that needs text; newlines are kept, other control characters are not, capped at 400', annotate.TYPES.includes('write') && /needs text/.test(throws(() => one({ type: 'write', x: 1, y: 1 }))) && /needs text/.test(throws(() => one({ type: 'write', x: 1, y: 1, text: ' \n ' }))) && one({ type: 'write', x: 1, y: 1, text: 'a\r\nb\u0007c\n' }).text === 'a\nb c' && one({ type: 'write', x: 1, y: 1, text: 'x'.repeat(900) }).text.length === annotate.MAX_WRITE);
+  const pt = one({ type: 'write', x: 50, y: 60, text: 'x = 4\ny = 7' });
+  check('write: a point becomes the box its text takes at 18 px (two lines tall), sized by height only', pt.auto === true && pt.at.box.x === 50 && pt.at.box.y === 60 && Math.abs(pt.at.box.h - 2 * 18 * 1.25) < 1e-9 && pt.at.box.w > 0, J(pt));
+  check('write: a box keeps its size and is fitted, not auto-sized', !one({ type: 'write', x: 50, y: 60, w: 200, h: 30, text: 'Paris' }).auto);
+  check('write: font is handwriting unless print/typed/sans/serif/mono or a font name is asked for', one({ type: 'write', x: 1, y: 1, text: 'a' }).font === 'hand' && one({ type: 'write', x: 1, y: 1, text: 'a', font: 'handwriting' }).font === 'hand' && ['print', 'typed', 'sans-serif', 'serif', 'mono', 'Arial'].every((v) => one({ type: 'write', x: 1, y: 1, text: 'a', font: v }).font === 'print'));
+  check('fill: one of the palette colours, else refused', one({ type: 'box', x: 1, y: 1, w: 9, h: 9, fill: 'yellow' }).fill === 'yellow' && /fill must be one of/.test(throws(() => one({ type: 'box', x: 1, y: 1, w: 9, h: 9, fill: '#fff' }))));
+  // element space
+  const inEl = one({ type: 'write', target: '4', x: 10, y: 5, w: 100, h: 20, text: 'B' }, null);
+  check('element space: a target with x,y,w,h is a box inside it, in CSS px without a screenshot', J(inEl.at) === J({ ref: 4, off: { x: 10, y: 5, w: 100, h: 20 } }), J(inEl.at));
+  check('element space: with a screenshot the offsets are screenshot px (scaled, never shifted by scroll)', J(one({ type: 'box', target: '4', x: 20, y: 10, w: 40, h: 20 }, { ratio: 0.5, zoom: 1, css: { x: 0.5, y: 0.5 }, scroll: { x: 0, y: 0 }, now: { x: 0, y: 300 } }).at.off) === J({ x: 10, y: 5, w: 20, h: 10 }));
+  const pin = one({ type: 'path', target: 'text:Total', points: [[0, 0], [30, 10], [60, 0]] }, null);
+  check('element space: points with a target need no screenshot: offsets inside it', J(pin.at) === J({ text: 'Total', off: { x: 0, y: 0, w: 60, h: 10 } }) && pin.pts.length === 3, J(pin));
+  check('element space: a frame or screenshot box gets the offsets added', J(annotate.offsetBox({ x: 100, y: 200, w: 50, h: 20 }, { ref: 1, off: { x: 5, y: 6, w: 7, h: 8 } })) === J({ x: 105, y: 206, w: 7, h: 8 }) && J(annotate.offsetBox({ x: 1, y: 2, w: 3, h: 4 }, { ref: 1 })) === J({ x: 1, y: 2, w: 3, h: 4 }));
+  const along = one({ type: 'arrow', points: [[100, 100], [200, 50], [300, 100]], to: { x: 1, y: 1 } });
+  check('arrow along points: kept as a path (to is ignored), validated by the schema', along.pts.length === 3 && along.to === null && J(along.at.box) === J({ x: 100, y: 50, w: 200, h: 50 }) && validateInput('annotate', { marks: [{ type: 'write', x: 1, y: 2, text: 'hi', font: 'print', fill: 'white' }, { type: 'arrow', points: [[1, 2], [3, 4]] }] }) === null);
+
+  // drawing (the screenshot board: a static 800 x 600 view)
+  const written = draw([{ type: 'write', x: 100, y: 100, text: 'first\nsecond' }]);
+  const tx = tags(written.svg, 'text')[0];
+  const spans = tags(written.svg, 'tspan');
+  check('write: drawn as text with one tspan per line via textContent (never markup), blue ink by default, handwriting font', written.drawn === 1 && spans.map((s) => s.textContent).join('|') === 'first|second' && tx.attrs.fill === '#1a6ef0' && /Segoe Print/.test(tx.attrs['font-family']) && Math.abs(Number(tx.attrs['font-size']) - 18) < 0.2, J(tx.attrs));
+  check('write: lines start at x,y and step down by the line height', Number(spans[0].attrs.x) === 100 && Number(spans[0].attrs.y) > 100 && Number(spans[0].attrs.y) < 120 && Math.abs(Number(spans[1].attrs.y) - Number(spans[0].attrs.y) - 18 * 1.2) < 0.2, J(spans.map((s) => s.attrs)));
+  const markup = draw([{ type: 'write', x: 10, y: 10, text: '<img src=x onerror=alert(1)>' }]);
+  check('write: text is never parsed as markup', !tags(markup.svg, 'img').length && tags(markup.svg, 'tspan')[0].textContent === '<img src=x onerror=alert(1)>');
+  const fitted = draw([{ type: 'write', x: 100, y: 100, w: 120, h: 30, text: 'a fairly long answer that cannot fit on one line at full size', font: 'print' }]);
+  const fs = Number(tags(fitted.svg, 'text')[0].attrs['font-size']);
+  const fl = tags(fitted.svg, 'tspan');
+  const longest = Math.max(...fl.map((s) => s.textContent.length));
+  check('write: a box is filled: the text wraps to its width and shrinks until every line fits its height', fl.length >= 2 && fl.length * fs * 1.2 <= 30.6 && longest * fs * 0.53 <= 120.6 && /system-ui/.test(tags(fitted.svg, 'text')[0].attrs['font-family']), `${fs} ${fl.map((s) => s.textContent).join('|')}`);
+  const short = Number(tags(draw([{ type: 'write', x: 100, y: 100, w: 400, h: 300, text: 'Yes' }]).svg, 'text')[0].attrs['font-size']);
+  check('write: a short answer in a big box stops at a readable size (28 px), not the box height', short === 28, String(short));
+  const covered = draw([{ type: 'write', x: 100, y: 100, w: 120, h: 30, text: '42', fill: 'white', opacity: 1, color: 'black' }]);
+  const card = tags(covered.svg, 'rect')[0];
+  check('write over: fill puts a solid card behind the text (white covers what was there), and the text keeps its own colour', card && card.attrs.fill === '#ffffff' && card.attrs['fill-opacity'] === '1' && Number(card.attrs.width) >= 120 && tags(covered.svg, 'text')[0].attrs.fill === '#111111', J(card && card.attrs));
+
+  const exact = draw([{ type: 'box', ...box, curve: false }]);
+  check('box: curve:false is the exact rectangle (no wobble, no padding)', pathOf(exact) === 'M100 200H300V260H100Z', pathOf(exact));
+  const ring = draw([{ type: 'circle', ...box, fill: 'green' }]);
+  const ringPaths = tags(ring.svg, 'path');
+  check('circle: fill gives the exact ellipse, filled translucent under its outline (outlined in the fill colour)', ringPaths.length === 3 && ringPaths[0].attrs.fill === '#1a9d4a' && ringPaths[0].attrs['fill-opacity'] === '0.35' && /A100 30 0 1 0 300 230/.test(ringPaths[0].attrs.d) && ringPaths[2].attrs.stroke === '#1a9d4a', J(ringPaths.map((p) => p.attrs)));
+  const poly = draw([{ type: 'path', points: [[100, 100], [200, 100], [150, 180]], curve: false, fill: 'yellow' }]);
+  const polyPaths = tags(poly.svg, 'path');
+  check('path: curve:false goes straight through the exact points; fill closes and fills it', polyPaths[0].attrs.d === 'M100 100L200 100L150 180Z' && polyPaths[0].attrs.fill === '#f5c400' && polyPaths[2].attrs.d === 'M100 100L200 100L150 180Z', J(polyPaths.map((p) => p.attrs.d)));
+  const arr = draw([{ type: 'arrow', points: [[100, 300], [200, 250], [300, 300]], curve: false }]);
+  const arrPaths = tags(arr.svg, 'path');
+  const headNums = arrPaths[3].attrs.d.match(/-?\d+(\.\d+)?/g).map(Number);
+  check('arrow along points: a shaft through the points and a head at the last one, pointing along the last segment (down-right)', arrPaths.length === 4 && arrPaths[1].attrs.d === 'M100 300L200 250L300 300' && headNums[2] === 300 && headNums[3] === 300 && headNums[0] < 300 && headNums[4] < 300, J(arrPaths.map((p) => p.attrs.d)));
+  const many = Array.from({ length: 400 }, (_, i) => [100 + i, 300 + Math.round(40 * Math.sin(i / 20))]);
+  const detail = draw([{ type: 'path', points: many, curve: false }]);
+  check('path: 400 points are all drawn (a detailed stroke)', (pathOf(detail).match(/L/g) || []).length === 399);
+
+  // live: element space follows the element, a PDF zoom scales the writing
+  const target = element({ x: 200, y: 400, w: 300, h: 40 });
+  const env = liveEnv({ elements: [target] });
+  withTimers(() => {
+    const lr = live(env, [{ type: 'write', target: '1', x: 10, y: 5, w: 200, h: 30, text: 'Ada Lovelace' }, { type: 'box', target: '1', x: 0, y: 0, w: 300, h: 40, curve: false }]);
+    const sp = () => tags(lr.svg, 'tspan')[0].attrs;
+    const x0 = Number(sp().x);
+    check('element space (live): the writing sits inside the element at the offset', lr.drawn === 2 && x0 >= 210 && x0 <= 214 && Number(sp().y) > 405 && Number(sp().y) < 435, J(sp()));
+    target.rect = { x: 200, y: 150, w: 300, h: 40 }; // scrolled
+    lr.board.layout();
+    check('element space (live): it moves with the element on scroll', Number(sp().y) > 155 && Number(sp().y) < 185 && Number(sp().x) === x0, J(sp()));
+    const size1 = Number(tags(lr.svg, 'text')[0].attrs['font-size']);
+    target.rect = { x: 400, y: 300, w: 600, h: 80 }; // zoomed 2x
+    lr.board.layout();
+    const size2 = Number(tags(lr.svg, 'text')[0].attrs['font-size']);
+    check('element space (live): a zoom scales the writing and the exact box with the element', Math.abs(size2 / size1 - 2) < 0.05 && pathOf(lr, 1) === 'M400 300H1000V380H400Z', `${size1} ${size2} ${pathOf(lr, 1)}`);
+    check('element space (live): the frozen marks keep the offsets as fractions of the element (Show again draws them the same way)', J(lr.frozen[0].at) === J({ ref: 1, rel: { fx: 10 / 300, fy: 5 / 40, fw: 200 / 300, fh: 30 / 40 } }) && lr.frozen[0].font === 'hand', J(lr.frozen[0]));
+    lr.board.destroy();
+  });
 }
 
 // ---- the PDF viewer's space: page number + fractions of the page's box, so marks follow scroll and zoom
