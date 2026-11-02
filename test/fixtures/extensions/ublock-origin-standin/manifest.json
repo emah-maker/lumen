@@ -1,0 +1,10 @@
+{
+  "manifest_version": 2,
+  "name": "uBlock Origin (test stand-in)",
+  "version": "1.0.0",
+  "description": "A fixture for test/e2e/ublock-origin.js and test/units/ublock-origin-units.js: a Manifest V2 background page that, as uBlock Origin does, uses `browser` when there is one (browserAction at start-up) and blocks /standin-ad.js with a blocking webRequest listener, but only for a request that comes with its tab (uBlock lets requests with tabId -1 through).",
+  "permissions": ["webRequest", "webRequestBlocking", "tabs", "<all_urls>"],
+  "background": { "page": "background.html" },
+  "browser_action": { "default_popup": "popup.html", "default_title": "uBlock Origin stand-in" },
+  "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "run_at": "document_start", "all_frames": true }]
+}
