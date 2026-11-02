@@ -16,8 +16,9 @@ Lumen's image router (`src/ai/image-router.js`) hands the request to a provider 
 | Gemini (API key) | `generateContent` with image output | yes |
 | OpenAI (API key) | `gpt-image` | yes |
 | OpenRouter (API key) | a model its catalog lists as making pictures | yes |
+| Antigravity (agy), **only when picked** | one headless `agy --sandbox --mode accept-edits --add-dir <temp folder> --print-timeout 3m -p "Generate an image: … Save to <file>."` run, through your Google sign-in (no API key, never `--always-approve`). Its own home (`<profile>/antigravity-image`) denies commands, URLs and MCP tools and loads none of your MCP servers; the picture must exist in the temp folder and be a real png/jpeg/webp/gif (`src/ai/image-agy.js`) | yes |
 
-Antigravity and Codex are not image providers here (Codex's free tier is limited; Antigravity's image tool is denied by Lumen's tool gate).
+Codex is not an image provider here (its free tier is limited). Antigravity makes pictures only when you pick it in **Make pictures with**: Automatic never uses it (each picture is a slow headless run, and agy has no sign-in check that costs nothing). If agy isn't installed, isn't signed in, or saves no picture, the next connected provider makes it and the picture says "instead of Antigravity". In an Antigravity chat, Lumen's tool gate still denies agy's own image tool; pictures there go through `generate_image` like every other engine.
 
 **Settings → AI → Make pictures with** (`imageGen`):
 

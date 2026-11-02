@@ -197,7 +197,7 @@ const classify = (e) => fallback.classify(e);
 
   // ---- settings
   {
-    check('the setting defaults to Automatic and takes only Automatic, Off or a provider', settingsBackend.DEFAULTS.imageGen === 'auto' && ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].every((v) => settingsBackend.validate('imageGen', v) === v) && settingsBackend.validate('imageGen', 'codex') === null && settingsBackend.validate('imageGen', 'antigravity') === null && settingsBackend.validate('imageGen', '') === null);
+    check('the setting defaults to Automatic and takes only Automatic, Off or a provider (Antigravity too, picked only; never Codex)', settingsBackend.DEFAULTS.imageGen === 'auto' && ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter', 'antigravity'].every((v) => settingsBackend.validate('imageGen', v) === v) && settingsBackend.validate('imageGen', 'codex') === null && settingsBackend.validate('imageGen', 'claudecode') === null && settingsBackend.validate('imageGen', '') === null);
     const ui = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'settings.js'), 'utf8');
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
     check('Settings → AI shows the choice, with every option named in the locale', /select\('imageGen'/.test(ui) && router.SETTINGS.every((v) => en[`settings.ai.imageGen.${v}`]) && en['settings.ai.imageGen'] && en['settings.ai.imageGenDesc'] && en['genimg.madeWith'] === 'Made with {name}');

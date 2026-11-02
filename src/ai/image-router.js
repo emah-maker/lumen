@@ -4,7 +4,9 @@
 // failure means.
 //
 //   setting           Settings → AI → Image generation ("Make pictures with", imageGen): 'auto' (default), 'off', or one provider to use first.
-//   providers         grokbuild (Grok Build's image_gen / image_edit, through the user's own sign-in), xai (Grok API), gemini, openai, openrouter.
+//   providers         grokbuild (Grok Build's image_gen / image_edit, through the user's own sign-in), xai (Grok API), gemini, openai, openrouter,
+//                     and antigravity (agy, through the user's Google sign-in: ai/image-agy.js), which is asked only when the user picks it
+//                     (a slow headless run, and agy has no sign-in check that costs nothing), never by Automatic.
 //                     Never a key the user has not set: only connected providers are ever asked, and a provider that is not connected
 //                     is never offered a request.
 //   order (auto)      the chat's own provider first when it can make pictures (a Grok Build or OpenAI chat), then the others: Grok Build
@@ -19,10 +21,11 @@
 // route() returns { images, provider, label, model, credit, tried } or throws an Error with `code`: 'off' | 'none' | 'refused' |
 // 'failed' | 'aborted'. The message is written for the user (and the model that called the tool).
 
-const LABELS = { grokbuild: 'Grok Build', xai: 'Grok', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter' };
-const ORDER = ['grokbuild', 'xai', 'gemini', 'openai', 'openrouter'];
-const CAN_EDIT = { grokbuild: true, xai: false, gemini: true, openai: true, openrouter: true };
-const SETTINGS = ['auto', 'off', ...ORDER];
+const LABELS = { grokbuild: 'Grok Build', xai: 'Grok', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter', antigravity: 'Antigravity' };
+const ORDER = ['grokbuild', 'xai', 'gemini', 'openai', 'openrouter']; // Automatic's order
+const PICK_ONLY = ['antigravity']; // asked only when picked in Settings
+const CAN_EDIT = { grokbuild: true, xai: false, gemini: true, openai: true, openrouter: true, antigravity: true };
+const SETTINGS = ['auto', 'off', ...ORDER, ...PICK_ONLY];
 
 const cleanSetting = (v) => (SETTINGS.includes(v) ? v : 'auto');
 
@@ -63,7 +66,7 @@ const WHY = { limit: 'out of usage', unreachable: 'unreachable', auth: 'not sign
 const oneLine = (s, n = 160) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 // Why a picked provider was passed over before anything was asked.
-const notReady = (key, edit) => (edit && !CAN_EDIT[key] ? `${labelOf(key)} cannot edit pictures` : key === 'grokbuild' ? 'Grok Build is not installed or signed in' : `${labelOf(key)} is not connected (or its key is off)`);
+const notReady = (key, edit) => (edit && !CAN_EDIT[key] ? `${labelOf(key)} cannot edit pictures` : key === 'grokbuild' ? 'Grok Build is not installed or signed in' : key === 'antigravity' ? 'Antigravity is not installed or signed in' : `${labelOf(key)} is not connected (or its key is off)`);
 
 function fail(code, message, extra = {}) { return Object.assign(new Error(message), { code, ...extra }); }
 
@@ -81,7 +84,7 @@ async function route(deps) {
   if (p.mode === 'off') throw fail('off', 'Picture making is turned off in Settings → AI → Image generation. Tell the user, and describe the picture in words instead.');
   if (!p.order.length) {
     if (p.missing) throw fail('none', `${labelOf(p.missing)} is chosen for pictures in Settings → AI → Image generation, but ${notReady(p.missing, edit)}, and no other connected AI can ${edit ? 'edit' : 'make'} pictures. Tell the user; do not ask them for a key in the chat.`, { missing: p.missing, userMessage: `${labelOf(p.missing)} is chosen for pictures (Settings → AI → Image generation) but ${notReady(p.missing, edit)}, and no other connected AI can ${edit ? 'edit' : 'make'} pictures. Set it up, or connect another provider.` });
-    throw fail('none', `No connected AI can ${edit ? 'edit' : 'make'} pictures. The user can connect an OpenAI, Grok or Gemini key, or OpenRouter (Settings → AI), or sign in to Grok Build. Tell them that; do not ask for a key in the chat.`);
+    throw fail('none', `No connected AI can ${edit ? 'edit' : 'make'} pictures. The user can connect an OpenAI, Grok or Gemini key, or OpenRouter (Settings → AI), sign in to Grok Build, or pick Antigravity in Settings → AI → Make pictures with. Tell them that; do not ask for a key in the chat.`);
   }
   const tried = [];
   for (const key of p.order) {
@@ -160,4 +163,4 @@ async function renderSvg(svg, { rasterize }) {
   return Buffer.from(png);
 }
 
-module.exports = { notReady, PICTURE_NOTE, DIAGRAM_NOTE, noContextAsk, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };
+module.exports = { PICK_ONLY, notReady, PICTURE_NOTE, DIAGRAM_NOTE, noContextAsk, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };

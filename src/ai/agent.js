@@ -3828,9 +3828,11 @@ ${prompt}` : prompt), historyImages: [] };
   // Which image providers are connected right now: an API key set (OpenRouter: and a picture model known for it), Grok Build signed in.
   async imageConnected(current) {
     const has = (p) => { try { return Boolean(this.getKey?.(p)); } catch { return false; } };
-    const out = { openai: has('openai'), xai: has('xai'), gemini: has('gemini'), openrouter: false, grokbuild: false };
+    const out = { openai: has('openai'), xai: has('xai'), gemini: has('gemini'), openrouter: false, grokbuild: false, antigravity: false };
     out.openrouter = has('openrouter') && Boolean(providers.openRouterImageModel(String(current || '').startsWith('openrouter:') ? String(current).slice(11) : null));
     try { const st = await this.engines?.grokbuild?.status?.(); out.grokbuild = st?.installed === true && st?.signedIn === true; } catch { out.grokbuild = false; }
+    // Antigravity only when it is picked (image-router.js PICK_ONLY): installed and not known to be signed out (agy has no free sign-in check).
+    if (this.imageSetting() === 'antigravity') { try { const st = await this.engines?.antigravity?.status?.(); out.antigravity = st?.installed === true && st?.signedIn !== false; } catch { out.antigravity = false; } }
     return out;
   }
 
@@ -3843,6 +3845,7 @@ ${prompt}` : prompt), historyImages: [] };
     return {
       openai: api('openai'), xai: api('xai'), gemini: api('gemini'), openrouter: api('openrouter'),
       grokbuild: async ({ prompt, source, signal }) => imageGrok.generate({ bin: await this.engines.grokbuild.ensureBin(), prompt, source, signal, userData: this.engines.grokbuild.userData }),
+      antigravity: async ({ prompt, source, signal }) => require('./image-agy').generate({ bin: await this.engines.antigravity.ensureBin(), prompt, source, signal, userData: this.engines.antigravity.userData, ...(this.imageAgySpawn ? { spawn: this.imageAgySpawn } : {}) }), // [image routing] agy, when picked (imageAgySpawn: tests' fake agy)
       ...(this.imageBackendOverrides || {}),
     };
   }
