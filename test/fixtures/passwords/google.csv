@@ -1,0 +1,7 @@
+name,url,username,password,note
+example.com,https://www.example.com/login,alice@example.com,fixture-pw-1,
+example.com,https://example.com/,alice@example.com,fixture-pw-1,dup of www
+shop,https://shop.example.org/,bob,"fixture,pw-2","note with ""quotes"""
+App,android://abc123@com.example.app/,carol,fixture-pw-3,
+Old,http://insecure.example/,dave,fixture-pw-4,
+NoPass,https://nopass.example/,erin,,
