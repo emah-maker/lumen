@@ -12,6 +12,9 @@
 // `adds: true` marks a write that only ADDS something new (a task, an event, a draft, a new file or page) and never changes, sends, deletes
 // or shares anything that exists: its card may offer "Always allow this action" (features/connectors/always.js; settings connectorAlways).
 // Never put it on a send (gated), an edit, an append, a move, a trash or a share: those ask every time.
+// `private: true` (with adds) marks an add that stays in the user's own account and reaches nobody else: a task, or a calendar event
+// with no guests. Its Always button is offered, and kept, even after the chat has read a page. Not a draft (it names recipients), a
+// file, a doc or a page (each can sit in a shared folder or workspace).
 //
 // kind: 'session' (the user's signed-in Lumen session, read through the site's own JSON endpoints),
 //       'token'   (the user pastes an API token or secret address; encrypted at rest),
@@ -219,7 +222,7 @@ const CONNECTORS = [
     actions: {
       events: { label: 'Calendar events', args: { days: int('days ahead, default 7', 1, 90), query: str('only events matching these words', { max: 100 }), max: int('how many, default 25', 1, 50) }, doc: 'Events from now to that many days ahead, soonest first, each with its id.' },
       event: { label: 'Read an event', args: { id: str('event id from events', { required: true, max: 200, pattern: EVENT_ID }) }, doc: 'One event with its end time and notes.' },
-      create_event: { label: 'Add an event', write: true, adds: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no guests. The user confirms first.' },
+      create_event: { label: 'Add an event', write: true, adds: true, private: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no guests. The user confirms first.' },
       update_event: { label: 'Change an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { id: str('event id from events', { required: true, max: 200, pattern: EVENT_ID }), title: str('new title', { max: 250, label: 'Title' }), start: str('new start, same form as create_event', { max: 30, pattern: WHEN, label: 'Starts' }), end: str('new end, same form', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('new place', { max: 300, label: 'Place' }), description: text('new notes', 8000, { label: 'Notes' }) }, doc: 'Changes only what is given. Nobody is emailed. The user confirms first.' },
     },
   },
@@ -234,7 +237,7 @@ const CONNECTORS = [
     actions: {
       lists: { label: 'Task lists', args: {}, doc: 'Your task lists with their ids.' },
       tasks: { label: 'Your tasks', args: { list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }), done: str('yes: include done tasks', { enum: ['yes', 'no'] }) }, doc: 'Tasks in a list, with ids.' },
-      add_task: { label: 'Add a task', write: true, adds: true, edit: ['title', 'due', 'notes'], args: { title: str('the task', { required: true, max: 500, label: 'Task' }), due: str('a date: 2026-11-03', { max: 10, pattern: DAY_ONLY, label: 'Due' }), notes: text('notes', 8000, { label: 'Notes' }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Adds a task. The user confirms first.' },
+      add_task: { label: 'Add a task', write: true, adds: true, private: true, edit: ['title', 'due', 'notes'], args: { title: str('the task', { required: true, max: 500, label: 'Task' }), due: str('a date: 2026-11-03', { max: 10, pattern: DAY_ONLY, label: 'Due' }), notes: text('notes', 8000, { label: 'Notes' }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Adds a task. The user confirms first.' },
       complete_task: { label: 'Mark a task done', write: true, args: { id: str('task id from tasks', { required: true, max: 200, pattern: EVENT_ID }), list_id: str('list id; default your main list', { max: 100, pattern: LIST_ID }) }, doc: 'Ticks a task off. The user confirms first.' },
     },
   },
@@ -289,7 +292,7 @@ const CONNECTORS = [
     actions: {
       tasks: { label: 'Your tasks', args: { filter: str('Todoist filter, default “today | overdue”', { max: 200 }), project_id: str('only this project', { max: 40, pattern: WORD }) }, doc: 'Tasks matching a Todoist filter, or one project’s tasks.' },
       projects: { label: 'Your projects', args: {}, doc: 'Your projects with their ids.' },
-      add_task: { label: 'Add a task', write: true, adds: true, edit: ['content', 'due'], args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
+      add_task: { label: 'Add a task', write: true, adds: true, private: true, edit: ['content', 'due'], args: { content: str('the task', { required: true, max: 500 }), due: str('when, in words: tomorrow 9am', { max: 100 }), project_id: str('project id', { max: 40, pattern: WORD }) }, doc: 'Adds a task. The user confirms first.' },
     },
   },
   {
@@ -355,7 +358,7 @@ const CONNECTORS = [
     does: ['Add an event (asks you first)', 'Change an event (asks you first)'],
     actions: {
       events: { label: 'Calendar events', args: { days: int('days ahead, default 7', 1, 90), query: str('only events matching these words', { max: 100 }), max: int('how many, default 25', 1, 50) }, doc: 'Events from now to that many days ahead, soonest first, each with its id.' },
-      create_event: { label: 'Add an event', write: true, adds: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no attendees. The user confirms first.' },
+      create_event: { label: 'Add an event', write: true, adds: true, private: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { title: str('the title', { required: true, max: 250, label: 'Title' }), start: str('2026-11-03T14:30 (local time) or 2026-11-03 (all day)', { required: true, max: 30, pattern: WHEN, label: 'Starts' }), end: str('same form; all day: the last day; default 1 hour', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('place', { max: 300, label: 'Place' }), description: text('notes', 8000, { label: 'Notes' }) }, doc: 'Adds an event to the main calendar, with no attendees. The user confirms first.' },
       update_event: { label: 'Change an event', write: true, edit: ['title', 'start', 'end', 'location', 'description'], args: { id: str('event id from events', { required: true, max: 300, pattern: GRAPH_ID }), title: str('new title', { max: 250, label: 'Title' }), start: str('new start, same form as create_event', { max: 30, pattern: WHEN, label: 'Starts' }), end: str('new end, same form', { max: 30, pattern: WHEN, label: 'Ends' }), location: str('new place', { max: 300, label: 'Place' }), description: text('new notes', 8000, { label: 'Notes' }) }, doc: 'Changes only what is given. Nobody is emailed. The user confirms first.' },
     },
   },

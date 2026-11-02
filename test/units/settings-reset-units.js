@@ -12,7 +12,7 @@ const inAreas = new Set(RS.AREAS.flatMap((a) => a.keys));
 const KEPT = [
   'newTabHeader', 'newTabFavorites', 'newTabFrequent', 'newTabPrivacy', 'newTabHiddenTiles', 'newTabWidgetsPacked', 'homeWidgetSizes', 'weatherPlaces',
   'weatherHere', 'weatherLocation', 'homeWidgets', 'extensionPins', 'focusSites', 'focusSchedules', 'adblockAllow', 'adBlocker', 'projectsDir', 'tabSleepNever',
-  'tabSleepSoon', 'maxSteps', 'aiSubagents', 'actingHelpers', 'aiSubagentModel', 'maxChatRuns', 'autoModel', 'autoCompact', 'autoExclude', 'imageGen',
+  'tabSleepSoon', 'maxSteps', 'aiSubagents', 'actingHelpers', 'aiSubagentModel', 'maxChatRuns', 'autoModel', 'autoCompact', 'autoExclude', 'imageGen', 'keysOff',
   'usageBars', 'aiGapLog', 'autoFallback', 'aiSignedInSites', 'aiSharedFiles', 'connectorAlways', 'claudeCodeSidebar', 'grokSidebar', 'antigravitySidebar', 'aiEffort',
   'featureCardNever', 'featureOffersSeen', 'telegramChannel', 'telegramFiles', 'telegramSignedIn', 'bypassBackground',
   'aiDesktopControl', 'aiFilesInApps', 'aiWordControl', 'aiDesktopTerminals', 'aiDesktopApps', 'aiWordAlways', 'routineWebhooks', 'routineWebhookPort',

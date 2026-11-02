@@ -216,6 +216,7 @@ label.check{display:flex;align-items:center;padding:var(--sp-1) 0;}
 .item.key .key-state.set::before{content:"•••• ";color:var(--muted);letter-spacing:0.08em;}
 .item.key > .note:not(.key-state){flex-basis:100%;}
 .item.key > .note:not(.key-state):empty{display:none;}
+.item.key[data-off] .grow{color:var(--muted);}
 .snippet + .snippet{border-top:1px solid var(--hairline);}
 .snippet > .item{padding-bottom:var(--sp-2);}
 .snippet > .note{display:block;padding-bottom:var(--sp-4);}
