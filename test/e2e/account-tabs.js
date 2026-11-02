@@ -135,8 +135,10 @@ function makeExtension(profile) {
   await waitFor(async () => (await chip())?.text === 'Account 2');
   await ui.evaluate(() => window.browser.accountAct('rename', '  Personal  '));
   const renamed = await waitFor(async () => { const x = await chip(); return x?.text === 'Personal' && x; });
-  check('renaming the account (the chip\'s Rename…) changes its name everywhere', renamed && JSON.stringify(await app.evaluate(() => global.__accounts.list().map((a) => a.name))) === '["Personal"]'
-    && /Personal/.test(await ui.evaluate((i) => document.querySelector(`#tabs .tab[data-id="${i}"]`)?.getAttribute('aria-label') || '', acct)), JSON.stringify(renamed));
+  const renamedList = JSON.stringify(await app.evaluate(() => global.__accounts.list().map((a) => a.name)));
+  const tabLabel = () => ui.evaluate((i) => document.querySelector(`#tabs .tab[data-id="${i}"]`)?.getAttribute('aria-label') || '', acct);
+  const renamedLabel = await waitFor(async () => { const l = await tabLabel(); return /Personal/.test(l) && l; });
+  check('renaming the account (the chip\'s Rename…) changes its name everywhere', renamed && renamedList === '["Personal"]' && Boolean(renamedLabel), JSON.stringify({ renamed, renamedList, label: await tabLabel() }));
   await switchTo(first);
   check('the chip is hidden on a main tab', await waitFor(async () => (await chip())?.shown === false) === true);
 
