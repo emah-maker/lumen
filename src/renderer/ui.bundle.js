@@ -1112,9 +1112,16 @@ function describe(bar, { cooling = null, now = Date.now(), name = '' } = {}) {
 
 
 const usable = (state) => Boolean(state && state.showBars !== false);
+
+const agyGroup = (id) => { const m = String(id || '').replace(/^antigravity:/, '').toLowerCase(); return !m || /gemini|^auto$|^default$/.test(m) ? 'gemini' : '3p'; };
+
+function barOf(key, state, modelId = null) {
+  const bar = state && state.bars ? state.bars[key] || null : null;
+  return bar && bar.groups && modelId ? bar.groups[agyGroup(modelId)] || null : bar;
+}
 function forProvider(key, state, now = Date.now(), modelId = null) {
   if (!usable(state) || !key) return null;
-  return describe(state.bars ? state.bars[key] : null, { cooling: coolingFor(state.cooling, key, modelId, now), now });
+  return describe(barOf(key, state, modelId), { cooling: coolingFor(state.cooling, key, modelId, now), now });
 }
 function forModel(id, state, now = Date.now()) {
   if (!id || id === 'auto' || String(id).endsWith(':__more')) return null;
@@ -1177,7 +1184,7 @@ function load(force = false) {
   return inflight;
 }
 
-const api = { engineOf, levelOf, windowsOf, windowLabel, clockOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
+const api = { engineOf, barOf, levelOf, windowsOf, windowLabel, clockOf, resetText, describe, forModel, forProvider, annotate, element, providerOf, WARN_AT, HIGH_AT };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else {
   root.usageBars = { ...api, state: () => state, load, touch: () => load(false) };
@@ -1268,6 +1275,7 @@ const cap = (s) => String(s || '').replace(/^./, (c) => c.toUpperCase());
 function planName(key, state) {
   if (key === 'claudecode' && state.plan && state.plan.available && state.plan.subscription) return tr('usage.pop.plan.claude', 'Claude subscription');
   if (key === 'codex' && state.codex && state.codex.planType) return tr('usage.pop.plan.named', '{plan} plan', { plan: cap(state.codex.planType) });
+  if (key === 'antigravity' && state.antigravity && state.antigravity.tier) return state.antigravity.tier;
   return '';
 }
 
@@ -1276,6 +1284,7 @@ function updatedAt(key, state) {
   const candidates = [];
   if (key === 'claudecode' && state.meter) candidates.push(state.meter.at);
   if (key === 'codex' && state.codex) candidates.push(state.codex.readAt);
+  if (key === 'antigravity' && state.antigravity) candidates.push(state.antigravity.readAt);
   if (state.rate && state.rate[key]) candidates.push(state.rate[key].at);
   const known = candidates.filter((n) => finite(n) && n > 0);
   return known.length ? Math.max(...known) : null;
@@ -1292,9 +1301,10 @@ function countedFor(key, state) {
   return null;
 }
 
-function view(key, state, { now = Date.now(), name = '' } = {}) {
+
+function view(key, state, { now = Date.now(), name = '', model = null } = {}) {
   if (!key || !state || typeof state !== 'object') return null;
-  const bar = state.bars ? state.bars[key] : null;
+  const bar = bars().barOf ? bars().barOf(key, state, model) : state.bars ? state.bars[key] : null;
   const windows = bars().windowsOf(bar, now).map((w) => ({
     key: w.key, label: w.label, percent: w.percent, level: w.level, percentText: percentText(w.percent),
     text: w.resetsAt ? resetLine({ resetsAt: w.resetsAt }, now) : w.reset,
@@ -13565,7 +13575,7 @@ $('agent-stop')?.addEventListener('click', () => {
   }
   function renderMeter() {
     const key = engineKey();
-    const bar = ENGINE_NAMES[key] ? usage?.bars?.[key] : null;
+    const bar = ENGINE_NAMES[key] ? (window.usageBars?.barOf ? window.usageBars.barOf(key, usage, select?.value) : usage?.bars?.[key]) : null;
     clearTimeout(limitTimer);
 
     const off = usage?.showBars === false;
@@ -13583,7 +13593,8 @@ $('agent-stop')?.addEventListener('click', () => {
       return;
     }
     if (!bar || off) return;
-    const engine = ENGINE_NAMES[key];
+
+    const engine = bar.group ? `${ENGINE_NAMES[key]} (${window.t(`usage.agy.group.${bar.group === 'gemini' ? 'gemini' : 'other'}`)})` : ENGINE_NAMES[key];
     const text = [];
     const title = [];
     const percent = bar.percent == null ? null : Math.round(bar.percent);
@@ -13660,7 +13671,7 @@ $('agent-stop')?.addEventListener('click', () => {
   }
   function renderPopover() {
     const key = engineKey();
-    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key] }) : null;
+    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
     if (!v) { closePopover(false); return; }
     pop.replaceChildren();
     const label = window.t('usage.bar.labelFor', { name: v.name });

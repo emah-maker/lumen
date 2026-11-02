@@ -3,7 +3,9 @@
 //    naming the 30-day limit and what is left, and the popover's row;
 //  - Codex on a paid plan: the 5-hour window and "week 12%";
 //  - Claude Code: its own 5-hour reading, not Codex's;
-//  - Antigravity with no reading: no bar; at its quota limit: the limit line with the reset time.
+//  - Antigravity with no reading: no bar; at its quota limit: the limit line with the reset time;
+//  - Antigravity's plan quota, read the real way (ai/agy-quota.js: a pseudo console, from Electron) from a fake agy TUI
+//    (test/fixtures/fake-agy-tui.js, through LUMEN_AGY_BIN): "Plan 0% · resets … · week 0%" on a Gemini model, "out" on a Claude one.
 // Hidden window only: run with CLAUDE_BROWSER_TEST=1 LUMEN_TEST_BACKGROUND=1 and a fresh CLAUDE_BROWSER_PROFILE through scripts/test/e2e-lock.js.
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -18,7 +20,10 @@ const path = require('path');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-engine-bar-'));
   const profile = process.env.CLAUDE_BROWSER_PROFILE || path.join(dir, 'profile');
   fs.mkdirSync(profile, { recursive: true });
-  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile };
+  // A fake agy: its TUI passes the recorded status line (test/fixtures/agy-statusline.json) to the statusLine command.
+  const agyShim = path.join(dir, 'agy.cmd');
+  fs.writeFileSync(agyShim, `@"${process.execPath}" "${path.join(__dirname, '..', 'fixtures', 'fake-agy-tui.js')}" %*\r\n`);
+  const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_AGY_BIN: agyShim };
   const app = await electron.launch({ args: [path.join(__dirname, '..', '..')], env });
   const ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
@@ -79,6 +84,29 @@ const path = require('path');
   await app.evaluate((_e, t) => global.__usage.record('antigravity', { limit: { text: 'Quota exhausted', resetsAt: t } }), Date.now() + 5 * H);
   m = await until((r) => r && !r.hidden && r.kind === 'limit');
   check('Antigravity at its quota limit: the limit line with the reset time', m && !m.hidden && m.kind === 'limit' && /Antigravity/.test(m.text) && /\d{1,2}:\d{2}/.test(m.text), JSON.stringify(m));
+
+  // ---- Antigravity's plan quota from its status line (the fake agy's recorded one: Gemini barely used, Claude/GPT used up).
+  // The reading's reset times are in the past by now, so the fixture's are moved into the future first.
+  const status = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'agy-statusline.json'), 'utf8'));
+  for (const [k, b] of Object.entries(status.quota)) b.reset_time = new Date(Date.now() + (/weekly/.test(k) ? 4 * D : 2 * H)).toISOString();
+  fs.writeFileSync(path.join(dir, 'status.json'), JSON.stringify(status));
+  fs.writeFileSync(agyShim, `@set FAKE_AGY_STATUS=${path.join(dir, 'status.json')}\r\n@"${process.execPath}" "${path.join(__dirname, '..', 'fixtures', 'fake-agy-tui.js')}" %*\r\n`);
+  await app.evaluate(() => global.__usage.record('antigravity', { usage: { inputTokens: 10, outputTokens: 5 }, ok: true, model: 'gemini-3.8-flash-high' }));
+  await app.evaluate(() => global.__usage.summary({ refresh: true }));
+  m = await until((r) => r && !r.hidden && r.kind === 'plan');
+  check('Antigravity quota: a Gemini chat shows "Plan 0% · resets <time> · week 0%", read from agy\'s status line', m && m.kind === 'plan' && /^Plan 0% · resets .+ · week 0%$/.test(m.text) && !m.barHidden && m.now === '0', JSON.stringify(m));
+  check('Antigravity quota: the tooltip names the Gemini models\' 5-hour limit and what is left', m && /Antigravity \(Gemini models\) plan's 5-hour limit is 0% used \(100% left\)/.test(m.title), m && m.title);
+  await pick('antigravity:claude-sonnet-4-6');
+  m = await until((r) => r && !r.hidden && /Plan 100%/.test(r.text));
+  check('Antigravity quota: a Claude chat on Antigravity shows its own used-up quota, in the high colour', m && /^Plan 100% · resets .+ · week 51%$/.test(m.text) && /Claude and GPT models/.test(m.title), JSON.stringify(m));
+  const high = await ui.evaluate(() => document.getElementById('usage-meter').classList.contains('high'));
+  check('Antigravity quota: 100% is drawn as high, like the other engines', high, String(high));
+  await apply();
+  await ui.evaluate(() => document.getElementById('usage-meter').click());
+  await sleep(300);
+  const agyPop = await ui.evaluate(() => { const p = document.getElementById('usage-popover'); return p && { open: !p.hidden, text: p.textContent }; });
+  check('Antigravity quota: the popover has the 5-hour and weekly rows and the plan\'s name', agyPop && agyPop.open && /5-hour limit/.test(agyPop.text) && /weekly limit/.test(agyPop.text) && /Google AI Pro/.test(agyPop.text), JSON.stringify(agyPop));
+  await ui.keyboard.press('Escape');
 
   await app.close();
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });

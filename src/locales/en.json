@@ -2603,6 +2603,8 @@
   "settings.ai.providersPageDesc": "For each AI: account and version, whether it is in the model menu, reasoning effort, Auto and usage.",
   "settings.ai.offerMenu": "Offer in the model menu",
   "usage.plan.title.other": "Your {engine} plan limit is {percent}% used.",
+  "usage.agy.group.gemini": "Gemini models",
+  "usage.agy.group.other": "Claude and GPT models",
   "usage.grok.hint": "Send a message to see Grok usage",
   "usage.grok.limit": "Grok limit reached, resets at {time}",
   "usage.grok.limit.title": "Grok said your plan's usage limit is reached.",
