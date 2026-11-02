@@ -2740,12 +2740,14 @@ function accountMenuItems(currentId, open) {
     { label: t('accounts.new'), enabled: list.length < require('./features/account-tabs').MAX_ACCOUNTS, click: () => { const a = accounts().add(); if (a) open(a.id); } },
   ];
 }
+// The tab menu's "Open with another account" (under More).
+const tabAccountItem = (id) => (tabMenuTemplate(id).find((i) => i.label === t('menu.tabMore'))?.submenu || []).find((i) => i.label === t('accounts.openWith'));
 if (TEST) global.__accounts = { // test/e2e/account-tabs.js
   add: (name) => accounts().add(name), list: () => accounts().list(), ui: () => accountUiState(),
   open: (url, id) => openTab(url, { partition: id ? `persist:lumen-account-${id}` : null }).id,
   tab: (id) => { const x = allTabsEverywhere().find((t) => t.id === id); return x ? { account: x.account || null, partition: alive(x) ? x.view.webContents.session === session.defaultSession ? 'default' : tabPartition(x) : tabPartition(x), sleeping: Boolean(x.sleeping) } : null; },
-  menu: (id) => (tabMenuTemplate(id).find((i) => i.label === t('accounts.openWith'))?.submenu || []).map((i) => i.label || '-'),
-  pick: (id, label) => (tabMenuTemplate(id).find((i) => i.label === t('accounts.openWith'))?.submenu || []).find((i) => i.label === label)?.click(),
+  menu: (id) => (tabAccountItem(id)?.submenu || []).map((i) => i.label || '-'),
+  pick: (id, label) => (tabAccountItem(id)?.submenu || []).find((i) => i.label === label)?.click(),
 };
 // What the main session has for pages: Lumen's page preloads, the PDF viewer, permissions (the same remembered answers),
 // downloads (the same list), Safe Browsing and Focus mode, the ad blocker, the proxy and request headers, the Site activity list.
@@ -5066,7 +5068,6 @@ function tabMenuTemplate(id) {
       { label: t('menu.newTabRight'), click: () => newTabRightOf(id) },
       { label: t('menu.reload'), ...shortcutHint('CmdOrCtrl+R'), click: () => reloadTab(tab, { always: true }) },
       { label: t('menu.duplicate'), enabled: !tab.settings, click: () => duplicateTab(id) }, // [settings] one settings tab
-      ...(isWebUrl(url) && !tab.isolated && !tab.rec?.agent ? [{ label: t('accounts.openWith'), submenu: accountMenuItems(tab.account || null, (aid) => openTabWithAccount(tab, url, aid)) }] : []), // [account tabs]
       tab.pinned ? { label: t('menu.unpinTab'), click: () => pinTab(id, false) } : { label: t('menu.pinTab'), click: () => pinTab(id, true) },
       ...muteSite,
     ],
@@ -5077,6 +5078,8 @@ function tabMenuTemplate(id) {
       {
         label: t('menu.tabMore'),
         submenu: sections(
+          // [account tabs] under More: the top level stays within a dozen rows (sign-in pages have their own "Use another account")
+          isWebUrl(url) && !tab.isolated && !tab.rec?.agent ? [{ label: t('accounts.openWith'), submenu: accountMenuItems(tab.account || null, (aid) => openTabWithAccount(tab, url, aid)) }] : [],
           [muteTab],
           tab.settings ? [] : sleepMenuItems(tab),
           splitMenuItems(tab), // [split view]
