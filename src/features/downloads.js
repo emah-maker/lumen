@@ -121,7 +121,16 @@ function createDownloads(deps) {
   }
 
   // A finished file opens in the system's program, except the kinds Lumen shows itself in a tab (deps.openLocal: an .eml).
-  const openFile = (file) => { deps.onOpened?.(file); return deps.openLocal?.(file) ? true : deps.shell.openPath(file); }; // (onOpened: the Files list)
+  // A double-click on a panel row is two clicks before the panel closes: the same file asked for again within OPEN_AGAIN_MS opens once.
+  const OPEN_AGAIN_MS = 1500;
+  let lastOpen = { file: '', at: 0 };
+  const openFile = (file) => {
+    const now = Date.now();
+    if (lastOpen.file === file && now - lastOpen.at < OPEN_AGAIN_MS) return true;
+    lastOpen = { file, at: now };
+    deps.onOpened?.(file); // (the Files list)
+    return deps.openLocal?.(file) ? true : deps.shell.openPath(file);
+  };
 
   function progress() {
     const active = downloads.filter((d) => d.state === 'progressing' && d.total > 0);

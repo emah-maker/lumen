@@ -129,7 +129,25 @@ document.addEventListener('keydown', (e) => {
 });
 
 // ---- save, print
-$('download').addEventListener('click', () => { $('download').href = `/data?${new URLSearchParams({ u: base, dl: '1' })}`; });
+// Save writes the bytes this page already has: asking the site again fails for a link that works once (a course site's signed file
+// link), and Lumen keeps its own copy only for a short while. Before the PDF has opened, Save asks main for it (/data?dl=1).
+const saveName = () => { const name = nameOf().replace(/[\u0000-\u001f\u007f<>:"/\\|?*]+/g, '_').slice(0, 120) || 'document'; return /\.pdf$/i.test(name) ? name : `${name}.pdf`; };
+let saving = false;
+$('download').addEventListener('click', (e) => {
+  const doc = viewer.pdfDocument;
+  if (!doc) { $('download').href = `/data?${new URLSearchParams({ u: base, dl: '1' })}`; return; }
+  e.preventDefault();
+  if (saving) return;
+  saving = true;
+  doc.getData().then((bytes) => {
+    const href = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+    const a = Object.assign(document.createElement('a'), { href, download: saveName() });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 60 * 1000);
+  }).catch((err) => console.warn('pdf: could not save', err && err.message)).finally(() => { saving = false; });
+});
 $('print').addEventListener('click', () => window.lumenPdfHost?.print());
 
 // ---- open
