@@ -71,7 +71,7 @@ const lines = (f) => read(f).split('\n').map((text, i) => ({ text, n: i + 1 }));
   // Spacing: paddings, margins and gaps sit on the 2 px scale (tokens.css --sp-*). A bare px value inside calc()/min()/max()/clamp() is geometry
   // (an icon's room, a border), values above 48 px are page layout, and a line that says "off-scale:" in a comment explains its exception.
   const SPACE_PX = new Set([0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24, 28, 32, 40, 48]);
-  const SPACED = [...SCALED, ...POPUPS, 'tokens.css', 'step-ui.css', 'chat-actions.css', 'chats.css', 'chat-page.css', 'chat-projects.css', 'chat-project-page.css', 'chat-page-tools.css', 'chat-image-viewer.css', 'chat-canvas.css', 'desktop-card.css', 'notes.css', 'external-apps.css', 'command-bar.css', 'files-picker.css', 'routines-chat.css', 'settings-preview.css', 'history.html', 'downloads.html', 'bookmarks.html'];
+  const SPACED = [...SCALED, ...POPUPS, 'tokens.css', 'step-ui.css', 'chat-actions.css', 'chats.css', 'chat-page.css', 'chat-projects.css', 'chat-project-page.css', 'chat-page-tools.css', 'chat-image-viewer.css', 'chat-canvas.css', 'desktop-card.css', 'notes.css', 'external-apps.css', 'command-bar.css', 'files-picker.css', 'routines-chat.css', 'settings-preview.css', 'offer-card.css', 'history.html', 'downloads.html', 'bookmarks.html'];
   const offScale = [];
   for (const f of SPACED) {
     for (const { text, n } of lines(f)) {

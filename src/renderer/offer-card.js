@@ -28,6 +28,7 @@
       const r = await act('set', { id: item.id, value: input.checked });
       input.disabled = false;
       if (!r.ok) input.checked = !input.checked;
+      if (document.activeElement === document.body) input.focus({ preventScroll: true }); // (disabling it while it saved dropped focus)
     });
     return input;
   }
@@ -46,6 +47,7 @@
       sel.disabled = false;
       if (r.ok) saved = v;
       sel.value = String(saved);
+      if (document.activeElement === document.body) sel.focus({ preventScroll: true }); // (as the switch)
     };
     sel.addEventListener('change', () => {
       li.querySelector('.offer-confirm')?.remove();
@@ -53,10 +55,18 @@
       if (v === undefined) return;
       if (item.confirm === undefined || v !== item.confirm) { save(v); return; }
       const ask = el('div', 'offer-confirm');
-      ask.append(el('span', 'offer-confirm-text', tr(`offers.${item.id}.${v}.confirm`)),
-        button(tr('offers.useIt'), 'offer-go', () => { ask.remove(); save(v); }),
-        button(tr('offers.cancel'), 'link-btn', () => { ask.remove(); sel.value = String(saved); }));
+      ask.setAttribute('role', 'group');
+      const text = el('span', 'offer-confirm-text', tr(`offers.${item.id}.${v}.confirm`));
+      text.id = `offer-confirm-${item.id}`;
+      ask.setAttribute('aria-labelledby', text.id);
+      const close = (keep) => { ask.remove(); if (!keep) sel.value = String(saved); sel.focus(); };
+      const go = button(tr('offers.useIt'), 'offer-go', () => { close(true); save(v); });
+      const actions = el('div', 'offer-confirm-actions');
+      actions.append(button(tr('offers.cancel'), 'link-btn', () => close(false)), go);
+      ask.append(text, actions);
+      ask.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(false); } }); // (Esc backs out of the question, not the card)
       li.append(ask);
+      go.focus();
     });
     return sel;
   }
@@ -77,7 +87,9 @@
         if (!r.ok) { go.disabled = false; return; }
         if (r.section) openSettings(r.section);
         const list = li.parentElement;
+        const next = li.nextElementSibling || li.previousElementSibling;
         li.remove();
+        next?.querySelector('input, select, button')?.focus({ preventScroll: true }); // (keyboard focus stays on the card)
         if (list && !list.querySelector('.offer-row')) { list.previousElementSibling?.remove(); list.remove(); } // (and its release heading)
         if (!card?.querySelector('.offer-row')) remove();
       });
@@ -94,8 +106,13 @@
     if (!list?.items?.length || card || document.getElementById('welcome')?.hidden === false) return; // (the first-run welcome has its own steps)
     card = el('section', 'offer-card');
     card.setAttribute('role', 'region');
-    card.setAttribute('aria-label', tr('offers.title'));
-    card.append(el('h3', 'offer-title', tr('offers.title')));
+    card.setAttribute('aria-labelledby', 'offer-title');
+    const head = el('div', 'offer-head');
+    const mark = el('span', 'offer-mark');
+    mark.setAttribute('aria-hidden', 'true');
+    mark.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5c.3 0 .5.2.6.5l.9 2.9c.2.7.8 1.3 1.5 1.5l2.9.9c.3.1.5.3.5.6s-.2.5-.5.6l-2.9.9c-.7.2-1.3.8-1.5 1.5l-.9 2.9c-.1.3-.3.5-.6.5s-.5-.2-.6-.5l-.9-2.9c-.2-.7-.8-1.3-1.5-1.5L2.1 8.6c-.3-.1-.5-.3-.5-.6s.2-.5.5-.6L5 6.5c.7-.2 1.3-.8 1.5-1.5L7.4 2c.1-.3.3-.5.6-.5z"/></svg>';
+    head.append(mark, Object.assign(el('h3', 'offer-title', tr('offers.title')), { id: 'offer-title' }));
+    card.append(head);
     const releases = [...new Set(list.items.map((i) => i.since))];
     for (const since of releases) {
       card.append(el('h4', 'offer-release', tr('offers.release', { version: since })));
@@ -105,10 +122,17 @@
     }
     const foot = el('div', 'offer-foot');
     if (list.more > 0) foot.append(button(tr('offers.more', { n: list.more }), 'link-btn offer-more', () => openSettings(list.moreSection)));
+    const dismiss = async (how) => {
+      const hadFocus = card?.contains(document.activeElement);
+      remove();
+      if (hadFocus) document.getElementById('prompt')?.focus(); // (not lost to the page)
+      await act('dismiss', how);
+    };
     foot.append(
-      button(tr('offers.notNow'), 'link-btn offer-later', async () => { remove(); await act('dismiss'); }),
-      button(tr('offers.never'), 'link-btn offer-never', async () => { remove(); await act('dismiss', 'never'); }));
+      button(tr('offers.notNow'), 'link-btn offer-later', () => dismiss()),
+      button(tr('offers.never'), 'link-btn offer-never', () => dismiss('never')));
     card.append(foot);
+    card.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); dismiss(); } }); // Esc = Not now
     (empty.querySelector('.chips') || empty).before(card);
     // Counted as shown once it has really been on screen (the next launch doesn't show it again).
     const ids = list.items.map((i) => i.id);
