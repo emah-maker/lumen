@@ -79,7 +79,14 @@ const path = require('path');
   let rows = await rowsNow();
   check('@ lists this tab, all tabs and each tab', rows.length >= 5 && /this tab/i.test(rows[0]) && /all tabs/i.test(rows[1]) && rows.some((r) => /Page alpha/.test(r)) && rows.some((r) => /Page beta/.test(r)) && rows.some((r) => /Page gamma/.test(r)), JSON.stringify(rows));
   const a11y = await ui.evaluate(() => ({ role: document.getElementById('prompt').getAttribute('role'), list: document.getElementById('tabs-picker').getAttribute('role'), opt: document.querySelector('.tabs-opt').getAttribute('role'), active: document.getElementById('prompt').getAttribute('aria-activedescendant'), sel: document.querySelectorAll('.tabs-opt[aria-selected="true"]').length }));
-  check('the picker is a listbox with aria-activedescendant on the composer', a11y.role === 'combobox' && a11y.list === 'listbox' && a11y.opt === 'option' && a11y.active === 'tabs-opt-0' && a11y.sel === 1, JSON.stringify(a11y));
+  // A tab's row is laid out like the "this tab" row: as wide as the list, tall enough for its two lines (the tab strip's .tab rule made it a
+  // 200 by 28 px box that cut the text in half).
+  const sizes = await ui.evaluate(() => [...document.querySelectorAll('#tabs-picker .tabs-opt')].map((el) => { const r = el.getBoundingClientRect(); const t = el.querySelector('.tabs-opt-title').getBoundingClientRect(); const s = el.querySelector('.tabs-opt-sub').getBoundingClientRect(); return { kind: el.className, w: Math.round(r.width), h: Math.round(r.height), inside: t.top >= r.top && s.bottom <= r.bottom + 0.5 }; }));
+  const thisRow = sizes[0];
+  const tabRows = sizes.filter((s) => /is-tab/.test(s.kind));
+  check('tab rows are as wide and as tall as the "this tab" row, with both lines inside', tabRows.length === 3 && tabRows.every((s) => Math.abs(s.w - thisRow.w) <= 1 && Math.abs(s.h - thisRow.h) <= 1 && s.inside),JSON.stringify(sizes));
+  check('no picker row carries the tab strip\'s .tab class', await ui.evaluate(() => document.querySelectorAll('#tabs-picker .tab').length === 0), '');
+  check('the picker is a listbox with aria-activedescendant on the composer',a11y.role === 'combobox' && a11y.list === 'listbox' && a11y.opt === 'option' && a11y.active === 'tabs-opt-0' && a11y.sel === 1, JSON.stringify(a11y));
   await ui.keyboard.type('bet');
   await sleep(300);
   rows = await rowsNow();

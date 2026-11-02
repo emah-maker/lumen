@@ -3,6 +3,8 @@
 Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [Releases](https://github.com/emah-maker/lumen/releases).
 
 ## Unreleased
+
+- **The @ menu shows tab names in full again.** In the chat's @ menu each open tab was squeezed into a small box with its name cut in half: the rows had picked up the tab strip's own look. They now match the "this tab" and "all tabs" rows. Test: `test/e2e/tabsask.js`.
 - **Save in the PDF viewer works for links that only open once.** Save wrote a "data.txt" that failed with "couldn't connect" for PDFs from course sites like Canvas: it asked the site for the file again, and those links answer only once. Save now writes the PDF the tab already shows, with its own name. Test: `test/e2e/pdf-save.js`.
 - **A double-click on a finished download opens it once.** The downloads panel and menu open the same file only once within a second and a half, so a double-click no longer opens two copies. Test: `test/units/downloads-open-units.js`.
 
