@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.89 (2026-11-02)
+
 - You can now use **uBlock Origin** itself, not only uBlock Origin Lite, as your ad blocker: Settings → Privacy and security → Ad blocker → uBlock Origin. The Chrome Web Store no longer offers it, so Lumen downloads it from its author’s GitHub releases, checks the package’s signature (a package that isn’t signed by uBlock Origin’s author is refused), and looks for a new release once a day. Two gaps in the Electron version Lumen is built on kept it from working: its background page stopped at start-up, and it saw every request as coming from no tab, so it blocked nothing. Lumen fills both in.
 - **Import your passwords from Google or Safari.** Export them from Google Password Manager (passwords.google.com or Chrome’s Password Manager → Settings → Export passwords) or from Safari (File → Export → Passwords) or iCloud Passwords for Windows, then pick the file in Settings → General → **Import passwords**, in Saved passwords, or from ⋯ → Import → **Passwords from a file…**. Before anything is saved you see how many passwords are new, already saved, duplicated in the file (merged into one) or skipped (apps, sites without https). Where Lumen already has a different password for the same login, you choose to keep Lumen’s (the default) or use the file’s. The passwords are stored encrypted with your system keychain, and Save passwords turns on so Lumen can fill them. Afterwards Lumen offers to move the exported file to the Trash, since it holds every password in plain text. Lumen reads only the file you pick, never another browser’s password store. Tests: `test/units/password-units.js`, `test/e2e/password-import.js`.
 
