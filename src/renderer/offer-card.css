@@ -1,27 +1,108 @@
 /* The "New in Lumen" card in the empty chat (renderer/offer-card.js): the settings an update brought, grouped by release,
-   each with its switch, choice or "Set up…". Loaded with the card (not part of the startup bundle). */
-.offer-card { margin: var(--sp-6) 0 0; padding: var(--sp-5) var(--sp-6); border-radius: var(--r-lg); background: var(--field); text-align: left; }
-.offer-title { margin: 0 0 var(--sp-3); color: var(--muted); font-size: 12px; font-weight: 600; }
-.offer-release { margin: var(--sp-4) 0 var(--sp-3); color: var(--faint); font-size: 11px; font-weight: 600; }
-.offer-title + .offer-release { margin-top: 0; }
-.offer-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-4); }
-.offer-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); }
-.offer-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
-.offer-name { font-weight: 500; }
-.offer-desc { color: var(--muted); font-size: 12px; line-height: 1.4; }
-.offer-go { flex: none; padding: var(--sp-2) var(--sp-5); border: none; border-radius: var(--r-md); background: var(--accent-deep); color: var(--on-accent); cursor: default; }
-.offer-go:disabled { opacity: 0.6; }
-.offer-choice { flex: none; max-width: 45%; padding: var(--sp-1) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-md); background: transparent; color: var(--text); font: inherit; font-size: 12px; }
-.offer-choice:disabled { opacity: 0.6; }
-.offer-switch { appearance: none; flex: none; position: relative; width: 36px; height: 20px; margin: 0; border-radius: var(--r-pill); background: var(--border); transition: background-color var(--t-fast) ease-out; }
-.offer-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform var(--t-fast) ease-out; }
-.offer-switch:checked { background: var(--accent); }
-.offer-switch:checked::after { transform: translateX(16px); }
-.offer-switch:disabled { opacity: 0.6; }
-.offer-confirm { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); font-size: 12px; line-height: 1.4; }
-.offer-confirm-text { flex: 1 1 200px; color: var(--text); }
-.offer-foot { margin-top: var(--sp-4); display: flex; flex-wrap: wrap; gap: var(--sp-3) var(--sp-6); font-size: 12px; }
-.offer-foot .link-btn { color: var(--muted); }
-.offer-foot .offer-more { color: var(--accent-text); }
-@media (prefers-reduced-motion: reduce) { .offer-switch, .offer-switch::after { transition: none; } }
-@media (forced-colors: active) { .offer-switch { border: 1px solid CanvasText; } .offer-switch:checked { background: Highlight; } .offer-switch::after { background: CanvasText; } }
+   each with its switch, choice or "Set up…". Loaded with the card (not part of the startup bundle). A raised surface like
+   the composer; the controls are the ones Settings draws (switch, select, secondary button), sized for the sidebar. */
+.offer-card {
+  margin: var(--sp-6) 0 var(--sp-8); padding: var(--sp-6) var(--sp-6) var(--sp-2); border-radius: var(--r-xl);
+  background: var(--surface-raised); color: var(--text); text-align: left; font-size: var(--fs-md);
+  box-shadow: inset 0 1px 0 var(--highlight), 0 0 0 1px var(--hairline), 0 8px 24px -14px rgb(0 0 0 / calc(0.6 * var(--shadow-k)));
+  animation: rise var(--t-smooth) var(--spring-smooth);
+}
+
+/* Header: a small accent mark and the title. */
+.offer-head { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-2); }
+.offer-mark { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-sm); background: var(--accent-soft); color: var(--accent-text); }
+.offer-mark svg { width: 14px; height: 14px; }
+.offer-title { margin: 0; color: var(--text); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
+
+/* A release: a caption with a rule running to the edge, then its lines. */
+.offer-release { display: flex; align-items: center; gap: var(--sp-4); margin: var(--sp-5) 0 var(--sp-1); color: var(--muted); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+.offer-release::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+.offer-list { margin: 0; padding: 0; list-style: none; }
+.offer-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4) var(--sp-6); padding: var(--sp-4) 0; }
+.offer-row + .offer-row { border-top: 1px solid var(--hairline); }
+.offer-text { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+.offer-name { color: var(--text); font-weight: 500; line-height: 1.35; }
+.offer-desc { color: var(--muted); font-size: var(--fs-sm); line-height: 1.4; text-wrap: pretty; }
+
+/* Switch: Settings' switch (input.switch), a size down for the card. */
+.offer-switch {
+  appearance: none; flex: none; position: relative; width: 36px; height: 22px; margin: 0; border-radius: var(--r-pill);
+  background: var(--field); box-shadow: inset 0 0 0 1px var(--border); cursor: pointer;
+  transition: background-color var(--t-fast) ease-out, box-shadow var(--t-fast) ease-out;
+}
+.offer-switch::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--paper); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.04);
+  transition: transform var(--t-base) var(--spring-snappy);
+}
+.offer-switch:checked { background: var(--accent); box-shadow: none; }
+.offer-switch:checked::after { transform: translateX(14px); }
+.offer-switch:hover:not(:disabled):not(:checked) { background: var(--hover); }
+.offer-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--accent); }
+.offer-switch:disabled { opacity: 0.45; cursor: default; }
+
+/* Choice: a quiet filled select with its own chevron. */
+.offer-choice {
+  appearance: none; flex: none; max-width: 45%; height: var(--hit); margin: 0; padding: 0 var(--sp-12) 0 var(--sp-5);
+  border: none; border-radius: var(--r-md); background-color: var(--field); color: var(--text);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238a8a8e' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center;
+  font: inherit; font-size: var(--fs-sm); font-weight: 500; text-overflow: ellipsis; cursor: pointer;
+  transition: background-color var(--t-fast) ease-out;
+}
+.offer-choice:hover:not(:disabled) { background-color: var(--hover); box-shadow: inset 0 0 0 1px var(--border); }
+.offer-choice:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.offer-choice:disabled { opacity: 0.45; cursor: default; }
+
+/* Buttons: "Set up…" is secondary (a tinted fill); "Use it" in the confirm is the one primary on the card. */
+.offer-go {
+  flex: none; height: var(--hit); padding: 0 var(--sp-6); border: none; border-radius: var(--r-md);
+  background: var(--accent-soft); color: var(--accent-text); font: inherit; font-size: var(--fs-sm); font-weight: 600; cursor: pointer;
+  transition: background-color var(--t-fast) ease-out, transform var(--t-press) ease-out;
+}
+.offer-go:hover:not(:disabled) { background: rgb(var(--accent-rgb, 0 122 255) / 0.22); }
+.offer-go:active:not(:disabled) { transform: scale(0.97); }
+.offer-go:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.offer-go:disabled { opacity: 0.45; cursor: default; }
+
+/* uBlock's inline confirm: a tinted panel under the line, the action on the right. */
+.offer-confirm {
+  flex-basis: 100%; display: flex; flex-direction: column; gap: var(--sp-5); padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-lg); background: var(--field); font-size: var(--fs-sm); line-height: 1.45;
+  animation: offer-open var(--t-base) var(--spring-smooth);
+}
+.offer-confirm-text { color: var(--text); text-wrap: pretty; }
+.offer-confirm-actions { display: flex; justify-content: flex-end; align-items: center; gap: var(--sp-2); }
+.offer-confirm .offer-go { background: var(--accent-deep); color: var(--on-accent); }
+.offer-confirm .offer-go:hover:not(:disabled) { background: var(--accent); }
+.offer-confirm .offer-go:focus-visible { box-shadow: 0 0 0 2px var(--field), var(--focus-ring); }
+@keyframes offer-open { from { opacity: 0; transform: translateY(-4px); } }
+
+/* Text buttons (Cancel and the footer): hit-sized, a hover fill instead of an underline. */
+.offer-card .link-btn {
+  min-height: var(--hit-min); padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); color: var(--muted);
+  font-size: var(--fs-sm); font-weight: 500; transition: background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;
+}
+.offer-card .link-btn:hover { background: var(--hover); color: var(--text); text-decoration: none; }
+.offer-card .link-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* Footer: "N more in Settings" on the left, "Not now" and "Don't show again" on the right. */
+.offer-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin: var(--sp-1) calc(-1 * var(--sp-4)) 0; padding-top: var(--sp-3); border-top: 1px solid var(--hairline); }
+.offer-foot .offer-more { display: inline-flex; align-items: center; gap: var(--sp-1); margin-right: auto; color: var(--accent-text); }
+.offer-foot .offer-more::after { content: "›"; font-size: var(--fs-lg); line-height: 1; translate: 0 -1px; transition: translate var(--t-fast) ease-out; }
+.offer-foot .offer-more:hover { color: var(--accent-text); }
+.offer-foot .offer-more:hover::after { translate: var(--sp-1) -1px; }
+.offer-foot .offer-later { margin-left: auto; }
+.offer-foot .offer-more + .offer-later { margin-left: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .offer-card, .offer-confirm { animation: none; }
+  .offer-switch, .offer-switch::after, .offer-choice, .offer-go, .offer-card .link-btn, .offer-foot .offer-more::after { transition: none; }
+}
+@media (forced-colors: active) {
+  .offer-card { border: 1px solid CanvasText; }
+  .offer-switch { forced-color-adjust: none; background: Canvas; border: 1px solid CanvasText; }
+  .offer-switch:checked { background: Highlight; }
+  .offer-switch::after { forced-color-adjust: none; background: CanvasText; top: 1px; left: 1px; }
+  .offer-choice, .offer-go { border: 1px solid ButtonText; }
+}

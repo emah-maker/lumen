@@ -29,6 +29,7 @@
   "adblock.loading": "Loading filter lists…",
   "adblock.toggle": "Block ads and trackers",
   "adblock.ublock": "uBlock Origin Lite is blocking ads (its toolbar button)",
+  "adblock.ublockOrigin": "uBlock Origin is blocking ads (its toolbar button)",
   "adblock.settings": "Ad blocker settings…",
   "address.label": "Address",
   "address.placeholder": "Search or enter address",
