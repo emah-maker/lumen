@@ -539,6 +539,16 @@ withTimers(() => {
   check('write: a box is filled: the text wraps to its width and shrinks until every line fits its height', fl.length >= 2 && fl.length * fs * 1.2 <= 30.6 && longest * fs * 0.53 <= 120.6 && /system-ui/.test(tags(fitted.svg, 'text')[0].attrs['font-family']), `${fs} ${fl.map((s) => s.textContent).join('|')}`);
   const short = Number(tags(draw([{ type: 'write', x: 100, y: 100, w: 400, h: 300, text: 'Yes' }]).svg, 'text')[0].attrs['font-size']);
   check('write: a short answer in a big box stops at a readable size (28 px), not the box height', short === 28, String(short));
+  {
+    // Fitted by ink (the glyphs), not the em box: without a canvas the ink is estimated per font, descenders only where the text has them.
+    const fitIn = (text) => { const r = draw([{ type: 'write', x: 100, y: 100, w: 300, h: 26, text }]); const t = tags(r.svg, 'text')[0]; return { size: Number(t.attrs['font-size']), base: Number(t.attrs.y) }; };
+    const flat = fitIn('Paris'), deep = fitIn('jumpy');
+    check('write: fitted by ink: text without descenders can be bigger than text with them, in the same blank', flat.size > deep.size, `${flat.size} ${deep.size}`);
+    const inkBottom = (o, desc) => o.base + (desc * o.size) / 100;
+    check('write: in a blank it fills, the ink sits on the blank\'s bottom line, inside it (2 px padding at most)', inkBottom(flat, 2) <= 126 + 0.3 && inkBottom(flat, 2) >= 126 - 2.5 && inkBottom(deep, 30) <= 126 + 0.3 && flat.base - (78 * flat.size) / 100 >= 100 - 0.3, JSON.stringify({ flat, deep }));
+    const parts = all(draw([{ type: 'box', ...box }, { type: 'write', x: 10, y: 10, text: 'a' }]).svg, (n) => n.attrs && n.attrs['data-mark'] !== undefined);
+    check('every drawn part says which mark it belongs to (data-mark)', parts.length >= 3 && parts.some((p) => p.attrs['data-mark'] === '0') && parts.some((p) => p.attrs['data-mark'] === '1' && p.tagName === 'text'));
+  }
   const covered = draw([{ type: 'write', x: 100, y: 100, w: 120, h: 30, text: '42', fill: 'white', opacity: 1, color: 'black' }]);
   const card = tags(covered.svg, 'rect')[0];
   check('write over: fill puts a solid card behind the text (white covers what was there), and the text keeps its own colour', card && card.attrs.fill === '#ffffff' && card.attrs['fill-opacity'] === '1' && Number(card.attrs.width) >= 120 && tags(covered.svg, 'text')[0].attrs.fill === '#111111', J(card && card.attrs));

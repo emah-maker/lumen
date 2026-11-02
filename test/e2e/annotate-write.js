@@ -9,6 +9,7 @@ const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const path = require('path');
+const { INK_FN } = require('../helpers/_annotate-ink');
 
 const WORKSHEET = `<!doctype html><html><head><meta charset="utf-8"><title>Worksheet</title><style>
 body { font: 16px/1.6 Arial, sans-serif; margin: 40px; }
@@ -65,8 +66,8 @@ function makePdf() {
     const shotCss = () => app.evaluate(() => global.__agent.screenshotScale && global.__agent.screenshotScale.css);
     const toShot = (r, css) => ({ x: r.x / css.x, y: r.y / css.y, w: r.w / css.x, h: r.h / css.y });
     const rectOf = (sel) => page(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; })()`);
-    // Every written line: its text and its box on screen (CSS px), measured by the engine.
-    const writing = () => overlay(`(() => { const b = window.__lumenDraw; if (!b || !b.alive) return null; return Array.from(b.svg.querySelectorAll('text')).filter((t) => t.querySelector('tspan')).map((t) => { const r = t.getBoundingClientRect(); return { text: Array.from(t.querySelectorAll('tspan')).map((s) => s.textContent).join('|'), x: r.left, y: r.top, w: r.width, h: r.height, size: Number(t.getAttribute('font-size')) }; }); })()`);
+    // Every written mark: its text and its ink box on screen (CSS px), measured with the real font.
+    const writing = () => overlay(`(() => { const b = window.__lumenDraw; if (!b || !b.alive) return null; return Array.from(b.svg.querySelectorAll('text')).filter((t) => t.querySelector('tspan')).map((t) => { const k = (${INK_FN})(t), r = { left: k.left, top: k.top, width: k.right - k.left, height: k.bottom - k.top }; return { text: Array.from(t.querySelectorAll('tspan')).map((s) => s.textContent).join('|'), x: r.left, y: r.top, w: r.width, h: r.height, size: Number(t.getAttribute('font-size')) }; }); })()`);
     // ANNOTATE_SHOT=<dir>: pictures of the drawing (after its animation) for a human to look at
     const snap = async (name) => { if (!process.env.ANNOTATE_SHOT) return; await sleep(1600); const png = await app.evaluate(async () => (await global.__agent.browser.activeTab().webContents.capturePage()).toPNG().toString('base64')); fs.writeFileSync(path.join(process.env.ANNOTATE_SHOT, `annotate-${name}.png`), Buffer.from(png, 'base64')); };
     const inside = (t, r, slack = 3) => t && t.x >= r.x - slack && t.y >= r.y - slack - 4 && t.x + t.w <= r.x + r.w + slack && t.y + t.h <= r.y + r.h + slack + 4;
