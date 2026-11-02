@@ -110,7 +110,7 @@ const DEFAULTS = {
   focusSchedules: [], // [focus] recurring focus: { id, days, from, to, on } (features/focus.js)
   adblock: true,
   adblockAllow: [],
-  adBlocker: 'lumen', // [uBlock mode] lumen (the built-in blocker) | ublock (uBlock Origin Lite, the user's own extension; features/ublock-mode.js)
+  adBlocker: 'lumen', // [uBlock mode] lumen (the built-in blocker) | ublock (uBlock Origin Lite) | ublock-origin (uBlock Origin): the user's own extension (features/ublock-mode.js)
   permissionDefaults: {}, // permission -> 'ask' | 'block'
   downloadDir: '',
   projectsDir: '', // [projects] the folder new projects' folders are made in; empty: <Documents>Lumen Projects (main.js projectsParent)
@@ -351,7 +351,7 @@ function validate(key, value) {
     case 'translateTarget': return value === '' || translate.LANG_CODES.includes(value) ? value : null;
     case 'focusSites': return require('../features/focus').cleanSites(value); // [focus]
     case 'focusSchedules': return require('../features/focus').cleanSchedules(value);
-    case 'adBlocker': return pick(value, ['lumen', 'ublock'], null);
+    case 'adBlocker': return pick(value, ['lumen', 'ublock', 'ublock-origin'], null); // (features/ublock-mode.js MODES, not loaded at start-up; ublock-origin-units checks they match)
     case 'adblockAllow':
       return Array.isArray(value) ? [...new Set(value.map((h) => String(h).trim().toLowerCase().replace(/^www\./, '')).filter((h) => /^[a-z0-9.-]+$/.test(h)))] : null;
     case 'permissionDefaults':
@@ -960,7 +960,7 @@ function create(deps) {
       await apply('bypassPermissions');
       return state();
     }
-    if (key === 'adBlocker') { // [uBlock mode] installs or removes uBlock Origin Lite, and moves Lumen's own hooks (main.js setAdBlocker)
+    if (key === 'adBlocker') { // [uBlock mode] installs or removes uBlock Origin Lite or uBlock Origin, and moves Lumen's own hooks (main.js setAdBlocker)
       const mode = validate(key, value);
       if (mode === null || !deps.setAdBlocker) throw new Error(`Invalid value for ${key}`);
       await deps.setAdBlocker(mode);
