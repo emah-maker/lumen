@@ -3,6 +3,8 @@
 Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [Releases](https://github.com/emah-maker/lumen/releases).
 
 ## Unreleased
+
+- **Always allow works for tasks and events after the AI read a page.** The Todoist, Google Tasks, Google Calendar and Microsoft Calendar cards only offered **Allow once** in a chat that had read a web page. Adding a task or a guest-less event stays in your own account, so these now offer **Always allow this action** there too, and an always-allowed one skips the card (a step says so). Drafts, docs, files, Notion pages, sends and edits still ask after a page was read. Tests: `test/units/connector-always-units.js`, `test/e2e/connectors.js`.
 - **Save in the PDF viewer works for links that only open once.** Save wrote a "data.txt" that failed with "couldn't connect" for PDFs from course sites like Canvas: it asked the site for the file again, and those links answer only once. Save now writes the PDF the tab already shows, with its own name. Test: `test/e2e/pdf-save.js`.
 - **A double-click on a finished download opens it once.** The downloads panel and menu open the same file only once within a second and a half, so a double-click no longer opens two copies. Test: `test/units/downloads-open-units.js`.
 

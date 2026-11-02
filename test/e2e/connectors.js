@@ -173,8 +173,10 @@ async function main() {
     const twoAdds = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Three' } } }, { input: { app: 'todoist', action: 'add_task', args: { content: 'Four' } } }], answer: false });
     check('two always-allowed adds in one chat: neither asks (an add leaves the chat as it was)', twoAdds.events.filter((e) => e.type === 'approval').length === 0 && twoAdds.events.filter((e) => e.name === 'auto_allowed').length === 2 && postsBefore() === addsBefore + 4, JSON.stringify({ cards: twoAdds.events.filter((e) => e.type === 'approval').length, posts: postsBefore() - addsBefore }));
     const taintedRun = await run({ toolUses: [{ input: { app: 'canvas', action: 'courses' } }, { input: { app: 'todoist', action: 'add_task', args: { content: 'After a read' } } }], answer: true });
-    const tcard = taintedRun.events.find((e) => e.type === 'approval');
-    check('a chat that read connected data still shows the card, with no Always button', tcard?.tainted === true && tcard.noAlways === true && !taintedRun.events.some((e) => e.name === 'auto_allowed'), JSON.stringify(taintedRun.events));
+    check('a task stays always allowed after the chat read connected data (it stays in your own account): no card, a step says so', !taintedRun.events.some((e) => e.type === 'approval') && taintedRun.events.some((e) => e.name === 'auto_allowed'), JSON.stringify(taintedRun.events));
+    const taintedComment = await run({ toolUses: [{ input: { app: 'canvas', action: 'courses' } }, { input: { app: 'github', action: 'comment', args: { repo: 'ada/notes', number: 7, body: 'x' } } }], answer: false });
+    const ccard = taintedComment.events.find((e) => e.type === 'approval');
+    check('a write that changes things, after the chat read connected data: the card, with no Always button', ccard?.tainted === true && ccard.noAlways === true, JSON.stringify(taintedComment.events.filter((e) => e.type === 'approval')));
     inSettings('setTimeout(() => location.reload(), 50); true').catch(() => {});
     await new Promise((r) => setTimeout(r, 1500));
     await waitFor(async () => { try { return (await inSettings('document.body?.dataset.ready === "1"')) === true; } catch { return false; } });
@@ -222,6 +224,14 @@ async function main() {
       return out;
     });
     check('the card in the chat: names the change, says it happens in your account, has no Always button', !cardDom.always && /your account/.test(cardDom.detail) && cardDom.buttons.includes('Allow once'), JSON.stringify(cardDom));
+    const taintedDom = await ui.evaluate(() => {
+      showApproval(9104, 'Todoist', { action: 'tool', title: 'Claude wants to: Use Todoist: Add a task', args: 'Add this task to Todoist: Buy', tainted: true, note: 'connector', alwaysFor: { action: 'Add a task', app: 'Todoist' } });
+      const c = [...document.querySelectorAll('.approval-tool')].pop();
+      const out = { always: c.querySelector('.approval-always')?.textContent || '', detail: c.querySelector('.approval-detail')?.textContent };
+      resolveApproval(9104, false);
+      return out;
+    });
+    check('a task card in a chat that read a page: says so, and offers Always allow this action', taintedDom.always === 'Always allow this action' && /read page content/.test(taintedDom.detail), JSON.stringify(taintedDom));
 
     console.log('--- nobody else gets in: outside agents, bypass, agents that do not ask, hands-off');
     const viaMcp = await app.evaluate(async () => {
@@ -287,7 +297,7 @@ async function main() {
     check('a Lumen-owned CLI run is offered the connector tool; an outside client and a forged tag are not', cliDenied.listed?.own === true && cliDenied.listed.outside === false && cliDenied.listed.forged === false, JSON.stringify(cliDenied.listed));
     check('…it can read (untrusted data), and the same call from an outside client or a forged tag is refused', !cliDenied.read?.isError && /Add dark mode/.test(cliDenied.read.text) && /untrusted_page_content/.test(cliDenied.read.text) && cliDenied.outside?.every((r) => r.isError && /Unknown tool/.test(r.text)), JSON.stringify(cliDenied));
     const cliCard = cliDenied.events.find((e) => e.type === 'approval');
-    check('…its write shows the card (even with Bypass permissions on, and with no Always allow) and denying it sends nothing', cliCard?.action === 'tool' && /From the CLI/.test(cliCard.args) && cliCard.noAlways === true && cliDenied.write?.isError && posts() === before && !fakes.seen.some((r) => /From outside/.test(r.body)), JSON.stringify({ cliCard, write: cliDenied.write }));
+    check('…its write shows the card (even with Bypass permissions on; a task offers Always allow, it stays in your own account) and denying it sends nothing', cliCard?.action === 'tool' && /From the CLI/.test(cliCard.args) && cliCard.tainted === true && cliCard.noAlways !== true && cliCard.alwaysFor?.action === 'Add a task' && cliCard.noBypass === true && cliDenied.write?.isError && posts() === before && !fakes.seen.some((r) => /From outside/.test(r.body)), JSON.stringify({ cliCard, write: cliDenied.write }));
     const cliAllowed = await cli(true);
     check('…and allowing the card adds the task', !cliAllowed.write?.isError && /Added: \d+\s+From the CLI/.test(cliAllowed.write.text) && posts() === before + 1, JSON.stringify(cliAllowed.write));
 
