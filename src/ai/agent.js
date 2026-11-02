@@ -3822,15 +3822,17 @@ ${prompt}` : prompt), historyImages: [] };
 
   // ---- [image routing] (ai/image-router.js) Any engine can ask for a picture: the generate_image tool, or a message like "draw a cat".
   // The request goes to a provider the user already connected that makes pictures (Settings → AI → Image generation: Automatic, one
-  // provider, or off); the picture is shown in the chat like any generated one, with a "Made with <provider>" line.
+  // provider first and the others after it, or off); the picture is shown in the chat like any generated one, with a "Made with <provider>" line.
   imageSetting() { return imageRouter.cleanSetting(this.browser.imageGen?.()); }
 
   // Which image providers are connected right now: an API key set (OpenRouter: and a picture model known for it), Grok Build signed in.
   async imageConnected(current) {
     const has = (p) => { try { return Boolean(this.getKey?.(p)); } catch { return false; } };
-    const out = { openai: has('openai'), xai: has('xai'), gemini: has('gemini'), openrouter: false, grokbuild: false };
+    const out = { openai: has('openai'), xai: has('xai'), gemini: has('gemini'), openrouter: false, grokbuild: false, antigravity: false };
     out.openrouter = has('openrouter') && Boolean(providers.openRouterImageModel(String(current || '').startsWith('openrouter:') ? String(current).slice(11) : null));
     try { const st = await this.engines?.grokbuild?.status?.(); out.grokbuild = st?.installed === true && st?.signedIn === true; } catch { out.grokbuild = false; }
+    // Antigravity only when it is picked (image-router.js PICK_ONLY): installed and not known to be signed out (agy has no free sign-in check).
+    if (this.imageSetting() === 'antigravity') { try { const st = await this.engines?.antigravity?.status?.(); out.antigravity = st?.installed === true && st?.signedIn !== false; } catch { out.antigravity = false; } }
     return out;
   }
 
@@ -3843,11 +3845,12 @@ ${prompt}` : prompt), historyImages: [] };
     return {
       openai: api('openai'), xai: api('xai'), gemini: api('gemini'), openrouter: api('openrouter'),
       grokbuild: async ({ prompt, source, signal }) => imageGrok.generate({ bin: await this.engines.grokbuild.ensureBin(), prompt, source, signal, userData: this.engines.grokbuild.userData }),
+      antigravity: async ({ prompt, source, signal }) => require('./image-agy').generate({ bin: await this.engines.antigravity.ensureBin(), prompt, source, signal, userData: this.engines.antigravity.userData, ...(this.imageAgySpawn ? { spawn: this.imageAgySpawn } : {}) }), // [image routing] agy, when picked (imageAgySpawn: tests' fake agy)
       ...(this.imageBackendOverrides || {}),
     };
   }
 
-  // The routed request: { images, credit, label, ... }, or an Error with `code` (image-router.js route). onTry(key) runs before each provider.
+  // The routed request: { images, credit, label, insteadOf?, ... }, or an Error with `code` (image-router.js route). onTry(key) runs before each provider.
   routeImage({ prompt, source = null, signal, current, onTry = null }) {
     return imageRouter.route({
       setting: this.imageSetting(), current, prompt, source, signal, onTry,
@@ -4045,7 +4048,8 @@ ${prompt}` : prompt), historyImages: [] };
     let started = false;
     const begin = (key) => {
       if (!started) { started = true; emit({ type: 'turn_start' }); }
-      emit({ type: 'status', text: `Making your picture with ${imageRouter.labelOf(key)}…` });
+      const first = this.imageSetting(); // a provider picked in Settings that is passed over: said, never a silent swap
+      emit({ type: 'status', text: first !== 'auto' && key !== first ? `Making your picture with ${imageRouter.labelOf(key)} (${imageRouter.labelOf(first)} isn’t available)…` : `Making your picture with ${imageRouter.labelOf(key)}…` });
     };
     const reply = (content) => { const r = { role: 'assistant', content }; producedBy.set(r, picked); messages.push(r); };
     let made;
@@ -4054,7 +4058,7 @@ ${prompt}` : prompt), historyImages: [] };
     } catch (err) {
       if (started) emit({ type: 'status', text: '' });
       if (err.code === 'none' && !err.missing) return false;
-      if (err.code === 'none') { emit({ type: 'turn_start' }); emit({ type: 'text', text: err.userMessage }); reply([{ type: 'text', text: err.userMessage }]); return true; } // the chosen provider is not connected: said, never swapped for another
+      if (err.code === 'none') { emit({ type: 'turn_start' }); emit({ type: 'text', text: err.userMessage }); reply([{ type: 'text', text: err.userMessage }]); return true; } // the chosen provider is not connected and nothing else makes pictures: said
       if (err.code === 'aborted') throw new Error('Stopped');
       if ((err.code === 'refused' || err.code === 'failed') && genImages.diagramishIntent(ask.prompt) && this.svgFallbackNotice(messages, err, emit)) return false; // [image routing] drawn as SVG instead
       if (err.code === 'refused') { const text = err.userMessage || err.message; emit({ type: 'text', text }); reply([{ type: 'text', text }]); return true; }

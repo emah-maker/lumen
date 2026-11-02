@@ -26,6 +26,9 @@
 // on the card first), setup ("Set up…": opens `section`; nothing is changed here), tip (a new thing to know about, with
 // no setting: just the line). `section`: where the setting lives in Settings ("More in Settings" opens it).
 const OFFERS = [
+  // ---- 0.5.90
+  // [key switches] Settings → AI → API keys: a saved key can be switched off (kept, never used) and back on
+  { id: 'keysOff', key: 'keysOff', since: '0.5.90', kind: 'setup', section: 'ai-keys-page' },
   // ---- 0.5.88
   // [uBlock mode] features/ublock-mode.js: uBlock Origin Lite (installed from the Chrome Web Store) in place of Lumen's blocker
   { id: 'adBlocker', key: 'adBlocker', since: '0.5.88', kind: 'choice', choices: ['lumen', 'ublock'], confirm: 'ublock', section: 'privacy-adblock' },
