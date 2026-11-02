@@ -4810,7 +4810,7 @@ function linkRow(label, { href, desc, value, more = '', icon, onOpen } = {}) {
   link.tabIndex = 0;
   link.setAttribute('role', 'link');
   if (icon) link.querySelector('.text').before(icon);
-  const open = () => { if (onOpen) onOpen(); else if (href) location.hash = href; };
+  const open = () => { if (onOpen) onOpen(); else if (href) openHash(href); };
   link.addEventListener('click', open);
   link.addEventListener('keydown', (e) => { if (e.target === link && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } });
   link.setValue = (v) => { link.valueSource = v; paintValue(link); };
@@ -4818,6 +4818,8 @@ function linkRow(label, { href, desc, value, more = '', icon, onOpen } = {}) {
   if (value !== undefined) link.setValue(value);
   return link;
 }
+
+function openHash(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 function paintValue(link) {
   const v = typeof link.valueSource === 'function' ? link.valueSource() : link.valueSource;
   link.valueEl.textContent = v || '';
@@ -4868,7 +4870,7 @@ class Slot {
     sub.pane = h('div', { class: 'pane subpane', id: `sub-${sub.id}`, hidden: true }, h('div', { class: 'subhead' }, back), h('h1', { class: 'pane-title', 'data-crumb': crumb, text: label }), sub.el);
     $('sections').append(sub.pane);
     const short = desc && desc.length <= INLINE_DESC ? desc : '';
-    const link = linkRow(label, { desc: short, more: `${desc && !short ? desc : ''} ${more}`, value, icon, onOpen: () => { returnTo = { cat: this.cat, sub: sub.id, y: window.scrollY }; location.hash = `#${sub.id}`; } });
+    const link = linkRow(label, { desc: short, more: `${desc && !short ? desc : ''} ${more}`, value, icon, onOpen: () => { returnTo = { cat: this.cat, sub: sub.id, y: window.scrollY }; openHash(`#${sub.id}`); } });
     link.dataset.sub = sub.id;
     sub.link = link;
     sub.setValue = (v) => link.setValue(v);
@@ -5839,7 +5841,7 @@ async function buildWidgets(card) {
           h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${w.title} up`, title: 'Move up', disabled: i === 0, onclick: move(-1) }),
           h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${w.title} down`, title: 'Move down', disabled: i === mine.length - 1, onclick: move(1) }),
           h('span', { class: 'chev', 'aria-hidden': 'true' })));
-      const go = () => { if (off) location.hash = `#app-${svc.id}`; else openForm(w); };
+      const go = () => { if (off) openHash(`#app-${svc.id}`); else openForm(w); };
       item.addEventListener('click', go);
       item.addEventListener('keydown', (e) => { if (e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } });
       return item;
@@ -8096,7 +8098,7 @@ function show() {
       if (!searching) {
         if (wasSearching) {
           for (const r of rows) { r.classList.remove('filtered'); r.style.order = ''; }
-          for (const d of g.querySelectorAll('details.adv-rows')) d.open = d.dataset.pinned === '1';
+          for (const d of g.querySelectorAll('details.adv-rows')) { d.open = d.dataset.pinned === '1'; d.hidden = false; }
           g.hidden = false;
         }
         continue;
@@ -8105,12 +8107,14 @@ function show() {
       const titleHit = SS.matchesAll(titles, words);
       let n = 0;
       for (const r of rows) {
-        const s = r.dataset.nosearch === '1' ? 0 : SS.rowScore(words, titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
+        const fold = r.closest('details.adv-rows');
+        const s = r.dataset.nosearch === '1' ? 0 : SS.rowScore(words, fold && g.contains(fold) ? `${titles} ${fold.querySelector('summary').textContent.toLowerCase()}` : titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
         r.classList.toggle('filtered', s < floor);
         r.style.order = String(-s);
         if (s >= floor) { n++; best = Math.max(best, s); }
       }
-      for (const d of g.querySelectorAll('details.adv-rows')) d.open = rows.some((r) => d.contains(r) && !r.classList.contains('filtered'));
+
+      for (const d of g.querySelectorAll('details.adv-rows')) { const any = rows.some((r) => d.contains(r) && !r.classList.contains('filtered')); d.open = any; d.hidden = !any; }
       g.hidden = rows.length ? n === 0 : !titleHit;
       hits += rows.length ? n : (titleHit ? 1 : 0);
     }

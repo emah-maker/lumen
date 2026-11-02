@@ -9,6 +9,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - **The @ menu shows tab names in full again.** In the chat's @ menu each open tab was squeezed into a small box with its name cut in half: the rows had picked up the tab strip's own look. They now match the "this tab" and "all tabs" rows. Test: `test/e2e/tabsask.js`.
 - **Save in the PDF viewer works for links that only open once.** Save wrote a "data.txt" that failed with "couldn't connect" for PDFs from course sites like Canvas: it asked the site for the file again, and those links answer only once. Save now writes the PDF the tab already shows, with its own name. Test: `test/e2e/pdf-save.js`.
 - **A double-click on a finished download opens it once.** The downloads panel and menu open the same file only once within a second and a half, so a double-click no longer opens two copies. Test: `test/units/downloads-open-units.js`.
+- **"More options" and the other rows with an arrow in Settings open from search results.** A fold like AI › Models and answers → More options showed in search results because a row next to it matched, and a click opened it empty. A fold now shows in results only when one of its rows matches, and its title and line count toward that. A row that links to the page you were already on before searching now opens that page instead of doing nothing. Test: `test/e2e/settings-drill-in.js`, which clicks every row with an arrow and every fold on every Settings page and in search results.
 
 ## 0.5.89 (2026-11-02)
 
