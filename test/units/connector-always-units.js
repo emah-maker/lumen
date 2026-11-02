@@ -35,13 +35,19 @@ const EXPECTED = [
   const list = ['todoist:add_task'];
   const d = (extra) => always.alwaysDecision({ app: 'todoist', name: 'add_task', action: add, list, ...extra });
   check('an add offers Always, and skips once listed', d({ list: [] }).offer && !d({ list: [] }).skip && d({}).skip, JSON.stringify(d({})));
-  check('a tainted chat neither offers nor skips', !d({ tainted: true }).offer && !d({ tainted: true }).skip, JSON.stringify(d({ tainted: true })));
+  check('a task (private) offers and skips even after the chat read a page', d({ tainted: true, list: [] }).offer && d({ tainted: true }).skip, JSON.stringify(d({ tainted: true })));
+  const page = registry.get('notion').actions.create_page;
+  const dp = (extra) => always.alwaysDecision({ app: 'notion', name: 'create_page', action: page, list: ['notion:create_page'], ...extra });
+  check('an add that is not private: offers and skips in a fresh chat only', dp({}).offer && dp({}).skip && !dp({ tainted: true }).offer && !dp({ tainted: true }).skip, JSON.stringify(dp({ tainted: true })));
+  const priv = registry.CONNECTORS.flatMap((def) => Object.entries(def.actions || {}).filter(([, a]) => a.private).map(([n, a]) => ({ key: `${def.id}:${n}`, a }))).sort((x, y) => x.key.localeCompare(y.key));
+  check('private adds are exactly the tasks and the guest-less events', JSON.stringify(priv.map((p) => p.key)) === JSON.stringify(['calendar:create_event', 'gtasks:add_task', 'mscal:create_event', 'todoist:add_task']), JSON.stringify(priv.map((p) => p.key)));
+  check('every private action is an add with no recipient, guest or parent argument', priv.every((p) => p.a.adds && !p.a.gated && !Object.keys(p.a.args || {}).some((k) => /^(to|cc|bcc|attendees?|guests?|parent(_id)?|folder(_id)?|share)$/.test(k))), JSON.stringify(priv.map((p) => Object.keys(p.a.args || {}))));
   check('a send neither offers nor skips', !d({ sending: true }).offer && !d({ sending: true }).skip, '');
   const dm = always.alwaysDecision({ app: 'github', name: 'comment', action: mark, list: ['github:comment'] });
   check('a write that is not an add never offers or skips, even if listed', !dm.offer && !dm.skip, JSON.stringify(dm));
 
   console.log('--- the agent');
-  registry.setConnected(['todoist', 'github']);
+  registry.setConnected(['todoist', 'github', 'notion']);
   const events = [];
   const saved = [];
   const browser = {
@@ -72,11 +78,16 @@ const EXPECTED = [
   check('...and is granted to run', Boolean(await agent.runConnector(second)), '');
 
   events.length = 0;
-  p = agent.allowConnector(task('Three'), gate({ run: { tainted: true } })); await wait();
-  check('a chat that read a page still asks, with no Always button', cardOf() && !events.some((e) => e.name === 'auto_allowed') && cardOf().noAlways === true && !cardOf().alwaysFor, JSON.stringify(events));
+  await agent.allowConnector(task('Three'), gate({ run: { tainted: true } }));
+  check('an always-allowed task still runs with no card after the chat read a page', !cardOf() && events.some((e) => e.name === 'auto_allowed'), JSON.stringify(events));
+
+  events.length = 0;
+  const notionPage = { app: 'notion', action: 'create_page', args: { parent_id: '0123456789abcdef0123456789abcdef', title: 'x', body: 'y' } };
+  p = agent.allowConnector(notionPage, gate({ run: { tainted: true } })); await wait();
+  check('a page add in a chat that read a page asks, with no Always button', cardOf() && !events.some((e) => e.name === 'auto_allowed') && cardOf().noAlways === true && !cardOf().alwaysFor, JSON.stringify(events));
   agent.resolveApproval(cardOf().approvalId, 'always');
   await p.catch(() => {});
-  check('an always answer in a chat that read a page is not stored', saved.length === 1, JSON.stringify(saved));
+  check('an always answer to it in a chat that read a page is not stored', saved.length === 1, JSON.stringify(saved));
 
   events.length = 0;
   p = agent.allowConnector({ app: 'github', action: 'comment', args: { repo: 'ada/notes', number: 7, body: 'x' } }, gate()); await wait();
