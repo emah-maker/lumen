@@ -3,14 +3,15 @@
 // supplies what is connected and how each provider is called (backends); this module decides who is asked, in what order, and what a
 // failure means.
 //
-//   setting           Settings → AI → Image generation (imageGen): 'auto' (default), 'off', or one provider.
+//   setting           Settings → AI → Image generation ("Make pictures with", imageGen): 'auto' (default), 'off', or one provider to use first.
 //   providers         grokbuild (Grok Build's image_gen / image_edit, through the user's own sign-in), xai (Grok API), gemini, openai, openrouter.
 //                     Never a key the user has not set: only connected providers are ever asked, and a provider that is not connected
 //                     is never offered a request.
 //   order (auto)      the chat's own provider first when it can make pictures (a Grok Build or OpenAI chat), then the others: Grok Build
 //                     (a plan, no per-picture charge), then the API keys (Grok, Gemini, OpenAI, OpenRouter). Providers that are out of
 //                     usage right now (ai/fallback.js cooldowns) go last, those the user turned off for Auto (autoExclude) are left out
-//                     unless it is the chat's own provider. A single chosen provider is the only one asked (and ignores autoExclude).
+//                     unless it is the chat's own provider. A chosen provider is asked first (even when it is turned off for Auto); when
+//                     it is not set up, out of usage or fails, the Automatic order takes over, and the picture says who made it.
 //   failures          a provider that is out of usage, unreachable, rejected the key or just failed hands the request to the next one.
 //                     A provider that REFUSED the picture (its content policy) does not: its refusal is the answer, never retried elsewhere.
 //   editing           "edit the last picture" only goes to providers that edit (OpenAI, Gemini, OpenRouter, Grok Build).
@@ -39,12 +40,14 @@ function plan({ setting = 'auto', current = null, connected = {}, cooling = () =
   const mode = cleanSetting(setting);
   if (mode === 'off') return { order: [], mode, missing: null };
   const usable = (key) => connected[key] === true && (!edit || CAN_EDIT[key]);
-  if (mode !== 'auto') return { order: usable(mode) ? [mode] : [], mode, missing: usable(mode) ? null : mode };
+  const first = mode === 'auto' ? null : mode; // the provider the user picked: asked first, then the Automatic order
   const own = ownProviderOf(current);
   const skip = new Set((exclude || []).map(String));
-  const ranked = [...(own ? [own] : []), ...ORDER.filter((k) => k !== own && !skip.has(k))].filter(usable);
+  const lead = [...new Set([first, own].filter(Boolean))];
+  const ranked = [...lead, ...ORDER.filter((k) => !lead.includes(k) && !skip.has(k))].filter(usable);
   const ready = ranked.filter((k) => !cooling(k));
-  return { order: [...ready, ...ranked.filter((k) => cooling(k))], mode, missing: null, own: own && usable(own) ? own : null };
+  const missing = first && !usable(first) ? first : null; // picked, but not set up (or it cannot edit pictures)
+  return { order: [...ready, ...ranked.filter((k) => cooling(k))], mode, missing, first, own: own && usable(own) ? own : null };
 }
 
 // What a failure means for the next step. 'refused': the provider declined the picture itself. 'aborted': the user stopped it.
@@ -58,6 +61,9 @@ function judge(err, { isPolicy, classify }) {
 
 const WHY = { limit: 'out of usage', unreachable: 'unreachable', auth: 'not signed in or key rejected', other: 'failed' };
 const oneLine = (s, n = 160) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+// Why a picked provider was passed over before anything was asked.
+const notReady = (key, edit) => (edit && !CAN_EDIT[key] ? `${labelOf(key)} cannot edit pictures` : key === 'grokbuild' ? 'Grok Build is not installed or signed in' : `${labelOf(key)} is not connected (or its key is off)`);
 
 function fail(code, message, extra = {}) { return Object.assign(new Error(message), { code, ...extra }); }
 
@@ -74,7 +80,7 @@ async function route(deps) {
   const p = plan({ setting: deps.setting, current: deps.current, connected, cooling: deps.cooling || (() => false), exclude: deps.exclude, edit });
   if (p.mode === 'off') throw fail('off', 'Picture making is turned off in Settings → AI → Image generation. Tell the user, and describe the picture in words instead.');
   if (!p.order.length) {
-    if (p.missing) throw fail('none', `${labelOf(p.missing)} is chosen for pictures in Settings → AI → Image generation, but ${p.missing === 'grokbuild' ? 'Grok Build is not installed or signed in' : 'it is not connected'}${edit && !CAN_EDIT[p.missing] ? ' (or it cannot edit pictures)' : ''}. Tell the user; do not ask them for a key in the chat.`, { missing: p.missing, userMessage: `${labelOf(p.missing)} is chosen for pictures (Settings → AI → Image generation) but ${p.missing === 'grokbuild' ? 'Grok Build is not installed or signed in' : 'it is not connected'}. Pick another provider there, or Automatic.` });
+    if (p.missing) throw fail('none', `${labelOf(p.missing)} is chosen for pictures in Settings → AI → Image generation, but ${notReady(p.missing, edit)}, and no other connected AI can ${edit ? 'edit' : 'make'} pictures. Tell the user; do not ask them for a key in the chat.`, { missing: p.missing, userMessage: `${labelOf(p.missing)} is chosen for pictures (Settings → AI → Image generation) but ${notReady(p.missing, edit)}, and no other connected AI can ${edit ? 'edit' : 'make'} pictures. Set it up, or connect another provider.` });
     throw fail('none', `No connected AI can ${edit ? 'edit' : 'make'} pictures. The user can connect an OpenAI, Grok or Gemini key, or OpenRouter (Settings → AI), or sign in to Grok Build. Tell them that; do not ask for a key in the chat.`);
   }
   const tried = [];
@@ -87,7 +93,8 @@ async function route(deps) {
       const made = await backend({ prompt, source, signal });
       if (made?.images?.length) {
         const label = labelOf(key);
-        return { images: made.images, provider: key, label, model: made.model || null, said: made.said || '', credit: made.model ? `${label} · ${made.model}` : label, tried };
+        const instead = p.first && key !== p.first ? { insteadOf: p.first, insteadWhy: p.missing ? notReady(p.first, edit) : (tried.find((t) => t.provider === p.first)?.why || 'out of usage') } : {};
+        return { images: made.images, provider: key, label, model: made.model || null, said: made.said || '', credit: `${made.model ? `${label} · ${made.model}` : label}${instead.insteadOf ? ` (instead of ${labelOf(instead.insteadOf)})` : ''}`, tried, ...instead };
       }
       tried.push({ provider: key, why: 'made no picture' });
     } catch (err) {
@@ -114,7 +121,7 @@ const TOOL = {
 function extendTools(TOOLS) { TOOLS.push({ ...TOOL, eager_input_streaming: true }); }
 
 // What the model is told after a picture was made (the picture itself is shown in the chat, never sent back to it).
-const toolResult = (r) => `Picture made with ${r.credit} and shown to the user in the chat. Do not repeat it or describe it at length.`;
+const toolResult = (r) => `Picture made with ${r.credit}${r.insteadOf ? `: ${labelOf(r.insteadOf)} is picked for pictures but ${r.insteadWhy}` : ''}, and shown to the user in the chat. Do not repeat it or describe it at length.`;
 
 // Told to the model (inside the hidden browser_state block, agent.js) when the message asks for a picture but needs reading first, or
 // only names the picture ("make me a picture of the Eiffel Tower"): a real one found online is quicker and free, so it is tried first.
@@ -153,4 +160,4 @@ async function renderSvg(svg, { rasterize }) {
   return Buffer.from(png);
 }
 
-module.exports = { PICTURE_NOTE, DIAGRAM_NOTE, noContextAsk, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };
+module.exports = { notReady, PICTURE_NOTE, DIAGRAM_NOTE, noContextAsk, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };

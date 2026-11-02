@@ -593,8 +593,12 @@ function setWidgetSecret(name, value) {
   writeSettings({ ...settings, keys });
 }
 
+// [key switches] Settings → AI → API keys: a key switched off (settings.keysOff) stays saved but is never used: no models from it,
+// no request with it, as if it were not set (an environment key too). Switching it back on needs no retyping.
+const keyOff = (provider) => Array.isArray(readSettings().keysOff) && readSettings().keysOff.includes(provider);
 function providerKey(provider) {
   if (provider === 'local') return readSettings().localAI?.enabled === true ? 'local' : null; // no key; just switched on
+  if (keyOff(provider)) return null;
   const enc = readSettings().keys?.[provider];
   if (enc && safeStorage.isEncryptionAvailable()) {
     try {
@@ -620,8 +624,10 @@ async function refreshModels(provider) {
 
 // Is the Anthropic API itself usable: a saved key, an env key, or an `ant auth login` profile.
 // (Separate from Claude Code: that's a whole other CLI, gated by aiAgents' own detection.)
+// The Anthropic key (saved, else ANTHROPIC_API_KEY) unless it is switched off; an `ant auth login` sign-in is not a key and stays.
+const anthropicKeyOn = () => !keyOff('anthropic') && Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY);
 function anthropicUsable() {
-  return Boolean(storedApiKey() || process.env.ANTHROPIC_API_KEY || (cliAuth.profileState().signedIn && cliLoginValid !== false));
+  return Boolean(anthropicKeyOn() || (cliAuth.profileState().signedIn && cliLoginValid !== false));
 }
 // An `ant` profile's tokens can expire while its credentials file stays. After a request is refused
 // for that reason (see the agent's describeError), the Claude models leave the picker until the user
@@ -726,11 +732,12 @@ function pickerOptions(options = modelOptions()) {
 let client = null;
 function getClient() {
   if (client) return client;
-  const apiKey = storedApiKey();
+  const off = keyOff('anthropic');
+  const apiKey = off ? null : storedApiKey();
   try {
-    // With no stored key, the SDK falls back to ANTHROPIC_API_KEY or an `ant auth login` profile.
+    // With no stored key, the SDK falls back to ANTHROPIC_API_KEY or an `ant auth login` profile. A key switched off: the profile only.
     const Anthropic = anthropicSdk();
-    client = apiKey ? new Anthropic({ apiKey, fetch: netFetch() }) : new Anthropic({ fetch: netFetch() });
+    client = apiKey ? new Anthropic({ apiKey, fetch: netFetch() }) : off ? new Anthropic({ apiKey: null, fetch: netFetch() }) : new Anthropic({ fetch: netFetch() });
   } catch {
     throw new Error('No API key found. Use your Claude account through Claude Code (pick “Claude Code” in the model menu), or add an API key or sign in with OpenRouter in Settings.');
   }
@@ -9289,7 +9296,7 @@ const agentSaveState = async (id) => {
 const agentUnsavedState = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? unsavedInputState(t.view.webContents) : Promise.resolve('no'); }; // [close guard] 'no' | 'yes' | 'unknown'
 const agentHasUnsavedInput = (id) => { const t = tabs.find((x) => x.id === id); return alive(t) ? hasUnsavedInput(t.view.webContents) : false; };
 // How Claude is reached, so an expired sign-in isn't reported as a bad API key.
-const anthropicAuth = () => (storedApiKey() ? 'key' : process.env.ANTHROPIC_API_KEY ? 'env' : cliAuth.profileState().signedIn ? 'cli' : null);
+const anthropicAuth = () => (anthropicKeyOn() ? (storedApiKey() ? 'key' : 'env') : cliAuth.profileState().signedIn ? 'cli' : null);
 // [mcp client] MCP servers the user added, for the sidebar's AI (features/mcp-client.js)
 const mcpClient = require('./features/mcp-client').create({
   userData: app.getPath('userData'),
@@ -10656,6 +10663,7 @@ const settingsBackend = settingsPage.create({
   onFocusChange: () => onFocusSettings(), // [focus] a schedule or the site list changed
   focusLocked: () => focusIsOn(), // [focus] ...and while a session is on they can't be edited
   onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
+  onKeysOffChange: () => { client = null; for (const p of Object.keys(providers.PROVIDERS)) if (p !== 'local') refreshModels(p).catch(() => {}); modelsChanged(); }, // [key switches] the picker drops or regains that provider's models
   onTabSleepChange: () => tabSleepSettingChanged(),
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
   onRoutineWebhooksChange: () => bgTasks.syncWebhooks(), // [routines] Settings → Routines → web links: the 127.0.0.1 listener follows the switch and the port
@@ -13355,10 +13363,12 @@ ipcMain.handle('settings:get', () => {
   return {
     hasStoredKey: Boolean(storedApiKey()),
     hasEnvKey: Boolean(process.env.ANTHROPIC_API_KEY),
+    anthropicKeyOff: keyOff('anthropic'), // [key switches]
     providerKeys: Object.fromEntries(Object.keys(providers.PROVIDERS).filter((p) => p !== 'local').map((p) => [p, {
       label: providers.PROVIDERS[p].label,
       stored: Boolean(readSettings().keys?.[p]),
       env: Boolean(process.env[ENV_KEYS[p]]),
+      off: keyOff(p),
     }])),
     adhdMode: readSettings().adhdMode !== false,
     autoGroupTabs: groupingMode() !== 'off',
@@ -13594,7 +13604,7 @@ async function cliStatus() {
     signedIn,
     profile,
     // A saved or exported API key takes precedence over the CLI profile.
-    shadowedBy: storedApiKey() ? 'saved key' : process.env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY' : null,
+    shadowedBy: !anthropicKeyOn() ? null : storedApiKey() ? 'saved key' : 'ANTHROPIC_API_KEY',
   };
 }
 

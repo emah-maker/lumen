@@ -161,7 +161,8 @@ const DEFAULTS = {
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku (everyday) / sonnet (code, multi-step) / opus (hard) per message (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
   autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
-  imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
+  imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider to ask first, then the others: grokbuild, xai, gemini, openai, openrouter (ai/image-router.js)
+  keysOff: [], // [key switches] API keys switched off in Settings → AI → API keys: kept saved, never used (main.js providerKey). Provider ids: anthropic, openai, xai, gemini, openrouter
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   recordSwitchTimings: false, // [diagnostics] time each tab switch on this computer, for Settings > Advanced > Export timings (features/switch-timing.js); no URLs or sites
   aiGapLog: true, // [ai] keep a private local list of what the AI still couldn't do after its second try (ai/capability-gaps.js; Settings → AI: Show what the AI couldn't do)
@@ -260,6 +261,7 @@ const WS = require('../features/widget-system'); // the clock's steps and the se
 const SLACK = require('../features/slack-view'); // [widgets] the prefilled "create app" link
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const TS = require('../features/tab-sleep'); // [tabs] the sleep settings' choices
+const KEY_PROVIDERS = ['anthropic', 'openai', 'xai', 'gemini', 'openrouter']; // [key switches] the API keys Settings lists (keysOff)
 const pick = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 // [extensions] The saved pins, checked here without loading renderer/ext-pins-core.js (which holds the rules and loads when a pin changes).
 const EXT_ID = /^[a-p]{32}$/;
@@ -313,6 +315,7 @@ function validate(key, value) {
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
     case 'dictationProvider': return pick(value, require('../ai/dictation').SETTINGS, null);
     case 'imageGen': return pick(value, require('../ai/image-router').SETTINGS, null);
+    case 'keysOff': return Array.isArray(value) ? [...new Set(value.map(String).filter((v) => KEY_PROVIDERS.includes(v)))] : null;
     case 'autoExclude': return Array.isArray(value) ? [...new Set(value.map((v) => String(v).trim()).filter((v) => /^[\w.:/@+-]{1,100}$/.test(v)))].slice(0, 60) : null;
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
@@ -933,6 +936,7 @@ function create(deps) {
       case 'safeBrowsing': deps.onSafeBrowsingChange?.(); break;
       case 'focusSites': case 'focusSchedules': deps.onFocusChange?.(); break; // [focus]
       case 'telegramChannel': deps.onTelegramChange?.(); break; // [telegram]
+      case 'keysOff': deps.onKeysOffChange?.(); break; // [key switches] the model list and the Claude client follow
       case 'performanceMode': deps.performance?.refresh(); break;
       case 'graphicsMode': deps.graphics?.refresh(); break; // (the pages follow through the onChange below, or the checks that already push for this key)
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
