@@ -3014,6 +3014,10 @@ setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(loadFilesPick
 // a state for them (an account tab or a sign-in page in front), not part of the bundle.
 window.browser.onAccountState?.((st) => { if (st || laterLoads['account-tabs.css']) loadLater('account-tabs.css', 'account-tabs.js').then(() => window.accountTabs?.draw(st)); });
 
+// [offers] The "New in Lumen" card in the empty chat (offer-card.js and .css): loaded only when main has something to show
+// after an update (it answers once startup has decided), not part of the bundle. From then on the card asks for itself.
+setTimeout(() => window.assistant?.offers?.get().then((list) => { if (list?.items?.length) loadLater('offer-card.css', 'offer-card.js').then((ok) => ok && window.offerCard?.show(list)); }).catch(() => {}), 600);
+
 // The command bar (Ctrl+K; command-bar.js, command-bar-match.js and .css): loaded by the first key that asks for it, not part of the bundle.
 // "Ask AI: ..." in it arrives here as an event and goes to the sidebar chat, like "Ask AI about this" on a selection.
 const loadCommandBar = () => loadLater('command-bar.css', 'command-bar-match.js', 'command-bar.js');

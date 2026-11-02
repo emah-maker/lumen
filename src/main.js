@@ -786,19 +786,20 @@ const whatsNew = lazy(() => require('./features/whats-new').createWhatsNew({
   showNotes: (opts) => dialogs.showNotes(opts),
 }));
 if (TEST) global.__whatsNew = whatsNew;
-// "New in Lumen: want to turn these on?" card in the empty chat, for features that ship off (features/feature-offers.js).
+// "New in Lumen" card in the empty chat: the settings an update brings, each changeable right there (features/feature-offers.js).
 const featureOffers = lazy(() => require('./features/feature-offers').createFeatureOffers({
-  readSettings, writeSettings, t, test: TEST,
+  readSettings, writeSettings, t, test: TEST, defaults: settingsPage.DEFAULTS,
   setSetting: (key, value) => settingsBackend.set(key, value),
   ready: () => ({ dictation: Boolean(dictationState().provider) }), // voice input already works (a key is set): nothing to offer
 }));
-// The card asks, and answers one click at a time; 'turn-on' of a "set up" feature only opens its Settings section.
+// The card asks, and answers one click at a time: 'set' changes a switch or a choice; 'act' on a "set up" line only opens its Settings section.
 ipcMain.handle('offers:get', () => featureOffers.get());
 ipcMain.handle('offers:act', async (_e, action, arg) => {
   const offers = featureOffers;
   if (action === 'shown') { offers.onShown(Array.isArray(arg) ? arg.filter((x) => typeof x === 'string').slice(0, 20) : []); return { ok: true }; }
   if (action === 'dismiss') return offers.dismiss({ never: arg === 'never' });
   if (action === 'act' && typeof arg === 'string') return offers.act(arg);
+  if (action === 'set' && typeof arg?.id === 'string' && ['boolean', 'string', 'number'].includes(typeof arg.value)) return offers.set(arg.id, arg.value);
   return { ok: false };
 });
 if (TEST) global.__featureOffers = featureOffers;

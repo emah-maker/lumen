@@ -1,8 +1,9 @@
-// "New in Lumen: want to turn these on?" (features/feature-offers.js, renderer/offer-card.js), in a real sidebar with invisible
-// windows: an update from an old version shows the card on the empty chat with one line and a button per new feature; it is
-// recorded as offered once on screen; "Turn on" saves the setting through the settings backend (no restart); "Set up" opens the
-// feature's Settings section and switches nothing on (Telegram and voice input send data, so they keep their own setup);
-// it never shows over a conversation; "Not now" and "Don't show again" stick across launches; a fresh profile is never asked.
+// "New in Lumen" (features/feature-offers.js, renderer/offer-card.js), in a real sidebar with invisible windows: an update
+// shows the settings it brought on the empty chat, grouped by release, newest first, capped with "More in Settings"; they
+// are recorded as shown once on screen; a switch and a choice change the setting right on the card, through the settings
+// backend (no restart), and the line stays; uBlock Origin Lite asks on the card first; "Set up…" opens the feature's
+// Settings section and switches nothing on (Telegram and voice input send data, so they keep their own setup); it never
+// shows over a conversation; "Not now" and "Don't show again" stick across launches; a fresh profile is never asked.
 // The rules are test/units/feature-offers-units.js.
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -11,8 +12,11 @@ const os = require('os');
 const path = require('path');
 
 const root = path.join(__dirname, '..', '..');
-const ALL = JSON.stringify(require('../../src/features/feature-offers').OFFERS.map((o) => o.key)); // a fresh install records every offer as seen
+const FO = require('../../src/features/feature-offers');
+const ALL = FO.OFFERS.map(FO.seenKey); // a fresh install records every line as seen
+const SIX = ['aiMemory', 'planModeDefault', 'skillsFromClaudeCode', 'telegramChannel', 'dictation', 'actingHelpers']; // the first batch
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sorted = (a) => JSON.stringify([...(a || [])].sort());
 
 (async () => {
   let failures = 0;
@@ -37,52 +41,104 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const card = () => ui.evaluate(() => {
       const el = document.querySelector('.offer-card');
       if (!el || el.offsetParent === null) return null;
-      return { title: el.querySelector('.offer-title').textContent, rows: [...el.querySelectorAll('.offer-row')].map((r) => ({ id: r.dataset.offer, name: r.querySelector('.offer-name').textContent, desc: r.querySelector('.offer-desc').textContent, button: r.querySelector('.offer-go').textContent })), foot: [...el.querySelectorAll('.offer-foot button')].map((b) => b.textContent) };
+      const control = (r) => {
+        const sw = r.querySelector('input[role=switch]'); if (sw) return { type: 'switch', on: sw.checked };
+        const sel = r.querySelector('select'); if (sel) return { type: 'choice', value: sel.value, options: [...sel.options].map((o) => o.textContent) };
+        const b = r.querySelector(':scope > .offer-go'); if (b) return { type: 'button', text: b.textContent };
+        return { type: 'none' };
+      };
+      return {
+        title: el.querySelector('.offer-title').textContent,
+        releases: [...el.querySelectorAll('.offer-release')].map((h) => h.textContent),
+        rows: [...el.querySelectorAll('.offer-row')].map((r) => ({ id: r.dataset.offer, name: r.querySelector('.offer-name').textContent, desc: r.querySelector('.offer-desc').textContent, control: control(r) })),
+        foot: [...el.querySelectorAll('.offer-foot button')].map((b) => b.textContent),
+        lazy: Boolean(document.querySelector('script[data-later][src="offer-card.js"]')),
+      };
     });
     const present = () => ui.evaluate(() => Boolean(document.querySelector('.offer-card'))); // (in the DOM, even when a Settings tab has the view)
     const press = (sel) => ui.evaluate((q) => document.querySelector(q).click(), sel);
+    const choose = (id, value) => ui.evaluate(([i, v]) => { const s = document.querySelector(`.offer-row[data-offer="${i}"] select`); s.value = v; s.dispatchEvent(new Event('change')); }, [id, value]);
     const urls = () => app.evaluate(({ webContents }) => webContents.getAllWebContents().map((w) => w.getURL()));
-    return { app, ui, open, card, urls, present, press };
+    return { app, ui, open, card, urls, present, press, choose };
   }
 
-  const updated = makeProfile({ lastSeenVersion: '0.3.0' });
+  // A profile that saw the first batch (0.5.55-0.5.60) and nothing since, updated to this version.
+  const updated = makeProfile({ lastSeenVersion: '0.5.87', featureOffersSeen: SIX });
+  let firstIds = [];
   {
-    const { app, ui, open, card, urls, present, press } = await launch(updated);
+    const { app, ui, open, card, urls, present, press, choose } = await launch(updated);
     try {
       await open();
       const c = await waitFor(card);
-      check('update: the card shows on the empty chat, with every new feature', c?.title === 'New in Lumen: want to turn these on?' && c.rows.map((r) => r.id).join() === 'memory,plan,skills,telegram,voice,helpers', JSON.stringify(c));
-      check('each line is plain, with Turn on or Set up', c?.rows.every((r) => r.name && r.desc.length < 200 && r.button === (['telegram', 'voice'].includes(r.id) ? 'Set up' : 'Turn on')) && c.foot.join() === 'Not now,Don’t show again', JSON.stringify(c));
-      await waitFor(() => JSON.stringify(settingsOf(updated).featureOffersSeen) === ALL, 4000);
-      check('once it has been on screen, the features are recorded as offered', JSON.stringify(settingsOf(updated).featureOffersSeen) === ALL, JSON.stringify(settingsOf(updated)));
+      firstIds = c?.rows.map((r) => r.id) || [];
+      check('update: the card shows the new settings on the empty chat', c?.title === 'New in Lumen' && c.rows.length === FO.CARD_MAX, JSON.stringify(c));
+      check('grouped by release, newest first', c?.releases[0] === 'In 0.5.88' && firstIds.slice(0, 3).join() === 'adBlocker,extensionSites,accountTabs' && c.releases.length >= 2, JSON.stringify(c?.releases));
+      check('a long batch is capped with "More in Settings"', c?.foot.join() === `${FO.OFFERS.length - SIX.length - FO.CARD_MAX} more in Settings,Not now,Don’t show again`, JSON.stringify(c?.foot));
+      check('the card was loaded after start, not with the window', c?.lazy === true, JSON.stringify(c));
+      const row = (id) => c?.rows.find((r) => r.id === id);
+      check('the ad blocker is a choice: Lumen’s built-in (in use) or uBlock Origin Lite', JSON.stringify(row('adBlocker')?.control) === JSON.stringify({ type: 'choice', value: 'lumen', options: ['Lumen’s built-in', 'uBlock Origin Lite'] }), JSON.stringify(row('adBlocker')));
+      check('a setting that ships on is a switch that shows on', JSON.stringify(row('autoNewChat')?.control) === '{"type":"switch","on":true}', JSON.stringify(row('autoNewChat')));
+      check('a setting that needs more has Set up…, a new thing to know has just its line', row('extensionSites')?.control.text === 'Set up…' && row('accountTabs')?.control.type === 'none', JSON.stringify(c?.rows));
+      check('each line is plain', c?.rows.every((r) => r.name && r.desc && r.desc.length < 200), JSON.stringify(c?.rows));
+      const want = [...SIX, ...firstIds.map((id) => FO.seenKey(FO.OFFERS.find((o) => o.id === id)))];
+      await waitFor(() => sorted(settingsOf(updated).featureOffersSeen) === sorted(want), 4000);
+      check('once it has been on screen, those lines are recorded as shown (and only those)', sorted(settingsOf(updated).featureOffersSeen) === sorted(want), JSON.stringify(settingsOf(updated).featureOffersSeen));
 
-      await ui.click('.offer-row[data-offer="memory"] .offer-go');
-      await waitFor(() => settingsOf(updated).aiMemory === true, 4000);
-      check('Turn on saves the setting', settingsOf(updated).aiMemory === true, JSON.stringify(settingsOf(updated)));
-      check('that row leaves the card', (await card())?.rows.every((r) => r.id !== 'memory'), JSON.stringify(await card()));
+      await ui.click('.offer-row[data-offer="autoNewChat"] input[role=switch]');
+      await waitFor(() => settingsOf(updated).autoNewChat === false, 4000);
+      check('the switch changes the setting at once', settingsOf(updated).autoNewChat === false, JSON.stringify(settingsOf(updated)));
+      check('and the line stays, showing off', JSON.stringify((await card())?.rows.find((r) => r.id === 'autoNewChat')?.control) === '{"type":"switch","on":false}', JSON.stringify(await card()));
+      check('the chat follows it without a restart', await waitFor(() => ui.evaluate(() => window.lumenAutoNewChat === false), 4000), await ui.evaluate(() => window.lumenAutoNewChat));
+      await choose('chatAutoDelete', '90');
+      await waitFor(() => settingsOf(updated).chatAutoDeleteDays === 90, 4000);
+      check('a choice changes its setting too', settingsOf(updated).chatAutoDeleteDays === 90, JSON.stringify(settingsOf(updated)));
+      await choose('adBlocker', 'ublock');
+      const ask = await waitFor(() => ui.evaluate(() => document.querySelector('.offer-row[data-offer="adBlocker"] .offer-confirm')?.textContent));
+      check('uBlock Origin Lite asks on the card first (it is installed from the Chrome Web Store)', /Chrome Web Store/.test(ask || ''), ask);
+      check('and nothing is changed while it asks', settingsOf(updated).adBlocker === undefined, JSON.stringify(settingsOf(updated).adBlocker));
+      await press('.offer-row[data-offer="adBlocker"] .offer-confirm .link-btn');
+      check('Cancel puts the choice back and keeps Lumen’s blocker', (await card())?.rows.find((r) => r.id === 'adBlocker')?.control.value === 'lumen' && settingsOf(updated).adBlocker === undefined && !(await ui.evaluate(() => document.querySelector('.offer-confirm'))), JSON.stringify(settingsOf(updated).adBlocker));
 
-      await press('.offer-row[data-offer="telegram"] .offer-go');
-      const opened = await waitFor(async () => (await urls()).some((u) => /settings\.html#telegram$/.test(u)));
-      check('Set up opens the Telegram section of Settings', Boolean(opened), JSON.stringify(await urls()));
-      check('and turns nothing on by itself', settingsOf(updated).telegramChannel !== true, JSON.stringify(settingsOf(updated)));
-      await press('.offer-row[data-offer="voice"] .offer-go');
-      check('voice input is set up in Settings too', Boolean(await waitFor(async () => (await urls()).some((u) => /settings\.html#voice-input$/.test(u)))), JSON.stringify(await urls()));
+      await press('.offer-row[data-offer="extensionSites"] .offer-go');
+      const opened = await waitFor(async () => (await urls()).some((u) => /settings\.html#extensions-page$/.test(u)));
+      check('Set up… opens the Extensions section of Settings', Boolean(opened), JSON.stringify(await urls()));
+      check('and that line leaves the card', !(await card())?.rows.some((r) => r.id === 'extensionSites'), 'still there');
 
       await press('.offer-foot .offer-later');
       check('Not now takes the card away', !(await present()), 'still there');
-      check('and turns nothing else on', settingsOf(updated).skillsFromClaudeCode !== true && settingsOf(updated).planModeDefault !== true, JSON.stringify(settingsOf(updated)));
+      check('and changes nothing else', settingsOf(updated).replySuggestions === undefined && settingsOf(updated).featureCardNever !== true, JSON.stringify(settingsOf(updated)));
     } finally { await app.close().catch(() => {}); }
   }
   {
     const { app, open, card } = await launch(updated);
     try {
       await open();
-      await sleep(2500);
-      check('the next launch shows nothing', (await card()) === null, JSON.stringify(await card()));
+      const c = await waitFor(card);
+      check('the next launch shows the rest, none of what was on screen', c && c.rows.length > 0 && !c.rows.some((r) => firstIds.includes(r.id)), JSON.stringify(c));
     } finally { await app.close().catch(() => {}); }
   }
 
-  const never = makeProfile({ lastSeenVersion: '0.3.0' });
+  // The first batch, for a profile that had seen everything newer: Telegram and voice input are set up in Settings.
+  const firstBatch = makeProfile({ lastSeenVersion: '0.5.19', featureOffersSeen: ALL.filter((k) => !SIX.includes(k)) });
+  {
+    const { app, ui, open, card, urls, press } = await launch(firstBatch);
+    try {
+      await open();
+      const c = await waitFor(card);
+      check('a feature that ships off is a switch that shows off', ['memory', 'plan', 'skills', 'helpers'].every((id) => JSON.stringify(c?.rows.find((r) => r.id === id)?.control) === '{"type":"switch","on":false}'), JSON.stringify(c));
+      await ui.click('.offer-row[data-offer="memory"] input[role=switch]');
+      await waitFor(() => settingsOf(firstBatch).aiMemory === true, 4000);
+      check('switching it on saves the setting', settingsOf(firstBatch).aiMemory === true, JSON.stringify(settingsOf(firstBatch)));
+      await press('.offer-row[data-offer="telegram"] .offer-go');
+      const opened = await waitFor(async () => (await urls()).some((u) => /settings\.html#telegram$/.test(u)));
+      check('Set up… opens the Telegram section of Settings', Boolean(opened), JSON.stringify(await urls()));
+      check('and turns nothing on by itself', settingsOf(firstBatch).telegramChannel !== true, JSON.stringify(settingsOf(firstBatch)));
+      await press('.offer-row[data-offer="voice"] .offer-go');
+      check('voice input is set up in Settings too', Boolean(await waitFor(async () => (await urls()).some((u) => /settings\.html#voice-input$/.test(u)))), JSON.stringify(await urls()));
+    } finally { await app.close().catch(() => {}); }
+  }
+
+  const never = makeProfile({ lastSeenVersion: '0.5.87', featureOffersSeen: SIX });
   {
     const { app, ui, open, card } = await launch(never);
     try {
@@ -93,8 +149,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       check('Don\'t show again is saved and the card goes', settingsOf(never).featureCardNever === true && (await card()) === null, JSON.stringify(settingsOf(never)));
     } finally { await app.close().catch(() => {}); }
   }
+  {
+    const { app, open, card } = await launch(never);
+    try {
+      await open();
+      await sleep(2500);
+      check('and the next launch shows nothing, though lines are left', (await card()) === null, JSON.stringify(await card()));
+    } finally { await app.close().catch(() => {}); }
+  }
 
-  const busy = makeProfile({ lastSeenVersion: '0.3.0' });
+  const busy = makeProfile({ lastSeenVersion: '0.5.87', featureOffersSeen: SIX });
   {
     const { app, ui, open, card } = await launch(busy);
     try {
@@ -114,14 +178,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const fresh = makeProfile(null);
   {
-    const { app, open, card } = await launch(fresh);
+    const { app, ui, open, card } = await launch(fresh);
     try {
       await open();
       await sleep(3000);
-      check('a fresh profile is never asked, and records the offers as seen', (await card()) === null && JSON.stringify(settingsOf(fresh).featureOffersSeen) === ALL, `${JSON.stringify(await card())} ${JSON.stringify(settingsOf(fresh))}`);
+      check('a fresh profile is never asked, and records every line as seen', (await card()) === null && sorted(settingsOf(fresh).featureOffersSeen) === sorted(ALL), `${JSON.stringify(await card())} ${JSON.stringify(settingsOf(fresh))}`);
+      check('and never loads the card', !(await ui.evaluate(() => Boolean(document.querySelector('script[src="offer-card.js"]')))), 'loaded');
     } finally { await app.close().catch(() => {}); }
   }
-  for (const dir of [updated, never, busy, fresh]) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of [updated, firstBatch, never, busy, fresh]) fs.rmSync(dir, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })();

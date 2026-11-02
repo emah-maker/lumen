@@ -1,69 +1,123 @@
-// "New in Lumen: want to turn these on?" in the empty chat, in the sidebar (index.html) and the full-page chat
-// (chat-page.html). Main (features/feature-offers.js) decides what is listed; this draws it above the example chips.
-// The card lives inside #empty, so it can't appear over a conversation or a running task, and a run that starts
-// takes it away with the empty chat. "Turn on" flips a setting through main; "Set up" opens the feature's section in
-// Settings (anything that sends data, like Telegram or voice input, is set up there, never from here).
+// "New in Lumen" in the empty chat, in the sidebar (index.html, loaded after start by app.js once main has something to
+// show) and the full-page chat (chat-page.html). Main (features/feature-offers.js) decides what is listed; this draws it
+// above the example chips, grouped by release, newest first. The card lives inside #empty, so it can't appear over a
+// conversation or a running task, and a run that starts takes it away with the empty chat. Each line can be changed in
+// place, through main (which saves it with the settings setter): a switch, a small choice (one that installs something,
+// like uBlock Origin Lite, asks once on the card first), or "Set up…", which opens the feature's section in Settings
+// (anything that sends data, like Telegram or voice input, is set up there, never from here).
 (() => {
   const api = window.assistant?.offers;
   const empty = document.getElementById('empty');
-  if (!api || !empty) return;
+  if (!api || !empty || window.offerCard) return;
   const tr = (key, vars) => (typeof window.t === 'function' ? window.t(key, vars) : key);
   let card = null;
 
   const remove = () => { card?.remove(); card = null; };
-  const button = (text, cls, onclick) => Object.assign(document.createElement('button'), { type: 'button', className: cls, textContent: text, onclick });
+  const el = (tag, className, text) => Object.assign(document.createElement(tag), className ? { className } : {}, text !== undefined ? { textContent: text } : {});
+  const button = (text, cls, onclick) => Object.assign(el('button', cls, text), { type: 'button', onclick });
   const act = (action, arg) => api.act(action, arg).catch(() => ({ ok: false }));
+  const openSettings = (section) => window.lumenPrefs?.openSettingsPage(section || 'general');
+
+  // A switch: saved at once; put back if the save fails.
+  function toggle(item, name) {
+    const input = Object.assign(el('input', 'offer-switch'), { type: 'checkbox', checked: item.value === true });
+    input.setAttribute('role', 'switch');
+    input.setAttribute('aria-label', name);
+    input.addEventListener('change', async () => {
+      input.disabled = true;
+      const r = await act('set', { id: item.id, value: input.checked });
+      input.disabled = false;
+      if (!r.ok) input.checked = !input.checked;
+    });
+    return input;
+  }
+
+  // A small choice. A value that installs something asks on the card first ("Use it" / "Cancel").
+  function choice(item, name, li) {
+    const sel = el('select', 'offer-choice');
+    sel.setAttribute('aria-label', name);
+    for (const v of item.choices) sel.append(Object.assign(el('option', '', tr(`offers.${item.id}.${v}`)), { value: String(v) }));
+    let saved = item.value;
+    sel.value = String(saved);
+    const valueOf = (s) => item.choices.find((c) => String(c) === s);
+    const save = async (v) => {
+      sel.disabled = true;
+      const r = await act('set', { id: item.id, value: v });
+      sel.disabled = false;
+      if (r.ok) saved = v;
+      sel.value = String(saved);
+    };
+    sel.addEventListener('change', () => {
+      li.querySelector('.offer-confirm')?.remove();
+      const v = valueOf(sel.value);
+      if (v === undefined) return;
+      if (item.confirm === undefined || v !== item.confirm) { save(v); return; }
+      const ask = el('div', 'offer-confirm');
+      ask.append(el('span', 'offer-confirm-text', tr(`offers.${item.id}.${v}.confirm`)),
+        button(tr('offers.useIt'), 'offer-go', () => { ask.remove(); save(v); }),
+        button(tr('offers.cancel'), 'link-btn', () => { ask.remove(); sel.value = String(saved); }));
+      li.append(ask);
+    });
+    return sel;
+  }
 
   function row(item) {
-    const li = document.createElement('li');
-    li.className = 'offer-row';
+    const li = el('li', 'offer-row');
     li.dataset.offer = item.id;
-    const text = document.createElement('span');
-    text.className = 'offer-text';
-    const name = Object.assign(document.createElement('span'), { className: 'offer-name', textContent: tr(`offers.${item.id}`) });
-    const desc = Object.assign(document.createElement('span'), { className: 'offer-desc', textContent: tr(`offers.${item.id}.desc`) });
-    text.append(name, desc);
-    const setup = item.kind === 'setup';
-    const go = button(tr(setup ? 'offers.setUp' : 'offers.turnOn'), 'offer-go', async () => {
-      go.disabled = true;
-      const r = await act('act', item.id);
-      if (!r.ok) { go.disabled = false; return; }
-      if (r.section) window.lumenPrefs?.openSettingsPage(r.section);
-      li.remove();
-      if (!card?.querySelector('.offer-row')) remove();
-    });
-    go.setAttribute('aria-label', `${go.textContent}: ${name.textContent}`);
-    li.append(text, go);
+    const text = el('span', 'offer-text');
+    const name = el('span', 'offer-name', tr(`offers.${item.id}`));
+    text.append(name, el('span', 'offer-desc', tr(`offers.${item.id}.desc`)));
+    li.append(text);
+    if (item.kind === 'toggle') li.append(toggle(item, name.textContent));
+    else if (item.kind === 'choice') li.append(choice(item, name.textContent, li));
+    else if (item.kind === 'setup') {
+      const go = button(tr('offers.setUp'), 'offer-go', async () => {
+        go.disabled = true;
+        const r = await act('act', item.id);
+        if (!r.ok) { go.disabled = false; return; }
+        if (r.section) openSettings(r.section);
+        const list = li.parentElement;
+        li.remove();
+        if (list && !list.querySelector('.offer-row')) { list.previousElementSibling?.remove(); list.remove(); } // (and its release heading)
+        if (!card?.querySelector('.offer-row')) remove();
+      });
+      go.setAttribute('aria-label', `${go.textContent} ${name.textContent}`);
+      li.append(go);
+    }
     return li;
   }
 
-  async function show() {
+  async function show(given) {
     if (card) return;
-    let list = null;
-    try { list = await api.get(); } catch { /* no card */ }
+    let list = given || null;
+    if (!list) { try { list = await api.get(); } catch { /* no card */ } }
     if (!list?.items?.length || card || document.getElementById('welcome')?.hidden === false) return; // (the first-run welcome has its own steps)
-    card = document.createElement('section');
-    card.className = 'offer-card';
+    card = el('section', 'offer-card');
     card.setAttribute('role', 'region');
     card.setAttribute('aria-label', tr('offers.title'));
-    const title = Object.assign(document.createElement('h3'), { className: 'offer-title', textContent: tr('offers.title') });
-    const ul = document.createElement('ul');
-    ul.className = 'offer-list';
-    for (const item of list.items) ul.append(row(item));
-    const foot = document.createElement('div');
-    foot.className = 'offer-foot';
+    card.append(el('h3', 'offer-title', tr('offers.title')));
+    const releases = [...new Set(list.items.map((i) => i.since))];
+    for (const since of releases) {
+      card.append(el('h4', 'offer-release', tr('offers.release', { version: since })));
+      const ul = el('ul', 'offer-list');
+      for (const item of list.items.filter((i) => i.since === since)) ul.append(row(item));
+      card.append(ul);
+    }
+    const foot = el('div', 'offer-foot');
+    if (list.more > 0) foot.append(button(tr('offers.more', { n: list.more }), 'link-btn offer-more', () => openSettings(list.moreSection)));
     foot.append(
       button(tr('offers.notNow'), 'link-btn offer-later', async () => { remove(); await act('dismiss'); }),
       button(tr('offers.never'), 'link-btn offer-never', async () => { remove(); await act('dismiss', 'never'); }));
-    card.append(title, ul, foot);
+    card.append(foot);
     (empty.querySelector('.chips') || empty).before(card);
-    // Counted as offered once it has really been on screen (the next launch doesn't show it again).
+    // Counted as shown once it has really been on screen (the next launch doesn't show it again).
     const ids = list.items.map((i) => i.id);
     const seenOnce = () => { if (card && card.offsetParent !== null && !document.hidden) { io.disconnect(); act('shown', ids); } };
     const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) seenOnce(); });
     io.observe(card);
   }
 
+  window.offerCard = { show };
   // After the page has settled (the first-run welcome, the restored chat); once the chat is empty again, show what is left.
   setTimeout(show, 600); // (main answers once startup has decided what is new, however long that takes)
   window.addEventListener('focus', () => { if (!card) setTimeout(show, 100); });
