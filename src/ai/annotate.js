@@ -550,7 +550,7 @@ function overlayMain(spec, env) {
     state.seed++;
     const delay = Math.min(index, 5) * 110;
     const parts = [];
-    const add = (tag, attrs, layer) => { const e = el(tag, attrs, layer || board.markLayer); if (m.opacity) e.setAttribute('opacity', m.opacity); parts.push(e); return e; };
+    const add = (tag, attrs, layer) => { const e = el(tag, attrs, layer || board.markLayer); if (m.opacity) e.setAttribute('opacity', m.opacity); e.setAttribute('data-mark', index); parts.push(e); return e; }; // data-mark: which mark a part belongs to (tests measure them)
     // A hand-drawn stroke: a halo underneath (so it reads on any background) and the colour on top.
     const stroke = (width0, extra) => {
       const width = m.width || width0;
@@ -715,17 +715,19 @@ function overlayMain(spec, env) {
       if (back) popIn(back);
       play(text, [{ clipPath: 'inset(0 100% 0 0)' }, { clipPath: 'inset(0 0 0 0)' }], { duration: Math.min(1400, 180 + m.text.length * 22), delay, fill: 'backwards', easing: 'linear' }); // written left to right
       const given = m.text.split('\n');
-      // Width of a line at 100 px: measured where the engine can (getComputedTextLength), else a per-font estimate.
-      const widths = new Map();
-      const probe = live && typeof text.getComputedTextLength === 'function' ? el('text', { 'font-family': family, 'font-weight': hand ? 400 : 500, 'font-size': 100, visibility: 'hidden' }, board.markLayer) : null;
-      if (probe) parts.push(probe);
+      // A line's ink at 100 px: its advance width and how far the glyphs reach above and below the baseline. Measured with the
+      // real font where the engine can (canvas measureText), so the writing sits inside its box by its ink, not by the font's
+      // padded em box; else a per-font estimate (the screenshot path).
+      const metrics = new Map();
+      let ctx = null;
+      if (live) { try { const cv = doc.createElement('canvas'); ctx = cv.getContext ? cv.getContext('2d') : null; if (ctx) ctx.font = `${hand ? 400 : 500} 100px ${family}`; } catch { ctx = null; } }
       const at100 = (s) => {
-        if (!widths.has(s)) {
-          let w = 0;
-          if (probe) { try { probe.textContent = s; w = probe.getComputedTextLength(); } catch { w = 0; } }
-          widths.set(s, w > 0 ? w : s.length * (hand ? 58 : 53));
+        if (!metrics.has(s)) {
+          let mm = null;
+          if (ctx && s) { try { const t = ctx.measureText(s); if (t.width > 0) mm = { w: t.width, asc: t.actualBoundingBoxAscent || 0, desc: t.actualBoundingBoxDescent || 0 }; } catch { mm = null; } }
+          metrics.set(s, mm || { w: s.length * (hand ? 58 : 53), asc: hand ? 78 : 72, desc: /[gjpqy,;]/.test(s) ? (hand ? 30 : 22) : 2 });
         }
-        return widths.get(s);
+        return metrics.get(s);
       };
       const wrapTo = (maxW, size) => {
         if (!(maxW > 0) || m.auto) return given;
@@ -734,45 +736,55 @@ function overlayMain(spec, env) {
           let cur = '';
           for (const word of line.split(/ +/)) {
             const next = cur ? `${cur} ${word}` : word;
-            if (cur && (at100(next) * size) / 100 > maxW) { out.push(cur); cur = word; } else cur = next;
+            if (cur && (at100(next).w * size) / 100 > maxW) { out.push(cur); cur = word; } else cur = next;
           }
           out.push(cur);
         }
         return out.slice(0, 16);
       };
-      // The largest size (up to the cap) at which the text fits the box: wrapped to its width, all lines in its height.
+      // The ink of lines at a size: from the first line's top to the last line's bottom (lines 1.2 apart).
+      const inkOf = (lines, size) => {
+        const asc = Math.max(...lines.slice(0, 1).map((l) => at100(l).asc)), desc = at100(lines[lines.length - 1]).desc;
+        return { asc: (asc * size) / 100, h: (((lines.length - 1) * 120 + asc + desc) * size) / 100, w: Math.max(...lines.map((l) => (at100(l).w * size) / 100)) };
+      };
+      // The largest size (up to the cap) at which the text fits the box: wrapped to its width, its ink inside its height.
       let first = null, fitted = null;
       const fit = (b) => {
+        const lines0 = given;
+        if (m.auto) { const size = b.h / (given.length * 1.25); return { size, lines: lines0, ink: inkOf(lines0, size) }; }
         const cap = 28 * (first ? b.h / first.h : 1); // the cap grows with a zoom, so a zoomed box keeps the same look
-        if (m.auto) return { size: b.h / (given.length * 1.25), lines: given };
-        let size = Math.max(6, Math.min(cap, b.h / (given.length * 1.2)));
+        const pad = Math.min(2, b.h * 0.06);
+        const one = inkOf(lines0, 100).h / 100; // ink height per px of size
+        let size = Math.max(6, Math.min(cap, (b.h - 2 * pad) / Math.max(0.5, one)));
         let lines = wrapTo(b.w, size);
-        for (let i = 0; i < 40 && size > 6; i++) {
-          const wide = Math.max(...lines.map((l) => (at100(l) * size) / 100));
-          if (lines.length * size * 1.2 <= b.h + 0.5 && wide <= b.w + 0.5) break;
-          size *= 0.93;
+        let ink = inkOf(lines, size);
+        for (let i = 0; i < 60 && size > 6; i++) {
+          if (ink.h <= b.h - 2 * pad + 0.25 && ink.w <= b.w - Math.min(3, b.w * 0.02) + 0.25) break;
+          size *= 0.95;
           lines = wrapTo(b.w, size);
+          ink = inkOf(lines, size);
         }
-        return { size, lines };
+        return { size, lines, ink, pad };
       };
       let spans = [];
       view.update = () => {
         const rs = rectsOf(at);
         if (!rs || !rs.length) { parts.forEach((p) => p.setAttribute('visibility', 'hidden')); return; }
-        parts.forEach((p) => { if (p !== probe) p.setAttribute('visibility', 'visible'); });
+        parts.forEach((p) => p.setAttribute('visibility', 'visible'));
         const b = bounds(rs);
         if (!first) first = { w: b.w, h: b.h };
         const key = `${f(b.w)},${f(b.h)}`;
         if (!fitted || fitted.key !== key) fitted = { key, ...fit(b) };
-        const { size, lines } = fitted;
-        const textH = lines.length * size * 1.2;
-        const top = m.auto ? b.y : textH >= b.h * 0.6 ? b.y + (b.h - textH) / 2 : b.y + Math.min(size * 0.2, (b.h - textH) / 2);
+        const { size, lines, ink, pad = 0 } = fitted;
+        // A point: the ink's top-left at it. A box the text fills: on its bottom line (an answer on a blank). A big box: at its top.
+        const inkTop = m.auto ? b.y : ink.h >= b.h * 0.6 ? b.y + b.h - pad - ink.h : b.y + pad;
+        const base = inkTop + ink.asc;
         const x = b.x + (m.auto ? 0 : Math.min(3, b.w * 0.02));
-        setA(text, { x: f(x), y: f(top + size * 0.95), 'font-size': f(size), 'stroke-width': f(Math.max(1.5, size * 0.16)) });
+        setA(text, { x: f(x), y: f(base), 'font-size': f(size), 'stroke-width': f(Math.max(1.5, size * 0.16)) });
         while (spans.length < lines.length) spans.push(el('tspan', {}, text));
         while (spans.length > lines.length) spans.pop().remove();
-        spans.forEach((t, i) => { t.textContent = lines[i]; setA(t, { x: f(x), y: f(top + size * 0.95 + i * size * 1.2) }); });
-        if (back) setA(back, { x: f(b.x - 2), y: f(Math.min(b.y, top) - 1), width: f(Math.max(b.w, Math.max(...lines.map((l) => (at100(l) * size) / 100)) + 6) + 4), height: f(Math.max(b.h, textH) + 2) });
+        spans.forEach((t, i) => { t.textContent = lines[i]; setA(t, { x: f(x), y: f(base + i * size * 1.2) }); });
+        if (back) setA(back, { x: f(b.x - 2), y: f(Math.min(b.y, inkTop) - 1), width: f(Math.max(b.w, ink.w + 6) + 4), height: f(Math.max(b.y + b.h, inkTop + ink.h) - Math.min(b.y, inkTop) + 2) });
       };
     } else if (m.type === 'bracket') {
       const set = stroke(3.5);

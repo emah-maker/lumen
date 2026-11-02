@@ -6583,7 +6583,8 @@ function showToolApproval(approvalId, host, { title: heading, args, tainted, ter
   actions.className = 'approval-actions';
   const deny = Object.assign(document.createElement('button'), { type: 'button', className: 'btn', textContent: denyLabel ? String(denyLabel) : t('approval.deny') });
   const allow = Object.assign(document.createElement('button'), { type: 'button', className: 'btn primary', textContent: allowLabel ? String(allowLabel) : t(app ? 'approval.app.once' : 'approval.once') });
-  const always = (tainted && !terminal) || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: alwaysLabel ? String(alwaysLabel) : app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : note === 'connector' ? t('approval.connector.always') : t('approval.tool.always'), title: alwaysTitle ? String(alwaysTitle) : app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : note === 'connector' ? t('approval.connector.always.title', { action: String(alwaysFor?.action || ''), app: String(alwaysFor?.app || '') }) : t('approval.tool.always.title') });
+
+  const always = (tainted && !terminal && note !== 'connector') || noAlways ? null : Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: alwaysLabel ? String(alwaysLabel) : app ? t('approval.app.always') : terminal ? t('approval.terminal.always') : note === 'connector' ? t('approval.connector.always') : t('approval.tool.always'), title: alwaysTitle ? String(alwaysTitle) : app ? t('approval.app.always.title') : terminal ? t('approval.terminal.always.title') : note === 'connector' ? t('approval.connector.always.title', { action: String(alwaysFor?.action || ''), app: String(alwaysFor?.app || '') }) : t('approval.tool.always.title') });
   const answer = (ok) => {
     if (card.classList.contains('answered')) return;
     card.classList.add('answered');
@@ -7731,7 +7732,7 @@ function startChat() {
     prompt.setAttribute('aria-autocomplete', 'list');
     picker.replaceChildren(...rows.map((row, i) => {
       const el = document.createElement('div');
-      el.className = `tabs-opt ${row.kind}${i === index ? ' active' : ''}`;
+      el.className = `tabs-opt is-${row.kind}${i === index ? ' active' : ''}`;
       el.id = `tabs-opt-${i}`;
       el.setAttribute('role', 'option');
       el.setAttribute('aria-selected', String(i === index));

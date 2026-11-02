@@ -5,7 +5,7 @@ Any chat model in Lumen can get a picture made, even one that can't draw (Claude
 - you type "draw a cat", "generate an image of …" or `/image …`, and
 - the AI calls the `generate_image` tool (every engine has it: the API tool list, and Lumen's MCP tools for Claude Code, Grok Build, Antigravity and Codex).
 
-Lumen's image router (`src/ai/image-router.js`) hands the request to a provider **you have already connected**. It never uses a key you haven't set, and it never asks for one in the chat.
+Lumen's image router (`src/ai/image-router.js`) hands the request to a provider **you have already connected**. It never uses a key you haven't set or switched off, and it never asks for one in the chat.
 
 ## Who makes the picture
 
@@ -16,13 +16,14 @@ Lumen's image router (`src/ai/image-router.js`) hands the request to a provider 
 | Gemini (API key) | `generateContent` with image output | yes |
 | OpenAI (API key) | `gpt-image` | yes |
 | OpenRouter (API key) | a model its catalog lists as making pictures | yes |
+| Antigravity (agy), **only when picked** | one headless `agy --sandbox --mode accept-edits --add-dir <temp folder> --print-timeout 3m -p "Generate an image: … Save to <file>."` run, through your Google sign-in (no API key, never `--always-approve`). Its own home (`<profile>/antigravity-image`) denies commands, URLs and MCP tools and loads none of your MCP servers; the picture must exist in the temp folder and be a real png/jpeg/webp/gif (`src/ai/image-agy.js`) | yes |
 
-Antigravity and Codex are not image providers here (Codex's free tier is limited; Antigravity's image tool is denied by Lumen's tool gate).
+Codex is not an image provider here (its free tier is limited). Antigravity makes pictures only when you pick it in **Make pictures with**: Automatic never uses it (each picture is a slow headless run, and agy has no sign-in check that costs nothing). If agy isn't installed, isn't signed in, or saves no picture, the next connected provider makes it and the picture says "instead of Antigravity". In an Antigravity chat, Lumen's tool gate still denies agy's own image tool; pictures there go through `generate_image` like every other engine.
 
-**Settings → AI → Image generation** (`imageGen`):
+**Settings → AI → Make pictures with** (`imageGen`):
 
 - **Automatic** (default). The chat's own provider first when it makes pictures (a Grok Build, OpenAI, Gemini or Grok chat), then Grok Build, Grok, Gemini, OpenAI, OpenRouter. A provider that is out of usage right now (the same cooldowns the model fallback uses) goes last. A provider you turned off for Auto ("Auto may use") is left out, unless it is the chat's own.
-- **A single provider.** Only that one is asked; if it isn't connected, Lumen says so instead of switching.
+- **A single provider.** It makes every picture, whatever the chat is on (even if it is turned off for Auto). When it isn't set up, its key is switched off (Settings → AI → API keys), it can't edit pictures (Grok's API, for "edit the last one"), it is out of usage or it fails, the Automatic order takes over (without the providers turned off for Auto). The status line says so ("Making your picture with Gemini (OpenAI isn’t available)…") and the picture's credit ends in "(instead of OpenAI)". Providers with no key, or a key switched off, show "(not set up)" in the list.
 - **Off.** Nothing is routed; the model says it can't make pictures.
 
 ## Failures

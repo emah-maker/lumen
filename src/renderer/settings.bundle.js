@@ -4817,7 +4817,7 @@ function linkRow(label, { href, desc, value, more = '', icon, onOpen } = {}) {
   link.tabIndex = 0;
   link.setAttribute('role', 'link');
   if (icon) link.querySelector('.text').before(icon);
-  const open = () => { if (onOpen) onOpen(); else if (href) location.hash = href; };
+  const open = () => { if (onOpen) onOpen(); else if (href) openHash(href); };
   link.addEventListener('click', open);
   link.addEventListener('keydown', (e) => { if (e.target === link && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); open(); } });
   link.setValue = (v) => { link.valueSource = v; paintValue(link); };
@@ -4825,6 +4825,8 @@ function linkRow(label, { href, desc, value, more = '', icon, onOpen } = {}) {
   if (value !== undefined) link.setValue(value);
   return link;
 }
+
+function openHash(hash) { if (location.hash === hash) route(); else location.hash = hash; }
 function paintValue(link) {
   const v = typeof link.valueSource === 'function' ? link.valueSource() : link.valueSource;
   link.valueEl.textContent = v || '';
@@ -4875,7 +4877,7 @@ class Slot {
     sub.pane = h('div', { class: 'pane subpane', id: `sub-${sub.id}`, hidden: true }, h('div', { class: 'subhead' }, back), h('h1', { class: 'pane-title', 'data-crumb': crumb, text: label }), sub.el);
     $('sections').append(sub.pane);
     const short = desc && desc.length <= INLINE_DESC ? desc : '';
-    const link = linkRow(label, { desc: short, more: `${desc && !short ? desc : ''} ${more}`, value, icon, onOpen: () => { returnTo = { cat: this.cat, sub: sub.id, y: window.scrollY }; location.hash = `#${sub.id}`; } });
+    const link = linkRow(label, { desc: short, more: `${desc && !short ? desc : ''} ${more}`, value, icon, onOpen: () => { returnTo = { cat: this.cat, sub: sub.id, y: window.scrollY }; openHash(`#${sub.id}`); } });
     link.dataset.sub = sub.id;
     sub.link = link;
     sub.setValue = (v) => link.setValue(v);
@@ -4939,9 +4941,19 @@ async function buildAi(card) {
   modelPicker.parentElement.append(noModels);
   const showEmpty = () => { noModels.hidden = ai.models.length > 0; modelPicker.hidden = !ai.models.length; settingsPicker.button?.toggleAttribute('hidden', !ai.models.length); };
   let autoUseRender = () => {};
+
+
+  const IMAGE_ENGINES = ['auto', 'off', 'grokbuild', 'antigravity', 'xai', 'gemini', 'openai', 'openrouter'];
+  const imageEngineText = (v) => {
+    const text = tr(`settings.ai.imageGen.${v}`, { auto: 'Automatic', off: 'Off', grokbuild: 'Grok Build', antigravity: 'Antigravity (agy)', xai: 'Grok (API key)', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter' }[v]);
+    const k = ai.providerKeys?.[v];
+    return k && (k.off || !(k.stored || k.env)) ? `${text} ${tr('settings.ai.imageGen.notSetUp', '(not set up)')}` : text;
+  };
+  const imageEngineRender = () => { for (const o of $('pref-imageGen')?.options || []) o.textContent = imageEngineText(o.value); };
   const refreshModels = async () => {
     ai = await S.ai.get();
     autoUseRender();
+    imageEngineRender();
     showEmpty();
     modelPicker.replaceChildren(...modelOptions());
     if (ai.model) modelPicker.value = ai.model;
@@ -4982,8 +4994,8 @@ async function buildAi(card) {
     toggle('aiPreferFractions', tr('settings.ai.preferFractions', 'Prefer fractions'), tr('settings.ai.preferFractionsDesc', 'Write exact values as fractions (4/3, not 1.333) and keep √ and π, unless you ask for decimals. Fractions show stacked. Applies to new chats.')),
     stackRow(tr('settings.ai.autoUse', 'Auto may use'), tr('settings.ai.autoUseDesc', 'Auto picks by task: quick chat and page questions go to a small, fast model, browsing to a reliable mid-size one, hard code and deep research to the strongest. Models out of usage are skipped. A model you pick is always used.'), autoUseBox),
     toggle('ccUserSettings', tr('settings.ai.ccUserSettings', 'Use my Claude Code settings in Lumen chats'), tr('settings.ai.ccUserSettingsDesc', 'Off: Lumen’s Claude Code chats skip your CLAUDE.md, rules, memory and hooks, which saves tokens and startup time. Turn it on if you rely on them, or on proxy or environment settings in ~/.claude/settings.json. Full access always uses them.')),
-    select('imageGen', tr('settings.ai.imageGen', 'Image generation'), tr('settings.ai.imageGenDesc', 'When you or the AI ask for a picture, Lumen sends the request to a provider you have already connected that makes pictures, even if the chat is on a model that can’t (Claude, Claude Code, Antigravity, Codex). Automatic tries the chat’s own provider first, then your other connected ones, and moves on if one is out of usage or down; a provider that refuses the picture on content grounds is not retried elsewhere. The picture says which provider made it. Your prompt goes to that provider, and it may count against its usage or your API key’s billing. Lumen never uses a provider you haven’t connected.'),
-      ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].map((v) => [v, tr(`settings.ai.imageGen.${v}`, { auto: 'Automatic', off: 'Off', grokbuild: 'Grok Build only', xai: 'Grok (API) only', gemini: 'Gemini only', openai: 'OpenAI only', openrouter: 'OpenRouter only' }[v])])),
+    select('imageGen', tr('settings.ai.imageGen', 'Make pictures with'), tr('settings.ai.imageGenDesc', 'When you or the AI ask for a picture, Lumen sends the request to a provider you have already connected that makes pictures, even if the chat is on a model that can’t (Claude, Claude Code, Antigravity, Codex). Automatic tries the chat’s own provider first, then your other connected ones. Pick one to have it make every picture (Antigravity is used only when you pick it); when it isn’t set up, is out of usage or fails, your other connected providers take over and the picture says which one made it. A provider that refuses the picture on content grounds is not retried elsewhere. Your prompt goes to that provider, and it may count against its usage or your API key’s billing. Lumen never uses a provider you haven’t connected, or a key you switched off.'),
+      IMAGE_ENGINES.map((v) => [v, imageEngineText(v)])),
     toggle('autoModel', tr('settings.ai.autoModel', 'Pick the model for me when I choose an engine’s Default'), tr('settings.ai.autoModelDesc', 'On Claude Code, Codex, Grok Build and Antigravity, Default picks per message: quick chat and one-step browsing use the small model (Haiku, Luna, Flash-Lite), multi-step browsing, research and code the mid-size one (Sonnet, Sol, Flash), hard debugging and proofs the strongest (Opus, Astra, Pro). A model you pick is always used.')),
     toggle('aiGapLog', tr('settings.ai.aiGapLog', 'Keep a list of what the AI couldn’t do'), tr('settings.ai.aiGapLogDesc', 'Notes, on this computer only, the times the AI still handed a task back to you after a second try: date, site, what was missing, the tool error. Never page content. See the list under Privacy below.')),
     toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatically when one is unavailable'), tr('settings.ai.autoFallbackDesc', 'When the model you picked hits its usage limit or can’t be reached, Lumen can continue with another model you’ve connected (a lighter one from the same provider first, then your other providers) and goes back on its own once the first one recovers. The conversation so far, including page text and images, may then be sent to that provider (for example OpenAI or xAI). Off: you get the error and choose.')),
@@ -5208,14 +5220,31 @@ async function buildAi(card) {
 
   const keys = h('div', { class: 'list', id: 'ai-keys' });
   const renderKeys = () => {
-    const entries = [['anthropic', { label: 'Anthropic (Claude)', stored: ai.hasStoredKey, env: ai.hasEnvKey }], ...Object.entries(ai.providerKeys)];
+    const entries = [['anthropic', { label: 'Anthropic (Claude)', stored: ai.hasStoredKey, env: ai.hasEnvKey, off: ai.anthropicKeyOff }], ...Object.entries(ai.providerKeys)];
     keys.replaceChildren(...entries.map(([provider, info]) => {
       const line = h('div', { class: 'item key', 'data-provider': provider });
-      const state = info.stored ? 'Saved' : info.env ? 'From environment' : 'Not set';
+      if (info.off) line.dataset.off = '1';
+      const state = info.off ? tr('settings.ai.keyOff', 'Off') : info.stored ? 'Saved' : info.env ? 'From environment' : 'Not set';
+
+      const onOff = () => {
+        const input = h('input', { type: 'checkbox', class: 'switch key-switch', role: 'switch', checked: !info.off, 'aria-label': tr('settings.ai.keyUse', 'Use the {name} key', { name: info.label }) });
+        input.addEventListener('change', async () => {
+          const next = new Set(st.prefs.keysOff || []);
+          if (input.checked) next.delete(provider); else next.add(provider);
+          if (!(await save('keysOff', [...next], input))) { input.checked = !info.off; return; }
+          info.off = !input.checked;
+          if (provider === 'anthropic') ai.anthropicKeyOff = info.off;
+          await refreshModels();
+          renderKeys();
+          keys.querySelector(`[data-provider="${provider}"] .key-switch`)?.focus();
+        });
+        return input;
+      };
       const rowNote = status();
       const view = (message = '', cls = 'ok') => { line.replaceChildren(...[
         h('span', { class: 'grow' }, info.label, KEY_PAGES[provider] && !info.stored && !info.env ? h('a', { class: 'key-get', href: KEY_PAGES[provider], text: tr('settings.ai.getKey', 'Get a key'), onclick: (e) => { e.preventDefault(); S.openUrl(KEY_PAGES[provider]); } }) : null),
-        h('span', { class: `note key-state${info.stored || info.env ? ' set' : ''}`, text: state }),
+        h('span', { class: `note key-state${(info.stored || info.env) && !info.off ? ' set' : ''}`, text: state }),
+        info.stored || info.env ? onOff() : null,
         h('button', { text: info.stored ? 'Change' : 'Add', 'aria-label': `${info.stored ? 'Change' : 'Add'} ${info.label} key`, onclick: edit }),
         provider === 'openrouter' && !info.stored ? h('button', {
           class: 'primary', text: 'Sign in with OpenRouter', 'aria-label': 'Sign in with OpenRouter',
@@ -5265,7 +5294,7 @@ async function buildAi(card) {
   };
   renderKeys();
   const accounts = slots.get('ai-keys-page');
-  accounts.group('API keys').append(stackRow('API keys', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider.', keys));
+  accounts.group('API keys').append(stackRow('API keys', tr('settings.ai.keysDesc', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider. Switch a key off to stop Lumen using it without removing it: its models leave the model menu and nothing is sent with it until you switch it back on.'), keys));
 
 
   const cliNote = status('ai-cli-status');
@@ -5846,7 +5875,7 @@ async function buildWidgets(card) {
           h('button', { class: 'plain icon', text: '↑', 'aria-label': `Move ${w.title} up`, title: 'Move up', disabled: i === 0, onclick: move(-1) }),
           h('button', { class: 'plain icon', text: '↓', 'aria-label': `Move ${w.title} down`, title: 'Move down', disabled: i === mine.length - 1, onclick: move(1) }),
           h('span', { class: 'chev', 'aria-hidden': 'true' })));
-      const go = () => { if (off) location.hash = `#app-${svc.id}`; else openForm(w); };
+      const go = () => { if (off) openHash(`#app-${svc.id}`); else openForm(w); };
       item.addEventListener('click', go);
       item.addEventListener('keydown', (e) => { if (e.target === item && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); go(); } });
       return item;
@@ -8103,7 +8132,7 @@ function show() {
       if (!searching) {
         if (wasSearching) {
           for (const r of rows) { r.classList.remove('filtered'); r.style.order = ''; }
-          for (const d of g.querySelectorAll('details.adv-rows')) d.open = d.dataset.pinned === '1';
+          for (const d of g.querySelectorAll('details.adv-rows')) { d.open = d.dataset.pinned === '1'; d.hidden = false; }
           g.hidden = false;
         }
         continue;
@@ -8112,12 +8141,14 @@ function show() {
       const titleHit = SS.matchesAll(titles, words);
       let n = 0;
       for (const r of rows) {
-        const s = r.dataset.nosearch === '1' ? 0 : SS.rowScore(words, titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
+        const fold = r.closest('details.adv-rows');
+        const s = r.dataset.nosearch === '1' ? 0 : SS.rowScore(words, fold && g.contains(fold) ? `${titles} ${fold.querySelector('summary').textContent.toLowerCase()}` : titles, { label: r.querySelector('.label')?.textContent || '', search: r.dataset.search, keywords: r.dataset.keywords || '' });
         r.classList.toggle('filtered', s < floor);
         r.style.order = String(-s);
         if (s >= floor) { n++; best = Math.max(best, s); }
       }
-      for (const d of g.querySelectorAll('details.adv-rows')) d.open = rows.some((r) => d.contains(r) && !r.classList.contains('filtered'));
+
+      for (const d of g.querySelectorAll('details.adv-rows')) { const any = rows.some((r) => d.contains(r) && !r.classList.contains('filtered')); d.open = any; d.hidden = !any; }
       g.hidden = rows.length ? n === 0 : !titleHit;
       hits += rows.length ? n : (titleHit ? 1 : 0);
     }

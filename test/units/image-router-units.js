@@ -37,8 +37,11 @@ const classify = (e) => fallback.classify(e);
     check('only connected providers are ever in the order', J(order({ connected: { gemini: true }, current: 'claude-opus-5' })) === J(['gemini']) && order({ connected: {} }).length === 0);
     check('providers out of usage go last, in the same order', J(order({ current: 'openai:gpt-5.6', cooling: (k) => k === 'openai' || k === 'grokbuild' })) === J(['xai', 'gemini', 'openrouter', 'openai', 'grokbuild']), J(order({ current: 'openai:gpt-5.6', cooling: (k) => k === 'openai' || k === 'grokbuild' })));
     check('providers turned off for Auto are left out (but not the chat\'s own)', J(order({ current: 'claude-opus-5', exclude: ['grokbuild', 'openai'] })) === J(['xai', 'gemini', 'openrouter']) && order({ current: 'openai:gpt-5.6', exclude: ['openai'] })[0] === 'openai');
-    check('one chosen provider is the only one asked, whatever the chat is on, and ignores the Auto exclusions', J(order({ setting: 'gemini', current: 'openai:gpt-5.6', exclude: ['gemini'] })) === J(['gemini']));
-    check('a chosen provider that is not connected asks nobody (it names which one is missing)', router.plan({ setting: 'openai', connected: { gemini: true } }).order.length === 0 && router.plan({ setting: 'openai', connected: { gemini: true } }).missing === 'openai');
+    check('a chosen provider is asked first, whatever the chat is on, even when it is turned off for Auto; then the chat\'s own, then the Automatic order', J(order({ setting: 'gemini', current: 'openai:gpt-5.6', exclude: ['gemini'] })) === J(['gemini', 'openai', 'grokbuild', 'xai', 'openrouter']), J(order({ setting: 'gemini', current: 'openai:gpt-5.6', exclude: ['gemini'] })));
+    check('after the chosen one, providers turned off for Auto stay out of the fallback', J(order({ setting: 'xai', current: 'claude-opus-5', exclude: ['grokbuild', 'openai'] })) === J(['xai', 'gemini', 'openrouter']), J(order({ setting: 'xai', current: 'claude-opus-5', exclude: ['grokbuild', 'openai'] })));
+    check('a chosen provider that is not connected: the others are asked, and it is named as missing', J(router.plan({ setting: 'openai', connected: { gemini: true } }).order) === J(['gemini']) && router.plan({ setting: 'openai', connected: { gemini: true } }).missing === 'openai');
+    check('a chosen provider out of usage right now goes last, like in Automatic', J(order({ setting: 'openai', current: 'claude-opus-5', cooling: (k) => k === 'openai' })) === J(['grokbuild', 'xai', 'gemini', 'openrouter', 'openai']));
+    check('a chosen provider that cannot edit: an edit goes to one that can, and the chosen one is named', J(router.plan({ setting: 'xai', connected: ALL, edit: true }).order) === J(['grokbuild', 'gemini', 'openai', 'openrouter']) && router.plan({ setting: 'xai', connected: ALL, edit: true }).missing === 'xai');
     check('off asks nobody', router.plan({ setting: 'off', connected: ALL }).order.length === 0);
     check('editing only goes to providers that edit (Grok\'s API does not)', J(order({ edit: true, current: 'xai:grok-4' })) === J(['grokbuild', 'gemini', 'openai', 'openrouter']), J(order({ edit: true, current: 'xai:grok-4' })));
     check('unknown settings mean Automatic', router.cleanSetting('banana') === 'auto' && router.cleanSetting(undefined) === 'auto' && router.cleanSetting('off') === 'off' && router.cleanSetting('xai') === 'xai');
@@ -99,8 +102,24 @@ const classify = (e) => fallback.classify(e);
     try { await run({ openai: ok('openai') }, { setting: 'off' }); } catch (e) { off = e; }
     check('off: refuses with a line the model can pass on, asks nobody', off?.code === 'off' && /turned off/.test(off.message) && calls.length === 0);
     let missing = null;
-    try { await run({ openai: ok('openai') }, { setting: 'openai', connected: { gemini: true } }); } catch (e) { missing = e; }
-    check('a chosen provider that is not connected: named, no silent switch to another', missing?.code === 'none' && /OpenAI is chosen/.test(missing.message), missing?.message);
+    try { await run({ openai: ok('openai') }, { setting: 'openai', connected: {} }); } catch (e) { missing = e; }
+    check('a chosen provider that is not connected, and nothing else is: named, never asks for a key in the chat', missing?.code === 'none' && missing.missing === 'openai' && /OpenAI is chosen/.test(missing.message) && /not ask them for a key/.test(missing.message) && /OpenAI is chosen for pictures/.test(missing.userMessage), missing?.message);
+
+    // the chosen provider first, then a fallback that is named (never a silent swap)
+    calls.length = 0;
+    r = await run({ grokbuild: ok('grokbuild'), gemini: ok('gemini'), openai: ok('openai') }, { setting: 'gemini' });
+    check('a chosen provider makes the picture when it can, and nobody else is asked', r.provider === 'gemini' && J(calls) === J(['gemini']) && !r.insteadOf && r.credit === 'Gemini · gemini-model', J({ calls, credit: r.credit }));
+    calls.length = 0;
+    r = await run({ grokbuild: ok('grokbuild'), gemini: bad('gemini', limitErr), openai: ok('openai') }, { setting: 'gemini' });
+    check('the chosen provider out of usage: the next connected one makes it, and the picture says instead of whom', r.provider === 'grokbuild' && J(calls) === J(['gemini', 'grokbuild']) && r.insteadOf === 'gemini' && r.insteadWhy === 'out of usage' && r.credit === 'Grok Build · grokbuild-model (instead of Gemini)', J({ calls, r: { ...r, images: 1 } }));
+    check('the model is told why the chosen one did not make it', /instead of Gemini/.test(router.toolResult(r)) && /Gemini is picked for pictures but out of usage/.test(router.toolResult(r)), router.toolResult(r));
+    calls.length = 0;
+    r = await run({ grokbuild: ok('grokbuild'), openai: ok('openai') }, { setting: 'gemini', connected: { grokbuild: true, openai: true } });
+    check('the chosen provider not set up (no key, or its key switched off): the others make it, and say why', r.provider === 'grokbuild' && r.insteadOf === 'gemini' && /not connected \(or its key is off\)/.test(r.insteadWhy) && J(calls) === J(['grokbuild']), J({ calls, why: r.insteadWhy }));
+    calls.length = 0;
+    let refusedFirst = null;
+    try { await run({ grokbuild: ok('grokbuild'), gemini: bad('gemini', policyErr) }, { setting: 'gemini' }); } catch (e) { refusedFirst = e; }
+    check('the chosen provider refusing on content grounds still ends it: nothing else is asked', refusedFirst?.code === 'refused' && J(calls) === J(['gemini']), J({ code: refusedFirst?.code, calls }));
 
     // a stopped request
     const ctl = new AbortController();
@@ -178,7 +197,7 @@ const classify = (e) => fallback.classify(e);
 
   // ---- settings
   {
-    check('the setting defaults to Automatic and takes only Automatic, Off or a provider', settingsBackend.DEFAULTS.imageGen === 'auto' && ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter'].every((v) => settingsBackend.validate('imageGen', v) === v) && settingsBackend.validate('imageGen', 'codex') === null && settingsBackend.validate('imageGen', 'antigravity') === null && settingsBackend.validate('imageGen', '') === null);
+    check('the setting defaults to Automatic and takes only Automatic, Off or a provider (Antigravity too, picked only; never Codex)', settingsBackend.DEFAULTS.imageGen === 'auto' && ['auto', 'off', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter', 'antigravity'].every((v) => settingsBackend.validate('imageGen', v) === v) && settingsBackend.validate('imageGen', 'codex') === null && settingsBackend.validate('imageGen', 'claudecode') === null && settingsBackend.validate('imageGen', '') === null);
     const ui = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'settings.js'), 'utf8');
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
     check('Settings → AI shows the choice, with every option named in the locale', /select\('imageGen'/.test(ui) && router.SETTINGS.every((v) => en[`settings.ai.imageGen.${v}`]) && en['settings.ai.imageGen'] && en['settings.ai.imageGenDesc'] && en['genimg.madeWith'] === 'Made with {name}');
@@ -250,6 +269,29 @@ const classify = (e) => fallback.classify(e);
       let text = null;
       await inChat(agent, chatOf('openai:gpt-5.6'), async () => { text = await agent.execute('generate_image', { prompt: 'x' }); });
       check('the chat\'s own provider is out of usage: the next connected one makes it, and says so', /Gemini/.test(text) && J(calls) === J(['openai', 'gemini']), text);
+    }
+    // a provider picked in Settings: it makes the picture; when it can't, the status line says who makes it instead
+    {
+      const agent = make({ imageGen: () => 'gemini' }, ['openai', 'gemini']);
+      calls.length = 0;
+      agent.imageBackendOverrides = { openai: async () => { calls.push('openai'); return { images: [{ data: png }], model: 'gpt-image-1' }; }, gemini: async () => { calls.push('gemini'); return { images: [{ data: png }], model: 'gemini-2.5-flash-image' }; } };
+      let text = null;
+      await inChat(agent, chatOf('openai:gpt-5.6'), async () => { text = await agent.execute('generate_image', { prompt: 'x' }); });
+      check('generate_image goes to the provider picked in Settings, not the chat\'s own', J(calls) === J(['gemini']) && /Gemini/.test(text), J({ calls, text }));
+      const statuses = [];
+      const agent2 = make({ imageGen: () => 'gemini' }, ['openai']); // Gemini picked, but its key is not there (or switched off)
+      agent2.imageBackendOverrides = { openai: async () => ({ images: [{ data: png }], model: 'gpt-image-1' }), gemini: async () => { throw new Error('must not run'); } };
+      const messages = chatOf('claude-sonnet-5');
+      await agent2.routedImageTurn(messages, { prompt: 'a cat' }, 'claude-sonnet-5', new AbortController().signal, (e) => { if (e.type === 'status' && e.text) statuses.push(e.text); });
+      check('the chosen provider not available: OpenAI makes it, and the status says Gemini isn\'t available', statuses.some((s) => /with OpenAI \(Gemini isn’t available\)/.test(s)), J(statuses));
+    }
+    // a key switched off is not "connected": the router never asks it (main.js providerKey returns null for it)
+    {
+      const agent = make({}, ['gemini']); // OpenAI's key is switched off: getKey('openai') -> null
+      calls.length = 0;
+      agent.imageBackendOverrides = { openai: async () => { calls.push('openai'); return { images: [{ data: png }], model: 'gpt-image-1' }; }, gemini: async () => { calls.push('gemini'); return { images: [{ data: png }], model: 'g' }; } };
+      await inChat(agent, chatOf('openai:gpt-5.6'), async () => { await agent.execute('generate_image', { prompt: 'x' }); });
+      check('a provider whose key is off is never asked, even on its own chat', J(calls) === J(['gemini']), J(calls));
     }
     // an outside agent over MCP has no chat: refused (it would spend the user's keys with nowhere to show the picture)
     {
