@@ -77,10 +77,12 @@ function server(opts) {
   const made = [];
   const today = new Date();
   const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const yesterday = new Date(today.getTime() - 86400e3);
+  // Calendar days at local noon, not now ± 24 h: on a 25-hour day (DST ending) "now - 24 h" late in the evening is still today.
+  const dayFrom = (n) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + n, 12);
+  const yesterday = dayFrom(-1);
   const utc = (d, h) => `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}T${String(h).padStart(2, '0')}0000Z`;
-  const tomorrow = new Date(today.getTime() + 86400e3);
-  const in3 = new Date(today.getTime() + 3 * 86400e3);
+  const tomorrow = dayFrom(1);
+  const in3 = dayFrom(3);
   const icsText = [
     'BEGIN:VCALENDAR', 'VERSION:2.0', 'X-WR-CALNAME:Muse schedule',
     'BEGIN:VEVENT', 'UID:e1', `DTSTART:${utc(tomorrow, 14)}`, `DTEND:${utc(tomorrow, 15)}`, 'SUMMARY:Design review', 'LOCATION:Studio', 'URL:https://example.com/review', 'COLOR:#e91e63', 'END:VEVENT',
@@ -112,7 +114,7 @@ function server(opts) {
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const times = [];
     for (let i = 0; i < days * 24; i++) { const d = new Date(start.getTime() + i * 3600e3); times.push(`${dateOf(d)}T${pad(d.getHours())}:00`); }
-    const dates = [...Array(days).keys()].map((i) => dateOf(new Date(start.getTime() + i * 86400e3)));
+    const dates = [...Array(days).keys()].map((i) => dateOf(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i))); // (calendar days: a DST day isn't 24 h)
     return {
       current: { time: `${dateOf(now)}T${pad(now.getHours())}:${pad(now.getMinutes())}`, temperature_2m: t(base + 0.4), apparent_temperature: t(base - 1.1), weather_code: 2, is_day: 1, wind_speed_10m: 9.4, wind_direction_10m: 220, relative_humidity_2m: 64 },
       hourly: { time: times, temperature_2m: times.map((_, i) => t(base + (i % 24) / 4)), weather_code: times.map(() => 2), is_day: times.map((_, i) => (i % 24 >= 6 && i % 24 < 20 ? 1 : 0)), precipitation_probability: times.map((_, i) => (i % 24) * 3), precipitation: times.map(() => 0.02) },
