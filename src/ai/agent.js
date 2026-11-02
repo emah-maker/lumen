@@ -3962,7 +3962,7 @@ ${prompt}` : prompt), historyImages: [] };
         const a = m[key];
         if (a && a.ref && frames.decodeId(a.ref)) {
           const box = await this.annotateBoxOf(wc, a.ref).catch(() => null);
-          m[key] = box ? { box } : null;
+          m[key] = box ? { box: annotate.offsetBox(box, a) } : null;
         }
       }
     }
@@ -3992,7 +3992,7 @@ ${prompt}` : prompt), historyImages: [] };
         if (!a) continue;
         if (a.text) { missing.push(`marks[${i}] ${m.type}: text targets need the page overlay`); ok = false; } else if (a.ref) {
           const box = await this.annotateBoxOf(wc, a.ref).catch(() => null);
-          if (box) out[key] = { box }; else { missing.push(`marks[${i}] ${m.type}: element ${a.ref} is gone or not visible`); ok = false; }
+          if (box) out[key] = { box: annotate.offsetBox(box, a) }; else { missing.push(`marks[${i}] ${m.type}: element ${a.ref} is gone or not visible`); ok = false; }
         }
       }
       if (ok) marks.push(out);
@@ -5075,7 +5075,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'read_page') return input.since_last ? 'Checking what changed on the page' : 'Reading the page';
       if (name === 'close_tab') return `Closing tab ${input.tab_id}`;
       if (name === 'hover') return 'Pointing at an element';
-      if (name === 'annotate') return input.clear === true && !input.marks?.length ? 'Clearing the drawings' : `Drawing ${Array.isArray(input.marks) ? input.marks.length : 0} mark${input.marks?.length === 1 ? '' : 's'} on ${quote(String(this.taskTab()?.title || this.taskTab()?.webContents?.getTitle?.() || 'the page').slice(0, 40))}`;
+      if (name === 'annotate') return input.clear === true && !input.marks?.length ? 'Clearing the drawings' : Array.isArray(input.marks) && input.marks.length && input.marks.every((m) => m?.type === 'write') ? `Writing on ${quote(String(this.taskTab()?.title || this.taskTab()?.webContents?.getTitle?.() || 'the page').slice(0, 40))}` : `Drawing ${Array.isArray(input.marks) ? input.marks.length : 0} mark${input.marks?.length === 1 ? '' : 's'} on ${quote(String(this.taskTab()?.title || this.taskTab()?.webContents?.getTitle?.() || 'the page').slice(0, 40))}`;
       if (name === 'upload_file') return this.uploadLabel(input);
       if (name === 'click_at') return 'Clicking a spot on the page';
       if (name === 'drag') return 'Dragging on the page';
@@ -5931,7 +5931,7 @@ ${prompt}` : prompt), historyImages: [] };
       // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
       const sending = Boolean(svc.isSend?.(input));
       const conAct = connectors.get(input.app)?.actions?.[input.action];
-      const always = connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good, until this chat reads a page
+      const always = connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good; after this chat reads a page, only a private one (a task, an event)
       let via = 'card';
       if (sending) {
         const verdict = sendLib.typedGrant({ typed: run?.chat?.typed || taskScope.getStore()?.chat?.typed || [], standing: (run?.chat || taskScope.getStore()?.chat)?.sendNoAsk === true, args: input.args, replyAddress: names?.replyAddress || '' });
@@ -5944,7 +5944,7 @@ ${prompt}` : prompt), historyImages: [] };
         const warn = sending ? sendLib.warnings({ typed: (run?.chat || taskScope.getStore()?.chat)?.typed || [], args: input.args, replyAddress: names?.replyAddress || '', tainted: Boolean(holder?.tainted) }) : '';
         const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: !always.offer, ...(always.offer ? { alwaysFor: { app: connectors.get(input.app)?.name || input.app, action: conAct.label } } : {}), noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null, ...(sending ? { allowLabel: 'Send', denyLabel: 'Cancel', warn } : {}) });
         if (!answer) throw new Error(sending ? 'The user cancelled, so the email was NOT sent. Ask them what to do instead.' : `The user did not allow that (${title}). Ask them what to do instead.`);
-        if (always.offer && (answer === 'always' || answer?.always === true)) svc.addAlways?.(connectorAlways.keyOf(input.app, input.action)); // "Always allow this action": never after this chat read a page, never a send
+        if (always.offer && (answer === 'always' || answer?.always === true)) svc.addAlways?.(connectorAlways.keyOf(input.app, input.action)); // "Always allow this action": never a send; after this chat read a page, only a private add
         if (answer?.edits) { // the user changed the text on the card: that is what goes
           const next = connectors.applyEdits(input, answer.edits);
           if (next.error) throw new Error(`The text the user edited on the card wasn’t accepted (${next.error}), so nothing was sent. Tell the user.`);

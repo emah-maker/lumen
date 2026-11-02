@@ -1,7 +1,8 @@
 // "Always allow" for connector actions that only ADD something (a task, an event, a draft, a new page): the user may let one
 // "<app>:<action>" skip its card for good. Pure and tiny so the rule can be checked without Electron.
 //   - Only an action the registry marks `adds: true`, and never a send (Gmail send also has gated: true).
-//   - Never in a chat that has read untrusted content (tainted): that one always asks, as MCP tools do.
+//   - In a chat that has read untrusted content (tainted) it asks, as MCP tools do, except an add the registry marks `private: true`
+//     (a task, a calendar event with no guests): it stays in the user's own account, so a page can't send anything out through it.
 //   - The list is settings.json connectorAlways: ["todoist:add_task", ...].
 'use strict';
 
@@ -19,10 +20,10 @@ function addsKeys(connectors) {
 // What the card does for one write. `action` is the registry's action definition.
 //   { offer }: show the Always button   { skip }: don't show a card at all
 function alwaysDecision({ app, name, action, sending = false, tainted = false, list = [] }) {
-  const eligible = Boolean(action?.adds && action.write && !action.gated) && !sending;
+  const eligible = Boolean(action?.adds && action.write && !action.gated) && !sending && (!tainted || action.private === true);
   return {
-    offer: eligible && !tainted,
-    skip: eligible && !tainted && Array.isArray(list) && list.includes(keyOf(app, name)),
+    offer: eligible,
+    skip: eligible && Array.isArray(list) && list.includes(keyOf(app, name)),
   };
 }
 
