@@ -7084,14 +7084,22 @@ async function buildPrivacy(card) {
   renderAllow();
 
 
+
   const blockerNote = status('ad-blocker-status');
   const blockerSel = h('select', { id: 'pref-adBlocker', 'aria-label': 'Ad blocker' },
-    h('option', { value: 'lumen', text: 'Lumen’s built-in blocker' }), h('option', { value: 'ublock', text: 'uBlock Origin Lite' }));
-  const ublockMode = () => st.prefs.adBlocker === 'ublock';
-  blockerSel.value = ublockMode() ? 'ublock' : 'lumen';
-  const ublockAbout = row('While uBlock Origin Lite is on', `It blocks in normal windows; its toolbar button pauses it on a site and opens its settings. Private windows keep Lumen’s blocker (extensions don’t run there). Lumen’s other protections keep working, with these differences: ${UBLOCK_DIFFERENCES.map((d) => d.charAt(0).toLowerCase() + d.slice(1, -1)).join('; ')}.`);
-  ublockAbout.id = 'ad-blocker-ublock-note';
-  ublockAbout.classList.add('warn');
+    ...Object.entries({ lumen: 'Lumen’s built-in blocker', ...UBLOCK_NAMES }).map(([value, text]) => h('option', { value, text })));
+  const inUse = () => (UBLOCK_NAMES[st.prefs.adBlocker] ? st.prefs.adBlocker : 'lumen');
+  const ublockMode = () => inUse() !== 'lumen';
+  blockerSel.value = inUse();
+
+  const aboutRow = (mode) => {
+    const el = row(`While ${UBLOCK_NAMES[mode]} is on`, `It blocks in normal windows; its toolbar button pauses it on a site and opens its settings. Private windows keep Lumen’s blocker (extensions don’t run there). Lumen’s other protections keep working, with these differences: ${UBLOCK_DIFFERENCES.map((d) => d.charAt(0).toLowerCase() + d.slice(1, -1)).join('; ')}.${mode === 'ublock-origin' ? ` ${UBLOCK_ORIGIN_NOTE}` : ''}`);
+    el.id = 'ad-blocker-ublock-note';
+    el.classList.add('warn');
+    el.dataset.mode = mode;
+    return el;
+  };
+  let ublockAbout = aboutRow(ublockMode() ? inUse() : 'ublock');
   const lumenRows = [
     toggle('adblock', 'Block ads and trackers', 'Built-in blocker using uBlock Origin-compatible filter lists.'),
     stackRow('Sites allowed to show ads', 'The blocker is off on these sites.', allowList,
@@ -7100,22 +7108,27 @@ async function buildPrivacy(card) {
         onclick: async () => { const host = allowInput.value.trim(); if (!host) return needSite(allowNote, allowInput); allowNote.textContent = ''; await save('adblockAllow', [...st.prefs.adblockAllow, host], allowInput); allowInput.value = ''; renderAllow(); },
       }), allowNote)),
   ];
-  const paintBlocker = () => { for (const r of lumenRows) r.hidden = ublockMode(); ublockAbout.hidden = !ublockMode(); };
+  const paintBlocker = () => {
+    for (const r of lumenRows) r.hidden = ublockMode();
+    if (ublockMode() && ublockAbout.dataset.mode !== inUse()) { const next = aboutRow(inUse()); ublockAbout.replaceWith(next); ublockAbout = next; }
+    ublockAbout.hidden = !ublockMode();
+  };
   blockerSel.addEventListener('change', async () => {
     const want = blockerSel.value;
-    if (want === 'ublock' && !(await confirmUblock())) { blockerSel.value = 'lumen'; return; }
+    const was = inUse();
+    if (UBLOCK_NAMES[want] && !(await confirmUblock(want))) { blockerSel.value = was; return; }
     blockerSel.disabled = true;
-    blockerNote.textContent = want === 'ublock' ? 'Installing uBlock Origin Lite…' : 'Removing uBlock Origin Lite…';
+    blockerNote.textContent = UBLOCK_NAMES[want] ? `Installing ${UBLOCK_NAMES[want]}…` : `Removing ${UBLOCK_NAMES[was]}…`;
     const saved = await save('adBlocker', want, blockerSel);
     blockerSel.disabled = false;
-    blockerSel.value = ublockMode() ? 'ublock' : 'lumen';
-    blockerNote.textContent = saved ? (ublockMode() ? 'uBlock Origin Lite is on. Its button is in the toolbar.' : 'Lumen’s blocker is on.') : '';
+    blockerSel.value = inUse();
+    blockerNote.textContent = saved ? (ublockMode() ? `${UBLOCK_NAMES[inUse()]} is on. Its button is in the toolbar.` : 'Lumen’s blocker is on.') : '';
     paintBlocker();
   });
-  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'adBlocker') { blockerSel.value = ublockMode() ? 'ublock' : 'lumen'; paintBlocker(); } });
+  window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'adBlocker') { blockerSel.value = inUse(); paintBlocker(); } });
   paintBlocker();
   slots.get('privacy-adblock').append(
-    withKeywords(row('Ad blocker', 'Lumen’s own blocker, or uBlock Origin Lite installed as an extension for you. Open pages reload with the one you choose.', blockerSel, blockerNote), 'ublock ublock origin lite extension'),
+    withKeywords(row('Ad blocker', 'Lumen’s own blocker, or uBlock Origin Lite or uBlock Origin installed as an extension for you. Open pages reload with the one you choose.', blockerSel, blockerNote), 'ublock ublock origin lite extension'),
     ublockAbout,
     ...lumenRows,
   );
@@ -7913,16 +7926,22 @@ const UBLOCK_DIFFERENCES = [
   "Only Google and YouTube get Chrome’s detailed version hints and the dark-mode hint; other sites that ask for them don’t.",
   "The AI’s network log doesn’t see requests made inside embedded frames from other sites."
 ];
-function confirmUblock() {
+
+const UBLOCK_NAMES = { ublock: 'uBlock Origin Lite', 'ublock-origin': 'uBlock Origin' };
+
+const UBLOCK_ORIGIN_NOTE = 'uBlock Origin comes from its author’s GitHub releases (the Chrome Web Store no longer offers it): Lumen checks each download’s signature and looks for a new release once a day.';
+function confirmUblock(mode = 'ublock') {
+  const name = UBLOCK_NAMES[mode];
+  const from = mode === 'ublock-origin' ? 'its author’s GitHub releases (its signature is checked)' : 'the Chrome Web Store';
   return new Promise((resolve) => {
     const dlg = h('dialog', { class: 'confirm-dialog', id: 'ublock-confirm', 'aria-labelledby': 'ublock-confirm-title' },
-      h('h3', { id: 'ublock-confirm-title', text: 'Use uBlock Origin Lite?' }),
-      h('p', { text: 'Lumen installs it from the Chrome Web Store and turns its own blocker off in normal windows; private windows keep Lumen’s. Do Not Track, Global Privacy Control, third-party cookie blocking, tracking-link cleanup, Safe Browsing and Focus mode keep working, with these differences:' }),
+      h('h3', { id: 'ublock-confirm-title', text: `Use ${name}?` }),
+      h('p', { text: `Lumen installs it from ${from} and turns its own blocker off in normal windows; private windows keep Lumen’s. Do Not Track, Global Privacy Control, third-party cookie blocking, tracking-link cleanup, Safe Browsing and Focus mode keep working, with these differences:` }),
       h('ul', { id: 'ublock-confirm-list' }, UBLOCK_DIFFERENCES.map((d) => h('li', { text: d }))),
       h('p', { class: 'note', text: 'You can switch back here at any time: Lumen removes it and turns its own blocker on again.' }),
       h('form', { method: 'dialog', class: 'confirm-buttons' },
         h('button', { value: 'cancel', id: 'ublock-confirm-cancel', text: 'Cancel', autofocus: true }),
-        h('button', { value: 'use', id: 'ublock-confirm-go', text: 'Use uBlock Origin Lite' })));
+        h('button', { value: 'use', id: 'ublock-confirm-go', text: `Use ${name}` })));
     dlg.addEventListener('close', () => { const yes = dlg.returnValue === 'use'; dlg.remove(); resolve(yes); });
     dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close('cancel'); });
     document.body.append(dlg);
