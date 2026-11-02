@@ -1038,8 +1038,8 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .tabs-opt-title { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabs-opt-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabs-opt-badge { margin-left: var(--sp-3); padding: 0 var(--sp-2); border-radius: var(--r-sm); background: var(--accent-soft); color: var(--muted); font-size: var(--fs-xs); }
-.tabs-opt.quick { border-top: 1px solid var(--hairline); border-radius: 0 0 8px 8px; }
-.tabs-opt.quick + .tabs-opt.quick { border-top: none; border-radius: var(--r-md); }
+.tabs-opt.is-quick { border-top: 1px solid var(--hairline); border-radius: 0 0 8px 8px; }
+.tabs-opt.is-quick + .tabs-opt.is-quick { border-top: none; border-radius: var(--r-md); }
 .msg-tabs { margin-top: var(--sp-3); font-size: 11px; opacity: 0.8; }
 .msg-tabs:first-child { margin-top: 0; }
 

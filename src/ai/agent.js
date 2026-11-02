@@ -5935,7 +5935,7 @@ ${prompt}` : prompt), historyImages: [] };
       // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
       const sending = Boolean(svc.isSend?.(input));
       const conAct = connectors.get(input.app)?.actions?.[input.action];
-      const always = connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good, until this chat reads a page
+      const always = connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good; after this chat reads a page, only a private one (a task, an event)
       let via = 'card';
       if (sending) {
         const verdict = sendLib.typedGrant({ typed: run?.chat?.typed || taskScope.getStore()?.chat?.typed || [], standing: (run?.chat || taskScope.getStore()?.chat)?.sendNoAsk === true, args: input.args, replyAddress: names?.replyAddress || '' });
@@ -5948,7 +5948,7 @@ ${prompt}` : prompt), historyImages: [] };
         const warn = sending ? sendLib.warnings({ typed: (run?.chat || taskScope.getStore()?.chat)?.typed || [], args: input.args, replyAddress: names?.replyAddress || '', tainted: Boolean(holder?.tainted) }) : '';
         const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: !always.offer, ...(always.offer ? { alwaysFor: { app: connectors.get(input.app)?.name || input.app, action: conAct.label } } : {}), noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null, ...(sending ? { allowLabel: 'Send', denyLabel: 'Cancel', warn } : {}) });
         if (!answer) throw new Error(sending ? 'The user cancelled, so the email was NOT sent. Ask them what to do instead.' : `The user did not allow that (${title}). Ask them what to do instead.`);
-        if (always.offer && (answer === 'always' || answer?.always === true)) svc.addAlways?.(connectorAlways.keyOf(input.app, input.action)); // "Always allow this action": never after this chat read a page, never a send
+        if (always.offer && (answer === 'always' || answer?.always === true)) svc.addAlways?.(connectorAlways.keyOf(input.app, input.action)); // "Always allow this action": never a send; after this chat read a page, only a private add
         if (answer?.edits) { // the user changed the text on the card: that is what goes
           const next = connectors.applyEdits(input, answer.edits);
           if (next.error) throw new Error(`The text the user edited on the card wasn’t accepted (${next.error}), so nothing was sent. Tell the user.`);
