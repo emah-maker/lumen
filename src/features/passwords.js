@@ -136,9 +136,20 @@ function parseCsv(text) {
   return rows;
 }
 
-// A passwords export -> { logins: [{ site, username, password }], skipped } or { error }. The header row
-// names the columns: url (or website, login_uri), username (or login, login_username) and password (or
-// login_password). A row whose address isn't a web site (an Android app, a plain-http site) is skipped.
+// Where an export came from, by its header row: Google Password Manager / Chrome writes
+// name,url,username,password,note; Safari (File → Export → Passwords) and iCloud Passwords for Windows
+// write Title,URL,Username,Password,Notes,OTPAuth. Only for the preview's wording: every file is read
+// the same way. Notes and one-time-code secrets are not imported (the vault keeps logins only).
+function sourceOf(head) {
+  if (head.includes('otpauth') || (head.includes('title') && head.includes('notes'))) return 'safari';
+  if (head.includes('name') && head.includes('note')) return 'google';
+  return 'other';
+}
+
+// A passwords export -> { logins: [{ site, username, password }], skipped, source } or { error }. The
+// header row names the columns: url (or website, login_uri), username (or login, login_username) and
+// password (or login_password). A row whose address isn't a web site (an Android app, a plain-http
+// site) is skipped.
 function importCsv(text) {
   const rows = parseCsv(text);
   if (!rows.length) return { error: 'empty' };
@@ -158,7 +169,30 @@ function importCsv(text) {
     if (!site || username === null || password === null) { skipped++; continue; }
     logins.push({ site, username, password });
   }
-  return { logins, skipped };
+  return { logins, skipped, source: sourceOf(head) };
+}
+
+// What importing these logins would do, before anything is written. One login per site and username:
+// rows of the file that land on the same one (a Chrome export lists www.x.com and x.com apart; Safari
+// lists a login once per related domain) are merged, the last row winning, and counted as duplicates.
+// Each is then new (add), already saved with that password (same), or saved with another password
+// (replace: the preview asks which to keep). find(site, username) -> the saved login or null.
+function planImport(logins, find) {
+  const byKey = new Map();
+  let duplicates = 0;
+  for (const l of logins) {
+    const key = `${l.site}\n${l.username}`;
+    if (byKey.has(key)) { duplicates++; byKey.delete(key); }
+    byKey.set(key, l);
+  }
+  const add = [];
+  const replace = [];
+  let same = 0;
+  for (const l of byKey.values()) {
+    const had = find(l.site, l.username);
+    if (!had) add.push(l); else if (had.password === l.password) same++; else replace.push(l);
+  }
+  return { add, replace, same, duplicates };
 }
 
 // ---- the vault: every login in one file, encrypted as a whole ----
@@ -234,6 +268,27 @@ function createVault({ file, cipher, now = () => Date.now(), onChange = null }) 
       persist(list.map((e) => (e === had ? next : e)));
       return summary(next);
     },
+    // An import: many logins, written once (one encryption, not one per login). Same rules as upsert.
+    upsertMany(logins) {
+      const list = load();
+      const byKey = new Map(list.map((e) => [`${e.site}\n${e.username}`, e]));
+      const at = now();
+      let created = 0;
+      let updated = 0;
+      for (const { site, username, password } of logins) {
+        const u = cleanUsername(username);
+        const p = cleanPassword(password);
+        if (!validSite(site) || u === null || p === null) throw new Error('Invalid login');
+        const key = `${site}\n${u}`;
+        const had = byKey.get(key);
+        if (!had && byKey.size >= MAX_ENTRIES) throw new Error(`At most ${MAX_ENTRIES} saved passwords`);
+        if (had) byKey.delete(key);
+        byKey.set(key, had ? { ...had, password: p, updated: at } : { id: crypto.randomUUID(), site, username: u, password: p, created: at, updated: at });
+        if (had) updated++; else created++;
+      }
+      if (created || updated) persist([...byKey.values()]);
+      return { created, updated };
+    },
     remove(id) { const list = load(); persist(list.filter((e) => e.id !== id)); },
     // Delete all: the file goes (a broken one too: the user asked for it).
     clear() {
@@ -251,8 +306,8 @@ function createVault({ file, cipher, now = () => Date.now(), onChange = null }) 
 // ---- the runtime, wired by main.js ----
 // deps: { file, cipher, readSettings, writeSettings, t, sendTabs, tabOf(webContents), facts(tab) ->
 //   { isolated, settings, internal, aiTab }, allTabs() -> tabs, popupMenu(template), openSettings(section),
-//   reauth(reason) -> Promise<bool>, confirm({ message, detail, buttons, defaultId }) -> Promise<index>,
-//   notify(message, detail), clipboard, pickCsv() -> Promise<path|null>, outsideDriver() -> bool (a CDP
+//   reauth(reason) -> Promise<bool>, confirm({ message, detail, buttons, defaultId, cancelId }) -> Promise<index>,
+//   notify(message, detail), clipboard, pickCsv() -> Promise<path|null>, trash(path) -> Promise (to the OS Trash), outsideDriver() -> bool (a CDP
 //   client is connected), isSettingsSender(event), now }
 function createPasswords(deps) {
   const now = deps.now || (() => Date.now());
@@ -467,6 +522,12 @@ function createPasswords(deps) {
     return settingsState();
   }
 
+  // Import a passwords export the user picks (Google Password Manager / Chrome, Safari, iCloud Passwords
+  // for Windows, Firefox, Bitwarden): a preview with the counts first, then the merge, then the offer to
+  // move the file to the Trash (it holds every password in plain text). Only the file the user picked
+  // is read: no other app's password store. From Settings and from the ⋯ menu's Import submenu.
+  // -> { cancelled } | { error, message?, skipped? } | { added, updated, unchanged, kept, duplicates,
+  //    skipped, source, turnedOn, deleted, file }
   async function importFile() {
     if (unavailable()) return { error: 'unavailable' };
     const file = await deps.pickCsv();
@@ -478,17 +539,59 @@ function createPasswords(deps) {
     } catch { return { error: 'unreadable' }; }
     const parsed = importCsv(text);
     if (parsed.error) return { error: parsed.error };
-    let added = 0;
-    let updated = 0;
-    let unchanged = 0;
-    try {
-      for (const login of parsed.logins) {
-        const had = vault.find(login.site, login.username);
-        if (had && had.password === login.password) { unchanged++; continue; }
-        if (vault.upsert(login).created) added++; else updated++;
-      }
-    } catch (err) { return { error: 'save', message: err.message, added, updated }; }
-    return { added, updated, unchanged, skipped: parsed.skipped };
+    let plan;
+    try { plan = planImport(parsed.logins, (site, username) => vault.find(site, username)); } catch (err) { return { error: 'save', message: err.message }; }
+    const total = plan.add.length + plan.replace.length + plan.same;
+    if (!total) return { error: 'none', skipped: parsed.skipped };
+
+    // The preview. With logins saved here under another password: keep Lumen's (the default: what was
+    // saved here is usually newer than an export) or take the file's. Closing it cancels.
+    const T = deps.t;
+    const lines = [
+      plan.add.length && T('passwords.import.new', { count: plan.add.length }),
+      plan.same && T('passwords.import.same', { count: plan.same }),
+      plan.replace.length && T('passwords.import.conflict', { count: plan.replace.length }),
+      plan.duplicates && T('passwords.import.duplicates', { count: plan.duplicates }),
+      parsed.skipped && T('passwords.import.skipped', { count: parsed.skipped }),
+      !enabled() && T('passwords.import.turnsOn'),
+    ].filter(Boolean);
+    const buttons = plan.replace.length
+      ? [T('dialog.cancel'), T('passwords.import.keepMine'), T('passwords.import.useFile')]
+      : [T('dialog.cancel'), T('passwords.import.button')];
+    const nothingNew = !plan.add.length && !plan.replace.length;
+    const answer = nothingNew ? 1 : await deps.confirm({
+      message: T(`passwords.import.preview.${parsed.source}`, { count: total }),
+      detail: lines.join('\n'), buttons, defaultId: 1, cancelId: 0,
+    });
+    if (answer !== 1 && answer !== 2) return { cancelled: true };
+    const take = answer === 2 ? [...plan.add, ...plan.replace] : plan.add;
+    let done;
+    try { done = vault.upsertMany(take); } catch (err) { return { error: 'save', message: err.message }; }
+    let turnedOn = false;
+    if (!enabled()) {
+      deps.writeSettings({ ...deps.readSettings(), savePasswords: true });
+      armAll();
+      deps.sendTabs();
+      turnedOn = true;
+    }
+
+    // The export is plain text: suggest moving it to the Trash (the default). Closing the dialog keeps it.
+    let deleted = false;
+    const name = path.basename(file);
+    const del = await deps.confirm({
+      message: nothingNew ? T('passwords.import.allSaved', { count: total }) : T('passwords.import.done', { count: done.created + done.updated }),
+      detail: T('passwords.import.deleteFile', { name }),
+      buttons: [T('passwords.import.keepFile'), T('passwords.import.trashFile')], defaultId: 1, cancelId: 0,
+    });
+    if (del === 1) {
+      try { await deps.trash(file); } catch {}
+      deleted = !fs.existsSync(file);
+      if (!deleted) deps.notify?.(T('passwords.import.trashFailed'), file);
+    }
+    return {
+      added: done.created, updated: done.updated, unchanged: plan.same, kept: answer === 2 ? 0 : plan.replace.length,
+      duplicates: plan.duplicates, skipped: parsed.skipped, source: parsed.source, turnedOn, deleted, file: name,
+    };
   }
 
   // Every channel answers the settings page's own document only (deps.isSettingsSender), on top of
@@ -523,10 +626,10 @@ function createPasswords(deps) {
   }
   const register = (ipcMain) => { for (const channel of Object.keys(handlers)) ipcMain.handle(channel, (event, ...args) => invoke(channel, event, ...args)); };
 
-  return { attach, stateOf, act, filledIn, contextMenuItems, fillLogin, register, invoke, channels: () => Object.keys(handlers), setEnabled, settingsState, unavailable, enabled, vault };
+  return { attach, stateOf, act, filledIn, contextMenuItems, fillLogin, register, invoke, channels: () => Object.keys(handlers), setEnabled, settingsState, unavailable, enabled, importFile, vault };
 }
 
 module.exports = {
-  createPasswords, createVault, verdict, siteOf, validSite, cleanNever, cleanEntries, cleanUsername, cleanPassword, parseCsv, importCsv,
+  createPasswords, createVault, verdict, siteOf, validSite, cleanNever, cleanEntries, cleanUsername, cleanPassword, parseCsv, importCsv, planImport,
   FILE_NAME, MAX_ENTRIES, MAX_PASSWORD, MAX_USERNAME,
 };

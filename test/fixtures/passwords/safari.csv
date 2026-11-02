@@ -1,0 +1,5 @@
+﻿Title,URL,Username,Password,Notes,OTPAuth
+Bank (bank.example),https://bank.example/,alice,fixture-pw-5,,
+example.com,https://example.com/,alice@example.com,fixture-pw-changed,,otpauth://totp/x?secret=FIXTURE
+Mail,mail.example.net,alice,fixture-pw-6,"multi
+line note",

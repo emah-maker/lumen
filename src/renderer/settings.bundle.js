@@ -5415,10 +5415,28 @@ async function buildAi(card) {
 }
 
 
+
+const PASSWORD_IMPORT_ERRORS = {
+  columns: 'That file has no url, username and password columns. Export a CSV from Google Password Manager (passwords.google.com → Settings → Export passwords) or Safari (File → Export → Passwords).',
+  empty: 'That file is empty.', none: 'That file has no web site logins Lumen can save (only apps, or sites without https).',
+  'too-big': 'That file is too big for a passwords export.', unreadable: 'Lumen couldn’t read that file.',
+  unavailable: 'Your system’s secure storage isn’t available, so nothing was imported.',
+};
+async function importPasswords(note) {
+  const r = await S.passwords.importCsv().catch((e) => ({ error: 'save', message: String(e?.message || e).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }));
+  if (r.cancelled) return false;
+  if (r.error) { flash(note, PASSWORD_IMPORT_ERRORS[r.error] || r.message || 'Import failed.', 'err'); return false; }
+  const parts = [`${r.added} new`, r.updated && `${r.updated} updated`, r.unchanged && `${r.unchanged} already saved`, r.kept && `${r.kept} kept as saved in Lumen`,
+    r.duplicates && `${r.duplicates} duplicates merged`, r.skipped && `${r.skipped} skipped (apps, or sites without https)`].filter(Boolean);
+  flash(note, `Imported passwords: ${parts.join(', ')}.${r.turnedOn ? ' Save passwords is on.' : ''} ${r.deleted ? `${r.file} was moved to the Trash.` : `Delete ${r.file} when you can: it isn’t encrypted.`}`, r.deleted ? 'ok' : '');
+  return true;
+}
+
+
 function buildImport(card) {
 
   const importRow = h('div', { class: 'controls', id: 'ai-import' });
-  const importEl = row('Import bookmarks and history', 'From another browser on this computer. Passwords and cookies are not imported.', importRow);
+  const importEl = row('Import bookmarks and history', 'From another browser on this computer. Cookies are not imported; passwords come from a file you export (below).', importRow);
   S.ai.importBrowsers().then((found) => {
     const note = status('import-status');
     note.setAttribute('role', 'status');
@@ -5455,7 +5473,13 @@ function buildImport(card) {
   window.addEventListener('focus', renderDefault);
   const defaultRow = row(tr('settings.default.title', 'Default browser'), tr('settings.default.desc', 'Links you open in other apps (mail, chat, documents) open in your default browser.'), defaultButton);
   defaultRow.querySelector('.text').append(defaultNote);
-  card.append(defaultRow, importEl);
+
+  const pwNote = status('import-passwords-status');
+  pwNote.setAttribute('role', 'status');
+  const pwRow = row(tr('settings.import.passwords', 'Import passwords'), tr('settings.import.passwordsDesc', 'From a file you exported: Google Password Manager or Chrome (passwords.google.com → Settings → Export passwords), or Safari (File → Export → Passwords) and iCloud Passwords. You see what’s in it before anything is saved.'),
+    h('button', { id: 'import-passwords', text: tr('settings.import.passwordsButton', 'Choose File…'), onclick: () => importPasswords(pwNote) }));
+  pwRow.querySelector('.text').append(pwNote);
+  card.append(defaultRow, importEl, pwRow);
   renderDefault(true);
 }
 
@@ -7265,21 +7289,12 @@ async function buildPasswords(card, asked) {
     h('span', { class: 'grow', text: site }),
     h('button', { text: 'Remove', 'aria-label': `Remove ${site}`, onclick: async () => { pw = await P.removeNever(site); renderNever(); } })))
     : [h('span', { class: 'note', text: 'None.' })]));
-  const IMPORT_ERRORS = {
-    columns: 'That file has no url, username and password columns. Export a CSV from Chrome (Password Manager → Settings → Export) or Apple Passwords (File → Export).',
-    empty: 'That file is empty.', 'too-big': 'That file is too big for a passwords export.', unreadable: 'Lumen couldn’t read that file.',
-    unavailable: 'Your system’s secure storage isn’t available, so nothing was imported.',
-  };
   const deleteAll = armedButton(tr('settings.passwords.deleteAll', 'Delete all saved passwords'), tr('settings.passwords.deleteAllSure', 'Delete all? Click again'), async () => { pw = await P.removeAll(); renderLogins(); }, 'danger', 'passwords-delete-all');
   page.append(stackRow('Saved passwords', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask you to confirm first (Touch ID, Windows Hello or your system password).',
     h('div', { class: 'controls' }, search), list,
     h('div', { class: 'controls' }, result,
-      h('button', { id: 'passwords-import', text: 'Import from CSV…', onclick: async () => {
-        const r = await P.importCsv().catch((e) => ({ error: 'save', message: errText(e) }));
-        if (r.cancelled) return;
-        if (r.error) flash(result, IMPORT_ERRORS[r.error] || r.message || 'Import failed.', 'err');
-        else flash(result, `Imported ${r.added} new, ${r.updated} updated${r.unchanged ? `, ${r.unchanged} already saved` : ''}${r.skipped ? `, ${r.skipped} skipped (not a secure web site)` : ''}. Delete the CSV file now: it isn’t encrypted.`);
-        renderLogins();
+      h('button', { id: 'passwords-import', text: 'Import from Google or Safari…', onclick: async () => {
+        if (await importPasswords(result)) renderLogins();
       } }),
       deleteAll)));
   page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));

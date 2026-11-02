@@ -5380,9 +5380,18 @@ ipcMain.handle('import:quiet', (_e, id) => setup.importFrom(String(id || '')));
 
 function importMenu() {
   const found = importer.detectBrowsers();
-  if (!found.length) return [{ label: t('menu.noBrowsers'), enabled: false }];
-  return found.map((b) => ({ label: b.label, click: () => runImport(b.id) }));
+  const browsers = found.length ? found.map((b) => ({ label: b.label, click: () => runImport(b.id) })) : [{ label: t('menu.noBrowsers'), enabled: false }];
+  // [passwords] A file exported from Google Password Manager / Chrome or Safari (features/passwords.js importFile).
+  return [...browsers, { type: 'separator' }, { label: t('menu.importPasswords'), click: () => importPasswordsFromMenu() }];
 }
+async function importPasswordsFromMenu() {
+  const r = await passwords().importFile().catch((err) => ({ error: 'save', message: err.message }));
+  if (r.cancelled) return r;
+  if (r.error) dialogs.showMessageBox(win, { type: 'warning', message: t('passwords.import.failed'), detail: r.message || t(`passwords.import.error.${r.error}`), buttons: [t('dialog.ok')], defaultId: 0, cancelId: 0 }).catch(() => {});
+  else openSettingsPage('passwords'); // (shows what came in)
+  return r;
+}
+if (TEST) { global.__importPasswordsFromMenu = importPasswordsFromMenu; global.__importMenu = () => importMenu().map((i) => ({ label: i.label || '---', run: () => i.click?.() })); }
 
 // ---------- history menu ----------
 
@@ -9558,11 +9567,12 @@ const passwordDeps = () => ({
   popupMenu: (template) => Menu.buildFromTemplate(template).popup({ window: win }),
   openSettings: (section) => openSettingsPage(section),
   reauth: passwordReauth,
-  confirm: async ({ message, detail, buttons, defaultId }) => {
-    if (TEST && global.__passwordsConfirm) return global.__passwordsConfirm({ message, buttons });
-    const { response, cancelled } = await dialogs.showMessageBox(win, { type: 'warning', message, detail, buttons, defaultId, cancelId: defaultId });
-    return cancelled ? defaultId : response;
+  confirm: async ({ message, detail, buttons, defaultId, cancelId = defaultId }) => {
+    if (TEST && global.__passwordsConfirm) return global.__passwordsConfirm({ message, detail, buttons, defaultId, cancelId });
+    const { response, cancelled } = await dialogs.showMessageBox(win, { type: 'warning', message, detail, buttons, defaultId, cancelId });
+    return cancelled ? cancelId : response;
   },
+  trash: (file) => (TEST ? fs.promises.rm(file, { force: true }) : shell.trashItem(file)), // (tests: no Recycle Bin)
   notify: (message, detail) => { dialogs.showMessageBox(win, { type: 'info', message, detail, buttons: [t('dialog.ok')], defaultId: 0, cancelId: 0 }).catch(() => {}); },
   clipboard,
   pickCsv: async () => {

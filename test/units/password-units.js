@@ -238,6 +238,86 @@ module.exports = async function passwordUnits(check) {
   check('runtime: Never for this site is stored validated, and Remove takes it out', P.cleanNever(['example.com', 'bad site', 'example.com', 'lumen://x']).join() === 'example.com'
     && (await call('settings:passwords-never-remove', 'example.com')).never.length === 0, '');
 
+  // ---- importing a Google Password Manager or Safari export (test/fixtures/passwords, no real passwords)
+  const googleCsv = read('test/fixtures/passwords/google.csv');
+  const safariCsv = read('test/fixtures/passwords/safari.csv');
+  const g = P.importCsv(googleCsv);
+  const sf = P.importCsv(safariCsv);
+  check('import: the header tells Google, Safari and other exports apart', g.source === 'google' && sf.source === 'safari' && P.importCsv('url,username,password\nhttps://a.example/,u,p\n').source === 'other', `${g.source} ${sf.source}`);
+  check('import: Google: web logins kept, an Android app, plain http and an empty password skipped', g.logins.length === 3 && g.skipped === 3 && g.logins[2].password === 'fixture,pw-2', JSON.stringify({ n: g.logins.length, skipped: g.skipped }));
+  check('import: Safari: BOM, bare host, a note across lines; notes and OTP secrets never kept', sf.logins.length === 3 && sf.logins[2].site === 'mail.example.net' && !JSON.stringify(sf.logins).includes('FIXTURE') && !JSON.stringify(sf.logins).includes('line note'), JSON.stringify(sf.logins.map((l) => l.site)));
+  let plan = P.planImport(g.logins, () => null);
+  check('import plan: www.example.com and example.com are one login (a duplicate, merged)', plan.add.length === 2 && plan.duplicates === 1 && plan.same === 0 && plan.replace.length === 0, JSON.stringify(plan));
+  const saved = { 'example.com\nalice@example.com': { password: 'fixture-pw-1' } };
+  plan = P.planImport(sf.logins, (site, username) => saved[`${site}\n${username}`] || null);
+  check('import plan: a login saved with another password is a conflict, not a new one', plan.add.length === 2 && plan.replace.length === 1 && plan.replace[0].password === 'fixture-pw-changed', JSON.stringify(plan));
+  plan = P.planImport(g.logins, (site, username) => saved[`${site}\n${username}`] || null);
+  check('import plan: the same password already saved counts as already saved', plan.same === 1 && plan.add.length === 1, JSON.stringify(plan));
+  plan = P.planImport([{ site: 'a.example', username: 'u', password: 'one' }, { site: 'a.example', username: 'u', password: 'two' }], () => null);
+  check('import plan: duplicates with different passwords: the last row wins', plan.add.length === 1 && plan.add[0].password === 'two' && plan.duplicates === 1, JSON.stringify(plan));
+
+  // The whole flow over the runtime: pick -> preview -> merge -> offer to delete the file.
+  const idir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-password-import-'));
+  let isettings = {};
+  let picked = null;
+  const prompts = [];
+  let answers = [];
+  const trashed = [];
+  const irt = P.createPasswords({
+    file: path.join(idir, P.FILE_NAME), cipher, readSettings: () => ({ ...isettings }), writeSettings: (v) => { isettings = v; },
+    t: (key, vars) => (vars ? `${key} ${JSON.stringify(vars)}` : key), sendTabs: () => {}, tabOf: () => null, facts: () => ({}), allTabs: () => [],
+    popupMenu: () => {}, openSettings: () => {}, reauth: async () => true, notify: () => {}, clipboard: clip, outsideDriver: () => false, isSettingsSender: () => true,
+    pickCsv: async () => picked, confirm: async (opts) => { prompts.push(opts); return answers.shift() ?? opts.cancelId; },
+    trash: async (f) => { trashed.push(f); fs.rmSync(f, { force: true }); },
+  });
+  const copyFixture = (name) => { const to = path.join(idir, name); fs.copyFileSync(path.join(root, 'test/fixtures/passwords', name), to); return to; };
+  picked = copyFixture('google.csv');
+  answers = [0];
+  let r = await irt.importFile();
+  check('import flow: the preview comes first and Cancel saves nothing', r.cancelled && prompts.length === 1 && irt.vault.count() === 0 && !fs.existsSync(path.join(idir, P.FILE_NAME)) && isettings.savePasswords === undefined, JSON.stringify(r));
+  check('import flow: the preview names the source and shows the count, new, duplicates and skipped', /preview\.google \{"count":2\}/.test(prompts[0].message)
+    && /import\.new \{"count":2\}/.test(prompts[0].detail) && /duplicates \{"count":1\}/.test(prompts[0].detail) && /skipped \{"count":3\}/.test(prompts[0].detail) && /turnsOn/.test(prompts[0].detail)
+    && prompts[0].cancelId === 0 && prompts[0].buttons.length === 2, JSON.stringify(prompts[0]));
+  prompts.length = 0;
+  answers = [1, 0];
+  r = await irt.importFile();
+  const onDiskImport = fs.readFileSync(path.join(idir, P.FILE_NAME));
+  check('import flow: Import saves them encrypted (no password on disk) and turns Save passwords on', r.added === 2 && r.duplicates === 1 && r.skipped === 3 && r.turnedOn && isettings.savePasswords === true
+    && irt.vault.count() === 2 && !['fixture-pw-1', 'fixture,pw-2', 'alice@example.com'].some((x) => onDiskImport.includes(Buffer.from(x))), JSON.stringify(r));
+  check('import flow: then it suggests deleting the plain-text file (Move to Trash the default, closing keeps it)', prompts.length === 2 && /deleteFile \{"name":"google.csv"\}/.test(prompts[1].detail)
+    && prompts[1].defaultId === 1 && prompts[1].cancelId === 0 && /trashFile/.test(prompts[1].buttons[1]) && !r.deleted && fs.existsSync(picked) && !trashed.length, JSON.stringify(prompts[1]));
+  prompts.length = 0;
+  picked = copyFixture('safari.csv');
+  answers = [1, 1];
+  r = await irt.importFile();
+  check('import flow: a conflict offers Keep Lumen\'s (the default) or Use the File\'s', prompts[0].buttons.length === 3 && prompts[0].defaultId === 1 && /conflict \{"count":1\}/.test(prompts[0].detail) && /preview\.safari/.test(prompts[0].message), JSON.stringify(prompts[0]));
+  check('import flow: Keep Lumen\'s adds the new ones and leaves the saved password alone', r.added === 2 && r.updated === 0 && r.kept === 1 && irt.vault.find('example.com', 'alice@example.com').password === 'fixture-pw-1' && irt.vault.count() === 4, JSON.stringify(r));
+  check('import flow: Move to Trash removes the export', r.deleted && trashed.length === 1 && !fs.existsSync(picked), JSON.stringify(r));
+  prompts.length = 0;
+  picked = copyFixture('safari.csv');
+  answers = [2, 0];
+  r = await irt.importFile();
+  check('import flow: Use the File\'s replaces only the conflicting password', r.added === 0 && r.updated === 1 && r.unchanged === 2 && irt.vault.find('example.com', 'alice@example.com').password === 'fixture-pw-changed' && irt.vault.count() === 4, JSON.stringify(r));
+  prompts.length = 0;
+  answers = [0];
+  r = await irt.importFile();
+  check('import flow: a file with nothing new skips the preview and still suggests deleting it', !r.cancelled && r.added === 0 && r.unchanged === 3 && prompts.length === 1 && /allSaved \{"count":3\}/.test(prompts[0].message), JSON.stringify({ r, prompts }));
+  picked = path.join(idir, 'apps.csv');
+  fs.writeFileSync(picked, 'name,url,username,password,note\nApp,android://x@com.app/,u,p,\n');
+  r = await irt.importFile();
+  check('import flow: a file with no web logins says so, with no preview', r.error === 'none' && r.skipped === 1, JSON.stringify(r));
+  available = false;
+  r = await irt.importFile();
+  check('import flow: without OS encryption nothing is imported (no file is even asked for)', r.error === 'unavailable', JSON.stringify(r));
+  available = true;
+  picked = null;
+  check('import flow: no file picked: nothing happens', (await irt.importFile()).cancelled === true, '');
+  check('import: upsertMany writes once for the whole file', (() => { let writes = 0; const v = P.createVault({ file: path.join(idir, 'many.bin'), cipher, onChange: () => { writes++; } }); const res = v.upsertMany(g.logins.concat(sf.logins)); return writes === 1 && res.created === 4 && res.updated === 2; })(), '');
+  check('import: from the ⋯ menu\'s Import submenu and from Settings (General and Saved passwords)', /label: t\('menu\.importPasswords'\), click: \(\) => importPasswordsFromMenu\(\)/.test(read('src/main.js'))
+    && /id: 'import-passwords'/.test(read('src/renderer/settings.js')) && /id: 'passwords-import'/.test(read('src/renderer/settings.js')), '');
+  check('import: only a file the user picks: Chrome\'s Login Data and other stores are never read', !/Login Data|logins\.json|key4\.db|find-generic-password|CredRead/.test(read('src/features/passwords.js')), '');
+  fs.rmSync(idir, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
+
   // ---- isolation from the AI (static): nothing AI-facing reaches the vault
   for (const file of ['src/ai/agent.js', 'mcp.js', 'src/automation/mcp-http.js', 'src/ai/snapshot.js', 'src/ai/page-scripts.js', 'src/automation/automation.js', 'src/automation/cdp-inproc.js', 'src/ai/claude-code.js', 'src/ai/grok-build.js',
     'src/features/ai-agents.js', 'src/features/background-runner.js', 'src/features/background-agents.js', 'src/features/tabs-ask.js', 'src/features/mcp-client.js', 'src/features/chat-store.js', 'src/features/skills.js']) {
