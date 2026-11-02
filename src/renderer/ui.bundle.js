@@ -7722,7 +7722,7 @@ function startChat() {
     prompt.setAttribute('aria-autocomplete', 'list');
     picker.replaceChildren(...rows.map((row, i) => {
       const el = document.createElement('div');
-      el.className = `tabs-opt ${row.kind}${i === index ? ' active' : ''}`;
+      el.className = `tabs-opt is-${row.kind}${i === index ? ' active' : ''}`;
       el.id = `tabs-opt-${i}`;
       el.setAttribute('role', 'option');
       el.setAttribute('aria-selected', String(i === index));
