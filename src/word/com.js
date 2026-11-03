@@ -47,6 +47,7 @@ function createWordHost(deps = {}) {
     insert: (a) => call('insert', a),
     replace: (a) => call('replace', a),
     style: (a) => call('style', a),
+    format: (a) => call('format', a, LONG_MS), // (a table of contents and a whole document's paragraphs take a while)
     table: (a) => call('table', a, LONG_MS),
     image: (a) => call('image', a, LONG_MS),
     comment: (a) => call('comment', a),

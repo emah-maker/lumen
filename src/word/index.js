@@ -182,7 +182,7 @@ function createWord(deps = {}) {
       return formatRead(got, ref.name, 'file');
     }
 
-    if ((A === 'new' || A === 'insert' || A === 'table') && v.path && !(await wordHasIt(v))) {
+    if ((A === 'new' || A === 'insert' || A === 'table' || A === 'format') && v.path && !(await wordHasIt(v))) {
       if (win && (mode() !== 'file' || !isDocx(v.path)) && (await installed())) { // (file: a .docx is changed in the file itself; any other kind still needs Word)
         if (A !== 'new') await openThen(v, ctx); // Word is there: the document is opened in it and changed there
         else return newViaWord(v, ctx);
@@ -239,6 +239,7 @@ function createWord(deps = {}) {
     switch (A) {
       case 'insert': { const r = await H.insert({ doc: target, at: v.at, heading: v.heading, text: v.text, style: v.style, bold: v.bold, italic: v.italic }); return done(`Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
       case 'replace': { const r = await H.replace({ doc: target, find: v.find, replace: v.replace }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
+      case 'format': { const r = await H.format({ doc: target, ...formatFields(v) }); return done(`${formatDone(r.done || {}, d.name, v, false)} Not saved yet.${d.tracking ? '' : ' Tracked changes are off, so the edit is not marked.'}`); }
       case 'style': { const r = await H.style({ doc: target, find: v.find, style: v.style, bold: v.bold, italic: v.italic }); return done(r.formatted ? `Formatted ${r.formatted} match${r.formatted === 1 ? '' : 'es'} in ${d.name}.` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed.`); }
       case 'table': { const r = await H.table({ doc: target, at: v.at, heading: v.heading, rows: v.rows }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
       case 'image': { checkImage(v.image); await H.image({ doc: target, at: v.at, heading: v.heading, image: v.image }); return done(`Added the picture ${spec.baseName(v.image)} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
@@ -248,6 +249,24 @@ function createWord(deps = {}) {
     }
   }
 
+  // format: the fields formatDocx and the helper take, and what was done, in words.
+  const formatFields = (v) => { const { action, path, doc, ...f } = v; void action; void path; void doc; return f; };
+  function formatDone(r, name, v, file) {
+    const out = [];
+    const q = (t) => `“${spec.clip(t, 40)}”`;
+    if (r.headings) out.push(`styled ${r.headings} heading${r.headings === 1 ? '' : 's'}`);
+    if (r.toc) out.push(r.toc.already ? (file ? 'the table of contents was already there; Word updates it when the document opens' : 'updated the table of contents that was already there') : `added a table of contents${r.toc.title ? ` under ${q(r.toc.title)}` : ''}${r.toc.replaced ? ` in place of the typed list (${r.toc.replaced} line${r.toc.replaced === 1 ? '' : 's'})` : ''}${file ? ' (Word fills it in from the Heading 1 to 3 paragraphs when the document opens: it asks to update fields)' : ' from the Heading 1 to 3 paragraphs'}`);
+    if (r.breaks) {
+      if (r.breaks.added?.length) out.push(`page break${r.breaks.added.length === 1 ? '' : 's'} before ${r.breaks.added.map(q).join(', ')}`);
+      if (r.breaks.had?.length) out.push(`${r.breaks.had.map(q).join(', ')} already start${r.breaks.had.length === 1 ? 's' : ''} a page`);
+    }
+    if (r.text) {
+      const what = [v.font && `font ${v.font}`, v.size && `size ${v.size} pt`, v.line !== undefined && (v.line > 5 ? `${v.line} pt lines` : `${v.line} line spacing`), v.before !== undefined && `${v.before} pt before`, v.after !== undefined && `${v.after} pt after`].filter(Boolean).join(', ');
+      out.push(`${what} for ${r.text.style ? `the ${r.text.style} style` : r.text.find ? `${r.text.paragraphs ?? 'the'} ${file ? 'paragraph' : 'place'}${r.text.paragraphs === 1 ? '' : 's'} with ${q(r.text.find)}` : 'the whole document (Normal and the headings)'}`);
+    }
+    if (r.sections) out.push(`${[v.margins && 'margins', v.orientation].filter(Boolean).join(' and ')} in ${r.sections} section${r.sections === 1 ? '' : 's'}`);
+    return `Formatted ${name}: ${out.join('; ') || 'nothing needed changing'}.`;
+  }
   const placeText = (v) => (v.at === 'start' ? ' at the start' : v.at === 'after' ? ` after “${spec.clip(v.heading, 40)}”` : v.at === 'section_end' ? ` at the end of “${spec.clip(v.heading, 40)}”` : ' at the end');
   function checkImage(p) {
     const real = checkFile(p);
@@ -303,10 +322,11 @@ function createWord(deps = {}) {
     const op = A === 'insert' ? { insert: { at: v.at, heading: v.heading, text: v.text, style: v.style } } : { table: { at: v.at, heading: v.heading, rows: v.rows } };
     cardUse(ctx, ref, spec.stepLabel(v, ref.name), { com: false });
     const before = (await docx().readDocx(buf, { budget: 1e6 })).text.split(String.fromCharCode(10));
-    const r = await docx().editDocx(buf, op, { track: true });
+    const r = A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
     writeAtomic(real, r.buf);
     try { await cardChanged(ctx, ref, { lines: require('./card').pageAround(before, (await docx().readDocx(r.buf, { budget: 1e6 })).text.split(String.fromCharCode(10))) }); } catch { /* the preview is a courtesy */ }
     noteRead(ctx, ref.key);
+    if (A === 'format') return `${formatDone(r.done, ref.name, v, true)} Saved in the file; new text, page breaks and removed lines are tracked changes, and style and page changes are not.`;
     return A === 'insert' ? `Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${ref.name}${placeText(v)} (saved in the file, as a tracked change).` : `Added a table (${r.rows} rows, ${r.columns} columns) to ${ref.name}${placeText(v)} (saved in the file, as a tracked change).`;
   }
 

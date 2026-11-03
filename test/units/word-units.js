@@ -33,7 +33,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
   // ---- validation and marshalling
   {
     const v = (i) => spec.validate(i);
-    check('actions: the fourteen actions are the whole list', J(spec.ACTIONS) === J(['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show']));
+    check('actions: the fifteen actions are the whole list', J(spec.ACTIONS) === J(['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show']));
     check('validate: an unknown action, no input, an array are refused with a plain sentence', /must be one of/.test(throws(() => v({ action: 'delete' }))) && /Give an action/.test(throws(() => v(null))) && /Give an action/.test(throws(() => v([]))));
     check('validate: list / save / show need nothing', v({ action: 'list' }).action === 'list' && v({ action: 'save' }).action === 'save' && v({ action: 'show', doc: 'Report.docx' }).doc === 'Report.docx');
     for (const text of NASTY) {
@@ -61,7 +61,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('limits: text 60000, table 200 x 30 with cells 2000, comment 4000', throws(() => v({ action: 'insert', text: 'x'.repeat(60001) })) && throws(() => v({ action: 'table', rows: Array.from({ length: 201 }, () => ['a']) })) && throws(() => v({ action: 'table', rows: [Array.from({ length: 31 }, () => 'a')] })) && throws(() => v({ action: 'table', rows: [['x'.repeat(2001)]] })) && throws(() => v({ action: 'comment', find: 'a', text: 'x'.repeat(4001) })));
     check('table: ragged rows are padded, numbers become text, text must be a list of lists', J(v({ action: 'table', rows: [['a', 'b'], [1]] }).rows) === J([['a', 'b'], ['1', '']]) && throws(() => v({ action: 'table', rows: 'a,b' })) && throws(() => v({ action: 'table', rows: ['a'] })));
     check('track: on must be a boolean; read: offset a whole number', throws(() => v({ action: 'track' })) && throws(() => v({ action: 'track', on: 'yes' })) && v({ action: 'track', on: true }).on === true && throws(() => v({ action: 'read', offset: -1 })) && throws(() => v({ action: 'read', offset: 1.5 })));
-    check('kinds: list and read are reads; insert, replace, style, table, image, comment, track are edits; save and save_as are saves', ['list', 'read'].every((a) => spec.kind(a) === 'read') && ['insert', 'replace', 'style', 'table', 'image', 'comment', 'track'].every((a) => spec.kind(a) === 'edit') && spec.kind('save') === 'save' && spec.kind('save_as') === 'save' && spec.kind('open') === 'open');
+    check('kinds: list and read are reads; insert, replace, style, format, table, image, comment, track are edits; save and save_as are saves', ['list', 'read'].every((a) => spec.kind(a) === 'read') && ['insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track'].every((a) => spec.kind(a) === 'edit') && spec.kind('save') === 'save' && spec.kind('save_as') === 'save' && spec.kind('open') === 'open');
     check('wrapper: document text is wrapped as untrusted, with a literal wrapper tag defanged', /^<untrusted_page_content source="word: Report.docx">/.test(spec.wrap('hi', 'Report.docx')) && !/<untrusted_page_content source="x">/.test(spec.wrap(NASTY[7], 'a')) && !spec.wrap('x', 'a"<b>').includes('"<b>'));
     check('labels: readable steps (the document, what, where)', spec.stepLabel({ action: 'insert', doc: 'Report.docx', at: 'after', heading: 'Results', text: 'a\nb\nc' }) === 'Writing in Report.docx: adding 3 paragraphs after “Results”' && spec.stepLabel({ action: 'replace', find: 'colour', replace: 'color' }, 'Essay.docx') === 'Editing Essay.docx: replacing “colour” with “color”' && /Saving Report.docx as Out.pdf/.test(spec.stepLabel({ action: 'save_as', doc: 'Report.docx', path: 'C:\\x\\Out.pdf' })) && spec.stepLabel({ action: 'read', path: 'C:\\x\\Memo (1).docx' }) === 'Reading Memo (1).docx' && spec.stepLabel({ action: 'table', rows: [['a'], ['b']] }, 'R.docx') === 'Writing in R.docx: adding a table of 2 rows at the end');
   }
@@ -85,7 +85,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const cliDef = agent.cliWordToolDefs({ cliWord: true })[0];
     check('CLI engines: the word tool they are given keeps offset, so a long document can be paged', Boolean(cliDef?.input_schema?.properties?.offset) && Boolean(cliDef?.input_schema?.properties?.replace), J(Object.keys(cliDef?.input_schema?.properties || {})));
     const ag = read('src/ai/agent.js');
-    check('lists: tab-free; list / read / open taint web actions (app only); every acting action is in the hands-off list', /TAB_FREE_TOOLS = new Set\([^)]*'word'/.test(ag) && /WORD_READS = new Set\(\['list', 'read', 'open'\]\)/.test(ag) && /WORD_ACTING = new Set\(\['open', 'new', 'show', 'insert', 'replace', 'style', 'table', 'image', 'comment', 'track', 'save', 'save_as'\]\)/.test(ag));
+    check('lists: tab-free; list / read / open taint web actions (app only); every acting action is in the hands-off list', /TAB_FREE_TOOLS = new Set\([^)]*'word'/.test(ag) && /WORD_READS = new Set\(\['list', 'read', 'open'\]\)/.test(ag) && /WORD_ACTING = new Set\(\['open', 'new', 'show', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as'\]\)/.test(ag));
     check('hands-off: a changing Word action is refused when the user does not let the AI act, reading still works', /name === 'word' && WORD_ACTING\.has/.test(ag) && new Agent({ handsOff: () => true }).handsOffCheck !== undefined);
     let msg = null;
     try { new Agent({ handsOff: () => true, bypassPermissions: () => false }).handsOffCheck('word', { action: 'insert' }); } catch (e) { msg = e.message; }
@@ -94,7 +94,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('hands-off: insert is refused with the reason, read goes through', /Hands-off mode/.test(msg) && msg2 === null, J([msg, msg2]));
     check('approval: Word cards are "app" cards, which Bypass permissions answers like any other card (Always only where src/word offers it)', /action: 'app', who: gate\.who, title: card\.title, args: card\.args, noAlways: card\.noAlways !== false/.test(ag) && /if \(action !== 'upload-pick' && !noBypass && this\.bypassOn\(\)\)/.test(ag));
     check('hands: the tool is refused for outside agents and background runs (nobody to ask)', /gate\.external \|\| gate\.noAsk\) throw new Error\('Using Word needs the user/.test(ag));
-    check('plan mode: only list and read run while planning', planMode.planToolError('word', { action: 'read' }) === null && planMode.planToolError('word', { action: 'list' }) === null && planMode.planToolError('word', { action: 'insert' }) !== null && planMode.planToolError('word', { action: 'save_as' }) !== null);
+    check('plan mode: only list and read run while planning', planMode.planToolError('word', { action: 'read' }) === null && planMode.planToolError('word', { action: 'list' }) === null && planMode.planToolError('word', { action: 'insert' }) !== null && planMode.planToolError('word', { action: 'format', toc: true }) !== null && planMode.planToolError('word', { action: 'save_as' }) !== null);
     check('step label: the agent describes a Word step in words', await agent.describeStep('word', { action: 'insert', doc: 'Report.docx', at: 'after', heading: 'Results', text: 'a\nb\nc' }) === 'Writing in Report.docx: adding 3 paragraphs after “Results”');
   }
 
@@ -121,6 +121,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       insert: async (a) => { store.calls.push(['insert', a]); return { doc: 'x', paragraphs: String(a.text).split('\n').length }; },
       replace: async (a) => { store.calls.push(['replace', a]); return { replaced: 3, capped: false }; },
       style: async (a) => { store.calls.push(['style', a]); return { formatted: 1 }; },
+      format: async (a) => { store.calls.push(['format', a]); return { doc: 'x', done: { toc: { replaced: 2, title: 'Contents' }, breaks: { added: ['Abstract'], had: [] }, sections: 1 } }; },
       table: async (a) => { store.calls.push(['table', a]); return { rows: a.rows.length, columns: a.rows[0].length }; },
       image: async (a) => { store.calls.push(['image', a]); return {}; },
       comment: async (a) => { store.calls.push(['comment', a]); return {}; },
@@ -644,6 +645,127 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const r = makeRig({ docs: [{ name: 'Lab2.docx', path: url, active: true, saved: true, tracking: false, paragraphs: 9, text: 'a' }] });
     const bad = await rejects(() => r.word.run({ action: 'replace', find: 'Lab Section:', new_text: 'Lab Section: 7' }, r.ctx));
     check('misnamed replace: refused before anything is asked or changed', /does not take new_text/.test(bad || '') && !r.store.calls.some((c) => c[0] === 'replace') && !r.store.cards.length, bad);
+  }
+
+
+  // ---- format: fonts and spacing through styles.xml, margins through w:sectPr, page breaks, heading styles and a real table of contents
+  {
+    const v = (i) => spec.validate(i);
+    const all = v({ action: 'format', font: 'Calibri', line_spacing: 1.5, margins: 'normal', page_break_before: ['Table of Contents', 'Abstract', 'Introduction'], toc: true, headings: ['# Abstract', '## Methods'] });
+    check('format: the user\'s request is one call (font, 1.5 lines, normal margins, three page breaks, headings, a table of contents)', all.font === 'Calibri' && all.line === 1.5 && J(all.margins) === J({ top: 1, right: 1, bottom: 1, left: 1 }) && all.breaks.length === 3 && all.toc === true && J(all.headings) === J([{ text: 'Abstract', level: 1 }, { text: 'Methods', level: 2 }]), J(all));
+    check('format: margins read as presets or inches (one, two or four numbers)', J(v({ action: 'format', margins: 'narrow' }).margins) === J({ top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 }) && J(v({ action: 'format', margins: '1 1.25' }).margins) === J({ top: 1, right: 1.25, bottom: 1, left: 1.25 }) && J(v({ action: 'format', margins: '1in 0.5in 1in 0.75in' }).margins) === J({ top: 1, right: 0.5, bottom: 1, left: 0.75 }) && v({ action: 'format', margins: 1 }).margins.top === 1);
+    const errs = [
+      [{ action: 'format' }, /Give something to change/],
+      [{ action: 'format', margins: 'huge' }, /margins must be normal/],
+      [{ action: 'format', line_spacing: 5.5 }, /multiple of a line .* or an exact height/],
+      [{ action: 'format', font: 'Arial', style: 'Normal', find: 'x' }, /style or find, not both/],
+      [{ action: 'format', style: 'Heading 1' }, /give one of those/],
+      [{ action: 'format', font: 'Calibri"/><w:b/>' }, /font must be a font name/],
+      [{ action: 'format', heading: 'Contents' }, /needs toc: true/],
+      [{ action: 'format', page_break_before: [''] }, /list of paragraph texts/],
+      [{ action: 'format', font: 'Arial', fontSize: 12 }, /format does not take fontSize/],
+    ];
+    const bad = errs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+    check('format: every bad argument is refused with a sentence that says what to send', !bad.length, J(bad.map(([i]) => [i, throws(() => v(i))])));
+    check('format: the step says what changes', spec.stepLabel({ action: 'format', font: 'Calibri', line_spacing: 1.5, margins: 'normal', page_break_before: ['a', 'b', 'c'], toc: true }, 'Lab2.docx') === 'Formatting Lab2.docx: font Calibri, 1.5 line spacing, margins normal, 3 page breaks, a table of contents');
+    const tool = requestFor(DEFAULT_MODEL && { model: DEFAULT_MODEL }, Object.assign([{ role: 'user', content: 'x' }], { settings: { model: DEFAULT_MODEL } }), undefined, { word: true }).tools.find((t) => t.name === 'word');
+    check('format: the tool lists the action and its fields (and the CLI engines get them)', tool.input_schema.properties.action.enum.includes('format') && ['font', 'size', 'line_spacing', 'space_before', 'space_after', 'margins', 'orientation', 'page_break_before', 'headings', 'toc'].every((k) => tool.input_schema.properties[k]) && Boolean(new Agent({}).cliWordToolDefs({ cliWord: true })[0].input_schema.properties.page_break_before));
+
+    // A strict well-formedness check (the reader here is forgiving on purpose): balanced tags, no repeated attribute, no bare &.
+    const wellFormed = (x) => {
+      const stack = [];
+      const re = /<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<(\/?)([A-Za-z][\w.:-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+      let m;
+      while ((m = re.exec(x))) {
+        if (!m[2]) continue;
+        if (m[1]) { if (stack.pop() !== m[2]) return `</${m[2]}> at ${m.index}`; continue; }
+        const names = [...m[3].matchAll(/\s([\w:.-]+)\s*=/g)].map((a) => a[1]);
+        if (new Set(names).size !== names.length) return `repeated attribute in ${m[0].slice(0, 80)}`;
+        if (!m[4]) stack.push(m[2]);
+      }
+      if (stack.length) return `unclosed ${stack.join(',')}`;
+      if (/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-f]+;)/i.test(x)) return 'a bare &';
+      return null;
+    };
+    const partsOf = async (buf) => { const z = createZipReader(buf, { root: 'word/document.xml' }); const out = {}; for (const e of docx.centralEntries(buf)) if (/\.(xml|rels)$/.test(e.name)) out[e.name] = await z.text(e.name); return out; };
+    const valid = async (buf) => { const p = await partsOf(buf); const bad2 = Object.entries(p).map(([n, x]) => [n, wellFormed(x)]).filter(([, e]) => e); const rd = await docx.readDocx(buf); return bad2.length ? J(bad2) : rd.total > 0 ? null : 'no blocks'; };
+    const setPart = (buf, name, text) => docx.buildZip([...docx.centralEntries(buf).filter((e) => e.name !== name), { name, data: Buffer.from(text, 'utf8') }]);
+    // a lab report as the user had it: a title, a typed contents list, then the sections, one of them not styled as a heading
+    const report = async ({ settings = true } = {}) => {
+      let b = docx.newDocx();
+      for (const [t, style] of [['Lab 2 Report', 'Title'], ['Table of Contents', null], ['Abstract\t1', null], ['', null], ['Introduction\t2', null], ['Methods..........3', null], ['Abstract', null], ['Short summary.', null], ['Introduction', 'Heading 1'], ['Body text & more.', null], ['Methods', null], ['More text.', null]]) b = (await docx.editDocx(b, { insert: { at: 'end', text: t, style } })).buf;
+      const p = await partsOf(b);
+      b = setPart(b, 'word/document.xml', p['word/document.xml'].replace('w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"', 'w:top="1800" w:right="1800" w:bottom="1800" w:left="1800"').replace('<w:t xml:space="preserve">Body text &amp; more.</w:t>', '<w:t xml:space="preserve">Body text &amp; more.</w:t></w:r><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/></w:rPr><w:t xml:space="preserve"> Old font.</w:t>'));
+      b = setPart(b, 'word/styles.xml', p['word/styles.xml'].replace('<w:rPr><w:b/><w:sz w:val="32"/></w:rPr>', '<w:rPr><w:rFonts w:asciiTheme="majorHAnsi" w:hAnsiTheme="majorHAnsi" w:cstheme="majorBidi"/><w:b/><w:sz w:val="32"/></w:rPr>')); // (a heading in the theme's heading font, as Word's own template has)
+      if (settings) {
+        b = setPart(b, 'word/settings.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:zoom w:percent="100"/><w:defaultTabStop w:val="720"/><w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat><w:decimalSymbol w:val="."/></w:settings>`);
+        const q = await partsOf(b);
+        b = setPart(b, 'word/_rels/document.xml.rels', q['word/_rels/document.xml.rels'].replace('</Relationships>', '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/></Relationships>'));
+        b = setPart(b, '[Content_Types].xml', q['[Content_Types].xml'].replace('</Types>', '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/></Types>'));
+      }
+      return b;
+    };
+    const base = await report();
+    check('format fixture: the lab report is a valid package', (await valid(base)) === null, await valid(base));
+    const f1 = spec.validate({ action: 'format', font: 'Calibri', line_spacing: 1.5, margins: 'normal', page_break_before: ['Table of Contents', 'Abstract', 'Introduction'], toc: true, headings: ['# Abstract', '# Methods'] });
+    const { action: _a, ...fields } = f1; void _a;
+    const out = await docx.formatDocx(base, fields, { track: false });
+    const p = await partsOf(out.buf);
+    const doc = p['word/document.xml']; const st = p['word/styles.xml']; const se = p['word/settings.xml'];
+    check('format (file): the result is a valid package that still reads', (await valid(out.buf)) === null, await valid(out.buf));
+    const nm = /<w:style w:type="paragraph" w:default="1" w:styleId="Normal">[\s\S]*?<\/w:style>/.exec(st)?.[0] || '';
+    check('format (file): the font goes into the styles (the defaults, Normal, and every style that named another font, headings too), not onto every run', /<w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"\/>/.test(st) && /<w:rFonts w:ascii="Calibri"/.test(nm) && [...st.matchAll(/<w:rFonts\b[^>]*\/>/g)].every((m) => m[0] === '<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/>') && !/Times New Roman/.test(doc) && !/<w:r><w:rPr><w:rFonts/.test(doc), nm);
+    check('format (file): 1.5 line spacing is w:line="360" w:lineRule="auto" in the defaults and Normal, in schema order (pPr before rPr)', /<w:pPrDefault><w:pPr><w:spacing [^>]*w:line="360" w:lineRule="auto"/.test(st) && /<w:pPr><w:spacing w:line="360" w:lineRule="auto"\/><\/w:pPr><w:rPr>/.test(nm), nm);
+    check('format (file): normal margins rewrite the section\'s w:pgMar (1800 -> 1440 twips), keeping header, footer and gutter, after w:pgSz', /<w:sectPr><w:pgSz[^>]*\/><w:pgMar [^>]*\/><\/w:sectPr>/.test(doc) && /<w:pgMar[^>]*w:top="1440"[^>]*\/>/.test(doc) && /<w:pgMar[^>]*w:left="1440"/.test(doc) && /<w:pgMar[^>]*w:header="720"[^>]*w:gutter="0"/.test(doc) && !/1800/.test(doc), (/<w:sectPr>[\s\S]*<\/w:sectPr>/.exec(doc) || [''])[0]);
+    const order = (x, a, b) => x.indexOf(a) >= 0 && x.indexOf(a) < x.indexOf(b);
+    const brk = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+    check('format (file): a page-break paragraph (w:br w:type="page") goes right before "Table of Contents", the "Abstract" section (not its typed entry) and "Introduction"', doc.split(brk).length - 1 === 3 && /<w:br w:type="page"\/><\/w:r><\/w:p><w:p><w:pPr><w:pStyle w:val="Heading1"\/><\/w:pPr><w:r><w:t xml:space="preserve">Abstract</.test(doc) && new RegExp(`${brk}<w:p><w:r><w:t xml:space="preserve">Table of Contents<`).test(doc) && J(out.done.breaks) === J({ added: ['Table of Contents', 'Abstract', 'Introduction'], had: [] }), J(out.done.breaks));
+    check('format (file): the headings it names get Heading 1 (pStyle first in pPr), so the table of contents finds them', (doc.match(/<w:pStyle w:val="Heading1"\/>/g) || []).length === 3 && /w:styleId="Heading1"/.test(st) && out.done.headings === 2);
+    check('format (file): a real TOC field (begin, marked dirty / instrText TOC \\o "1-3" \\h \\z \\u / separate / end) under the title, in place of the typed list', /<w:fldChar w:fldCharType="begin" w:dirty="true"\/><\/w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u <\/w:instrText><\/w:r><w:r><w:fldChar w:fldCharType="separate"\/>[\s\S]*?<w:fldChar w:fldCharType="end"\/>/.test(doc) && order(doc, 'Table of Contents<', 'TOC \\o') && !/Abstract<\/w:t><\/w:r><w:r><w:tab\/>/.test(doc) && !/Methods\.{5,}/.test(doc) && out.done.toc.replaced === 3 && out.done.toc.title === 'Table of Contents', J(out.done.toc));
+    check('format (file): settings.xml gets <w:updateFields w:val="true"/> before w:compat (schema order), so Word fills the table in on open', /<w:defaultTabStop w:val="720"\/><w:updateFields w:val="true"\/><w:compat>/.test(se), se);
+    const lines = (await docx.readDocx(out.buf)).text.split('\n');
+    check('format (file): the text is all still there, the typed entries gone', lines.includes('# Abstract') && lines.includes('# Introduction') && lines.includes('# Methods') && lines.some((l) => l.includes('Body text & more.')) && !lines.some((l) => /\t1$|\.{5}3$/.test(l)), lines.join(' | '));
+    const again = await docx.formatDocx(out.buf, { breaks: ['Table of Contents', 'Abstract', 'Introduction'], toc: true }, { track: false });
+    const p2 = await partsOf(again.buf);
+    check('format (file): running it again adds no second page break or table of contents', p2['word/document.xml'].split(brk).length - 1 === 3 && (p2['word/document.xml'].match(/ TOC \\o/g) || []).length === 1 && again.done.toc.already === true && again.done.breaks.added.length === 0 && again.done.breaks.had.length === 3, J(again.done));
+
+    const tracked = await docx.formatDocx(base, { breaks: ['Abstract'], toc: true }, { track: true, now: () => new Date('2026-11-02T12:00:00Z') });
+    const td = (await partsOf(tracked.buf))['word/document.xml'];
+    check('format (file, tracked): the typed list is marked deleted (w:del, w:delText, a deleted paragraph mark), the TOC and the break inserted (w:ins), by the AI', /<w:del w:id="\d+" w:author="AI \(Lumen\)" w:date="2026-11-02T12:00:00Z"><w:r><w:delText xml:space="preserve">Abstract<\/w:delText>/.test(td) && /<w:pPr><w:rPr><w:del w:id/.test(td) && /<w:ins w:id="\d+" w:author="AI \(Lumen\)"[^>]*><w:r><w:fldChar w:fldCharType="begin"/.test(td) && /<w:ins [^>]*><w:r><w:br w:type="page"\/><\/w:r><\/w:ins>/.test(td) && (await valid(tracked.buf)) === null, await valid(tracked.buf));
+    const ids = [...td.matchAll(/w:id="(\d+)"/g)].map((m) => m[1]);
+    check('format (file, tracked): every revision id is unique', new Set(ids).size === ids.length);
+
+    const noSettings = await report({ settings: false });
+    const ns = await docx.formatDocx(noSettings, { toc: true }, { track: false });
+    const np = await partsOf(ns.buf);
+    check('format (file): a document without settings.xml gets one, with its relationship and content type', /<w:updateFields w:val="true"\/>/.test(np['word/settings.xml'] || '') && /relationships\/settings" Target="settings.xml"/.test(np['word/_rels/document.xml.rels']) && /PartName="\/word\/settings.xml" ContentType="application\/vnd.openxmlformats-officedocument.wordprocessingml.settings\+xml"/.test(np['[Content_Types].xml']) && (await valid(ns.buf)) === null, await valid(ns.buf));
+
+    const h1 = await docx.formatDocx(base, { style: 'Heading 1', size: 16, after: 6 }, { track: false });
+    const hs = (await partsOf(h1.buf))['word/styles.xml'];
+    const h1s = /w:styleId="Heading1">[\s\S]*?<\/w:style>/.exec(hs)[0];
+    check('format (file): a style\'s size and spacing change that style only (sz 32, after 120 twips)', /<w:sz w:val="32"\/><w:szCs w:val="32"\/>/.test(h1s) && /<w:spacing w:before="240" w:after="120"\/>/.test(h1s) && !/w:szCs w:val="32"/.test(/w:styleId="Normal">[\s\S]*?<\/w:style>/.exec(hs)[0]), h1s);
+    const land = await docx.formatDocx(base, { orientation: 'landscape', margins: { top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 } }, { track: false });
+    const ld = (await partsOf(land.buf))['word/document.xml'];
+    check('format (file): landscape swaps the page size and sets w:orient; margins are in twips', /<w:pgSz w:w="15840" w:h="12240" w:orient="landscape"\/>/.test(ld) && /w:top="720"/.test(ld) && land.done.sections === 1, (/<w:sectPr>[\s\S]*<\/w:sectPr>/.exec(ld) || [''])[0]);
+    const fnd = await docx.formatDocx(base, { find: 'Short summary', line: 2, size: 14 }, { track: false });
+    const fd = (await partsOf(fnd.buf))['word/document.xml'];
+    check('format (file): find formats just the paragraphs holding that text (spacing in pPr, size in each run)', /<w:p><w:pPr><w:spacing w:line="480" w:lineRule="auto"\/><\/w:pPr><w:r><w:rPr><w:sz w:val="28"\/><w:szCs w:val="28"\/><\/w:rPr><w:t xml:space="preserve">Short summary\.</.test(fd) && fnd.done.text.paragraphs === 1 && (fd.match(/w:line="480"/g) || []).length === 1, fd.slice(fd.indexOf('Short') - 200, fd.indexOf('Short') + 40));
+    const missing = await rejects(() => docx.formatDocx(base, { breaks: ['Abstract', 'Conclusion'] }, { track: false }));
+    check('format (file): a page break before text that is not there changes nothing and says which', /No paragraph matches “Conclusion”, so nothing was changed/.test(missing || ''), missing);
+
+    // the controller: Word open -> the helper's format; no Word -> the file, after a card that shows the path
+    const rig = makeRig();
+    const said = await rig.word.run({ action: 'format', font: 'Calibri', line_spacing: 1.5, margins: 'normal', page_break_before: ['Abstract'], toc: true }, rig.ctx).catch((e) => e.message);
+    check('format (Word): goes to the helper with the clean fields, after the document\'s edit card', /Formatted|nothing needed/.test(said) && rig.store.cards.length === 1 && /Allow the AI to edit Report.docx/.test(rig.store.cards[0].title) && rig.store.calls.some((c) => c[0] === 'format' && c[1].font === 'Calibri' && c[1].line === 1.5 && c[1].margins.top === 1 && J(c[1].breaks) === J(['Abstract']) && c[1].toc === true && c[1].doc), said + J(rig.store.calls));
+    const ho = makeRig({ answers: [false] });
+    const refused = await rejects(() => ho.word.run({ action: 'format', font: 'Arial' }, ho.ctx));
+    check('format (Word): a No on the card changes nothing', /did not allow/.test(refused || '') && !ho.store.calls.some((c) => c[0] === 'format'), refused);
+    const file = path.join(tmp, 'Lab report (2).docx');
+    fs.writeFileSync(file, base);
+    const fr = makeRig({ platform: 'linux' });
+    const fw = await fr.word.run({ action: 'format', path: file, font: 'Calibri', margins: 'normal', page_break_before: ['Introduction'], toc: true }, fr.ctx);
+    const fp = await partsOf(fs.readFileSync(file));
+    check('format (file route): without Word the .docx itself is changed after a card that shows the path, and says what was done', /Formatted Lab report \(2\)\.docx: added a table of contents under “Table of Contents” in place of the typed list \(3 lines\)/.test(fw) && /page break before “Introduction”/.test(fw) && /Saved in the file/.test(fw) && fr.store.cards.length === 1 && fr.store.cards[0].args.includes(file) && / TOC \\o/.test(fp['word/document.xml']) && /updateFields/.test(fp['word/settings.xml']) && (await valid(fs.readFileSync(file))) === null, fw);
   }
 
   // ---- real Word, only when it is installed and runs fully hidden on a temp document
