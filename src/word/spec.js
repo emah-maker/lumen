@@ -70,7 +70,7 @@ function styleName(v, what = 'style') {
 }
 
 // Character formatting (insert, style and format take it): -> fields on out.
-const COLORS = { black: '000000', white: 'FFFFFF', red: 'FF0000', 'dark red': 'C00000', orange: 'FFC000', yellow: 'FFFF00', green: '00B050', 'dark green': '006400', blue: '0070C0', 'dark blue': '002060', 'light blue': '00B0F0', purple: '7030A0', gray: '808080', grey: '808080', auto: 'auto' };
+const COLORS = { black: '000000', white: 'FFFFFF', red: 'FF0000', 'dark red': 'C00000', orange: 'FFC000', yellow: 'FFFF00', green: '00B050', 'dark green': '006400', blue: '0070C0', 'dark blue': '002060', 'light blue': '00B0F0', purple: '7030A0', gray: '808080', grey: '808080', 'light gray': 'D9D9D9', 'light grey': 'D9D9D9', lightgray: 'D9D9D9', 'pale blue': 'D9E2F3', auto: 'auto' };
 const HIGHLIGHTS = ['yellow', 'green', 'cyan', 'magenta', 'blue', 'red', 'darkBlue', 'darkCyan', 'darkGreen', 'darkMagenta', 'darkRed', 'darkYellow', 'darkGray', 'lightGray', 'black', 'white', 'none'];
 const UNDERLINES = ['single', 'double', 'thick', 'dotted', 'dash', 'wave', 'words', 'none'];
 const bool = (v, name) => { if (v === 'true' || v === 'false') return v === 'true'; if (typeof v !== 'boolean') fail(`${name} must be true or false.`); return v; };
@@ -141,6 +141,48 @@ function tableRows(rows) {
   return out.map((r) => { while (r.length < width) r.push(''); return r; });
 }
 
+// table: a new one (rows, with its look), or one that is there (index: its number in the document, or find: text in one of its cells), whose
+// cells, rows, columns and look change. -> the clean fields (as docx.tableDocx and host.ps1 take them).
+const BORDERS = ['all', 'outside', 'none'];
+const whole = (v, name, lo, hi) => { const n = num(v, name, lo, hi); if (!Number.isInteger(n)) fail(`${name} must be a whole number from ${lo} to ${hi}.`); return n; };
+function tableOf(input, out) {
+  if (input.header !== undefined) out.header = bool(input.header, 'header');
+  if (input.widths !== undefined) {
+    if (!Array.isArray(input.widths) || !input.widths.length || input.widths.length > MAX.cols) fail('widths must be a list of column widths in inches, such as [1.5, 3, 1].');
+    out.widths = input.widths.map((w) => num(w, 'each of widths (inches)', 0.2, 20));
+  }
+  if (input.borders !== undefined) { out.borders = String(input.borders).trim().toLowerCase(); if (out.borders === 'grid' || out.borders === 'true') out.borders = 'all'; if (!BORDERS.includes(out.borders)) fail('borders must be all, outside or none.'); }
+  if (input.shading !== undefined) { const c = charOf({ color: input.shading }, {}); if (c.color === 'auto') fail('shading must be a color (the header row\'s fill), such as lightgray or #D9E2F3.'); out.shading = c.color; }
+  if (input.align !== undefined) { out.align = ALIGN[String(input.align).trim().toLowerCase()]; if (!['left', 'center', 'right'].includes(out.align)) fail('align (for a table) must be left, center or right.'); }
+  const edit = input.index !== undefined || (input.find !== undefined && input.find !== '');
+  if (!edit) {
+    for (const k of ['cells', 'add_rows', 'add_column']) if (input[k] !== undefined) fail(`${k} changes a table that is there: give index (its number, 1 is the first table) or find (text in one of its cells).`);
+    Object.assign(out, placeOf(input));
+    out.rows = tableRows(input.rows);
+    if (out.widths && out.widths.length !== out.rows[0].length) fail(`widths has ${out.widths.length} columns but the table has ${out.rows[0].length}.`);
+    return out;
+  }
+  if (input.index !== undefined) out.index = whole(input.index, 'index (the table\'s number, 1 is the first)', 1, 1000);
+  else out.find = str(input.find, 'find', MAX.find);
+  if (input.at !== undefined || input.heading !== undefined) fail('at and heading place a new table; a table that is there is picked by index or find.');
+  if (input.cells !== undefined) {
+    if (!Array.isArray(input.cells) || !input.cells.length || input.cells.length > 500) fail('cells must be a list of [row, column, "text"] (1 is the first row and column).');
+    out.cells = input.cells.map((c) => {
+      if (!Array.isArray(c) || c.length !== 3) fail('Each of cells is [row, column, "text"], such as [2, 3, "12.5"].');
+      const t = c[2] === null || c[2] === undefined ? '' : String(c[2]);
+      if (t.length > MAX.cell) fail(`A table cell can hold at most ${MAX.cell} characters.`);
+      return [whole(c[0], 'a cell\'s row', 1, MAX.rows * 5), whole(c[1], 'a cell\'s column', 1, MAX.cols), t];
+    });
+  }
+  if (input.add_rows !== undefined) {
+    out.addRows = input.add_rows === 'end' ? -1 : whole(input.add_rows, 'add_rows (the row to add after: 0 is the top, "end" the bottom)', 0, MAX.rows * 5);
+    out.rows = input.rows === undefined ? [['']] : tableRows(input.rows);
+  } else if (input.rows !== undefined) fail('rows on a table that is there go with add_rows (the row to add them after: 0 is the top, "end" the bottom); cells changes cells.');
+  if (input.add_column !== undefined) out.addColumn = input.add_column === 'end' ? -1 : whole(input.add_column, 'add_column (the column to add after: 0 is the first, "end" the last)', 0, MAX.cols);
+  if (!out.cells && out.addRows === undefined && out.addColumn === undefined && !['header', 'widths', 'borders', 'shading', 'align'].some((k) => out[k] !== undefined)) fail('Give what changes in the table: cells, add_rows (with rows), add_column, header, widths, borders, shading or align.');
+  return out;
+}
+
 // format: fonts and spacing (for a style, the paragraphs holding some text, or the whole document), margins and orientation (every section, or
 // one), page breaks before paragraphs, heading styles and a table of contents. -> the clean fields (names as docx.formatDocx and host.ps1 take them).
 const MARGINS = { normal: [1, 1, 1, 1], narrow: [0.5, 0.5, 0.5, 0.5], moderate: [1, 0.75, 1, 0.75], wide: [1, 2, 1, 2] };
@@ -195,7 +237,7 @@ function formatOf(input) {
 // What each change takes besides action, doc and path (tab_id: the MCP listing adds it to every tool). An argument it does not take is refused,
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
 const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -252,8 +294,7 @@ function validate(input) {
     case 'format': if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg); Object.assign(out, formatOf(input)); break;
     case 'table': {
       if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
-      Object.assign(out, placeOf(input));
-      out.rows = tableRows(input.rows);
+      tableOf(input, out);
       break;
     }
     case 'image': Object.assign(out, placeOf(input)); out.image = checkPath(input.image, 'image path'); if (!IMAGE_EXT.test(out.image)) fail('Only .png, .jpg, .gif and .bmp pictures are inserted.'); break;
@@ -321,7 +362,8 @@ function stepLabel(input = {}, name = '') {
     case 'insert': { const n = lines(input.text); return `Writing in ${doc}: adding ${count(n, 'paragraph', 'paragraphs')}${where(input)}`; }
     case 'replace': return `Editing ${doc}: replacing “${clip(input.find, 30)}” with “${clip(input.replace, 30)}”`;
     case 'style': { const extra = formatParts({ ...input, style: undefined, based_on: undefined }); return `Formatting ${doc}: “${clip(input.find, 30)}”${input.style ? ` as ${input.style}` : ''}${extra.length ? `, ${extra.join(', ')}` : ''}`; }
-    case 'table': return `Writing in ${doc}: adding a table of ${count(Array.isArray(input.rows) ? input.rows.length : 0, 'row', 'rows')}${where(input)}`;
+    case 'table': if (input.index !== undefined || input.find) return `Editing ${doc}: ${input.index !== undefined ? `table ${clip(input.index, 6)}` : `the table with “${clip(input.find, 30)}”`}${Array.isArray(input.cells) ? `, ${count(input.cells.length, 'cell', 'cells')}` : ''}${input.add_rows !== undefined ? `, adding ${count(Array.isArray(input.rows) ? input.rows.length : 1, 'row', 'rows')}` : ''}${input.add_column !== undefined ? ', adding a column' : ''}`;
+      return `Writing in ${doc}: adding a table of ${count(Array.isArray(input.rows) ? input.rows.length : 0, 'row', 'rows')}${where(input)}`;
     case 'image': return `Writing in ${doc}: adding the picture ${baseName(input.image) || ''}${where(input)}`.trim();
     case 'comment': return `Commenting in ${doc} on “${clip(input.find ?? input.heading, 30)}”`;
     case 'format': return `Formatting ${doc}: ${formatParts(input).join(', ') || 'the layout'}`;
@@ -349,7 +391,9 @@ const HELP = [
   'format styles: style + based_on makes the style when the document has none of that name (style "Figure Caption", based_on "Normal", size 9, italic true), or changes what it is based on; then apply it with style or insert.',
   'format lists: list bullet|number|none with paragraphs or find, level 1-9 (a numbered list starts at 1 each time).',
   'format pages: margins (normal|narrow|moderate|wide or inches "1" / "1 1.25" / "1 1 1 1"), orientation portrait|landscape, section (number) for one section only, page_break_before [paragraph texts], headings ["# Title", "## Sub"] (Heading 1-6), toc true (a real table of contents; heading: the paragraph to put it after).',
-  'table: rows [[cells]], at, heading. image: image (a file path), at, heading. comment: find, comment. track: on. save; save_as: path (.docx or .pdf). show.',
+  'table (new): rows [[cells]], at, heading, header (first row repeats on each page, bold; default true), widths [inches per column], borders all|outside|none, shading (the header row\'s fill: lightgray, #D9E2F3...), align left|center|right.',
+  'table (one that is there): index (1 is the first table, in reading order) or find (text in one of its cells), then cells [[row, col, "text"]] (1-based, counted after the rows and column this call adds), add_rows (after row n: 0 top, "end" bottom) with rows [[cells]], add_column (after column n, "end"; fill it with cells), header, widths, borders, shading, align.',
+  'image: image (a file path), at, heading. comment: find, comment. track: on. save; save_as: path (.docx or .pdf). show.',
 ];
 function help(topic) {
   const t = String(topic || '').toLowerCase();
