@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.92 (2026-11-03)
+
 - **The AI can delete rows and columns from Word tables.** The word tool's `table` action takes `delete_rows` and `delete_columns`, one or a range, on a table picked by its number or by a cell's text. Before anything goes, the remove card shows exactly which rows or columns, every time. A deleted column leaves the table's grid, merged cells across it get narrower, and a cell merged down from a deleted row starts its merge in the next row. The last row or column is never deleted; the AI is told to remove the whole table instead. It works in Word (recorded as tracked changes when tracking is on) and in the .docx file itself. Test: `test/units/word-units.js` (deleting table rows and columns).
 
 ## 0.5.91 (2026-11-03)
