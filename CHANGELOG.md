@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **/btw works with only Claude Code installed, no API key needed.** When no API model is connected, a side question goes to your own Claude Code (signed in) on Haiku, as a one-shot run with no tools, no MCP servers and an empty folder, and the card says "Answered by Claude Code (Haiku)". It answers whole after a few seconds instead of streaming. With nothing connected at all, the card now says to add a key or install Claude Code. Tests: `test/units/btw-units.js`.
+
 ## 0.5.93 (2026-11-03)
 
 - **The Word card shows Word itself again, and Claude Code keeps its word tool.** The card's live picture was always skipped as "hidden" because the helper asked Word's Application for a window handle it does not have; it now uses the document window's, so the card shows Word while the AI works and Show in Word brings that window forward. In a Claude Code chat that was loaded again, the word tool was listed but refused ("Unknown tool: word"), and the AI fell back to rewriting the .docx with PowerShell; a chat's earlier Word steps now keep the tool.

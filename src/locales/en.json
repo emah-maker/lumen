@@ -870,7 +870,7 @@
   "btw.dismiss": "Dismiss (Esc)",
   "btw.needQuestion": "Type your question after /btw, for example /btw what was that last link?",
   "btw.unavailable": "/btw is not available here.",
-  "btw.noProvider": "No API model is connected for /btw. Add an API key in Settings → AI: Claude Code and the other engines can’t answer a side question mid-task.",
+  "btw.noProvider": "No model can answer /btw. Add an API key in Settings → AI, or install Claude Code and sign in: it answers side questions with your own Claude account.",
   "btw.timeout": "That took too long (over 30 seconds). Try again.",
   "btw.retry": "Retry",
   "btw.busy": "Too many side questions are open. Dismiss one first.",

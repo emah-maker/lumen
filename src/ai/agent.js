@@ -4562,7 +4562,18 @@ ${prompt}` : prompt), historyImages: [] };
         return [summary ? `Summary of the earlier conversation:\n${summary}` : '', btwLib.clipTail(turns)].filter(Boolean).join('\n\n');
       } catch { return ''; }
     })();
+    // No API model connected: the user's own Claude Code answers, when it is installed and signed in (btw.js plan, `local`).
+    const cc = this.engines?.claudecode;
+    const local = !btwLib.plan({ chatModel, defaultModel: this.resolveAuto(this.getOptions().model || ''), options })
+      && Boolean(await cc?.status?.().then((st) => st?.installed && st.signedIn !== false).catch(() => false));
     const call = async (model, { system, messages: sent, signal: sig, onText: text }) => {
+      if (model === btwLib.LOCAL_MODEL) {
+        const bin = await cc.detect();
+        if (!bin) throw new Error('Claude Code isn’t installed.');
+        const r = await require('./cli-json').completeText({ bin, model: 'haiku', system, user: sent[0].content, timeoutMs: btwLib.LOCAL_TIME_MS, signal: sig });
+        if (r.text) text(r.text);
+        return { content: [{ type: 'text', text: r.text }] }; // (no usage: it is the user's Claude plan, not an API bill)
+      }
       const { provider, model: id } = providers.splitModel(model);
       if (provider === 'anthropic') {
         const stream = this.getClient().beta.messages.stream({ model: id, max_tokens: btwLib.MAX_TOKENS, system, messages: sent }, { signal: sig });
@@ -4578,6 +4589,7 @@ ${prompt}` : prompt), historyImages: [] };
       defaultModel: this.resolveAuto(this.getOptions().model || ''),
       options,
       mode: this.browser.subagentModel?.() === 'same' ? 'same' : 'auto',
+      local,
       transcript, tab, question, signal, onText, call,
       onUsage: (message, model) => {
         if (!message?.usage) return;
@@ -4592,6 +4604,7 @@ ${prompt}` : prompt), historyImages: [] };
       const pretty = modelNames.prettyModel(model) || model;
       return provider === 'anthropic' ? pretty.replace(/(\d) (\d)(?!\d)/g, '$1.$2') : `${fallback.providerName(id, options)} ${pretty}`;
     };
+    if (result.local) return { ...result, name: 'Claude Code (Haiku)' };
     const shown = result.model || result.own;
     return { ...result, ...(shown ? { name: nice(shown) } : {}), ...(result.engine ? { engineName: nice(result.engine) } : {}) };
   }

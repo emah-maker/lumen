@@ -264,7 +264,27 @@ const OPTIONS = [
     cmd.run({ input: 'fails', ask: () => {} });
     finishers[4]({ ok: false, error: 'no-provider' });
     await sleep(5);
-    check('card: no provider is said in plain words', /No API model is connected/.test(byId('composer').children[0].children.at(-1).children[1].textContent), J(byId('composer').children[0].children.map((c) => c.children[1]?.textContent)));
+    check('card: no provider is said in plain words', /No model can answer \/btw[\s\S]*install Claude Code/.test(byId('composer').children[0].children.at(-1).children[1].textContent), J(byId('composer').children[0].children.map((c) => c.children[1]?.textContent)));
+  }
+
+  // ---- no API model: the user's own Claude Code answers (cli-json.js completeText)
+  {
+    const engines = OPTIONS.filter((o) => /^(claudecode|codex):/.test(o.id));
+    const p = B.plan({ chatModel: 'claudecode:default', defaultModel: 'claudecode:default', options: engines, local: true });
+    check('local: no API model + Claude Code signed in -> Claude Code Haiku, no "not the engine" line', p?.local === true && p.model === B.LOCAL_MODEL && p.engine === null, J(p));
+    check('local: an API model still wins over Claude Code', B.plan({ chatModel: 'claudecode:default', options: OPTIONS, local: true }).local === false);
+    const asked = [];
+    const r = await B.run({ chatModel: 'claudecode:default', options: engines, local: true, question: '/btw hi?', firstTextMs: 20, call: async (model, a) => { asked.push(model); await sleep(60); a.onText('Hi'); return { content: [{ type: 'text', text: 'Hi' }] }; } });
+    check('local: the whole answer, with no stall watch cutting the CLI start short', r.ok && r.text === 'Hi' && r.local && J(asked) === J([B.LOCAL_MODEL]), J(r));
+    const cj = require('../../src/ai/cli-json');
+    const argv = cj.claudeArgs({ system: 'S', schema: null, model: 'haiku' });
+    check('local: the CLI run has no tools, no MCP servers and no JSON schema', argv.includes('--strict-mcp-config') && argv[argv.indexOf('--tools') + 1] === '' && !argv.includes('--json-schema') && argv.includes('--no-session-persistence'), J(argv));
+    let seen = null;
+    const out = await cj.completeText({ bin: 'claude', system: 'S', user: 'U', run: async (o) => { seen = o; return JSON.stringify({ type: 'result', result: ' Answer ', usage: { input_tokens: 1 } }); } });
+    check('local: completeText sends the message on stdin and reads the result text', out.text === 'Answer' && seen.input === 'U' && !seen.argv.includes('U'), J(out));
+    let failed = '';
+    try { await cj.completeText({ bin: 'claude', system: 'S', user: 'U', run: async () => JSON.stringify({ is_error: true, result: 'Not logged in' }) }); } catch (err) { failed = err.message; }
+    check('local: a CLI error is a failure, not an answer', failed !== '', failed);
   }
 
   // ---- the wiring (main.js, preloads, chat page, skills)

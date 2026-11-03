@@ -12,6 +12,8 @@
 //    engine's one-shot is neither cheap nor isolated (it would start the CLI with its tools and session), so an API model
 //    answers: the engine's own vendor when its key is connected, else the user's default model, else any connected one.
 //    The card says which answered, and why it was not the engine.
+//  - no API model connected at all: Claude Code answers when it is installed and signed in (`local`), as a one-shot run with no
+//    tools, no MCP servers and an empty folder (cli-json.js completeText), on Haiku. Its answer comes whole, not streamed.
 const { helperModel } = require('./subagents');
 const fallback = require('./fallback');
 const autoModel = require('./auto-model');
@@ -23,6 +25,8 @@ const FIRST_TEXT_MS = 8000; // no first token by then (a hung connection, a busy
 const RECENT_MESSAGES = 24; // how much of the chat is read at all (agent.js btw): a side question needs the last few turns, not the whole chat
 const TRANSCRIPT_CHARS = 6000; // ...and how much of that text is sent
 const SUMMARY_CHARS = 1500; // the chat's /compact summary, clipped
+const LOCAL_MODEL = 'claudecode:haiku'; // no API model: the user's own Claude Code answers
+const LOCAL_TIME_MS = 60000; // ...which starts a process and sends no text until it is done
 
 const SYSTEM = `You answer one quick side question ("/btw") from a person using the Lumen browser's AI sidebar. Another assistant may still be working on their main task in the same chat.
 - You have no tools. You cannot browse, search, click, read other pages or change anything, and you must not claim or promise that you did or will.
@@ -74,33 +78,35 @@ function buildMessages({ transcript = '', tab = null, question }) {
 
 // Which model answers. `chatModel`: the chat's concrete model id; `options`: the connected models (main.js modelOptions());
 // `defaultModel`: the user's default. Returns { model (the cheaper sibling), own (the model it is a sibling of), engine
-// (the engine the chat is on, when it was not asked), viaDefault } or null when no API model is connected.
-function plan({ chatModel, defaultModel = '', options = [], mode = 'auto' }) {
+// (the engine the chat is on, when it was not asked), viaDefault, local } or null when no model can answer. `local`: Claude Code
+// is installed and signed in, and answers when no API model is connected.
+function plan({ chatModel, defaultModel = '', options = [], mode = 'auto', local = false }) {
   // ('auto' is a pick, not a model: the caller resolves it, and one that was not is never sent as a model id)
   const chat = [chatModel, defaultModel].map((m) => String(m || '')).find((m) => m && !autoModel.isAuto(m)) || '';
   if (autoModel.isAuto(defaultModel)) defaultModel = '';
   const apiOption = (o) => o?.id && !o.more && !String(o.id).endsWith(':__more') && !fallback.isEngine(o.id) && o.signedIn !== false && !(o.badges || []).includes('sign in');
   const list = (options || []).filter(apiOption);
-  if (chat && !fallback.isEngine(chat)) return { model: helperModel(chat, mode), own: chat, engine: null, viaDefault: false };
+  if (chat && !fallback.isEngine(chat)) return { model: helperModel(chat, mode), own: chat, engine: null, viaDefault: false, local: false };
   const engine = chat || null;
   let own = '';
   if (engine) for (const vendor of fallback.relatedOf(fallback.providerOf(engine))) { own = list.find((o) => fallback.providerOf(o.id) === vendor)?.id || ''; if (own) break; }
   let viaDefault = false;
   if (!own && defaultModel && !fallback.isEngine(defaultModel) && (!list.length || list.some((o) => o.id === defaultModel))) { own = defaultModel; viaDefault = true; }
   if (!own && list.length) { own = list[0].id; viaDefault = true; }
-  if (!own) return null;
-  return { model: helperModel(own, mode), own, engine, viaDefault };
+  if (!own) return local ? { model: LOCAL_MODEL, own: LOCAL_MODEL, engine: null, viaDefault: false, local: true } : null;
+  return { model: helperModel(own, mode), own, engine, viaDefault, local: false };
 }
 
 // Runs it. `call(model, { system, messages, signal, onText })` -> an Anthropic-shaped message { content, model, usage } and
 // calls onText(chunk) as text streams (never gets tools: there is no parameter for them). `onUsage(message, model)` is told
 // each call that answered (the chat's totals and the app's usage log). Never throws:
 // { ok, text, model, own, engine, viaDefault, error? }.
-async function run({ chatModel, defaultModel, options, mode, transcript, tab, question, call, onText = () => {}, onUsage = () => {}, signal, timeMs = TIME_MS, firstTextMs = FIRST_TEXT_MS }) {
+async function run({ chatModel, defaultModel, options, mode, local = false, transcript, tab, question, call, onText = () => {}, onUsage = () => {}, signal, timeMs = TIME_MS, firstTextMs = FIRST_TEXT_MS }) {
   const q = parseQuestion(question);
   if (!q) return { ok: false, error: 'empty', text: '' };
-  const picked = plan({ chatModel, defaultModel, options, mode });
+  const picked = plan({ chatModel, defaultModel, options, mode, local });
   if (!picked) return { ok: false, error: 'no-provider', text: '' };
+  if (picked.local) { timeMs = Math.max(timeMs, LOCAL_TIME_MS); firstTextMs = timeMs; } // (no stall watch: nothing streams)
   const ctrl = new AbortController();
   const outer = () => ctrl.abort();
   if (signal?.aborted) return { ok: false, error: 'stopped', text: '', ...picked };
@@ -149,4 +155,4 @@ async function run({ chatModel, defaultModel, options, mode, transcript, tab, qu
   }
 }
 
-module.exports = { SYSTEM, QUESTION_CHARS, MAX_TOKENS, TIME_MS, FIRST_TEXT_MS, RECENT_MESSAGES, TRANSCRIPT_CHARS, SUMMARY_CHARS, clipTail, parseQuestion, plainUrl, buildMessages, plan, run };
+module.exports = { LOCAL_MODEL, LOCAL_TIME_MS, SYSTEM, QUESTION_CHARS, MAX_TOKENS, TIME_MS, FIRST_TEXT_MS, RECENT_MESSAGES, TRANSCRIPT_CHARS, SUMMARY_CHARS, clipTail, parseQuestion, plainUrl, buildMessages, plan, run };

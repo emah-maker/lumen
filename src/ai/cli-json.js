@@ -22,6 +22,7 @@ const configure = (o = {}) => { if (typeof o.userSettings === 'function') userSe
 
 // ---------- Claude Code ----------
 
+// schema: null gets a plain-text answer (/btw) instead of JSON.
 function claudeArgs({ system, schema, model = 'haiku', userSettings = false }) {
   return [
     '-p',
@@ -34,7 +35,7 @@ function claudeArgs({ system, schema, model = 'haiku', userSettings = false }) {
     ...(userSettings || userSettingsOn() ? [] : ['--setting-sources', 'project']), // [cc settings] Settings → AI: off, skip the user's CLAUDE.md, rules, memory and hooks
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     '--system-prompt', system, // replaces Claude Code's own (coding) system prompt
-    '--json-schema', JSON.stringify(schema),
+    ...(schema ? ['--json-schema', JSON.stringify(schema)] : []),
   ];
 }
 
@@ -172,6 +173,30 @@ function parseResult(stdout) {
   try { return JSON.parse(text); } catch { throw new Error('The CLI’s answer was not valid JSON.'); }
 }
 
+// The reply text in a Claude Code --output-format json result, with its usage ({ text, usage }).
+function parseText(stdout) {
+  let out;
+  try { out = JSON.parse(String(stdout).trim()); } catch { throw new Error('The CLI did not return JSON.'); }
+  if (!out || typeof out !== 'object') throw new Error('The CLI did not return JSON.');
+  if (out.is_error) throw Object.assign(new Error('The CLI reported an error.'), { output: String(out.result || '') });
+  return { text: String(out.result ?? '').trim(), usage: out.usage || null };
+}
+
+// One plain-text answer from Claude Code, with the same no-tools, no-MCP, empty-folder run as completeJSON (/btw with no API key).
+async function completeText({ bin, model = 'haiku', system, user, timeoutMs = TIMEOUT_MS, run = runCli, signal = null }) {
+  const { describeFailure } = require('./claude-code');
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cc1-'));
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  try {
+    return parseText(await run({ bin, argv: claudeArgs({ system, schema: null, model }), input: user, env, cwd, timeoutMs, signal }));
+  } catch (err) {
+    throw err.output !== undefined ? new Error(describeFailure(err.output, err.code).text) : err;
+  } finally {
+    require('./temp-dirs').removeDirSync(cwd);
+  }
+}
+
 // { groups: [{ name, tab_ids }] }, the shape Organize asks for; anything else is refused.
 function checkGroups(answer) {
   const groups = answer?.groups;
@@ -239,4 +264,4 @@ async function completeJSON({ engine, bin, model, system, user, schema, userData
   throw new Error(`No one-shot runner for ${engine}.`);
 }
 
-module.exports = { configure, claudeArgs, grokArgs, grokConfig, antigravityArgs, antigravitySettings, runCli, parseResult, checkGroups, completeJSON, whenIdle, TIMEOUT_MS };
+module.exports = { configure, claudeArgs, grokArgs, grokConfig, antigravityArgs, antigravitySettings, runCli, parseResult, parseText, checkGroups, completeJSON, completeText, whenIdle, TIMEOUT_MS };
