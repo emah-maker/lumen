@@ -623,8 +623,10 @@ function Cmd-Table($req) {
   }
   if (-not $req.ContainsKey('header') -and $nr -gt 1) { $req['header'] = $true }
   Table-Look $t $req
+  $n = $null
+  if ($req.ContainsKey('caption')) { $n = Add-Caption $d $t.Range 'Table' ([string]$req['caption']) 0 }
   $script:last[(Doc-Key $d)] = @([int]$t.Range.Start, [int]$t.Range.End)
-  return @{ doc = [string]$d.Name; rows = $nr; columns = $nc }
+  return @{ doc = [string]$d.Name; rows = $nr; columns = $nc; caption = $n }
 }
 
 function Cmd-Image($req) {
@@ -639,9 +641,44 @@ function Cmd-Image($req) {
   $pic = $d.InlineShapes.AddPicture($path, $false, $true, $rng)
   $max = 450
   try { $ps = $d.PageSetup; $max = [Math]::Max(100, $ps.PageWidth - $ps.LeftMargin - $ps.RightMargin) } catch { }
-  if ($pic.Width -gt $max) { $pic.LockAspectRatio = -1; $pic.Width = $max }
+  $pic.LockAspectRatio = -1
+  if ($req.ContainsKey('width') -and $req.ContainsKey('height')) { $pic.LockAspectRatio = 0; $pic.Width = 72 * [double]$req['width']; $pic.Height = 72 * [double]$req['height'] }
+  elseif ($req.ContainsKey('width')) { $pic.Width = 72 * [double]$req['width'] }
+  elseif ($req.ContainsKey('height')) { $pic.Height = 72 * [double]$req['height'] }
+  elseif ($pic.Width -gt $max) { $pic.Width = $max }
+  if ($req.ContainsKey('alt')) { $pic.AlternativeText = [string]$req['alt'] }
+  $align = [string](Arg $req 'align' 'center')
+  $wrap = [string](Arg $req 'wrap' 'inline')
+  if ($wrap -eq 'inline') { $pic.Range.ParagraphFormat.Alignment = [int](@{ 'left' = 0; 'center' = 1; 'right' = 2 })[$align] }
+  $n = $null
+  if ($req.ContainsKey('caption')) { $n = Add-Caption $d $pic.Range 'Figure' ([string]$req['caption']) 1; $pic.Range.ParagraphFormat.KeepWithNext = -1 }
+  if ($wrap -ne 'inline') {
+    $sh = $pic.ConvertToShape()
+    $sh.WrapFormat.Type = [int](@{ 'square' = 0; 'tight' = 1; 'top_bottom' = 4; 'behind' = 5; 'front' = 3 })[$wrap]
+    $sh.RelativeHorizontalPosition = 2
+    $sh.Left = [int](@{ 'left' = -999998; 'center' = -999995; 'right' = -999996 })[$align]
+  }
   $script:last[(Doc-Key $d)] = @($pos, $pos + 1)
-  return @{ doc = [string]$d.Name }
+  return @{ doc = [string]$d.Name; caption = $n; size = @{ width = [Math]::Round($pic.Width / 72, 2); height = [Math]::Round($pic.Height / 72, 2) } }
+}
+
+# A caption (Word's own Insert Caption: the Caption style and a SEQ field): below (1) a picture, above (0) a table. -> its number.
+function Add-Caption($d, $range, [string]$label, [string]$text, [int]$where) {
+  $labels = $d.Application.CaptionLabels
+  $have = $false; foreach ($l in $labels) { if ([string]$l.Name -eq $label) { $have = $true } }
+  if (-not $have) { [void]$labels.Add($label) }
+  $title = ''; if ($text) { $title = ': ' + $text }
+  $range.InsertCaption($label, $title, '', $where)
+  # the numbers in order again (the captions after this one move up), and this caption's number: the SEQ field nearest the picture or table
+  $best = $null; $gap = [int]::MaxValue
+  foreach ($f in $d.Fields) {
+    if (([string]$f.Code.Text) -notmatch ('^\s*SEQ ' + $label + '\b')) { continue }
+    [void]$f.Update()
+    $g = [Math]::Min([Math]::Abs([int]$f.Result.Start - [int]$range.End), [Math]::Abs([int]$f.Result.Start - [int]$range.Start))
+    if ($g -lt $gap) { $gap = $g; $best = $f }
+  }
+  if ($null -eq $best) { return $null }
+  return [int]([string]$best.Result.Text -replace '\D', '')
 }
 
 function Cmd-Comment($req) {
