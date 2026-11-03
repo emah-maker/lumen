@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI can delete rows and columns from Word tables.** The word tool's `table` action takes `delete_rows` and `delete_columns`, one or a range, on a table picked by its number or by a cell's text. Before anything goes, the remove card shows exactly which rows or columns, every time. A deleted column leaves the table's grid, merged cells across it get narrower, and a cell merged down from a deleted row starts its merge in the next row. The last row or column is never deleted; the AI is told to remove the whole table instead. It works in Word (recorded as tracked changes when tracking is on) and in the .docx file itself. Test: `test/units/word-units.js` (deleting table rows and columns).
+
 ## 0.5.91 (2026-11-03)
 
 - **The AI can review a Word document: accept or reject tracked changes, replace with formatting, comment, and set its properties.** The word tool's `track` action now accepts or rejects tracked changes: all of them, one person's (`author: "AI (Lumen)"` undoes the AI's own edits), or those around some text. `replace` can match whole words only and give the new text a look (bold, a color, a highlight...). `format` sets the document's title, author, subject and keywords. `{date}` in text the AI puts into a paragraph becomes a date field. Without Word, all of this now works on the .docx file too, along with comments and turning tracking on. Saving as PDF and a replace across paragraphs still need Word, and the tool says so. Test: `test/units/word-units.js` (review and the rest).

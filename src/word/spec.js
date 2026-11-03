@@ -156,7 +156,7 @@ function tableOf(input, out) {
   if (input.align !== undefined) { out.align = ALIGN[String(input.align).trim().toLowerCase()]; if (!['left', 'center', 'right'].includes(out.align)) fail('align (for a table) must be left, center or right.'); }
   const edit = input.index !== undefined || (input.find !== undefined && input.find !== '');
   if (!edit) {
-    for (const k of ['cells', 'add_rows', 'add_column']) if (input[k] !== undefined) fail(`${k} changes a table that is there: give index (its number, 1 is the first table) or find (text in one of its cells).`);
+    for (const k of ['cells', 'add_rows', 'add_column', 'delete_rows', 'delete_columns']) if (input[k] !== undefined) fail(`${k} changes a table that is there: give index (its number, 1 is the first table) or find (text in one of its cells).`);
     Object.assign(out, placeOf(input));
     out.rows = tableRows(input.rows);
     captionOf(input, out);
@@ -181,7 +181,18 @@ function tableOf(input, out) {
     out.rows = input.rows === undefined ? [['']] : tableRows(input.rows);
   } else if (input.rows !== undefined) fail('rows on a table that is there go with add_rows (the row to add them after: 0 is the top, "end" the bottom); cells changes cells.');
   if (input.add_column !== undefined) out.addColumn = input.add_column === 'end' ? -1 : whole(input.add_column, 'add_column (the column to add after: 0 is the first, "end" the last)', 0, MAX.cols);
-  if (!out.cells && out.addRows === undefined && out.addColumn === undefined && !['header', 'widths', 'borders', 'shading', 'align'].some((k) => out[k] !== undefined)) fail('Give what changes in the table: cells, add_rows (with rows), add_column, header, widths, borders, shading or align.');
+  // rows or columns taken out: one (3) or a range ([2, 4]), as the table is now; alone, so the numbers mean what read shows
+  for (const [k, key, what] of [['delete_rows', 'deleteRows', 'row'], ['delete_columns', 'deleteColumns', 'column']]) {
+    if (input[k] === undefined) continue;
+    const v = Array.isArray(input[k]) ? input[k] : [input[k], input[k]];
+    if (v.length !== 2) fail(`${k} is one ${what} number (3) or a range [from, to] ([2, 4]); 1 is the first.`);
+    const [a, b] = v.map((x) => whole(x, `${k} (${what} numbers, 1 is the first)`, 1, k === 'delete_rows' ? MAX.rows * 5 : MAX.cols));
+    if (b < a) fail(`${k} [from, to] needs from <= to.`);
+    out[key] = [a, b];
+  }
+  if ((out.deleteRows || out.deleteColumns) && (out.cells || out.addRows !== undefined || out.addColumn !== undefined)) fail('delete_rows and delete_columns go in a call of their own (the numbers are the table as it is now); add or fill rows in another call.');
+  if (out.deleteRows && out.deleteColumns) fail('Give delete_rows or delete_columns, one at a time.');
+  if (!out.cells && out.addRows === undefined && out.addColumn === undefined && !out.deleteRows && !out.deleteColumns && !['header', 'widths', 'borders', 'shading', 'align'].some((k) => out[k] !== undefined)) fail('Give what changes in the table: cells, add_rows (with rows), add_column, delete_rows, delete_columns, header, widths, borders, shading or align.');
   return out;
 }
 
@@ -293,7 +304,7 @@ function formatOf(input) {
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
 const BOOKMARK = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic', 'find', 'note', 'ref'], replace: ['find', 'replace', ...CHAR_ARGS, 'whole_word'], style: ['find', 'style', ...CHAR_ARGS, 'link', 'bookmark'], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on', 'accept', 'reject', 'author', 'find'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before', 'properties'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic', 'find', 'note', 'ref'], replace: ['find', 'replace', ...CHAR_ARGS, 'whole_word'], style: ['find', 'style', ...CHAR_ARGS, 'link', 'bookmark'], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column', 'delete_rows', 'delete_columns'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on', 'accept', 'reject', 'author', 'find'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before', 'properties'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -478,7 +489,7 @@ function stepLabel(input = {}, name = '') {
       { const n = lines(input.text); return `Writing in ${doc}: adding ${count(n, 'paragraph', 'paragraphs')}${where(input)}`; }
     case 'replace': return `Editing ${doc}: replacing “${clip(input.find, 30)}” with “${clip(input.replace, 30)}”`;
     case 'style': { const extra = formatParts({ ...input, style: undefined, based_on: undefined }); return `Formatting ${doc}: “${clip(input.find, 30)}”${input.style ? ` as ${input.style}` : ''}${extra.length ? `, ${extra.join(', ')}` : ''}`; }
-    case 'table': if (input.index !== undefined || input.find) return `Editing ${doc}: ${input.index !== undefined ? `table ${clip(input.index, 6)}` : `the table with “${clip(input.find, 30)}”`}${Array.isArray(input.cells) ? `, ${count(input.cells.length, 'cell', 'cells')}` : ''}${input.add_rows !== undefined ? `, adding ${count(Array.isArray(input.rows) ? input.rows.length : 1, 'row', 'rows')}` : ''}${input.add_column !== undefined ? ', adding a column' : ''}`;
+    case 'table': if (input.index !== undefined || input.find) return `Editing ${doc}: ${input.index !== undefined ? `table ${clip(input.index, 6)}` : `the table with “${clip(input.find, 30)}”`}${Array.isArray(input.cells) ? `, ${count(input.cells.length, 'cell', 'cells')}` : ''}${input.add_rows !== undefined ? `, adding ${count(Array.isArray(input.rows) ? input.rows.length : 1, 'row', 'rows')}` : ''}${input.add_column !== undefined ? ', adding a column' : ''}${input.delete_rows !== undefined ? `, deleting ${Array.isArray(input.delete_rows) ? `rows ${input.delete_rows.join('–')}` : `row ${input.delete_rows}`}` : ''}${input.delete_columns !== undefined ? `, deleting ${Array.isArray(input.delete_columns) ? `columns ${input.delete_columns.join('–')}` : `column ${input.delete_columns}`}` : ''}`;
       return `Writing in ${doc}: adding a table of ${count(Array.isArray(input.rows) ? input.rows.length : 0, 'row', 'rows')}${where(input)}`;
     case 'image': { const src = String(input.image || ''); const name = /^https?:/i.test(src) ? (() => { try { return `from ${new URL(src).hostname}`; } catch { return ''; } })() : baseName(src); return `Writing in ${doc}: adding the picture ${name || ''}${input.caption ? ` with the caption “${clip(input.caption, 30)}”` : ''}${where(input)}`.trim(); }
     case 'comment': return `Commenting in ${doc} on “${clip(input.find ?? input.heading, 30)}”`;
@@ -512,7 +523,7 @@ const HELP = [
   'format pages: margins (normal|narrow|moderate|wide or inches "1" / "1 1.25" / "1 1 1 1"), orientation portrait|landscape, section (number) for one section only, page_break_before [paragraph texts], headings ["# Title", "## Sub"] (Heading 1-6), toc true (a real table of contents; heading: the paragraph to put it after).',
   'format headers and footers: header / footer "text" or "left | center | right" with {page}, {pages}, {date} (footer "Page {page} of {pages}"), page_numbers true or bottom center|bottom right|top right..., different_first_page (a title page without them), page_number_start, columns 1-4; section (number) for one section only; section_break_before [paragraph texts] with section_break next_page|continuous|even_page|odd_page, column_break_before [paragraph texts].',
   'table (new): rows [[cells]], at, heading, header (first row repeats on each page, bold; default true), widths [inches per column], borders all|outside|none, shading (the header row\'s fill: lightgray, #D9E2F3...), align left|center|right.',
-  'table (one that is there): index (1 is the first table, in reading order) or find (text in one of its cells), then cells [[row, col, "text"]] (1-based, counted after the rows and column this call adds), add_rows (after row n: 0 top, "end" bottom) with rows [[cells]], add_column (after column n, "end"; fill it with cells), header, widths, borders, shading, align.',
+  'table (one that is there): index (1 is the first table, in reading order) or find (text in one of its cells), then cells [[row, col, "text"]] (1-based, counted after the rows and column this call adds), add_rows (after row n: 0 top, "end" bottom) with rows [[cells]], add_column (after column n, "end"; fill it with cells), header, widths, borders, shading, align. delete_rows / delete_columns: 3 or [2, 4] (a call of its own; the user sees what goes first; never every row or column).',
   'image: image (a file path or an https address), at, heading, width / height (inches; one keeps the shape), wrap inline|square|tight|top_bottom|behind|front, align left|center|right, caption ("Figure N: " is added, numbered by Word), alt (text for screen readers). table (new) takes caption too ("Table N: ", above it).',
   'save; save_as: path (.docx or .pdf). show.',
 ];

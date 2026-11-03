@@ -243,7 +243,7 @@ function createWord(deps = {}) {
       case 'replace': { const r = await H.replace({ doc: target, ...formatFields(v) }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
       case 'format': { const r = await H.format({ doc: target, ...formatFields(v) }); return done(`${formatDone(r.done || {}, d.name, v, false)} Not saved yet.${d.tracking ? '' : ' Tracked changes are off, so the edit is not marked.'}`); }
       case 'style': { const r = await H.style({ doc: target, ...formatFields(v) }); return done(styleDone(r, d.name, v)); }
-      case 'table': { if (isEdit(v)) { const r = await H.table({ doc: target, ...formatFields(v) }); return done(`${tableDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.table({ doc: target, ...formatFields(v) }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''}. Not saved yet.${hint}`); }
+      case 'table': { if (isEdit(v)) { if (v.deleteRows || v.deleteColumns) await confirmLoss(ctx, d.name, v, (await H.table({ doc: target, ...formatFields(v), preview: true })).preview); const r = await H.table({ doc: target, ...formatFields(v) }); return done(`${tableDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.table({ doc: target, ...formatFields(v) }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''}. Not saved yet.${hint}`); }
       case 'image': { const pic = await pictureFor(v); let r; try { r = await H.image({ doc: target, ...formatFields(v), url: undefined, image: pic.file }); } finally { pic.done(); } return done(`${imageDone(r, d.name, v, pic)} Not saved yet.${hint}`); }
       case 'comment': await H.comment({ doc: target, find: v.find, text: v.text }); return done(`Added a comment on “${spec.clip(v.find, 40)}” in ${d.name}.`);
       case 'track': { const r = await H.track({ doc: target, ...formatFields(v) }); if (v.review) return done(reviewDone(r.reviewed, d.name, v)); return `Tracked changes are ${r.tracking ? 'on' : 'off'} in ${d.name}.`; }
@@ -283,9 +283,17 @@ function createWord(deps = {}) {
   // insert with find: what went in after the match
   const atDone = (r, name, v) => `${r.ref ? `Added a cross-reference to ${r.ref}` : r.note ? `Added ${r.note.kind === 'endnote' ? 'an endnote' : 'a footnote'}${r.note.id ? ` (${r.note.kind} ${r.note.id})` : ''}` : 'Added the text'} after “${spec.clip(v.find, 40)}” in ${name}.${r.ref ? ' Word keeps it up to date (it updates fields on opening and printing).' : ''}`;
   const isEdit = (v) => v.index !== undefined || v.find !== undefined;
+  // [content guard] rows or columns taken out: the remove card, every time (after the document's edit card), with what goes.
+  async function confirmLoss(ctx, name, v, p) {
+    const what = v.deleteRows ? (p.count === 1 ? 'row' : 'rows') : (p.count === 1 ? 'column' : 'columns');
+    const ok = await ctx.ask({ kind: 'content-loss', site: name, title: `The AI is about to delete ${p.count} ${what} from table ${p.index} in ${name}`, args: `${(p.lines || []).join('\n')}` });
+    if (!ok) throw new Error(`The user did not allow deleting those ${what}. Nothing was changed. Ask them what to do instead.`);
+  }
   // a table that is there, changed: what was done, in words
   function tableDone(r, name, v) {
     const out = [];
+    if (r.deletedRows) out.push(`${r.deletedRows} row${r.deletedRows === 1 ? '' : 's'} deleted`);
+    if (r.deletedColumns) out.push(`${r.deletedColumns} column${r.deletedColumns === 1 ? '' : 's'} deleted`);
     if (r.cells) out.push(`${r.cells} cell${r.cells === 1 ? '' : 's'} filled in`);
     if (r.rows) out.push(`${r.rows} row${r.rows === 1 ? '' : 's'} added`);
     if (r.column) out.push(`a column added (now column ${r.column})`);
@@ -380,7 +388,7 @@ function createWord(deps = {}) {
     cardUse(ctx, ref, spec.stepLabel(v, ref.name), { com: false });
     const before = (await docx().readDocx(buf, { budget: 1e6 })).text.split(String.fromCharCode(10));
     const pic = A === 'image' ? await pictureFor(v) : null;
-    const r = A === 'replace' ? await docx().replaceDocx(buf, formatFields(v), { track: true }) : A === 'comment' ? await docx().commentDocx(buf, formatFields(v)) : A === 'track' ? (v.review ? await docx().reviewDocx(buf, formatFields(v)) : await docx().trackDocx(buf, v.on)) : A === 'insert' && v.find ? await docx().insertDocx(buf, formatFields(v), { track: true }) : A === 'image' ? await docx().imageDocx(buf, { ...formatFields(v), data: pic.buf, info: pic.info, name: pic.name }, { track: true }) : A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await docx().tableDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
+    const r = A === 'replace' ? await docx().replaceDocx(buf, formatFields(v), { track: true }) : A === 'comment' ? await docx().commentDocx(buf, formatFields(v)) : A === 'track' ? (v.review ? await docx().reviewDocx(buf, formatFields(v)) : await docx().trackDocx(buf, v.on)) : A === 'insert' && v.find ? await docx().insertDocx(buf, formatFields(v), { track: true }) : A === 'image' ? await docx().imageDocx(buf, { ...formatFields(v), data: pic.buf, info: pic.info, name: pic.name }, { track: true }) : A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await (async () => { if (v.deleteRows || v.deleteColumns) await confirmLoss(ctx, ref.name, v, await docx().tableDeletion(buf, formatFields(v))); return docx().tableDocx(buf, formatFields(v), { track: true }); })() : await docx().editDocx(buf, op, { track: true });
     if (r.buf !== buf) writeAtomic(real, r.buf);
     try { await cardChanged(ctx, ref, { lines: require('./card').pageAround(before, (await docx().readDocx(r.buf, { budget: 1e6 })).text.split(String.fromCharCode(10))) }); } catch { /* the preview is a courtesy */ }
     noteRead(ctx, ref.key);
@@ -389,7 +397,7 @@ function createWord(deps = {}) {
     if (A === 'track') return v.review ? `${reviewDone(r.count, ref.name, v)}${r.count ? ' Saved in the file.' : ''}` : `Tracked changes are ${v.on ? 'on' : 'off'} in ${ref.name} (saved in the file): Word marks the next edits as revisions.`;
     if (A === 'insert' && v.find) return `${atDone(r.done, ref.name, v)} Saved in the file, as a tracked change.`;
     if (A === 'image') return `${imageDone(r, ref.name, v, pic)} Saved in the file, as a tracked change.`;
-    if (A === 'table' && isEdit(v)) return `${tableDone(r.done, ref.name, v)} Saved in the file; new and replaced text and new rows are tracked changes, the look is not.`;
+    if (A === 'table' && isEdit(v)) return `${tableDone(r.done, ref.name, v)} Saved in the file; ${v.deleteRows || v.deleteColumns ? 'the deletion is not a tracked change (merged cells were mended).' : 'new and replaced text and new rows are tracked changes, the look is not.'}`;
     if (A === 'style') return `${styleDone(r, ref.name, v)} Saved in the file (formatting is not a tracked change).`;
     if (A === 'format') return `${formatDone(r.done, ref.name, v, true)}${v.header || v.footer ? ' Page numbers and other fields show their real values when Word updates them (it does on opening and printing).' : ''} Saved in the file; new text, page breaks and removed lines are tracked changes, and style and page changes are not.`;
     return A === 'insert' ? `Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${ref.name}${placeText(v)} (saved in the file, as a tracked change).` : `Added a table (${r.rows} rows, ${r.columns} columns) to ${ref.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''} (saved in the file, as a tracked change).`;

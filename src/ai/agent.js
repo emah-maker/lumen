@@ -6859,7 +6859,9 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
       emit: gate.emit, signal: gate.signal,
       tainted: () => { const h = taintHolder(gate.run); return Boolean(h?.tainted && !h.appOnly); }, // read a page, an email or a connector's answer: edits ask every time (document text is tracked per document, in src/word)
       once: { has: (key) => hosts.has(`app:${key}`), add: (key) => hosts.add(`app:${key}`) }, // Once: for this chat (the chat's approved set; never saved)
-      ask: (card) => this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways !== false, upload: { detail: card.detail, allowLabel: card.allowLabel, alwaysLabel: card.alwaysLabel, alwaysTitle: card.alwaysTitle } }), // ('app' cards: answered by Bypass permissions, with a step; Always only where src/word offers it: one saved document)
+      ask: (card) => (card.kind === 'content-loss' // [content guard] a change that takes content out (table rows or columns): the remove card, every time, showing what goes
+        ? this.askApproval(card.site || 'Microsoft Word', gate.emit, gate.signal, { action: 'content-loss', who: gate.who, title: card.title, args: card.args, upload: { phase: 'before', undone: false } })
+        : this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways !== false, upload: { detail: card.detail, allowLabel: card.allowLabel, alwaysLabel: card.alwaysLabel, alwaysTitle: card.alwaysTitle } })), // ('app' cards: answered by Bypass permissions, with a step; Always only where src/word offers it: one saved document)
     };
     return this.wordCtl().run(input, ctx);
   }

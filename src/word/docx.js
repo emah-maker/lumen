@@ -248,8 +248,93 @@ function setCell(s, tc, text, ctx) {
   old = splice(old, last.start, last.end, withLine);
   return splice(s, ps[0].start, ps[ps.length - 1].end, old + lines.slice(1).map((l) => cellPara(l, ctx, { rpr, ppr })).join(''));
 }
+// A row's cells on the table's grid: [{ tc, g (first grid column, 0-based), span, vm ('restart' | 'continue' | null) }].
+function gridOf(s, tr) {
+  let g = 0;
+  return cellsOf(s, tr).map((tc) => {
+    const pr = kidOf(s, tc, 'w:tcPr');
+    const prx = pr ? s.slice(pr.start, pr.end) : '';
+    const span = Number((/<w:gridSpan w:val="(\d+)"/.exec(prx) || [])[1] || 1);
+    const vmTag = /<w:vMerge\b[^>]*\/?>/.exec(prx)?.[0];
+    const vm = vmTag ? (/w:val="restart"/.test(vmTag) ? 'restart' : 'continue') : null;
+    const cell = { tc, g, span, vm };
+    g += span;
+    return cell;
+  });
+}
+const cellText = (s, tc) => unesc([...s.slice(tc.start, tc.end).matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => m[1]).join('')).replace(/\s+/g, ' ').trim();
+// A cell merged down from the row above (vMerge continue) whose row above has no merged cell there any more starts the merge itself.
+function mendMerges(s) {
+  for (let i = 0; i < rowsOf(s).length; i++) {
+    const rows = rowsOf(s);
+    const above = i ? new Set(gridOf(s, rows[i - 1]).filter((c) => c.vm).map((c) => c.g)) : new Set();
+    for (const c of gridOf(s, rows[i]).reverse()) {
+      if (c.vm !== 'continue' || above.has(c.g)) continue;
+      const pr = kidOf(s, c.tc, 'w:tcPr');
+      const vmEl = kidOf(s, pr, 'w:vMerge');
+      s = splice(s, vmEl.start, vmEl.end, '<w:vMerge w:val="restart"/>');
+    }
+  }
+  return s;
+}
+// What delete_rows / delete_columns would take out of a table (its XML), as lines for the card, after the checks: -> { lines, count }
+function deletionOf(s, t) {
+  const rows = rowsOf(s);
+  if (t.deleteRows) {
+    const [a, b] = t.deleteRows;
+    if (b > rows.length) throw new WordError(`The table has ${rows.length} row${rows.length === 1 ? '' : 's'}, so there is no row ${b}. Nothing was changed.`);
+    if (b - a + 1 >= rows.length) throw new WordError('That is every row of the table, so nothing was deleted. To take the table out, remove the whole table instead (in Word: select it, then Layout > Delete > Delete Table); a table keeps at least one row here.');
+    return { count: b - a + 1, lines: rows.slice(a - 1, b).map((tr, i) => `Row ${a + i}: | ${cellsOf(s, tr).map((tc) => cellText(s, tc)).join(' | ')} |`) };
+  }
+  const grid = kidOf(s, elementAt(s, 0), 'w:tblGrid');
+  const cols = grid ? kidsOf(s, grid).filter((k) => k.name === 'w:gridCol').length : Math.max(...rows.map((tr) => gridOf(s, tr).reduce((n, c) => n + c.span, 0)));
+  const [a, b] = t.deleteColumns;
+  if (b > cols) throw new WordError(`The table has ${cols} column${cols === 1 ? '' : 's'}, so there is no column ${b}. Nothing was changed.`);
+  if (b - a + 1 >= cols) throw new WordError('That is every column of the table, so nothing was deleted. To take the table out, remove the whole table instead (in Word: select it, then Layout > Delete > Delete Table); a table keeps at least one column here.');
+  if (/<w:gridBefore\b|<w:gridAfter\b|<w:hMerge\b/.test(s)) throw new WordError('This table has rows that start or end off its grid, so its columns are not deleted here. Use Word for it.');
+  const lines = [];
+  for (let c = a; c <= b; c++) lines.push(`Column ${c}: ${rows.map((tr) => gridOf(s, tr).find((x) => x.g <= c - 1 && c - 1 < x.g + x.span)).filter(Boolean).map((x) => cellText(s, x.tc) || '(empty)').join(' · ')}`);
+  return { count: b - a + 1, lines };
+}
+function deleteRows(s, [a, b]) {
+  for (const tr of rowsOf(s).slice(a - 1, b).reverse()) s = splice(s, tr.start, tr.end, '');
+  return mendMerges(s);
+}
+// Grid columns a..b (1-based) out: a cell inside them goes, a merged cell across them gets narrower (gridSpan, and its width), the grid loses them.
+function deleteColumns(s, [a, b]) {
+  const grid = kidOf(s, elementAt(s, 0), 'w:tblGrid');
+  const gridCols = grid ? kidsOf(s, grid).filter((k) => k.name === 'w:gridCol') : [];
+  const widths = gridCols.map((k) => Number((/w:w="(\d+)"/.exec(s.slice(k.start, k.end)) || [])[1] || 0));
+  const from = a - 1; const to = b;
+  for (const tr of [...rowsOf(s)].reverse()) {
+    for (const c of gridOf(s, tr).reverse()) {
+      const lo = Math.max(c.g, from); const hi = Math.min(c.g + c.span, to);
+      const over = Math.max(0, hi - lo);
+      if (!over) continue;
+      if (over === c.span) { s = splice(s, c.tc.start, c.tc.end, ''); continue; }
+      const span = c.span - over;
+      const lost = widths.slice(lo, hi).reduce((x, y) => x + y, 0);
+      let pr; [s, pr] = upsert(s, c.tc, 'w:tcPr', (had) => had || '<w:tcPr></w:tcPr>', ['w:tcPr']);
+      const gs = kidOf(s, pr, 'w:gridSpan');
+      if (span === 1 && gs) s = splice(s, gs.start, gs.end, '');
+      else if (gs) s = splice(s, gs.start, gs.end, `<w:gridSpan w:val="${span}"/>`);
+      const pr2 = kidOf(s, elementAt(s, c.tc.start), 'w:tcPr');
+      const w = kidOf(s, pr2, 'w:tcW');
+      if (w && lost && /w:type="dxa"/.test(s.slice(w.start, w.end))) { const cur = Number((/w:w="(\d+)"/.exec(s.slice(w.start, w.end)) || [])[1] || 0); s = splice(s, w.start, w.end, `<w:tcW w:w="${Math.max(0, cur - lost)}" w:type="dxa"/>`); }
+    }
+  }
+  const g2 = kidOf(s, elementAt(s, 0), 'w:tblGrid');
+  if (g2) for (const k of kidsOf(s, g2).filter((x) => x.name === 'w:gridCol').slice(from, to).reverse()) s = splice(s, k.start, k.end, '');
+  return s;
+}
+
 function editTable(s, t, ctx) {
   const done = {};
+  if (t.deleteRows || t.deleteColumns) {
+    const d = deletionOf(s, t);
+    if (t.deleteRows) { s = deleteRows(s, t.deleteRows); done.deletedRows = d.count; } else { s = deleteColumns(s, t.deleteColumns); done.deletedColumns = d.count; }
+    done.deleted = d.lines;
+  }
   const merged = /<w:gridSpan\b|<w:vMerge\b|<w:hMerge\b/.test(s);
   if (merged && (t.addColumn !== undefined || t.widths)) throw new WordError('This table has merged cells, so its columns are not changed here. Open it in Word, or change cells and rows instead.');
   if (t.addRows !== undefined) {
@@ -327,13 +412,23 @@ function editTable(s, t, ctx) {
 }
 const tableText = (xml, b) => [...xml.slice(b.start, b.end).matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => unesc(m[1])).join(' ');
 // A table that is there (t.index, or t.find: text in one of its cells), changed -> { buf, done } (done.index: which table).
-async function tableDocx(buf, t, { track = false, now = () => new Date() } = {}) {
-  const { xml, entries } = await openForEdit(buf);
+function pickTable(xml, t) {
   const tables = bodyOf(xml).blocks.filter((b) => b.name === 'tbl');
   if (!tables.length) throw new WordError('This document has no table. Add one with table and rows.');
   let i;
   if (t.index) { i = t.index - 1; if (!tables[i]) throw new WordError(`The document has ${tables.length} table${tables.length === 1 ? '' : 's'}, so there is no table ${t.index}.`); }
   else { const want = String(t.find).toLowerCase(); i = tables.findIndex((b) => tableText(xml, b).toLowerCase().includes(want)); if (i < 0) throw new WordError(`No table has a cell with “${String(t.find).slice(0, 60)}”. Use read to see the tables.`); }
+  return { tables, i };
+}
+// What a delete_rows / delete_columns call would take out (for the card that asks first): -> { lines, count, index }
+async function tableDeletion(buf, t) {
+  const { xml } = await openForEdit(buf);
+  const { tables, i } = pickTable(xml, t);
+  return { ...deletionOf(xml.slice(tables[i].start, tables[i].end), t), index: i + 1 };
+}
+async function tableDocx(buf, t, { track = false, now = () => new Date() } = {}) {
+  const { xml, entries } = await openForEdit(buf);
+  const { tables, i } = pickTable(xml, t);
   const ctx = { track, nextId: makeIds(xml), date: now().toISOString().replace(/\.\d+Z$/, 'Z') };
   const r = editTable(xml.slice(tables[i].start, tables[i].end), t, ctx);
   return { buf: pack(entries, new Map([['word/document.xml', splice(xml, tables[i].start, tables[i].end, r.xml)]])), done: { ...r.done, index: i + 1, tables: tables.length }, tracked: track };
@@ -1652,4 +1747,4 @@ function newDocx() {
   return buildZip(Object.entries(files).map(([name, text]) => ({ name, data: Buffer.from(text, 'utf8') })));
 }
 
-module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, imageDocx, insertDocx, reviewDocx, replaceDocx, commentDocx, trackDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };
+module.exports = { tableDeletion, readDocx, editDocx, formatDocx, styleDocx, tableDocx, imageDocx, insertDocx, reviewDocx, replaceDocx, commentDocx, trackDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };
