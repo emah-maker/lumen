@@ -1,0 +1,56 @@
+{
+  "cwd": "C:/Users/someone/AppData/Local/Temp/lumen-agy-quota-x/work",
+  "session_id": "",
+  "conversation_id": "",
+  "transcript_path": "C:/Users/someone/.gemini/antigravity/brain/transcript.jsonl",
+  "model": {
+    "id": "Gemini 3.8 Flash (High)",
+    "display_name": "Gemini 3.8 Flash (High)",
+    "effort": "high"
+  },
+  "workspace": {
+    "current_dir": "C:/Users/someone/AppData/Local/Temp/lumen-agy-quota-x/work",
+    "project_dir": "C:/Users/someone/AppData/Local/Temp/lumen-agy-quota-x/work"
+  },
+  "version": "1.4.12",
+  "context_window": {
+    "total_input_tokens": 0,
+    "total_output_tokens": 0,
+    "context_window_size": 1048576,
+    "used_percentage": 0,
+    "remaining_percentage": 100,
+    "current_usage": null
+  },
+  "exceeds_200k_tokens": null,
+  "product": "antigravity",
+  "quota": {
+    "3p-5h": {
+      "remaining_fraction": 0,
+      "reset_time": "2026-11-03T03:57:08Z",
+      "reset_in_seconds": 15430
+    },
+    "3p-weekly": {
+      "remaining_fraction": 0.4937824,
+      "reset_time": "2026-11-09T22:57:08Z",
+      "reset_in_seconds": 602230
+    },
+    "gemini-5h": {
+      "remaining_fraction": 0.9989524,
+      "reset_time": "2026-11-03T03:25:51Z",
+      "reset_in_seconds": 13553
+    },
+    "gemini-weekly": {
+      "remaining_fraction": 0.9997007,
+      "reset_time": "2026-11-09T22:25:51Z",
+      "reset_in_seconds": 600353
+    }
+  },
+  "agent_state": "initializing",
+  "cycle_mode": "plan",
+  "sandbox": {
+    "enabled": false
+  },
+  "plan_tier": "Google AI Pro",
+  "email": "someone@example.com",
+  "terminal_width": 120
+}

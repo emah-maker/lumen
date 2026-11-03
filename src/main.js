@@ -9791,6 +9791,8 @@ const usage = createUsage({ app, showBars: () => readSettings().usageBars !== fa
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
   codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
+  // [usage] Antigravity's plan quota, from agy's own status line (ai/agy-quota.js); tests only ever reach a fake agy (LUMEN_AGY_BIN).
+  agyQuota: async () => (TEST && !process.env.LUMEN_AGY_BIN ? null : require('./ai/agy-quota').readQuota({ bin: await require('./ai/antigravity').findAgy() })),
   ...(TEST ? { otherActivity: async () => false } : {}) });
 agent.onUsage = (engine, data) => usage.record(engine, data);
 ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(options?.refresh), cached: Boolean(options?.cached) }));

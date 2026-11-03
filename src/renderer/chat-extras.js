@@ -108,7 +108,7 @@
   }
   function renderMeter() {
     const key = engineKey();
-    const bar = ENGINE_NAMES[key] ? usage?.bars?.[key] : null;
+    const bar = ENGINE_NAMES[key] ? (window.usageBars?.barOf ? window.usageBars.barOf(key, usage, select?.value) : usage?.bars?.[key]) : null;
     clearTimeout(limitTimer);
     // Grok Build, nothing real yet: the bar stays hidden, and a hint says how to get one.
     const off = usage?.showBars === false; // Settings → Usage → Show usage bars
@@ -126,7 +126,8 @@
       return;
     }
     if (!bar || off) return;
-    const engine = ENGINE_NAMES[key];
+    // Antigravity's quota is per model group: the title names whose ("Antigravity (Gemini models)").
+    const engine = bar.group ? `${ENGINE_NAMES[key]} (${window.t(`usage.agy.group.${bar.group === 'gemini' ? 'gemini' : 'other'}`)})` : ENGINE_NAMES[key];
     const text = [];
     const title = [];
     const percent = bar.percent == null ? null : Math.round(bar.percent);
@@ -203,7 +204,7 @@
   }
   function renderPopover() {
     const key = engineKey();
-    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key] }) : null;
+    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
     if (!v) { closePopover(false); return; }
     pop.replaceChildren();
     const label = window.t('usage.bar.labelFor', { name: v.name });
