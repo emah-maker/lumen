@@ -583,6 +583,8 @@ contextBridge.exposeInMainWorld('assistant', {
   },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'),
   stop: (chatId) => ipcRenderer.send('agent:stop', chatId),
+  steer: (chatId, uid, text) => ipcRenderer.invoke('agent:steer', chatId, uid, text),
+  unsteer: (chatId, uid) => ipcRenderer.invoke('agent:unsteer', chatId, uid),
   sidebarTarget: (o) => ipcRenderer.invoke('chat:sidebar-target', o && o.liveOnly === true ? { liveOnly: true } : undefined),
   resync: () => ipcRenderer.invoke('chat:resync'),
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''),

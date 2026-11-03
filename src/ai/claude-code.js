@@ -887,7 +887,7 @@ class ClaudeCodeEngine {
     }
   }
 
-  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '', workDir = '', adopt = null, onFollowUp = null }, { fresh = false, attempt = 0 } = {}) {
+  async turn({ prompt, images = [], sessionId, resume, systemPrompt, model = 'default', maxTurns = 0, fullAccess = false, signal, emit, runAgent = null, scope = null, quietExpired = false, lateUsage = null, prestart = true, userSettings = false, effort = '', workDir = '', adopt = null, onFollowUp = null, steers = null }, { fresh = false, attempt = 0 } = {}) {
     const notInstalled = () => {
       emit({ type: 'error', text: `Claude Code isn't installed. ${INSTALL_HINT}` });
       return { text: '', sessionId: null, failed: true };
@@ -920,7 +920,7 @@ class ClaudeCodeEngine {
     if (proc.watch) clearTimeout(proc.watch.grace); // (a message on a process kept for helpers: it is a turn again, not a quiet wait)
 
     // The same message once more on a fresh process (attempt 1: no further automatic retry).
-    const again = (over = {}) => this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir, onFollowUp, ...over }, { fresh: true, attempt: 1 });
+    const again = (over = {}) => this.turn({ prompt, images, sessionId, resume, systemPrompt, model, maxTurns, fullAccess, signal, emit, runAgent, scope, quietExpired, lateUsage, prestart, userSettings, effort, workDir, onFollowUp, steers, ...over }, { fresh: true, attempt: 1 });
     let text = '';
     let finalText = '';
     let result = null;
@@ -998,6 +998,20 @@ class ClaudeCodeEngine {
       early = true;
       emit({ type: 'reply_complete' });
     };
+    // [mid-run messages] (ai/steer.js) What the user typed while this turn runs: a stream-json line on stdin while one of its tool calls is out,
+    // which the CLI reads at its next model call (the same turn, one `result`). Never while the final reply streams, or on a one-shot process
+    // (its stdin is closed): those wait for the next message. `steers`: { take(), delivered(entries) } from agent.js claudeCodeTurn.
+    let steered = []; // written, and not yet seen to reach the model
+    const pump = () => {
+      if (!steers || over || result || !sent || adopt || proc.single || proc.exited || signal.aborted || finalSeen || compacting || pending.size === 0) return;
+      const got = steers.take();
+      for (const e of got) {
+        try { proc.child.stdin.write(`${JSON.stringify(stdinMessage(require('./steer').wrap(e.text)))}
+`); steered.push(e); } catch { /* the process is going: the message waits for the next one */ }
+      }
+    };
+    const steerArrived = () => { if (!steered.length) return; const went = steered; steered = []; try { steers.delivered(went); } catch { /* said on screen only */ } };
+    if (steers) steers.pump = pump;
     const handle = (msg) => {
       heard = true;
       clearTimeout(slow);
@@ -1005,6 +1019,7 @@ class ClaudeCodeEngine {
       else if (msg.type === 'user' && (Array.isArray(msg.message?.content) ? msg.message.content : []).some((b) => b.type === 'tool_result')) afterTool = true;
       if (finalSeen && ((msg.type === 'stream_event' && /^(message_start|content_block_start)$/.test(msg.event?.type)) || (msg.type === 'assistant' && !msg.parent_tool_use_id && (msg.message?.content || []).some((b) => b.type === 'tool_use')) || (msg.type === 'user' && !msg.parent_tool_use_id && afterTool))) finalSeen = false; // (the model is at work again)
       active.arm();
+      if (steered.length && msg.type === 'stream_event' && msg.event?.type === 'message_start' && !msg.parent_tool_use_id) steerArrived(); // (a new model call: it has the message)
       if (msg.type === 'rate_limit_event' && msg.rate_limit_info) {
         rateLimit = msg.rate_limit_info;
         emit({ type: 'rate_limit', info: rateLimit });
@@ -1065,6 +1080,7 @@ class ClaudeCodeEngine {
         newSession = msg.session_id || newSession;
         settle({ code: null });
       }
+      pump(); // (a tool call just went out: what waits can go now)
     };
     const current = { handle, exit: (code) => settle({ code }) };
     proc.turn = current;
@@ -1079,7 +1095,8 @@ class ClaudeCodeEngine {
     const onAbort = () => {
       settle({ code: null });
       if (proc.exited) return;
-      if (proc.single || !sent) this.dispose(proc); else this.interrupt(proc, lateUsage);
+      // (a message written on stdin that has not reached the model yet would start a turn of its own after the interrupt: the process goes)
+      if (proc.single || !sent || steered.length) this.dispose(proc); else this.interrupt(proc, lateUsage);
     };
     signal.addEventListener('abort', onAbort, { once: true });
     if (signal.aborted) onAbort();
@@ -1093,6 +1110,8 @@ class ClaudeCodeEngine {
     }
 
     const { code } = await ended;
+    if (steers?.pump === pump) steers.pump = null;
+    if (result && !signal.aborted) steerArrived(); // (the turn read it: its `result` is the one for both)
     over = true;
     clearTimeout(active.dog);
     clearTimeout(finalTimer);

@@ -30,6 +30,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     },
     askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs
     stop: (chatId) => ipcRenderer.send('agent:stop', chatId), // (as the sidebar's: the chat the page shows)
+    steer: (chatId, uid, text) => ipcRenderer.invoke('agent:steer', chatId, uid, text), // [mid-run messages] (as the sidebar's)
+    unsteer: (chatId, uid) => ipcRenderer.invoke('agent:unsteer', chatId, uid),
     resync: () => Promise.resolve(null), // (the chat page has no tab of its own to follow)
     reset: () => ipcRenderer.send('agent:reset'),
     rewind: (expected) => ipcRenderer.invoke('agent:rewind', expected),
