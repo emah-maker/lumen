@@ -1095,6 +1095,79 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const ps4 = read('src/word/host.ps1');
       check('helper: headers and footers with Word\'s PAGE, NUMPAGES and DATE fields, a different first page, page numbering, columns, section and column breaks with InsertBreak; still no Delete', /function Set-HeaderText/.test(ps4) && /Fields\.Add\(\$end, 33\)/.test(ps4) && /Fields\.Add\(\$end, 26\)/.test(ps4) && /DifferentFirstPageHeaderFooter/.test(ps4) && /TextColumns\.SetCount/.test(ps4) && /RestartNumberingAtSection/.test(ps4) && /InsertBreak\(\$code\)/.test(ps4) && !/Delete\(/.test(ps4));
     }
+    // ---- references: footnotes and endnotes, cross-references to captions and bookmarks, hyperlinks and bookmarks, text inside a paragraph
+    {
+      const rv = v({ action: 'insert', find: 'grows linearly', note: 'Footnote', text: 'Smith (2020), p. 4.' });
+      check('references: insert with find is inside the paragraph (text, a note, or a ref), and style takes link and bookmark', rv.find === 'grows linearly' && rv.note === 'footnote' && rv.text === 'Smith (2020), p. 4.' && v({ action: 'insert', find: 'as shown in', ref: 'figure 2' }).ref === 'figure 2' && v({ action: 'style', find: 'NIST', link: 'https://www.nist.gov' }).link === 'https://www.nist.gov/' && v({ action: 'style', find: 'x', link: '#Results' }).link === '#Results' && v({ action: 'style', find: 'x', bookmark: 'Fig_setup' }).bookmark === 'Fig_setup', J(rv));
+      const rErrs = [
+        [{ action: 'insert', find: 'x', at: 'end', text: 'y' }, /find puts the insert inside a paragraph/],
+        [{ action: 'insert', text: 'y', note: 'footnote' }, /note and ref go with find/],
+        [{ action: 'insert', find: 'x', note: 'sidenote', text: 'y' }, /note must be footnote or endnote/],
+        [{ action: 'insert', find: 'x', ref: 'Figure 2', note: 'footnote' }, /note or ref, not both/],
+        [{ action: 'insert', find: 'x', ref: 'my figure!' }, /ref is "Figure 2", "Table 1" \(a caption\) or a bookmark/],
+        [{ action: 'insert', find: 'x', text: 'two\nlines' }, /is one line/],
+        [{ action: 'style', find: 'x', link: 'javascript:alert(1)' }, /link must be a web address/],
+        [{ action: 'style', find: 'x', link: 'file:///C:/secret.txt' }, /link must be a web address/],
+        [{ action: 'style', find: 'x', bookmark: '1st place' }, /bookmark is a name of letters, digits and _/],
+      ];
+      const rBad = rErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+      check('references: every bad argument is refused with a sentence that says what to send (no javascript: or file: links)', !rBad.length, J(rBad.map(([i]) => [i, throws(() => v(i))])));
+      check('references: the steps say what goes where', spec.stepLabel({ action: 'insert', find: 'grows', note: 'footnote', text: 'x' }, 'L.docx') === 'Writing in L.docx: a footnote after “grows”' && spec.stepLabel({ action: 'insert', find: 'see', ref: 'Figure 1' }, 'L.docx') === 'Writing in L.docx: a cross-reference to Figure 1 after “see”' && /a link/.test(spec.stepLabel({ action: 'style', find: 'NIST', link: 'https://nist.gov' }, 'L.docx')));
+
+      const P2 = require('../../src/word/picture');
+      const tiny = Buffer.alloc(30); tiny.writeUInt32BE(0x89504e47, 0); tiny.writeUInt32BE(0x0d0a1a0a, 4); tiny.writeUInt32BE(10, 16); tiny.writeUInt32BE(10, 20);
+      let rb = docx.newDocx();
+      for (const t of ['The rate grows linearly with mass, as shown in the plot.', 'Data are from NIST and NIST again.', 'Results']) rb = (await docx.editDocx(rb, { insert: { at: 'end', text: t } })).buf;
+      rb = (await docx.imageDocx(rb, { at: 'end', data: tiny, info: P2.pictureInfo(tiny), caption: 'Rate' })).buf;
+      const n1 = await docx.insertDocx(rb, { find: 'grows linearly', note: 'footnote', text: 'Smith (2020) & Lee, p. 4.' });
+      const n2 = await docx.insertDocx(n1.buf, { find: 'mass', note: 'footnote', text: 'Second.' });
+      const n3 = await docx.insertDocx(n2.buf, { find: 'the plot', note: 'endnote', text: 'An endnote.' });
+      const np = await partsOf(n3.buf);
+      const nd = np['word/document.xml'];
+      check('footnotes (file): the note mark goes right after the text (the run split there), as a FootnoteReference run; footnotes 1 and 2 in that order', /<w:t xml:space="preserve">The rate grows linearly<\/w:t><\/w:r><w:r><w:rPr><w:rStyle w:val="FootnoteReference"\/><\/w:rPr><w:footnoteReference w:id="1"\/><\/w:r><w:r><w:t xml:space="preserve"> with mass<\/w:t><\/w:r><w:r><w:rPr><w:rStyle w:val="FootnoteReference"\/><\/w:rPr><w:footnoteReference w:id="2"\/><\/w:r>/.test(nd) && /the plot<\/w:t><\/w:r><w:r><w:rPr><w:rStyle w:val="EndnoteReference"\/><\/w:rPr><w:endnoteReference w:id="1"\/><\/w:r>/.test(nd) && n1.done.note.id === 1 && n2.done.note.id === 2, nd.slice(nd.indexOf('The rate'), nd.indexOf('The rate') + 600));
+      check('footnotes (file): footnotes.xml (made, with the separator and continuation notes Word needs, -1 and 0) holds each note in FootnoteText with its footnoteRef mark, text escaped; endnotes.xml likewise; both with relationships, content types and their styles', /<w:footnotes [^>]*><w:footnote w:type="separator" w:id="-1">[\s\S]*?<w:separator\/>[\s\S]*?<w:footnote w:type="continuationSeparator" w:id="0">[\s\S]*?<w:footnote w:id="1"><w:p><w:pPr><w:pStyle w:val="FootnoteText"\/><\/w:pPr><w:r><w:rPr><w:rStyle w:val="FootnoteReference"\/><\/w:rPr><w:footnoteRef\/><\/w:r><w:r><w:t xml:space="preserve"> Smith \(2020\) &amp; Lee, p\. 4\.<\/w:t><\/w:r><\/w:p><\/w:footnote><w:footnote w:id="2">/.test(np['word/footnotes.xml'] || '') && /<w:endnote w:id="1"><w:p><w:pPr><w:pStyle w:val="EndnoteText"\/>/.test(np['word/endnotes.xml'] || '') && /relationships\/footnotes" Target="footnotes.xml"/.test(np['word/_rels/document.xml.rels']) && /relationships\/endnotes" Target="endnotes.xml"/.test(np['word/_rels/document.xml.rels']) && /footnotes\+xml/.test(np['[Content_Types].xml']) && /w:styleId="FootnoteReference"><w:name w:val="footnote reference"\/>[\s\S]*?<w:vertAlign w:val="superscript"\/>/.test(np['word/styles.xml']) && /w:type="character" w:styleId="EndnoteReference"/.test(np['word/styles.xml']) && (await valid(n3.buf)) === null, np['word/footnotes.xml']);
+      const x1 = await docx.insertDocx(rb, { find: 'as shown in', ref: 'Figure 1' });
+      const xd = (await partsOf(x1.buf))['word/document.xml'];
+      const bmName = (/<w:bookmarkStart w:id="\d+" w:name="(_Ref\d+)"\/><w:r><w:t xml:space="preserve">Figure <\/w:t>/.exec(xd) || [])[1];
+      check('cross-references (file): "Figure 1" gets a _Ref bookmark around the caption\'s label and number (as Word makes them), and the text a space and a REF field to it showing "Figure 1"', Boolean(bmName) && new RegExp(`<w:fldChar w:fldCharType="end"\\/><\\/w:r><w:bookmarkEnd w:id="\\d+"\\/><w:r><w:t xml:space="preserve">: Rate`).test(xd) && new RegExp(`as shown in<\\/w:t><\\/w:r><w:r><w:t xml:space="preserve"> <\\/w:t><\\/w:r><w:r><w:fldChar w:fldCharType="begin"\\/><\\/w:r><w:r><w:instrText xml:space="preserve"> REF ${bmName} \\\\h <\\/w:instrText><\\/w:r><w:r><w:fldChar w:fldCharType="separate"\\/><\\/w:r><w:r><w:t>Figure 1<\\/w:t>`).test(xd) && x1.done.ref === 'Figure 1' && (await valid(x1.buf)) === null, xd.slice(xd.indexOf('as shown'), xd.indexOf('as shown') + 500));
+      const x2 = await docx.insertDocx(x1.buf, { find: 'the plot', ref: 'Figure 1', text: ' (' });
+      check('cross-references (file): a second one to the same caption reuses its bookmark; text given goes before the field', ((await partsOf(x2.buf))['word/document.xml'].match(/<w:bookmarkStart /g) || []).length === 1 && new RegExp(`the plot<\\/w:t><\\/w:r><w:r><w:t xml:space="preserve"> \\(<\\/w:t><\\/w:r><w:r><w:fldChar w:fldCharType="begin"\\/><\\/w:r><w:r><w:instrText xml:space="preserve"> REF ${bmName} `).test((await partsOf(x2.buf))['word/document.xml']));
+      const l1 = await docx.styleDocx(rb, { find: 'NIST', link: 'https://www.nist.gov/' });
+      const lp = await partsOf(l1.buf);
+      check('links (file): every match is a w:hyperlink (its runs in the Hyperlink style) with an external relationship; the text around them is untouched', (lp['word/document.xml'].match(/<w:hyperlink r:id="rId\d+" w:history="1"><w:r><w:rPr><w:rStyle w:val="Hyperlink"\/><\/w:rPr><w:t xml:space="preserve">NIST<\/w:t><\/w:r><\/w:hyperlink>/g) || []).length === 2 && /<w:t xml:space="preserve">Data are from <\/w:t><\/w:r><w:hyperlink/.test(lp['word/document.xml']) && /Type="http:\/\/schemas.openxmlformats.org\/officeDocument\/2006\/relationships\/hyperlink" Target="https:\/\/www.nist.gov\/" TargetMode="External"/.test(lp['word/_rels/document.xml.rels']) && /w:type="character" w:styleId="Hyperlink"/.test(lp['word/styles.xml']) && l1.links === 2 && (await valid(l1.buf)) === null, lp['word/document.xml'].slice(lp['word/document.xml'].indexOf('Data are'), lp['word/document.xml'].indexOf('Data are') + 400));
+      const b1 = await docx.styleDocx(rb, { find: 'Results', bookmark: 'Results' });
+      const b2 = await docx.styleDocx(b1.buf, { find: 'Data', link: '#Results', bold: true });
+      const bx = (await partsOf(b2.buf))['word/document.xml'];
+      check('bookmarks (file): a bookmark goes around the first match; an internal link (#name) is a w:hyperlink with w:anchor (no relationship), formatting and link in one call', /<w:bookmarkStart w:id="(\d+)" w:name="Results"\/><w:r><w:t xml:space="preserve">Results<\/w:t><\/w:r><w:bookmarkEnd w:id="\1"\/>/.test(bx) && /<w:hyperlink w:anchor="Results" w:history="1"><w:r><w:rPr><w:rStyle w:val="Hyperlink"\/><w:b\/><\/w:rPr><w:t xml:space="preserve">Data<\/w:t><\/w:r><\/w:hyperlink>/.test(bx) && (await valid(b2.buf)) === null, bx.slice(bx.indexOf('Data') - 200, bx.indexOf('Data') + 100));
+      const x3 = await docx.insertDocx(b1.buf, { find: 'from', ref: 'Results' });
+      check('cross-references (file): a ref to a bookmark is REF name \\h showing the bookmark\'s text', /<w:instrText xml:space="preserve"> REF Results \\h <\/w:instrText><\/w:r><w:r><w:fldChar w:fldCharType="separate"\/><\/w:r><w:r><w:t>Results<\/w:t>/.test((await partsOf(x3.buf))['word/document.xml']));
+      const t1 = await docx.insertDocx(rb, { find: 'mass,', text: ' (in kg)' }, { track: true });
+      check('insert in the text (file, tracked): the words go right after the match in its run\'s look, as a tracked insertion', /with mass,<\/w:t><\/w:r><w:ins w:id="\d+" w:author="AI \(Lumen\)"[^>]*><w:r><w:t xml:space="preserve"> \(in kg\)<\/w:t><\/w:r><\/w:ins><w:r><w:t xml:space="preserve"> as shown/.test((await partsOf(t1.buf))['word/document.xml']) && (await docx.readDocx(t1.buf)).text.includes('with mass, (in kg) as shown'));
+      const xErrs = [
+        [() => docx.insertDocx(rb, { find: 'nowhere', text: 'x' }), /No match for “nowhere”/],
+        [() => docx.insertDocx(rb, { find: 'plot', ref: 'Figure 4' }), /There is no Figure 4 caption/],
+        [() => docx.insertDocx(rb, { find: 'plot', ref: 'Missing' }), /There is no bookmark named Missing/],
+        [() => docx.styleDocx(b1.buf, { find: 'Data', bookmark: 'Results' }), /already a bookmark named Results/],
+      ];
+      const xBad = [];
+      for (const [fn, re] of xErrs) { const m = await rejects(fn); if (!re.test(m || '')) xBad.push(m); }
+      check('references (file): a match, caption or bookmark that is not there, or a bookmark name taken, changes nothing and says why', !xBad.length, J(xBad));
+
+      const wr7 = makeRig();
+      wr7.store.calls.length = 0;
+      await wr7.word.run({ action: 'insert', find: 'Results', note: 'footnote', text: 'From lab 2.' }, wr7.ctx);
+      await wr7.word.run({ action: 'style', find: 'Intro', link: 'https://example.org', bookmark: 'Intro1' }, wr7.ctx);
+      const ic2 = wr7.store.calls.find((c) => c[0] === 'insert')[1]; const sc2 = wr7.store.calls.find((c) => c[0] === 'style')[1];
+      check('references (Word): the helper gets find, note and text for a note, and link and bookmark for style', ic2.find === 'Results' && ic2.note === 'footnote' && ic2.text === 'From lab 2.' && !('at' in ic2) && sc2.link === 'https://example.org/' && sc2.bookmark === 'Intro1', J([ic2, sc2]));
+      const rf = path.join(tmp, 'Refs (lab).docx');
+      fs.writeFileSync(rf, rb);
+      const fr6 = makeRig({ platform: 'linux' });
+      const said10 = await fr6.word.run({ action: 'insert', path: rf, find: 'grows linearly', note: 'footnote', text: 'Smith 2020.' }, fr6.ctx);
+      const said11 = await fr6.word.run({ action: 'insert', path: rf, find: 'as shown in', ref: 'Figure 1' }, fr6.ctx);
+      check('references (file route): without Word, notes and cross-references go into the .docx after a card with its path (one per write), and the answers say what went where', /Added a footnote \(footnote 1\) after “grows linearly” in Refs \(lab\)\.docx\. Saved in the file/.test(said10) && /Added a cross-reference to Figure 1 after “as shown in”/.test(said11) && fr6.store.cards.length === 2 && fr6.store.cards[0].args.includes(rf) && (await valid(fs.readFileSync(rf))) === null, said10 + ' / ' + said11);
+      const ps5 = read('src/word/host.ps1');
+      check('helper: notes with Footnotes.Add and Endnotes.Add, cross-references with InsertCrossReference (captions by label and number, bookmarks), links with Hyperlinks.Add, bookmarks with Bookmarks.Add; still no Delete', /function Cmd-InsertAt/.test(ps5) && /Footnotes\.Add\(\$r, \$miss/.test(ps5) && /Endnotes\.Add\(\$r, \$miss/.test(ps5) && /InsertCrossReference\(\$label, 3/.test(ps5) && /InsertCrossReference\(2, -1, \$ref/.test(ps5) && /Hyperlinks\.Add\(\$hits\[\$k\]/.test(ps5) && /Bookmarks\.Add\(/.test(ps5) && !/Delete\(/.test(ps5));
+    }
   }
 
   // ---- real Word, only when it is installed and runs fully hidden on a temp document
