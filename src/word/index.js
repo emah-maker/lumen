@@ -267,7 +267,13 @@ function createWord(deps = {}) {
       const where = r.text.style ? `the ${r.text.style} style` : r.text.find ? `${r.text.paragraphs ?? 'the'} ${file ? 'paragraph' : 'place'}${r.text.paragraphs === 1 ? '' : 's'} with ${q(r.text.find)}` : r.text.paragraphs ? `${r.text.paragraphs} paragraph${r.text.paragraphs === 1 ? '' : 's'}` : 'the whole document (Normal and the headings)';
       out.push(r.text.created && !hasLook(v) ? what : `${what} for ${where}`);
     }
-    if (r.sections) out.push(`${[v.margins && 'margins', v.orientation].filter(Boolean).join(' and ')} in ${r.sections} section${r.sections === 1 ? '' : 's'}`);
+    for (const [k, what] of [['sectionBreaks', `${{ continuous: 'continuous section break', evenPage: 'even-page section break', oddPage: 'odd-page section break' }[v.sectionBreak] || 'section break (new page)'}`], ['columnBreaks', 'column break']]) {
+      if (r[k]?.added?.length) out.push(`${what}${r[k].added.length === 1 ? '' : 's'} before ${r[k].added.map(q).join(', ')}`);
+      if (r[k]?.had?.length) out.push(`${r[k].had.map(q).join(', ')} already start${r[k].had.length === 1 ? 's' : ''} one`);
+    }
+    const hfText = (p) => [p.left, p.center, p.right].filter(Boolean).join(' | ');
+    const page = [v.margins && 'margins', v.orientation, v.header && `header “${spec.clip(hfText(v.header), 40)}”`, v.footer && `footer “${spec.clip(hfText(v.footer), 40)}”`, v.firstPage === true && 'a first page without them', v.firstPage === false && 'the same header and footer on the first page', v.pageStart !== undefined && `page numbers from ${v.pageStart}`, v.columns !== undefined && (v.columns > 1 ? `${v.columns} columns` : 'one column')].filter(Boolean);
+    if (r.sections && page.length) out.push(`${page.join(', ')} in ${r.sections} section${r.sections === 1 ? '' : 's'}`);
     return `Formatted ${name}: ${out.join('; ') || 'nothing needed changing'}.`;
   }
   const charWords = (v) => [v.font && `font ${v.font}`, v.size && `size ${v.size} pt`, v.bold !== undefined && (v.bold ? 'bold' : 'not bold'), v.italic !== undefined && (v.italic ? 'italic' : 'not italic'), v.underline && (v.underline === 'none' ? 'no underline' : `${v.underline === 'single' ? '' : `${v.underline} `}underline`), v.strike !== undefined && (v.strike ? 'struck through' : 'not struck through'), v.color && `color ${v.color === 'auto' ? 'automatic' : `#${v.color}`}`, v.highlight && (v.highlight === 'none' ? 'no highlight' : `${v.highlight} highlight`)].filter(Boolean);
@@ -377,7 +383,7 @@ function createWord(deps = {}) {
     if (A === 'image') return `${imageDone(r, ref.name, v, pic)} Saved in the file, as a tracked change.`;
     if (A === 'table' && isEdit(v)) return `${tableDone(r.done, ref.name, v)} Saved in the file; new and replaced text and new rows are tracked changes, the look is not.`;
     if (A === 'style') return `${styleDone(r, ref.name, v)} Saved in the file (formatting is not a tracked change).`;
-    if (A === 'format') return `${formatDone(r.done, ref.name, v, true)} Saved in the file; new text, page breaks and removed lines are tracked changes, and style and page changes are not.`;
+    if (A === 'format') return `${formatDone(r.done, ref.name, v, true)}${v.header || v.footer ? ' Page numbers and other fields show their real values when Word updates them (it does on opening and printing).' : ''} Saved in the file; new text, page breaks and removed lines are tracked changes, and style and page changes are not.`;
     return A === 'insert' ? `Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${ref.name}${placeText(v)} (saved in the file, as a tracked change).` : `Added a table (${r.rows} rows, ${r.columns} columns) to ${ref.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''} (saved in the file, as a tracked change).`;
   }
 

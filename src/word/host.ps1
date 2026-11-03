@@ -424,6 +424,30 @@ function Typed-Contents($d) {
   return @{ title = $t; entries = $entries.ToArray() }
 }
 
+# A header's or footer's text: "left <tab> center <tab> right" on the Header / Footer style's own tab stops, with {page}, {pages} and {date}
+# as Word's PAGE, NUMPAGES and DATE fields. parts: @{ left; center; right }.
+function Set-HeaderText($d, $r, $parts) {
+  $r.Text = ''
+  $pieces = @([string](Arg $parts 'left' ''), [string](Arg $parts 'center' ''), [string](Arg $parts 'right' ''))
+  $seq = New-Object System.Collections.ArrayList
+  [void]$seq.Add($pieces[0])
+  if ($pieces[1] -or $pieces[2]) { [void]$seq.Add("`t"); [void]$seq.Add($pieces[1]) }
+  if ($pieces[2]) { [void]$seq.Add("`t"); [void]$seq.Add($pieces[2]) }
+  foreach ($chunk in $seq) {
+    foreach ($tok in ([regex]::Split([string]$chunk, '(\{page\}|\{pages\}|\{date\})', 'IgnoreCase'))) {
+      if ($tok -eq '') { continue }
+      $end = $r.Duplicate; $end.Collapse(0)
+      switch -regex ($tok) {
+        '^(?i)\{page\}$' { [void]$d.Fields.Add($end, 33) }
+        '^(?i)\{pages\}$' { [void]$d.Fields.Add($end, 26) }
+        '^(?i)\{date\}$' { [void]$d.Fields.Add($end, 31, '\@ "MMMM d, yyyy"', $false) }
+        default { $end.InsertAfter($tok) }
+      }
+      $r.End = $r.StoryLength
+    }
+  }
+}
+
 function Cmd-Format($req) {
   $d = Find-Doc $req
   $done = @{}
@@ -431,7 +455,7 @@ function Cmd-Format($req) {
   $heads = @(Arg $req 'headings' @())
   $breaks = @(Arg $req 'breaks' @())
   $targets = @(Arg $req 'paras' @())
-  $texts = @(); foreach ($h in $heads) { $texts += [string]$h['text'] }; foreach ($b in $breaks) { $texts += [string]$b }; foreach ($t in $targets) { $texts += [string]$t }
+  $texts = @(); foreach ($h in $heads) { $texts += [string]$h['text'] }; foreach ($b in $breaks) { $texts += [string]$b }; foreach ($t in $targets) { $texts += [string]$t }; foreach ($k in @('sectionBreaks', 'columnBreaks')) { foreach ($t in @(Arg $req $k @())) { $texts += [string]$t } }
   if ($req.ContainsKey('toc') -and $req.ContainsKey('tocAt')) { $texts += [string]$req['tocAt'] }
   if ($texts.Count) { Need-Paras $d $texts }
   if ($req.ContainsKey('find') -and ((Has-Text $req) -or (Has-Spacing $req) -or $req.ContainsKey('list'))) { if ((Find-All $d ([string]$req['find']) 1).Count -eq 0) { throw ('No paragraph contains "' + [string]$req['find'] + '". Use read to see the text.') } }
@@ -537,7 +561,25 @@ function Cmd-Format($req) {
     }
     $done.text = @{ style = (Arg $req 'style' $null); find = (Arg $req 'find' $null); paragraphs = $paras }
   }
-  if ($req.ContainsKey('margins') -or $req.ContainsKey('orientation')) {
+  # section and column breaks before paragraphs (before the section-numbered changes below, which count the sections they make)
+  foreach ($pair in @(@('sectionBreaks', 'sectionBreaks'), @('columnBreaks', 'columnBreaks'))) {
+    $list = @(Arg $req $pair[0] @())
+    if (-not $list.Count) { continue }
+    $code = 8; if ($pair[0] -eq 'sectionBreaks') { $code = [int](@{ 'nextPage' = 2; 'continuous' = 3; 'evenPage' = 4; 'oddPage' = 5 })[[string](Arg $req 'sectionBreak' 'nextPage')] }
+    $added = @(); $had = @()
+    $targets = @(); foreach ($b in $list) { $targets += [pscustomobject]@{ t = [string]$b; i = [int](Find-Para $d ([string]$b)) } }
+    foreach ($x in @($targets | Sort-Object -Property i -Descending)) {
+      $p = $d.Paragraphs.Item($x.i)
+      $name = Para-Text $p
+      if ($x.i -eq 1) { $had = @($name) + $had; continue }
+      $d.Range($p.Range.Start, $p.Range.Start).InsertBreak($code)
+      $added = @($name) + $added
+      $first = [int]$p.Range.Start
+    }
+    $done[$pair[1]] = @{ added = $added; had = $had }
+  }
+  $hf = $req.ContainsKey('header') -or $req.ContainsKey('footer') -or $req.ContainsKey('firstPage') -or $req.ContainsKey('pageStart') -or $req.ContainsKey('columns')
+  if ($req.ContainsKey('margins') -or $req.ContainsKey('orientation') -or $hf) {
     $secs = @(); $i = 0
     foreach ($s in $d.Sections) { $i++; if (-not $req.ContainsKey('section') -or [int]$req['section'] -eq $i) { $secs += $s } }
     if ($req.ContainsKey('section') -and [int]$req['section'] -gt $i) { throw ('The document has ' + $i + ' section(s), so there is no section ' + [int]$req['section'] + '.') }
@@ -545,8 +587,18 @@ function Cmd-Format($req) {
       $ps = $s.PageSetup
       if ($req.ContainsKey('orientation')) { if ([string]$req['orientation'] -eq 'landscape') { $ps.Orientation = 1 } else { $ps.Orientation = 0 } }
       if ($req.ContainsKey('margins')) { $m = $req['margins']; $ps.TopMargin = 72 * [double]$m['top']; $ps.RightMargin = 72 * [double]$m['right']; $ps.BottomMargin = 72 * [double]$m['bottom']; $ps.LeftMargin = 72 * [double]$m['left'] }
+      if ($req.ContainsKey('columns')) { $ps.TextColumns.SetCount([int]$req['columns']) }
+      if ($req.ContainsKey('firstPage')) { $ps.DifferentFirstPageHeaderFooter = [int](-1 * [int][bool]$req['firstPage']) }
+      foreach ($kind in @('header', 'footer')) {
+        if (-not $req.ContainsKey($kind)) { continue }
+        if ($kind -eq 'header') { $hdr = $s.Headers.Item(1) } else { $hdr = $s.Footers.Item(1) }
+        if ($req.ContainsKey('section')) { $hdr.LinkToPrevious = $false }
+        Set-HeaderText $d $hdr.Range $req[$kind]
+      }
+      if ($req.ContainsKey('pageStart')) { $pn = $s.Footers.Item(1).PageNumbers; $pn.RestartNumberingAtSection = $true; $pn.StartingNumber = [int]$req['pageStart'] }
     }
     $done.sections = $secs.Count
+    if ($req.ContainsKey('header') -or $req.ContainsKey('footer') -or $req.ContainsKey('firstPage')) { $done.headers = @{ header = $req.ContainsKey('header'); footer = $req.ContainsKey('footer'); firstPage = (Arg $req 'firstPage' $null) } }
   }
   if ($null -ne $first) { $script:last[(Doc-Key $d)] = @([int]$first, [int]$first + 1) }
   return @{ doc = [string]$d.Name; done = $done }

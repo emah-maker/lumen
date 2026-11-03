@@ -1042,6 +1042,59 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const ps3 = read('src/word/host.ps1');
       check('helper: size, alt text, wrap (ConvertToShape, WrapFormat) and Word\'s own InsertCaption with its SEQ numbers updated; still no Delete', /InsertCaption\(\$label, \$title, '', \$where\)/.test(ps3) && /ConvertToShape\(\)/.test(ps3) && /WrapFormat\.Type/.test(ps3) && /AlternativeText/.test(ps3) && /Add-Caption \$d \$t\.Range 'Table'/.test(ps3) && !/Delete\(/.test(ps3));
     }
+    // ---- headers, footers and page numbers; sections, columns and section and column breaks
+    {
+      const gv = v({ action: 'format', header: 'Lab 2 | Ana Ruiz | {date}', page_numbers: 'right bottom', different_first_page: true, page_number_start: 0 });
+      check('pages: a header in three parts, page numbers by where they go (either word order), a different first page and the first number come out as clean fields', J(gv.header) === J({ left: 'Lab 2', center: 'Ana Ruiz', right: '{date}' }) && J(gv.footer) === J({ right: '{page}' }) && gv.firstPage === true && gv.pageStart === 0 && J(v({ action: 'format', footer: 'Page {page} of {pages}' }).footer) === J({ center: 'Page {page} of {pages}' }) && J(v({ action: 'format', page_numbers: true }).footer) === J({ center: '{page}' }) && J(v({ action: 'format', page_numbers: 'top' }).header) === J({ center: '{page}' }), J(gv));
+      const gErrs = [
+        [{ action: 'format', footer: 'a | b | c | d' }, /at most three parts/],
+        [{ action: 'format', footer: 'Page {pg}' }, /knows \{page\}, \{pages\} and \{date\}/],
+        [{ action: 'format', page_numbers: 'middle' }, /page_numbers must be true, or where they go/],
+        [{ action: 'format', footer: 'x', page_numbers: 'bottom' }, /page_numbers goes in the footer, which this call also sets/],
+        [{ action: 'format', columns: 7 }, /columns must be a number from 1 to 4/],
+        [{ action: 'format', section_break: 'continuous' }, /give section_break_before too/],
+        [{ action: 'format', section_break_before: ['A'], section_break: 'sideways' }, /section_break must be next_page, continuous/],
+        [{ action: 'format', section: 2, bold: true }, /section picks where margins, orientation, header, footer/],
+      ];
+      const gBad = gErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+      check('pages: every bad argument is refused with a sentence that says what to send', !gBad.length, J(gBad.map(([i]) => [i, throws(() => v(i))])));
+
+      let pb = docx.newDocx();
+      for (const [t, st] of [['Lab 2 Report', 'Title'], ['Introduction', 'Heading 1'], ['Body text.', null], ['Appendix', 'Heading 1'], ['Left column', null], ['Right column', null]]) pb = (await docx.editDocx(pb, { insert: { at: 'end', text: t, style: st } })).buf;
+      const g1 = await docx.formatDocx(pb, { sectionBreaks: ['Introduction', 'Appendix'], sectionBreak: 'nextPage', columnBreaks: ['Right column'] });
+      const gd = (await partsOf(g1.buf))['word/document.xml'];
+      const sects = [...gd.matchAll(/<w:sectPr>[\s\S]*?<\/w:sectPr>/g)].map((m) => m[0]);
+      check('section breaks (file): a break before a paragraph copies its section\'s w:sectPr into the paragraph before it (pPr, last), and the next section starts with the break\'s kind (w:type first after the references)', sects.length === 3 && /<w:p><w:pPr><w:pStyle w:val="Title"\/><w:sectPr><w:pgSz /.test(gd) && /Body text\.<\/w:t><\/w:r><\/w:p>/.test(gd) && /<w:pPr><w:sectPr><w:type w:val="nextPage"\/><w:pgSz[^>]*\/><w:pgMar[^>]*\/><\/w:sectPr><\/w:pPr><w:r><w:t xml:space="preserve">Body text\./.test(gd) && /<w:sectPr><w:type w:val="nextPage"\/><w:pgSz/.test(sects[2]) && !/<w:type/.test(sects[0]) && J(g1.done.sectionBreaks) === J({ added: ['Introduction', 'Appendix'], had: [] }) && (await valid(g1.buf)) === null, sects.join('\n'));
+      check('column breaks (file): a column break run starts the paragraph (after its pPr)', /<w:p><w:r><w:br w:type="column"\/><\/w:r><w:r><w:t xml:space="preserve">Right column</.test(gd) && J(g1.done.columnBreaks) === J({ added: ['Right column'], had: [] }));
+      const again2 = await docx.formatDocx(g1.buf, { sectionBreaks: ['Introduction', 'Lab 2 Report'], columnBreaks: ['Right column'] });
+      check('breaks (file): asked again (or before the first paragraph) adds nothing and says so', [...(await partsOf(again2.buf))['word/document.xml'].matchAll(/<w:sectPr>/g)].length === 3 && J(again2.done.sectionBreaks) === J({ added: [], had: ['Lab 2 Report', 'Introduction'] }) && again2.done.columnBreaks.had.length === 1, J(again2.done));
+      const g2 = await docx.formatDocx(g1.buf, { header: { left: 'Lab 2', right: '{date}' }, footer: { center: 'Page {page} of {pages}' }, firstPage: true, pageStart: 1, columns: 2, section: 3 }, { now: () => new Date('2026-11-02T12:00:00Z') });
+      const gp = await partsOf(g2.buf);
+      const last = [...gp['word/document.xml'].matchAll(/<w:sectPr>[\s\S]*?<\/w:sectPr>/g)].map((m) => m[0])[2];
+      check('headers (file): section 3 gets header and footer references first in its w:sectPr (default and first), then w:type, pgSz, pgMar, pgNumType, cols, titlePg in schema order; the other sections are untouched', /^<w:sectPr>(<w:(header|footer)Reference w:type="(first|default)" r:id="rId\d+"\/>){4}<w:type w:val="nextPage"\/><w:pgSz[^>]*\/><w:pgMar[^>]*\/><w:pgNumType w:start="1"\/><w:cols w:num="2" w:space="720"\/><w:titlePg\/><\/w:sectPr>$/.test(last) && (gp['word/document.xml'].match(/Reference /g) || []).length === 4 && g2.done.sections === 1, last);
+      const ftr = Object.entries(gp).find(([n, x]) => /^word\/footer\d\.xml$/.test(n) && /PAGE/.test(x))?.[1] || '';
+      const hdr = Object.entries(gp).find(([n, x]) => /^word\/header\d\.xml$/.test(n) && /Lab 2/.test(x))?.[1] || '';
+      check('headers (file): the footer is its own part (w:ftr) with the Footer style, the text\'s center and right tab stops, and "Page {PAGE} of {NUMPAGES}" as fields', /^<\?xml[^>]*\?><w:ftr xmlns:w=[^>]*><w:p><w:pPr><w:pStyle w:val="Footer"\/><w:tabs><w:tab w:val="center" w:pos="4680"\/><w:tab w:val="right" w:pos="9360"\/><\/w:tabs><\/w:pPr><w:r><w:tab\/><\/w:r><w:r><w:t xml:space="preserve">Page <\/w:t><\/w:r><w:r><w:fldChar w:fldCharType="begin"\/><\/w:r><w:r><w:instrText xml:space="preserve"> PAGE <\/w:instrText>[\s\S]*? of <\/w:t><\/w:r><w:r><w:fldChar w:fldCharType="begin"\/><\/w:r><w:r><w:instrText xml:space="preserve"> NUMPAGES <\/w:instrText>/.test(ftr), ftr);
+      check('headers (file): "Lab 2 | {date}" is left and right (two tabs), the date a DATE field showing today', /<w:t xml:space="preserve">Lab 2<\/w:t><\/w:r><w:r><w:tab\/><\/w:r><w:r><w:tab\/><\/w:r><w:r><w:fldChar w:fldCharType="begin"\/><\/w:r><w:r><w:instrText xml:space="preserve"> DATE \\@ "MMMM d, yyyy" <\/w:instrText><\/w:r><w:r><w:fldChar w:fldCharType="separate"\/><\/w:r><w:r><w:t>November 2, 2026<\/w:t>/.test(hdr), hdr);
+      const rels4 = gp['word/_rels/document.xml.rels']; const ct4 = gp['[Content_Types].xml'];
+      check('headers (file): four parts (default and first-page header and footer, the first-page ones empty) each with a relationship and a content type; Header and Footer styles; still a valid package', ['header1', 'header2', 'footer1', 'footer2'].every((n) => new RegExp(`Target="${n}.xml"`).test(rels4) && new RegExp(`PartName="/word/${n}.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.(header|footer)\\+xml"`).test(ct4)) && /w:styleId="Header"/.test(gp['word/styles.xml']) && /w:styleId="Footer"/.test(gp['word/styles.xml']) && Object.entries(gp).filter(([n, x]) => /^word\/(header|footer)\d\.xml$/.test(n) && !/<w:r>/.test(x)).length === 2 && (await valid(g2.buf)) === null, rels4);
+      const bare = setPart(docx.newDocx(), 'word/document.xml', (await partsOf(docx.newDocx()))['word/document.xml'].replace(' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"', ''));
+      const g3 = await docx.formatDocx(bare, { footer: { center: '{page}' } });
+      check('headers (file): a document whose root does not declare the r: namespace gets it, so r:id is valid', /<w:document xmlns:r="http:\/\/schemas.openxmlformats.org\/officeDocument\/2006\/relationships"/.test((await partsOf(g3.buf))['word/document.xml']) && (await valid(g3.buf)) === null);
+      check('pages (file): section 9 of 3 is a plain error', /The document has 3 sections, so there is no section 9/.test(await rejects(() => docx.formatDocx(g1.buf, { columns: 2, section: 9 })) || ''));
+
+      const wr6 = makeRig();
+      const said8 = await wr6.word.run({ action: 'format', footer: 'Page {page} of {pages}', different_first_page: true, section_break_before: ['Appendix'], section_break: 'continuous' }, wr6.ctx);
+      const fc = wr6.store.calls.find((c) => c[0] === 'format')[1];
+      check('pages (Word): the helper gets the footer parts, the first page, the breaks and their kind', J(fc.footer) === J({ center: 'Page {page} of {pages}' }) && fc.firstPage === true && J(fc.sectionBreaks) === J(['Appendix']) && fc.sectionBreak === 'continuous' && /Formatted/.test(said8), J(fc));
+      const pf2 = path.join(tmp, 'Pages (lab).docx');
+      fs.writeFileSync(pf2, pb);
+      const fr5 = makeRig({ platform: 'linux' });
+      const said9 = await fr5.word.run({ action: 'format', path: pf2, page_numbers: 'bottom center', different_first_page: true, section_break_before: ['Appendix'] }, fr5.ctx);
+      check('pages (file route): without Word, the answer says what was done and that fields fill in when Word updates them', /section break \(new page\) before “Appendix”/.test(said9) && /footer “\{page\}”, a first page without them in 2 sections/.test(said9) && /show their real values when Word updates them/.test(said9) && fr5.store.cards.length === 1 && (await valid(fs.readFileSync(pf2))) === null, said9);
+      const ps4 = read('src/word/host.ps1');
+      check('helper: headers and footers with Word\'s PAGE, NUMPAGES and DATE fields, a different first page, page numbering, columns, section and column breaks with InsertBreak; still no Delete', /function Set-HeaderText/.test(ps4) && /Fields\.Add\(\$end, 33\)/.test(ps4) && /Fields\.Add\(\$end, 26\)/.test(ps4) && /DifferentFirstPageHeaderFooter/.test(ps4) && /TextColumns\.SetCount/.test(ps4) && /RestartNumberingAtSection/.test(ps4) && /InsertBreak\(\$code\)/.test(ps4) && !/Delete\(/.test(ps4));
+    }
   }
 
   // ---- real Word, only when it is installed and runs fully hidden on a temp document
