@@ -292,7 +292,10 @@ function Cmd-InsertAt($d, $req) {
     if ([string]$req['note'] -eq 'endnote') { [void]$d.Endnotes.Add($r, $miss, [string]$req['text']) } else { [void]$d.Footnotes.Add($r, $miss, [string]$req['text']) }
     $done.note = @{ kind = [string]$req['note'] }
   } else {
-    $r.InsertAfter([string]$req['text'])
+    foreach ($tok in ([regex]::Split([string]$req['text'], '(\{date\})', 'IgnoreCase'))) {
+      if ($tok -eq '') { continue }
+      if ($tok -match '^(?i)\{date\}$') { $f = $d.Fields.Add($r, 31, '\@ "MMMM d, yyyy"', $false); $r = $d.Range([int]$f.Result.End + 1, [int]$f.Result.End + 1) } else { $r.InsertAfter($tok); $r.Collapse(0) }
+    }
     $done.text = $true
   }
   $script:last[(Doc-Key $d)] = @([int]$hits[0].Start, [int]$hits[0].End + 1)
@@ -332,20 +335,20 @@ function Esc-Find([string]$s) { return ($s.Replace('^', '^^') -replace "`r`n|`r|
 function Rep-Text([string]$s) { return ($s -replace "`r`n|`r|`n", $CR) }
 
 # Every place `find` occurs (up to a cap): ranges.
-function Find-All($d, [string]$find, [int]$cap) {
+function Find-All($d, [string]$find, [int]$cap, [bool]$whole = $false) {
   $res = New-Object System.Collections.ArrayList
   $r = $d.Content
   $f = $r.Find
   $f.ClearFormatting()
   $f.Text = (Esc-Find $find)
-  $f.Forward = $true; $f.Wrap = 0; $f.MatchCase = $true; $f.MatchWildcards = $false
+  $f.Forward = $true; $f.Wrap = 0; $f.MatchCase = $true; $f.MatchWildcards = $false; $f.MatchWholeWord = $whole
   while ($res.Count -lt $cap -and $f.Execute()) {
     [void]$res.Add($d.Range([int]$r.Start, [int]$r.End))
     $r.Collapse(0)
     $r.End = [int]$d.Content.End
     $f = $r.Find
     $f.Text = (Esc-Find $find)
-    $f.Forward = $true; $f.Wrap = 0; $f.MatchCase = $true; $f.MatchWildcards = $false
+    $f.Forward = $true; $f.Wrap = 0; $f.MatchCase = $true; $f.MatchWildcards = $false; $f.MatchWholeWord = $whole
   }
   return , $res
 }
@@ -357,10 +360,14 @@ function Cmd-Replace($req) {
   $cap = 1000
   # (every match is found first, then changed from the last to the first: with tracked changes the deleted text stays in the document, and
   # searching again after each change would find it again)
-  $hits = Find-All $d $find $cap
+  $hits = Find-All $d $find $cap ([bool](Arg $req 'wholeWord' $false))
   $count = 0
   if ($hits.Count -gt 0) { $script:last[(Doc-Key $d)] = @([int]$hits[0].Start, [int]$hits[0].Start + $rep.Length) }
-  for ($k = $hits.Count - 1; $k -ge 0; $k--) { $hits[$k].Text = $rep; $count++ }
+  for ($k = $hits.Count - 1; $k -ge 0; $k--) {
+    $hits[$k].Text = $rep
+    if ($rep -ne '') { Set-Char $hits[$k].Font $req; Set-Highlight $hits[$k] $req }   # (the new text's look, when one is asked for)
+    $count++
+  }
   return @{ doc = [string]$d.Name; replaced = $count; capped = ($count -ge $cap) }
 }
 
@@ -644,6 +651,7 @@ function Cmd-Format($req) {
     $done.sections = $secs.Count
     if ($req.ContainsKey('header') -or $req.ContainsKey('footer') -or $req.ContainsKey('firstPage')) { $done.headers = @{ header = $req.ContainsKey('header'); footer = $req.ContainsKey('footer'); firstPage = (Arg $req 'firstPage' $null) } }
   }
+  if ($req.ContainsKey('properties')) { Set-Properties $d $req['properties']; $done.properties = @($req['properties'].Keys) }
   if ($null -ne $first) { $script:last[(Doc-Key $d)] = @([int]$first, [int]$first + 1) }
   return @{ doc = [string]$d.Name; done = $done }
 }
@@ -788,8 +796,41 @@ function Cmd-Comment($req) {
 
 function Cmd-Track($req) {
   $d = Find-Doc $req
+  if ($req.ContainsKey('review')) { return (Cmd-Review $d $req) }
   $d.TrackRevisions = [bool]$req['on']
   return @{ doc = [string]$d.Name; tracking = [bool]$d.TrackRevisions }
+}
+# The tracked changes accepted or rejected with Word's own Accept and Reject: all, one author's, or those in the paragraphs holding find.
+function Cmd-Review($d, $req) {
+  $accept = ([string]$req['review'] -eq 'accept')
+  $author = [string](Arg $req 'author' '')
+  $scopes = New-Object System.Collections.ArrayList
+  if ($req.ContainsKey('find')) {
+    $hits = Find-All $d ([string]$req['find']) 200
+    if ($hits.Count -eq 0) { throw ('No paragraph contains "' + [string]$req['find'] + '". Use read to see the text.') }
+    $seen = @{}; foreach ($h in $hits) { foreach ($p in $h.Paragraphs) { $k = [int]$p.Range.Start; if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; [void]$scopes.Add($p.Range) } } }
+  } else { [void]$scopes.Add($d.Content) }
+  $count = 0
+  foreach ($sc in $scopes) {
+    $revs = $sc.Revisions
+    for ($i = [int]$revs.Count; $i -ge 1; $i--) {
+      $rv = $revs.Item($i)
+      if ($author -and ([string]$rv.Author).ToLowerInvariant() -ne $author.ToLowerInvariant()) { continue }
+      if ($accept) { $rv.Accept() } else { $rv.Reject() }
+      $count++
+    }
+  }
+  return @{ doc = [string]$d.Name; reviewed = $count; tracking = [bool]$d.TrackRevisions }
+}
+# The document's own properties (File > Info): title, author, subject, keywords. (BuiltInDocumentProperties is late-bound, so by name.)
+function Set-Properties($d, $props) {
+  $map = @{ 'title' = 'Title'; 'author' = 'Author'; 'subject' = 'Subject'; 'keywords' = 'Keywords' }
+  $all = $d.BuiltInDocumentProperties
+  $flags = [Reflection.BindingFlags]
+  foreach ($k in @($props.Keys)) {
+    $p = [System.__ComObject].InvokeMember('Item', $flags::GetProperty, $null, $all, @($map[[string]$k]))
+    [void][System.__ComObject].InvokeMember('Value', $flags::SetProperty, $null, $p, @([string]$props[$k]))
+  }
 }
 
 function Cmd-Save($req) {

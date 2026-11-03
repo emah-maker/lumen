@@ -217,6 +217,15 @@ function pagesOf(input, out) {
     if (!out.sectionBreaks) fail('section_break says what kind of break section_break_before makes; give section_break_before too.');
   }
   if (input.column_break_before !== undefined) out.columnBreaks = texts(input.column_break_before, 'column_break_before');
+  if (input.properties !== undefined) {
+    const p = input.properties;
+    if (!p || typeof p !== 'object' || Array.isArray(p)) fail('properties is { title, author, subject, keywords } (the document\'s own, shown in File > Info).');
+    const odd = Object.keys(p).filter((k2) => !['title', 'author', 'subject', 'keywords'].includes(k2));
+    if (odd.length) fail(`properties takes title, author, subject and keywords, not ${odd.join(', ')}.`);
+    out.properties = {};
+    for (const k2 of ['title', 'author', 'subject', 'keywords']) if (p[k2] !== undefined) out.properties[k2] = str(Array.isArray(p[k2]) ? p[k2].join(', ') : p[k2], `properties.${k2}`, 500) ?? '';
+    if (!Object.keys(out.properties).length) fail('properties needs at least one of title, author, subject and keywords.');
+  }
 }
 
 // image: how the picture sits in the text.
@@ -274,7 +283,7 @@ function formatOf(input) {
   const at = str(input.heading, 'heading', MAX.find); if (at) { if (!out.toc) fail('heading (where the table of contents goes) needs toc: true.'); out.tocAt = at; }
   const text = hasAny(out, CHAR_KEYS) || hasAny(out, PARA_KEYS);
   if ((out.style || out.find || out.paras) && !text && !out.list && !out.basedOn) fail('style, find and paragraphs pick where the change goes; give one of those changes: font, size, bold, italic, underline, color, line_spacing, space_before, space_after, align, indent, first_line, keep_with_next (or list, or based_on for a style). help lists them.');
-  const page = ['header', 'footer', 'firstPage', 'pageStart', 'columns', 'sectionBreaks', 'columnBreaks'].some((k) => out[k] !== undefined);
+  const page = ['header', 'footer', 'firstPage', 'pageStart', 'columns', 'sectionBreaks', 'columnBreaks', 'properties'].some((k) => out[k] !== undefined);
   if (!text && !page && !out.list && !out.basedOn && !out.margins && !out.orientation && !out.breaks && !out.headings && !out.toc) fail('Give something to change: font, size, line_spacing, space_before, space_after, align, indent, margins, orientation, page_break_before, headings, list, toc, header, footer, page_numbers, columns or section_break_before (help lists them all).');
   if (out.section && !out.margins && !out.orientation && !['header', 'footer', 'firstPage', 'pageStart', 'columns'].some((k) => out[k] !== undefined)) fail('section picks where margins, orientation, header, footer, page numbers or columns change; give one of those.');
   return out;
@@ -284,7 +293,7 @@ function formatOf(input) {
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
 const BOOKMARK = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic', 'find', 'note', 'ref'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS, 'link', 'bookmark'], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic', 'find', 'note', 'ref'], replace: ['find', 'replace', ...CHAR_ARGS, 'whole_word'], style: ['find', 'style', ...CHAR_ARGS, 'link', 'bookmark'], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on', 'accept', 'reject', 'author', 'find'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before', 'properties'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -345,6 +354,8 @@ function validate(input) {
       out.find = str(input.find, 'find', MAX.find, { required: true });
       if (typeof input.replace !== 'string') fail('replace is required: the new text (give "" to delete the found text), so nothing was changed.');
       out.replace = str(input.replace, 'replace', MAX.text) ?? '';
+      charOf(input, out); // (the new text's look: bold, color, ...)
+      if (input.whole_word !== undefined) out.wholeWord = bool(input.whole_word, 'whole_word');
       break;
     }
     case 'style': {
@@ -384,11 +395,24 @@ function validate(input) {
       break;
     }
     case 'comment': {
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
       out.find = str(input.find ?? input.heading, 'find', MAX.find, { required: true });
       out.text = str(input.comment ?? input.text, 'comment', MAX.comment, { required: true });
       break;
     }
-    case 'track': if (typeof input.on !== 'boolean') fail('on must be true or false.'); out.on = input.on; break;
+    case 'track': {
+      // on: tracking itself; accept / reject: the tracked changes there are (all, one author's, or those in the paragraphs holding find)
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      const picked = ['on', 'accept', 'reject'].filter((k) => input[k] !== undefined);
+      if (picked.length !== 1) fail('track takes one of: on (true or false: tracking itself), accept true or reject true (the tracked changes, optionally only an author\'s, or those in paragraphs holding find).');
+      if (input.on !== undefined) { if (typeof input.on !== 'boolean') fail('on must be true or false.'); out.on = input.on; if (input.author !== undefined || input.find !== undefined) fail('author and find go with accept or reject.'); break; }
+      const k = picked[0];
+      if (input[k] !== true && input[k] !== 'all') fail(`${k} must be true (all of them, or only those author or find picks).`);
+      out.review = k;
+      if (input.author !== undefined) out.author = str(input.author, 'author', 100, { required: true }).trim();
+      if (input.find !== undefined && input.find !== '') out.find = str(input.find, 'find', MAX.find);
+      break;
+    }
     case 'save_as': {
       out.path = checkPath(pathArg);
       const m = /\.(docx|pdf)$/i.exec(out.path);
@@ -433,6 +457,10 @@ function formatParts(i = {}) {
   if (nb) parts.push(count(nb, 'page break', 'page breaks'));
   if (Array.isArray(i.headings) && i.headings.length) parts.push(count(i.headings.length, 'heading', 'headings'));
   if (i.toc) parts.push('a table of contents');
+  if (i.properties) parts.push('the document properties');
+  if (i.header || i.footer || i.page_numbers) parts.push('header and footer');
+  if (i.section_break_before || i.column_break_before) parts.push('breaks');
+  if (i.columns) parts.push(`${clip(i.columns, 2)} columns`);
   return parts;
 }
 
@@ -455,7 +483,8 @@ function stepLabel(input = {}, name = '') {
     case 'image': { const src = String(input.image || ''); const name = /^https?:/i.test(src) ? (() => { try { return `from ${new URL(src).hostname}`; } catch { return ''; } })() : baseName(src); return `Writing in ${doc}: adding the picture ${name || ''}${input.caption ? ` with the caption “${clip(input.caption, 30)}”` : ''}${where(input)}`.trim(); }
     case 'comment': return `Commenting in ${doc} on “${clip(input.find ?? input.heading, 30)}”`;
     case 'format': return `Formatting ${doc}: ${formatParts(input).join(', ') || 'the layout'}`;
-    case 'track': return `${input.on ? 'Turning on' : 'Turning off'} tracked changes in ${doc}`;
+    case 'track': if (input.accept !== undefined || input.reject !== undefined) return `${input.accept !== undefined ? 'Accepting' : 'Rejecting'} ${input.author ? `${clip(input.author, 30)}'s` : 'the'} tracked changes${input.find ? ` around “${clip(input.find, 30)}”` : ''} in ${doc}`;
+      return `${input.on ? 'Turning on' : 'Turning off'} tracked changes in ${doc}`;
     case 'save': return `Saving ${doc}`;
     case 'save_as': return `Saving ${doc} as ${baseName(input.path) || 'a new file'}`;
     case 'show': return `Showing ${doc} in Word`;
@@ -474,7 +503,8 @@ const HELP = [
   'read: offset (next_offset of the last read). Headings show as #, lists as -, tables as | a | b |.',
   'insert: text (a line per paragraph), at end|start|after|section_end, heading (the paragraph to go after), style, bold, italic. Lists: style "List Bullet" or "List Number"; indent a line (two spaces or a tab) for a deeper level; a typed "- " or "1. " is dropped.',
   'insert in the text (references): find (the text it goes right after), then text (a word or sentence), or note footnote|endnote with text (the note), or ref "Figure 2" / "Table 1" / a bookmark name (a cross-reference Word keeps up to date).',
-  'replace: find, replace (required; "" deletes). A line break in find matches across paragraphs.',
+  'replace: find, replace (required; "" deletes), whole_word, and the new text\'s look: bold, italic, underline, color, highlight, strike, font, size. A line break in find matches across paragraphs (in Word).',
+  'review: track accept true or reject true (every tracked change, or author "AI (Lumen)" / a person\'s name, or find: those in the paragraphs holding it); track on true|false turns tracking on or off. comment: find, comment. format properties { title, author, subject, keywords }. Text with {date} (insert with find) is a date field.',
   'style (the exact text found): find, and style (any style the document has: Normal, Heading 1-6, Title, Quote, List Bullet, List Number, or its own) or character formatting: bold, italic, underline (true or single|double|thick|dotted|dash|wave|none), color (red, blue, #1F4E79...), highlight (yellow, green, cyan, lightGray, none...), strike, font, size; link (https://..., mailto:, or #bookmark) makes it a hyperlink; bookmark (a name) marks it for ref and #links.',
   'format (styles, paragraphs and pages; where: style (that style everywhere, the cleanest), find (paragraphs holding that text), paragraphs [their texts], or nothing for the whole document): font, size, bold, italic, underline, color, line_spacing (1, 1.15, 1.5, 2; 6+ = exact points), space_before / space_after (points), align left|center|right|justify, indent (inches), first_line (inches; negative = hanging), keep_with_next.',
   'format styles: style + based_on makes the style when the document has none of that name (style "Figure Caption", based_on "Normal", size 9, italic true), or changes what it is based on; then apply it with style or insert.',
@@ -484,7 +514,7 @@ const HELP = [
   'table (new): rows [[cells]], at, heading, header (first row repeats on each page, bold; default true), widths [inches per column], borders all|outside|none, shading (the header row\'s fill: lightgray, #D9E2F3...), align left|center|right.',
   'table (one that is there): index (1 is the first table, in reading order) or find (text in one of its cells), then cells [[row, col, "text"]] (1-based, counted after the rows and column this call adds), add_rows (after row n: 0 top, "end" bottom) with rows [[cells]], add_column (after column n, "end"; fill it with cells), header, widths, borders, shading, align.',
   'image: image (a file path or an https address), at, heading, width / height (inches; one keeps the shape), wrap inline|square|tight|top_bottom|behind|front, align left|center|right, caption ("Figure N: " is added, numbered by Word), alt (text for screen readers). table (new) takes caption too ("Table N: ", above it).',
-  'comment: find, comment. track: on. save; save_as: path (.docx or .pdf). show.',
+  'save; save_as: path (.docx or .pdf). show.',
 ];
 function help(topic) {
   const t = String(topic || '').toLowerCase();
