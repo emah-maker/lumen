@@ -242,8 +242,29 @@ function Locate($d, $req) {
   return @{ pos = [int]$pr.End; lead = $false; trail = $true }
 }
 
-$STYLE_ID = @{ 'Normal' = -1; 'Heading 1' = -2; 'Heading 2' = -3; 'Heading 3' = -4; 'Title' = -63; 'List Bullet' = -49; 'List Number' = -50; 'Quote' = -181 }
-function Set-Style($d, $range, [string]$name) { if ($STYLE_ID.ContainsKey($name)) { $range.Style = $d.Styles.Item([int]$STYLE_ID[$name]) } else { throw 'Unknown style.' } }
+$STYLE_ID = @{ 'Normal' = -1; 'Heading 1' = -2; 'Heading 2' = -3; 'Heading 3' = -4; 'Heading 4' = -5; 'Heading 5' = -6; 'Heading 6' = -7; 'Title' = -63; 'List Bullet' = -49; 'List Number' = -50; 'Quote' = -181 }
+# A style by name: a built-in one by its number (the name differs by the language Word is in), else the document's own by its name.
+function Get-Style($d, [string]$name) {
+  if ($STYLE_ID.ContainsKey($name)) { return $d.Styles.Item([int]$STYLE_ID[$name]) }
+  try { return $d.Styles.Item($name) } catch { throw ('This document has no style named "' + $name + '", so nothing was changed. To make one, use format with style "' + $name + '" and based_on (such as "Normal").') }
+}
+function Set-Style($d, $range, [string]$name) { $range.Style = (Get-Style $d $name) }
+# Character formatting on a Font (and the highlight, which is the range's): bold, italic, underline, strike, color, font, size.
+$UNDERLINE = @{ 'none' = 0; 'single' = 1; 'words' = 2; 'double' = 3; 'dotted' = 4; 'thick' = 6; 'dash' = 7; 'wave' = 11 }
+$HIGHLIGHT = @{ 'none' = 0; 'black' = 1; 'blue' = 2; 'cyan' = 3; 'green' = 4; 'magenta' = 5; 'red' = 6; 'yellow' = 7; 'white' = 8; 'darkBlue' = 9; 'darkCyan' = 10; 'darkGreen' = 11; 'darkMagenta' = 12; 'darkRed' = 13; 'darkYellow' = 14; 'darkGray' = 15; 'lightGray' = 16 }
+function Set-Char($font, $req) {
+  if ($req.ContainsKey('font')) { $font.Name = [string]$req['font'] }
+  if ($req.ContainsKey('size')) { $font.Size = [double]$req['size'] }
+  if ($req.ContainsKey('bold')) { $font.Bold = [int]([bool]$req['bold']) }
+  if ($req.ContainsKey('italic')) { $font.Italic = [int]([bool]$req['italic']) }
+  if ($req.ContainsKey('strike')) { $font.StrikeThrough = [int]([bool]$req['strike']) }
+  if ($req.ContainsKey('underline')) { $font.Underline = [int]$UNDERLINE[[string]$req['underline']] }
+  if ($req.ContainsKey('color')) {
+    $c = [string]$req['color']
+    if ($c -eq 'auto') { $font.Color = -16777216 } else { $font.Color = [Convert]::ToInt32($c.Substring(0, 2), 16) + 256 * [Convert]::ToInt32($c.Substring(2, 2), 16) + 65536 * [Convert]::ToInt32($c.Substring(4, 2), 16) }   # (Word's colors are BGR)
+  }
+}
+function Set-Highlight($range, $req) { if ($req.ContainsKey('highlight')) { $range.HighlightColorIndex = [int]$HIGHLIGHT[[string]$req['highlight']] } }
 
 function Cmd-Insert($req) {
   $d = Find-Doc $req
@@ -264,6 +285,8 @@ function Cmd-Insert($req) {
   if (-not $req.ContainsKey('style')) { try { $nr.ParagraphFormat.Reset(); $nr.Font.Reset() } catch { } }
   if ($req.ContainsKey('bold')) { $nr.Font.Bold = [int]([bool]$req['bold']) }
   if ($req.ContainsKey('italic')) { $nr.Font.Italic = [int]([bool]$req['italic']) }
+  $levels = @(Arg $req 'levels' @())
+  for ($i = 0; $i -lt $levels.Count -and $i -lt [int]$nr.Paragraphs.Count; $i++) { if ([int]$levels[$i] -gt 1) { $nr.Paragraphs.Item($i + 1).Range.ListFormat.ListLevelNumber = [int]$levels[$i] } }
   $script:last[(Doc-Key $d)] = @($s, $e)
   return @{ doc = [string]$d.Name; paragraphs = $paras.Count; tracking = [bool]$d.TrackRevisions }
 }
@@ -311,10 +334,11 @@ function Cmd-Style($req) {
   $d = Find-Doc $req
   $hits = Find-All $d ([string]$req['find']) 200
   $done = 0
+  if ($req.ContainsKey('style')) { $null = Get-Style $d ([string]$req['style']) }   # (a style the document lacks changes nothing)
   foreach ($h in $hits) {
     if ($req.ContainsKey('style')) { Set-Style $d $h.Paragraphs.Item(1).Range ([string]$req['style']) }
-    if ($req.ContainsKey('bold')) { $h.Font.Bold = [int]([bool]$req['bold']) }
-    if ($req.ContainsKey('italic')) { $h.Font.Italic = [int]([bool]$req['italic']) }
+    Set-Char $h.Font $req
+    Set-Highlight $h $req
     $done++
   }
   if ($done -gt 0) { $script:last[(Doc-Key $d)] = @([int]$hits[0].Start, [int]$hits[0].End) }
@@ -355,13 +379,22 @@ function Set-Spacing($pf, $req) {
   }
   if ($req.ContainsKey('before')) { $pf.SpaceBefore = [double]$req['before'] }
   if ($req.ContainsKey('after')) { $pf.SpaceAfter = [double]$req['after'] }
+  if ($req.ContainsKey('align')) { $pf.Alignment = [int](@{ 'left' = 0; 'center' = 1; 'right' = 2; 'justify' = 3 })[[string]$req['align']] }
+  if ($req.ContainsKey('indent')) { $pf.LeftIndent = 72 * [double]$req['indent'] }
+  if ($req.ContainsKey('firstLine')) { $pf.FirstLineIndent = 72 * [double]$req['firstLine'] }   # (negative: a hanging indent)
+  if ($req.ContainsKey('keepNext')) { $pf.KeepWithNext = [int]([bool]$req['keepNext']) }
 }
-function Set-Font($font, $req) {
-  if ($req.ContainsKey('font')) { $font.Name = [string]$req['font'] }
-  if ($req.ContainsKey('size')) { $font.Size = [double]$req['size'] }
+function Has-Text($req) { foreach ($k in @('font', 'size', 'bold', 'italic', 'strike', 'underline', 'color', 'highlight')) { if ($req.ContainsKey($k)) { return $true } }; return $false }
+function Has-Spacing($req) { foreach ($k in @('line', 'before', 'after', 'align', 'indent', 'firstLine', 'keepNext')) { if ($req.ContainsKey($k)) { return $true } }; return $false }
+# A list on paragraph p (Word's own bullets or numbers, at a level), continuing the list the call started; none takes it out.
+function Set-List($p, [string]$kind, [int]$level, [bool]$continue) {
+  $lf = $p.Range.ListFormat
+  if ($kind -eq 'none') { $lf.RemoveNumbers(); return }
+  $gallery = 1; if ($kind -eq 'number') { $gallery = 2 }
+  $tpl = $p.Application.ListGalleries.Item($gallery).ListTemplates.Item(1)
+  $lf.ApplyListTemplateWithLevel($tpl, $continue, 0, 2)
+  if ($level -gt 1) { $lf.ListLevelNumber = $level }
 }
-function Has-Text($req) { return ($req.ContainsKey('font') -or $req.ContainsKey('size')) }
-function Has-Spacing($req) { return ($req.ContainsKey('line') -or $req.ContainsKey('before') -or $req.ContainsKey('after')) }
 $ENTRY_TAIL = '(\s*\.{2,}\s*|\t+|\s+)\d+\s*$'
 
 # A typed contents list: the paragraphs after a "Table of Contents" title that look like entries (a heading's text, or text ending in a page
@@ -397,10 +430,19 @@ function Cmd-Format($req) {
   # every paragraph a change names is found first: a missing one changes nothing
   $heads = @(Arg $req 'headings' @())
   $breaks = @(Arg $req 'breaks' @())
-  $texts = @(); foreach ($h in $heads) { $texts += [string]$h['text'] }; foreach ($b in $breaks) { $texts += [string]$b }
+  $targets = @(Arg $req 'paras' @())
+  $texts = @(); foreach ($h in $heads) { $texts += [string]$h['text'] }; foreach ($b in $breaks) { $texts += [string]$b }; foreach ($t in $targets) { $texts += [string]$t }
   if ($req.ContainsKey('toc') -and $req.ContainsKey('tocAt')) { $texts += [string]$req['tocAt'] }
   if ($texts.Count) { Need-Paras $d $texts }
-  if ($req.ContainsKey('find') -and ((Has-Text $req) -or (Has-Spacing $req))) { if ((Find-All $d ([string]$req['find']) 1).Count -eq 0) { throw ('No paragraph contains "' + [string]$req['find'] + '". Use read to see the text.') } }
+  if ($req.ContainsKey('find') -and ((Has-Text $req) -or (Has-Spacing $req) -or $req.ContainsKey('list'))) { if ((Find-All $d ([string]$req['find']) 1).Count -eq 0) { throw ('No paragraph contains "' + [string]$req['find'] + '". Use read to see the text.') } }
+  $style = $null
+  if ($req.ContainsKey('style')) {
+    $name = [string]$req['style']
+    $base = $null; if ($req.ContainsKey('basedOn')) { $base = Get-Style $d ([string]$req['basedOn']) }
+    try { $style = Get-Style $d $name } catch { if ($null -eq $base) { throw } }
+    if ($null -eq $style) { $style = $d.Styles.Add($name, 1); $style.BaseStyle = [string]$base.NameLocal; $style.NextParagraphStyle = $d.Styles.Item(-1); $done.created = $true }
+    elseif ($null -ne $base) { $style.BaseStyle = [string]$base.NameLocal }
+  }
   $first = $null
   if ($heads.Count) {
     foreach ($h in $heads) { $p = $d.Paragraphs.Item((Find-Para $d ([string]$h['text']))); Set-Style $d $p.Range ('Heading ' + [int]$h['level']); if ($null -eq $first) { $first = [int]$p.Range.Start } }
@@ -449,25 +491,41 @@ function Cmd-Format($req) {
     }
     $done.breaks = @{ added = $added; had = $had }
   }
-  if ((Has-Text $req) -or (Has-Spacing $req)) {
+  if ($targets.Count -or ($req.ContainsKey('find') -and $req.ContainsKey('list'))) {
+    # the paragraphs named (or holding the find text): their own formatting, and a list
+    $ps = New-Object System.Collections.ArrayList
+    if ($targets.Count) { foreach ($t in $targets) { [void]$ps.Add($d.Paragraphs.Item((Find-Para $d ([string]$t)))) } }
+    else { $seen = @{}; foreach ($h in (Find-All $d ([string]$req['find']) 200)) { foreach ($hp in $h.Paragraphs) { $k = [int]$hp.Range.Start; if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; [void]$ps.Add($hp) } } } }
+    $sorted = @($ps | Sort-Object -Property { [int]$_.Range.Start } -Unique)
+    $n = 0
+    foreach ($p in $sorted) {
+      if ($req.ContainsKey('list')) { Set-List $p ([string]$req['list']) ([int](Arg $req 'level' 1)) ($n -gt 0) }
+      if (Has-Text $req) { Set-Char $p.Range.Font $req; Set-Highlight $p.Range $req }
+      if (Has-Spacing $req) { Set-Spacing $p.Format $req }
+      $n++
+    }
+    if ($sorted.Count) { $first = [int]$sorted[0].Range.Start }
+    $done.text = @{ find = (Arg $req 'find' $null); paragraphs = $sorted.Count; list = (Arg $req 'list' $null) }
+  } elseif ($null -ne $style) {
+    Set-Char $style.Font $req
+    Set-Spacing $style.ParagraphFormat $req
+    $done.text = @{ style = [string]$req['style']; created = [bool]$done.created; basedOn = (Arg $req 'basedOn' $null) }
+    $done.Remove('created')
+  } elseif ((Has-Text $req) -or (Has-Spacing $req)) {
     $paras = $null
     if ($req.ContainsKey('find')) {
       $hits = Find-All $d ([string]$req['find']) 200
       $seen = @{}
       foreach ($h in $hits) {
-        if (Has-Text $req) { Set-Font $h.Font $req }
+        if (Has-Text $req) { Set-Char $h.Font $req; Set-Highlight $h $req }
         if (Has-Spacing $req) { foreach ($hp in $h.Paragraphs) { $k = [int]$hp.Range.Start; if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; Set-Spacing $hp.Format $req } } }
       }
       $paras = $hits.Count
       if ($hits.Count) { $first = [int]$hits[0].Start }
-    } elseif ($req.ContainsKey('style')) {
-      $st = $d.Styles.Item([int]$STYLE_ID[[string]$req['style']])
-      Set-Font $st.Font $req
-      Set-Spacing $st.ParagraphFormat $req
     } else {
       # the whole document: Normal (spacing, font, size), the headings' and title's font, then the paragraphs whose own formatting still hides it
       $normal = $d.Styles.Item(-1)
-      Set-Font $normal.Font $req
+      Set-Char $normal.Font $req
       Set-Spacing $normal.ParagraphFormat $req
       if ($req.ContainsKey('font')) { foreach ($id in @(-2, -3, -4, -5, -63, -75)) { try { $d.Styles.Item($id).Font.Name = [string]$req['font'] } catch { } } }
       $font = [string](Arg $req 'font' '')

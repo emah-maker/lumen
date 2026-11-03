@@ -5,12 +5,12 @@
 
 const path = require('path');
 
-const ACTIONS = ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show'];
+const ACTIONS = ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show', 'help'];
 // Changes that open, edit, save or show something: refused in hands-off mode and asked about in a card.
 const EDITS = new Set(['insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track']);
 const SAVES = new Set(['save', 'save_as']);
 const ACTING = new Set(['open', 'new', 'show', ...EDITS, ...SAVES]);
-const STYLES = { normal: 'Normal', 'heading 1': 'Heading 1', 'heading 2': 'Heading 2', 'heading 3': 'Heading 3', title: 'Title', 'list bullet': 'List Bullet', bullet: 'List Bullet', bullets: 'List Bullet', 'list number': 'List Number', numbered: 'List Number', number: 'List Number', quote: 'Quote' };
+const STYLES = { normal: 'Normal', 'heading 1': 'Heading 1', 'heading 2': 'Heading 2', 'heading 3': 'Heading 3', 'heading 4': 'Heading 4', 'heading 5': 'Heading 5', 'heading 6': 'Heading 6', title: 'Title', 'list bullet': 'List Bullet', bullet: 'List Bullet', bullets: 'List Bullet', 'list number': 'List Number', numbered: 'List Number', number: 'List Number', quote: 'Quote' };
 const AT = ['end', 'start', 'after', 'section_end'];
 const OPEN_EXT = /\.(docx|doc|rtf|odt|txt)$/i;
 const IMAGE_EXT = /\.(png|jpe?g|gif|bmp)$/i;
@@ -58,11 +58,64 @@ const str = (v, name, max, { required = false } = {}) => {
   return v;
 };
 
-function styleName(v) {
+// A style by name: one of the built-in ones (case and spacing free), or the document's own ("Lab Caption"), which Word or the file route looks up
+// (and says so when the document has no such style). A name that could not be a style's is refused here.
+function styleName(v, what = 'style') {
   if (v === undefined || v === null || v === '') return undefined;
-  const key = String(v).trim().toLowerCase().replace(/\s+/g, ' ');
-  if (!STYLES[key]) fail(`Unknown style "${String(v).slice(0, 40)}". Use Normal, Heading 1, Heading 2, Heading 3, Title, List Bullet, List Number or Quote.`);
-  return STYLES[key];
+  const name = String(v).trim().replace(/\s+/g, ' ');
+  const key = name.toLowerCase();
+  if (STYLES[key]) return STYLES[key];
+  if (name.length > 60 || !/^[\p{L}\p{N} ._'&()+-]+$/u.test(name)) fail(`Unknown ${what} "${String(v).slice(0, 40)}". Use Normal, Heading 1 to 6, Title, List Bullet, List Number, Quote, or a style the document has (make one with format: style and based_on).`);
+  return name;
+}
+
+// Character formatting (insert, style and format take it): -> fields on out.
+const COLORS = { black: '000000', white: 'FFFFFF', red: 'FF0000', 'dark red': 'C00000', orange: 'FFC000', yellow: 'FFFF00', green: '00B050', 'dark green': '006400', blue: '0070C0', 'dark blue': '002060', 'light blue': '00B0F0', purple: '7030A0', gray: '808080', grey: '808080', auto: 'auto' };
+const HIGHLIGHTS = ['yellow', 'green', 'cyan', 'magenta', 'blue', 'red', 'darkBlue', 'darkCyan', 'darkGreen', 'darkMagenta', 'darkRed', 'darkYellow', 'darkGray', 'lightGray', 'black', 'white', 'none'];
+const UNDERLINES = ['single', 'double', 'thick', 'dotted', 'dash', 'wave', 'words', 'none'];
+const bool = (v, name) => { if (v === 'true' || v === 'false') return v === 'true'; if (typeof v !== 'boolean') fail(`${name} must be true or false.`); return v; };
+function fontOf(v) { const font = str(v, 'font', 60, { required: true }).trim(); if (!/^[\p{L}\p{N} .'&()-]+$/u.test(font)) fail('font must be a font name, such as Calibri or Times New Roman.'); return font; }
+function charOf(input, out) {
+  if (input.font !== undefined) out.font = fontOf(input.font);
+  if (input.size !== undefined) out.size = Math.round(num(input.size, 'size (points)', 1, 400) * 2) / 2;
+  if (input.bold !== undefined) out.bold = bool(input.bold, 'bold');
+  if (input.italic !== undefined) out.italic = bool(input.italic, 'italic');
+  if (input.strike !== undefined) out.strike = bool(input.strike, 'strike');
+  if (input.underline !== undefined) {
+    const u = input.underline === true ? 'single' : input.underline === false ? 'none' : String(input.underline).trim().toLowerCase().replace(/^wavy$/, 'wave');
+    if (!UNDERLINES.includes(u)) fail(`underline must be true, false or one of ${UNDERLINES.join(', ')}.`);
+    out.underline = u;
+  }
+  if (input.color !== undefined) {
+    const c = String(input.color).trim().toLowerCase();
+    const hex = COLORS[c] || (/^#?[0-9a-f]{6}$/.test(c) ? c.replace('#', '').toUpperCase() : null);
+    if (!hex) fail(`color must be a color name (${Object.keys(COLORS).slice(0, 12).join(', ')}) or #RRGGBB.`);
+    out.color = hex;
+  }
+  if (input.highlight !== undefined) {
+    const h = input.highlight === false ? 'none' : String(input.highlight).trim().replace(/\s+(\w)/g, (_, x) => x.toUpperCase()).replace(/^gr[ae]y$/i, 'lightGray');
+    const hit = HIGHLIGHTS.find((x) => x.toLowerCase() === h.toLowerCase());
+    if (!hit) fail(`highlight must be one of ${HIGHLIGHTS.join(', ')}.`);
+    out.highlight = hit;
+  }
+  return out;
+}
+const CHAR_KEYS = ['font', 'size', 'bold', 'italic', 'strike', 'underline', 'color', 'highlight'];
+const PARA_KEYS = ['line', 'before', 'after', 'align', 'indent', 'firstLine', 'keepNext'];
+const hasAny = (o, keys) => keys.some((k) => o[k] !== undefined);
+
+// List items in inserted text: with a list style, each line's indent (a tab or two spaces) is its level, and a typed marker ("- ", "1. ") goes.
+const MARKER = /^(?:[-*•‣◦▪]|\d{1,3}[.)]|[a-zA-Z][.)]|[ivxIVX]{1,4}[.)])\s+/;
+function listLines(text) {
+  const lines = String(text).split(/\r\n|\r|\n/);
+  const levels = [];
+  const out = lines.map((l) => {
+    const lead = /^[ \t]*/.exec(l)[0];
+    const level = Math.min(9, 1 + (lead.match(/\t/g) || []).length + Math.floor(lead.replace(/\t/g, '').length / 2));
+    levels.push(level);
+    return l.slice(lead.length).replace(MARKER, '');
+  });
+  return { text: out.join('\n'), levels: levels.some((n) => n > 1) ? levels : null };
 }
 
 // Where new content goes.
@@ -102,33 +155,47 @@ function marginsOf(v) {
   const [t, r, b, l] = n.length === 1 ? [n[0], n[0], n[0], n[0]] : n.length === 2 ? [n[0], n[1], n[0], n[1]] : n;
   return { top: t, right: r, bottom: b, left: l };
 }
+const ALIGN = { left: 'left', start: 'left', center: 'center', centre: 'center', centered: 'center', right: 'right', end: 'right', justify: 'justify', justified: 'justify', both: 'justify' };
+const LISTS = { bullet: 'bullet', bullets: 'bullet', bulleted: 'bullet', number: 'number', numbers: 'number', numbered: 'number', none: 'none', off: 'none', remove: 'none' };
 function formatOf(input) {
   const out = {};
-  if (input.font !== undefined) { const font = str(input.font, 'font', 60, { required: true }).trim(); if (!/^[\p{L}\p{N} .'&()-]+$/u.test(font)) fail('font must be a font name, such as Calibri or Times New Roman.'); out.font = font; }
-  if (input.size !== undefined) out.size = Math.round(num(input.size, 'size (points)', 1, 400) * 2) / 2;
+  charOf(input, out);
   if (input.line_spacing !== undefined) { out.line = num(input.line_spacing, 'line_spacing', 0.5, 200); if (out.line > 5 && out.line < 6) fail('line_spacing is a multiple of a line (1, 1.15, 1.5, 2; at most 5) or an exact height in points (6 or more).'); }
   if (input.space_before !== undefined) out.before = num(input.space_before, 'space_before (points)', 0, 200);
   if (input.space_after !== undefined) out.after = num(input.space_after, 'space_after (points)', 0, 200);
+  if (input.align !== undefined) { out.align = ALIGN[String(input.align).trim().toLowerCase()]; if (!out.align) fail('align must be left, center, right or justify.'); }
+  if (input.indent !== undefined) out.indent = num(input.indent, 'indent (inches from the left margin)', 0, 10);
+  if (input.first_line !== undefined) out.firstLine = num(input.first_line, 'first_line (inches; negative is a hanging indent)', -10, 10);
+  if (input.keep_with_next !== undefined) out.keepNext = bool(input.keep_with_next, 'keep_with_next');
   const style = styleName(input.style); if (style) out.style = style;
+  if (input.based_on !== undefined) { if (!out.style) fail('based_on needs style: the name of the style to make or change.'); out.basedOn = styleName(input.based_on, 'based_on style'); }
   const find = str(input.find, 'find', MAX.find); if (find) out.find = find;
-  if (out.style && out.find) fail('Give style or find, not both: style changes a style, find the paragraphs holding that text.');
+  if (input.paragraphs !== undefined) out.paras = texts(input.paragraphs, 'paragraphs');
+  if ([out.style, out.find, out.paras].filter(Boolean).length > 1) fail('Give style or find, not both (nor paragraphs with either): style changes a style, find the paragraphs holding that text, paragraphs the paragraphs with those texts.');
+  if (input.list !== undefined) {
+    out.list = LISTS[String(input.list).trim().toLowerCase()];
+    if (!out.list) fail('list must be bullet, number or none.');
+    if (!out.find && !out.paras) fail('list needs the paragraphs to make a list of: paragraphs (their texts, as read shows them) or find.');
+  }
+  if (input.level !== undefined) { if (!out.list || out.list === 'none') fail('level goes with list (bullet or number).'); out.level = num(input.level, 'level', 1, 9); if (!Number.isInteger(out.level)) fail('level must be a whole number from 1 to 9.'); }
   if (input.margins !== undefined) out.margins = marginsOf(input.margins);
   if (input.orientation !== undefined) { if (!['portrait', 'landscape'].includes(input.orientation)) fail('orientation must be portrait or landscape.'); out.orientation = input.orientation; }
   if (input.section !== undefined) { if (!Number.isInteger(input.section) || input.section < 1) fail('section must be a section number (1 is the first).'); out.section = input.section; }
   if (input.page_break_before !== undefined) out.breaks = texts(input.page_break_before, 'page_break_before');
-  if (input.headings !== undefined) out.headings = texts(input.headings, 'headings').map((t) => { const m = /^(#{1,3})\s+(.+)$/.exec(t); return m ? { text: m[2].trim(), level: m[1].length } : { text: t, level: 1 }; });
+  if (input.headings !== undefined) out.headings = texts(input.headings, 'headings').map((t) => { const m = /^(#{1,6})\s+(.+)$/.exec(t); return m ? { text: m[2].trim(), level: m[1].length } : { text: t, level: 1 }; });
   if (input.toc !== undefined) { if (typeof input.toc !== 'boolean') fail('toc must be true (a table of contents).'); if (input.toc) out.toc = true; }
   const at = str(input.heading, 'heading', MAX.find); if (at) { if (!out.toc) fail('heading (where the table of contents goes) needs toc: true.'); out.tocAt = at; }
-  const text = out.font !== undefined || out.size !== undefined || out.line !== undefined || out.before !== undefined || out.after !== undefined;
-  if ((out.style || out.find) && !text) fail('style and find pick where font, size, line_spacing, space_before or space_after change; give one of those.');
-  if (!text && !out.margins && !out.orientation && !out.breaks && !out.headings && !out.toc) fail('Give something to change: font, size, line_spacing, space_before, space_after, margins, orientation, page_break_before, headings or toc.');
+  const text = hasAny(out, CHAR_KEYS) || hasAny(out, PARA_KEYS);
+  if ((out.style || out.find || out.paras) && !text && !out.list && !out.basedOn) fail('style, find and paragraphs pick where the change goes; give one of those changes: font, size, bold, italic, underline, color, line_spacing, space_before, space_after, align, indent, first_line, keep_with_next (or list, or based_on for a style). help lists them.');
+  if (!text && !out.list && !out.basedOn && !out.margins && !out.orientation && !out.breaks && !out.headings && !out.toc) fail('Give something to change: font, size, line_spacing, space_before, space_after, align, indent, margins, orientation, page_break_before, headings, list or toc (help lists them all).');
   if (out.section && !out.margins && !out.orientation) fail('section picks where margins or orientation change; give one of those.');
   return out;
 }
 
 // What each change takes besides action, doc and path (tab_id: the MCP listing adds it to every tool). An argument it does not take is refused,
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', 'bold', 'italic'], table: ['at', 'heading', 'rows'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: ['font', 'size', 'line_spacing', 'space_before', 'space_after', 'style', 'find', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
+const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -147,6 +214,7 @@ function validate(input) {
   const pathArg = input.path;
   switch (action) {
     case 'list': case 'show': case 'save': break;
+    case 'help': { const t = input.topic ?? input.find; if (t !== undefined && t !== '') out.topic = String(t).slice(0, 40).trim().toLowerCase(); break; }
     case 'open': out.path = checkPath(pathArg); if (!OPEN_EXT.test(out.path)) fail('Only Word documents are opened here (.docx, .doc, .rtf, .odt or .txt).'); break;
     case 'new': if (pathArg !== undefined && pathArg !== '') { out.path = checkPath(pathArg); if (!/\.docx$/i.test(out.path)) fail('A new document is saved as .docx.'); } break;
     case 'read': {
@@ -161,8 +229,9 @@ function validate(input) {
       Object.assign(out, placeOf(input));
       out.text = str(input.text, 'text', MAX.text, { required: true });
       const style = styleName(input.style); if (style) out.style = style;
-      if (input.bold !== undefined) out.bold = input.bold === true;
-      if (input.italic !== undefined) out.italic = input.italic === true;
+      if (/^List (Bullet|Number)$/.test(out.style || '')) { const l = listLines(out.text); out.text = l.text; if (l.levels) out.levels = l.levels; }
+      if (input.bold !== undefined) out.bold = bool(input.bold, 'bold');
+      if (input.italic !== undefined) out.italic = bool(input.italic, 'italic');
       break;
     }
     case 'replace': {
@@ -173,11 +242,11 @@ function validate(input) {
       break;
     }
     case 'style': {
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
       out.find = str(input.find, 'find', MAX.find, { required: true });
       const style = styleName(input.style); if (style) out.style = style;
-      if (input.bold !== undefined) out.bold = input.bold === true;
-      if (input.italic !== undefined) out.italic = input.italic === true;
-      if (!out.style && out.bold === undefined && out.italic === undefined) fail('Give a style, bold or italic to apply.');
+      charOf(input, out);
+      if (!out.style && !hasAny(out, CHAR_KEYS)) fail('Give a style, bold or italic to apply (or font, size, underline, color, highlight, strike).');
       break;
     }
     case 'format': if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg); Object.assign(out, formatOf(input)); break;
@@ -217,6 +286,14 @@ function formatParts(i = {}) {
   const parts = [];
   if (i.font) parts.push(`font ${clip(i.font, 30)}`);
   if (i.size) parts.push(`size ${i.size} pt`);
+  for (const k of ['bold', 'italic', 'strike']) if (i[k] === true) parts.push(k);
+  if (i.underline && i.underline !== 'none' && i.underline !== false) parts.push('underline');
+  if (i.color) parts.push(`color ${clip(i.color, 12)}`);
+  if (i.highlight && i.highlight !== 'none') parts.push(`${clip(i.highlight, 12)} highlight`);
+  if (i.align) parts.push(`${clip(i.align, 10)} aligned`);
+  if (i.indent !== undefined || (i.first_line ?? i.firstLine) !== undefined) parts.push('indents');
+  if (i.list) parts.push(i.list === 'none' || i.list === 'off' ? 'no list' : /^bullet/.test(i.list) ? 'a bulleted list' : 'a numbered list');
+  if (i.based_on ?? i.basedOn) parts.push(`style ${clip(i.style, 30)} based on ${clip(i.based_on ?? i.basedOn, 30)}`);
   const line = i.line_spacing ?? i.line; // (the tool's arguments, or validate's clean fields)
   if (line !== undefined) parts.push(Number(line) > 5 ? `${line} pt lines` : `${line} line spacing`);
   if ((i.space_before ?? i.before) !== undefined || (i.space_after ?? i.after) !== undefined) parts.push('paragraph spacing');
@@ -243,7 +320,7 @@ function stepLabel(input = {}, name = '') {
     case 'read': return `Reading ${doc}`;
     case 'insert': { const n = lines(input.text); return `Writing in ${doc}: adding ${count(n, 'paragraph', 'paragraphs')}${where(input)}`; }
     case 'replace': return `Editing ${doc}: replacing “${clip(input.find, 30)}” with “${clip(input.replace, 30)}”`;
-    case 'style': return `Formatting ${doc}: “${clip(input.find, 30)}”${input.style ? ` as ${input.style}` : ''}${input.bold ? ', bold' : ''}${input.italic ? ', italic' : ''}`;
+    case 'style': { const extra = formatParts({ ...input, style: undefined, based_on: undefined }); return `Formatting ${doc}: “${clip(input.find, 30)}”${input.style ? ` as ${input.style}` : ''}${extra.length ? `, ${extra.join(', ')}` : ''}`; }
     case 'table': return `Writing in ${doc}: adding a table of ${count(Array.isArray(input.rows) ? input.rows.length : 0, 'row', 'rows')}${where(input)}`;
     case 'image': return `Writing in ${doc}: adding the picture ${baseName(input.image) || ''}${where(input)}`.trim();
     case 'comment': return `Commenting in ${doc} on “${clip(input.find ?? input.heading, 30)}”`;
@@ -252,6 +329,7 @@ function stepLabel(input = {}, name = '') {
     case 'save': return `Saving ${doc}`;
     case 'save_as': return `Saving ${doc} as ${baseName(input.path) || 'a new file'}`;
     case 'show': return `Showing ${doc} in Word`;
+    case 'help': return 'Looking up what the Word tool takes';
     default: return 'Using Word';
   }
 }
@@ -260,8 +338,27 @@ function stepLabel(input = {}, name = '') {
 const defang = (t) => String(t ?? '').replace(/<(\/?)untrusted_page_content/gi, '\u2039$1untrusted_page_content');
 const wrap = (text, name) => `<untrusted_page_content source="word: ${defang(String(name || 'document')).replace(/["<>]/g, '')}">\n${defang(text)}\n</untrusted_page_content>`;
 
+// help: every action's fields, so the tool's own description can stay short. topic: an action name, or a word from a line (lists, styles, page).
+const HELP = [
+  'word tool, every field (doc: an open document by name or path, default the active one; path: a .docx file, worked on without Word when Word does not have it open):',
+  'read: offset (next_offset of the last read). Headings show as #, lists as -, tables as | a | b |.',
+  'insert: text (a line per paragraph), at end|start|after|section_end, heading (the paragraph to go after), style, bold, italic. Lists: style "List Bullet" or "List Number"; indent a line (two spaces or a tab) for a deeper level; a typed "- " or "1. " is dropped.',
+  'replace: find, replace (required; "" deletes). A line break in find matches across paragraphs.',
+  'style (the exact text found): find, and style (any style the document has: Normal, Heading 1-6, Title, Quote, List Bullet, List Number, or its own) or character formatting: bold, italic, underline (true or single|double|thick|dotted|dash|wave|none), color (red, blue, #1F4E79...), highlight (yellow, green, cyan, lightGray, none...), strike, font, size.',
+  'format (styles, paragraphs and pages; where: style (that style everywhere, the cleanest), find (paragraphs holding that text), paragraphs [their texts], or nothing for the whole document): font, size, bold, italic, underline, color, line_spacing (1, 1.15, 1.5, 2; 6+ = exact points), space_before / space_after (points), align left|center|right|justify, indent (inches), first_line (inches; negative = hanging), keep_with_next.',
+  'format styles: style + based_on makes the style when the document has none of that name (style "Figure Caption", based_on "Normal", size 9, italic true), or changes what it is based on; then apply it with style or insert.',
+  'format lists: list bullet|number|none with paragraphs or find, level 1-9 (a numbered list starts at 1 each time).',
+  'format pages: margins (normal|narrow|moderate|wide or inches "1" / "1 1.25" / "1 1 1 1"), orientation portrait|landscape, section (number) for one section only, page_break_before [paragraph texts], headings ["# Title", "## Sub"] (Heading 1-6), toc true (a real table of contents; heading: the paragraph to put it after).',
+  'table: rows [[cells]], at, heading. image: image (a file path), at, heading. comment: find, comment. track: on. save; save_as: path (.docx or .pdf). show.',
+];
+function help(topic) {
+  const t = String(topic || '').toLowerCase();
+  const lines = t ? HELP.filter((l, i) => i === 0 || l.toLowerCase().startsWith(t) || l.toLowerCase().includes(` ${t}`)) : HELP;
+  return (lines.length > 1 ? lines : HELP).join(String.fromCharCode(10));
+}
+
 const OFF_TEXT = 'Using Microsoft Word is off. The user can turn it on in Settings → AI → "Let the AI use Microsoft Word".';
 const NO_WORD = 'Microsoft Word is not installed on this computer, so it cannot be driven. Documents can still be read (action read with path to a .docx file), and a .docx file can get new paragraphs, headings and tables written straight into it (insert or table with path), without Word.';
 const NOT_WINDOWS = 'Using Word works on Windows for now. On this computer a .docx file can still be read (action read with path) and given new paragraphs, headings and tables (insert or table with path).';
 
-module.exports = { ACTIONS, EDITS, SAVES, ACTING, STYLES, MAX, WordError, validate, checkPath, sameDoc, kind, stepLabel, wrap, defang, baseName, clip, OFF_TEXT, NO_WORD, NOT_WINDOWS, OPEN_EXT };
+module.exports = { help, listLines, ACTIONS, EDITS, SAVES, ACTING, STYLES, MAX, WordError, validate, checkPath, sameDoc, kind, stepLabel, wrap, defang, baseName, clip, OFF_TEXT, NO_WORD, NOT_WINDOWS, OPEN_EXT };
