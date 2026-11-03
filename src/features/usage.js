@@ -30,12 +30,17 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const settingsFile = require('../settings/settings-file'); // tmp + rename + .bak writes, corrupt-file recovery
+const AQ = () => require('../ai/agy-quota'); // Antigravity's plan quota, from its own status line (loaded when first read: startup budget)
 const PU = require('./provider-usage'); // every provider's own numbers: rate-limit headers, Antigravity's quota text, per-provider totals
 
 const KEEP_DAYS = 35;
 const PLAN_TTL = 60 * 1000; // /usage is re-run at most once a minute
 const FRESH = 10 * 60 * 1000; // a meter reading this recent counts as "just before" a turn
 const FIVE_HOURS = 5 * 60 * 60 * 1000;
+// Antigravity's quota is read by starting agy's terminal UI out of sight (ai/agy-quota.js, about 2 seconds): at most once a minute
+// after an Antigravity reply, else every 5 minutes, and only while Lumen has used Antigravity this week (or on a Refresh).
+const AGY_TTL = 5 * 60 * 1000;
+const AGY_AFTER_TURN = 60 * 1000;
 
 // "Current session: 29% used · resets Sep 28 at 8:09pm (America/New_York)" and friends.
 function parsePlan(text) {
@@ -147,6 +152,7 @@ const levelOf = (percent, warnAt = WARN_AT, highAt = 100) => (percent >= highAt 
 //                        with today's tokens and cost.
 //    Every kind carries `windows`: Lumen's own use in the last 5 hours and 7 days, and `level`
 //    ('ok' | 'warn' | 'high') for the colour.
+//  - antigravity: its plan quota when agy's status line gave one (agyPlanBar), else as below.
 //  - any other CLI engine: { kind: 'context' }, from the turns' own usage.
 function barFor(engine, s) {
   if (!s) return null;
@@ -174,6 +180,10 @@ function barFor(engine, s) {
     const pct = (p) => Math.max(0, Math.min(100, p));
     return { engine, kind: 'plan', percent: pct(w.percent), level: levelOf(w.percent), minutes: w.minutes ?? null, resetsAt: w.resetsAt || null, resetsText: null, weekly: next ? { percent: pct(next.percent), minutes: next.minutes ?? null, resetsText: null, resetsAt: next.resetsAt || null } : null, lumenPoints: null };
   }
+  if (engine === 'antigravity') {
+    const plan = agyPlanBar(s.antigravity, s.limits?.antigravity);
+    if (plan) return plan;
+  }
   const { limit, windows, budget, rate } = ownOf(engine, s);
   if (limit) return { engine, kind: 'limit', percent: 100, level: 'high', resetsAt: limit.resetsAt || null, message: limit.text || '', model: limit.model || null, windows };
   const e = s.engines?.[engine];
@@ -189,6 +199,24 @@ function barFor(engine, s) {
   // Amber from 10 points below the model's own auto-compaction threshold (100 when it isn't known).
   const compactAt = compactPercent || 100;
   return { engine, kind: 'context', percent: contextPercent, level: contextPercent == null ? 'ok' : levelOf(contextPercent, Math.max(1, compactAt - 10), Infinity), ...context, tokens: today.tokens, costUSD: today.costUSD, turns: today.turns, windows };
+}
+// Antigravity's plan bar from its quota reading (ai/agy-quota.js summaryOf), in Codex's shape: the Gemini models' 5-hour window with
+// the weekly one as the second number, and every group's own bar in `groups` (renderer/usage-bars.js barOf picks a chat's by its
+// model: Claude and GPT models draw from "3p"). A limit message newer than the reading wins: the quota moved since it was read.
+// null without a window still running.
+function agyPlanBar(q, limit) {
+  if (!q || !q.groups || (limit && !(q.readAt > limit.at))) return null;
+  const groups = {};
+  for (const [name, g] of Object.entries(q.groups)) {
+    const [w, next] = (g.windows || []).filter((x) => !x.expired && Number.isFinite(x.percent));
+    if (!w) continue;
+    groups[name] = {
+      engine: 'antigravity', kind: 'plan', group: name, percent: w.percent, level: levelOf(w.percent), minutes: w.minutes ?? null, resetsAt: w.resetsAt || null, resetsText: null,
+      weekly: next ? { percent: next.percent, minutes: next.minutes ?? null, resetsText: null, resetsAt: next.resetsAt || null } : null, lumenPoints: null,
+    };
+  }
+  const first = groups.gemini || Object.values(groups)[0];
+  return first ? { ...first, groups, tier: q.tier || null } : null;
 }
 // The AI status card's Codex reading: the shortest window still running (as the bar), with its length. null without one.
 function codexMeterOf(cx) {
@@ -235,6 +263,10 @@ function createUsage(deps) {
   let codexSnap = null; // the last Codex reading, numbers only: { at, scan } (scan: codexSummary's input, no text)
   let grokLimit = null; // Grok said the plan's limit was reached: { at, resetsAt (ms | null), text }
   let agyLimit = null; // Antigravity said its quota is used up: { at, resetsAt (ms | null), text, model }
+  let agySnap = null; // Antigravity's last quota reading (agy-quota.js parseStatus): numbers and the plan's name only
+  let agyRun = null;
+  let agyTriedAt = 0; // the last attempt, read or not: an agy that gives no quota is not started again on every look
+  let agyTurnAt = 0; // the last finished Antigravity turn: a reading older than it is re-read sooner
   let rates = {}; // the newest rate-limit headers per API provider (provider-usage.js parseRateLimitHeaders): numbers only
   let budgets = {}; // the user's budget per other provider ({ openai: { unit, daily, weekly } }); Grok's is `budget`
   let budget = { ...DEFAULT_BUDGET }; // the user's Grok budget (Settings → Usage); 0 = none
@@ -248,6 +280,7 @@ function createUsage(deps) {
       if (saved.meter && Number.isFinite(saved.meter.percent)) meter = saved.meter;
       if (saved.grokLimit && Number.isFinite(saved.grokLimit.at)) grokLimit = { at: saved.grokLimit.at, resetsAt: Number.isFinite(saved.grokLimit.resetsAt) ? saved.grokLimit.resetsAt : null, text: String(saved.grokLimit.text || '').slice(0, 200) };
       if (saved.codex && Number.isFinite(saved.codex.at) && saved.codex.scan && typeof saved.codex.scan === 'object') codexSnap = { at: saved.codex.at, scan: saved.codex.scan };
+      if (saved.agyQuota && Number.isFinite(saved.agyQuota.at) && saved.agyQuota.groups && typeof saved.agyQuota.groups === 'object') agySnap = saved.agyQuota;
       if (saved.agyLimit && Number.isFinite(saved.agyLimit.at)) agyLimit = { at: saved.agyLimit.at, resetsAt: Number.isFinite(saved.agyLimit.resetsAt) ? saved.agyLimit.resetsAt : null, text: String(saved.agyLimit.text || '').slice(0, 200), model: saved.agyLimit.model ? String(saved.agyLimit.model).slice(0, 60) : null };
       if (saved.rates && typeof saved.rates === 'object') for (const [k, v] of Object.entries(saved.rates)) if (PU.KEYS.includes(k) && Array.isArray(v?.buckets) && Number.isFinite(v.at)) rates[k] = v;
       if (saved.budgets && typeof saved.budgets === 'object') for (const [k, v] of Object.entries(saved.budgets)) if (PU.KEYS.includes(k) && k !== 'grokbuild') budgets[k] = normalizeBudget(v);
@@ -262,7 +295,7 @@ function createUsage(deps) {
   const payload = () => {
     const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
     records = records.filter((r) => r.at >= cutoff);
-    return { records, meter, grokLimit, agyLimit, rates, codex: codexSnap, budget, budgets, notified };
+    return { records, meter, grokLimit, agyLimit, agyQuota: agySnap, rates, codex: codexSnap, budget, budgets, notified };
   };
   function save() {
     clearTimeout(saveTimer);
@@ -306,6 +339,7 @@ function createUsage(deps) {
     if (engine === 'antigravity') {
       if (limit) { agyLimit = { at: clock(), resetsAt: Number.isFinite(limit.resetsAt) ? limit.resetsAt : null, text: String(limit.text || '').slice(0, 200), model: limit.model ? String(limit.model).slice(0, 60) : null }; save(); }
       else if (ok && agyLimit) { agyLimit = null; save(); }
+      agyTurnAt = clock();
     }
     if (rate && PU.KEYS.includes(engine) && Array.isArray(rate.buckets)) { rates[engine] = PU.mergeRate(rates[engine], { ...rate, at: Number.isFinite(rate.at) ? rate.at : clock() }); save(); }
     if (engine === 'codex') {
@@ -443,6 +477,20 @@ function createUsage(deps) {
     return codexSnap ? codexSummary(codexSnap.scan, now, { installed: deps.codexInstalled ? deps.codexInstalled() : null }) : deps.codexInstalled?.() ? codexSummary(null, now, { installed: true }) : null;
   }
 
+  // Antigravity's quota: the kept reading, re-read (one run at a time) when it is due; a failed read keeps the last one.
+  async function agyNow(now, { scan = true, refresh = false } = {}) {
+    const usedThisWeek = records.some((r) => r.engine === 'antigravity' && r.at > now - 7 * DAY);
+    const age = now - Math.max(agySnap?.at || 0, agyTriedAt);
+    const due = refresh || age > AGY_TTL || (agyTurnAt > (agySnap?.at || 0) && age > AGY_AFTER_TURN);
+    if (scan && deps.agyQuota && due && (usedThisWeek || refresh)) {
+      agyTriedAt = now;
+      agyRun ||= Promise.resolve().then(() => deps.agyQuota()).catch(() => null).finally(() => { agyRun = null; });
+      const next = await agyRun;
+      if (next) { agySnap = { ...next, tier: next.tier || agySnap?.tier || null }; save(); }
+    }
+    return agySnap ? AQ().summaryOf(agySnap, now) : null;
+  }
+
   // Everything the panel and the meter show.
   // cached: only what is already in memory (no `claude /usage` run, no Codex log scan): what the small bars in the pickers read.
   async function summary({ refresh = false, cached = false } = {}) {
@@ -471,6 +519,7 @@ function createUsage(deps) {
       engines[name] = { today: sum(today.filter((r) => r.engine === name)), background: sum(today.filter((r) => r.engine === name && r.background)), last: { at: last.at, contextTokens: fresh ? 0 : last.contextTokens || 0, contextWindow: last.contextWindow || 0, compactPercent: last.compactPercent || null } };
     }
     const codex = await codexNow(now, !cached);
+    const antigravity = await agyNow(now, { scan: !cached, refresh });
     const result = {
       plan: planData,
       meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt, at: meter.at } : null,
@@ -483,6 +532,7 @@ function createUsage(deps) {
       },
       engines,
       codex,
+      antigravity,
       // Grok: no plan numbers exist, only Lumen's own use, the user's budget and the limit message.
       grok: { limit: grokLimitNow(now), windows: grokWindows(records, now), budget: { config: budget, status: budgetStatus(records, budget, now) } },
     };
@@ -523,7 +573,7 @@ function createUsage(deps) {
     return { agyLimit: agy ? { resetsAt: agy.resetsAt } : null, rate, codexLimit, codexMeter: codexMeterOf(cx), meter: meter && meter.resetsAt > now ? { percent: meter.percent, resetsAt: meter.resetsAt } : null, grokLimit: g ? { resetsAt: g.resetsAt } : null, today };
   }
 
-  function clear() { records = []; codexSnap = null; codexAt = 0; rates = {}; agyLimit = null; save(); }
+  function clear() { records = []; codexSnap = null; codexAt = 0; rates = {}; agyLimit = null; agySnap = null; save(); }
   // `engine` omitted: Grok's budget (as before); else that provider's.
   function setBudget(next, engine = 'grokbuild') {
     if (engine !== 'grokbuild' && !PU.KEYS.includes(engine)) return null;

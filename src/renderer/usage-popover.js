@@ -77,6 +77,7 @@ const cap = (s) => String(s || '').replace(/^./, (c) => c.toUpperCase());
 function planName(key, state) {
   if (key === 'claudecode' && state.plan && state.plan.available && state.plan.subscription) return tr('usage.pop.plan.claude', 'Claude subscription');
   if (key === 'codex' && state.codex && state.codex.planType) return tr('usage.pop.plan.named', '{plan} plan', { plan: cap(state.codex.planType) });
+  if (key === 'antigravity' && state.antigravity && state.antigravity.tier) return state.antigravity.tier; // agy's own words: "Google AI Pro"
   return '';
 }
 
@@ -85,6 +86,7 @@ function updatedAt(key, state) {
   const candidates = [];
   if (key === 'claudecode' && state.meter) candidates.push(state.meter.at);
   if (key === 'codex' && state.codex) candidates.push(state.codex.readAt);
+  if (key === 'antigravity' && state.antigravity) candidates.push(state.antigravity.readAt);
   if (state.rate && state.rate[key]) candidates.push(state.rate[key].at);
   const known = candidates.filter((n) => finite(n) && n > 0);
   return known.length ? Math.max(...known) : null;
@@ -101,9 +103,10 @@ function countedFor(key, state) {
   return null;
 }
 
-function view(key, state, { now = Date.now(), name = '' } = {}) {
+// model: the chat's picker id, for a provider whose quota is per model group (Antigravity).
+function view(key, state, { now = Date.now(), name = '', model = null } = {}) {
   if (!key || !state || typeof state !== 'object') return null;
-  const bar = state.bars ? state.bars[key] : null;
+  const bar = bars().barOf ? bars().barOf(key, state, model) : state.bars ? state.bars[key] : null;
   const windows = bars().windowsOf(bar, now).map((w) => ({
     key: w.key, label: w.label, percent: w.percent, level: w.level, percentText: percentText(w.percent),
     text: w.resetsAt ? resetLine({ resetsAt: w.resetsAt }, now) : w.reset, // (w.reset: the CLI's own words, already "resets Mon 12:00 AM")
