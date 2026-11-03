@@ -477,6 +477,8 @@ const STYLE_DEFS = {
   Quote: styleXml('Quote', 'Quote', '<w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr>'),
   ListBullet: styleXml('ListBullet', 'List Bullet'),
   ListNumber: styleXml('ListNumber', 'List Number'),
+  Header: '<w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>',
+  Footer: '<w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>',
   Caption: '<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="35"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:spacing w:after="200" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="44546A"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>',
 };
 const LIST_KIND = { 'List Bullet': 'bullet', 'List Number': 'number' };
@@ -927,8 +929,86 @@ function formatSections(xml, f) {
       const m = f.margins;
       [xml] = upsert(xml, sect, 'w:pgMar', (had) => withAttrs(had || '<w:pgMar w:header="720" w:footer="720" w:gutter="0"/>', { 'w:top': String(Math.round(m.top * 1440)), 'w:right': String(Math.round(m.right * 1440)), 'w:bottom': String(Math.round(m.bottom * 1440)), 'w:left': String(Math.round(m.left * 1440)) }), SECT_ORDER);
     }
+    const S = () => elementAt(xml, at);
+    if (f.columns !== undefined) [xml] = upsert(xml, S(), 'w:cols', () => (f.columns > 1 ? `<w:cols w:num="${f.columns}" w:space="720"/>` : '<w:cols w:space="720"/>'), SECT_ORDER);
+    if (f.pageStart !== undefined) [xml] = upsert(xml, S(), 'w:pgNumType', (had) => withAttrs(had || '<w:pgNumType/>', { 'w:start': String(f.pageStart) }), SECT_ORDER);
+    if (f.firstPage !== undefined) [xml] = upsert(xml, S(), 'w:titlePg', () => onOff('w:titlePg', f.firstPage), SECT_ORDER);
+    // header and footer references (refs: { header: { default, first }, footer: { ... } } relationship ids): first in w:sectPr, one per kind and type
+    for (const [kind, types] of Object.entries(f.refs || {})) {
+      for (const [type, rid] of Object.entries(types)) {
+        const el = `w:${kind}Reference`;
+        let x = xml.slice(S().start, S().end);
+        x = x.replace(new RegExp(`<${el}\\b(?=[^>]*w:type="${type}")[^>]*/>`, 'g'), '');
+        const open = /^<w:sectPr\b[^>]*>/.exec(x);
+        x = open ? x.slice(0, open[0].length) + `<${el} w:type="${type}" r:id="${rid}"/>` + x.slice(open[0].length) : x.replace(/^<w:sectPr\b([^>]*)\/>$/, (m, a) => `<w:sectPr${a}><${el} w:type="${type}" r:id="${rid}"/></w:sectPr>`);
+        xml = splice(xml, S().start, S().end, x);
+      }
+    }
   }
   return { xml, sections: picked.length };
+}
+
+// ---- headers and footers: a part of their own (word/headerN.xml, word/footerN.xml) with one paragraph, "left <tab> center <tab> right" on the
+// text's center and right tab stops; {page}, {pages} and {date} are PAGE, NUMPAGES and DATE fields.
+const HF = { header: { root: 'w:hdr', style: 'Header', rel: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/header', ct: 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml' }, footer: { root: 'w:ftr', style: 'Footer', rel: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer', ct: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml' } };
+const FIELD_OF = { '{page}': ['PAGE', '1'], '{pages}': ['NUMPAGES', '1'] };
+function hfRuns(text, now) {
+  return String(text || '').split(/(\{page\}|\{pages\}|\{date\})/i).filter((t) => t !== '').map((t) => {
+    const k = t.toLowerCase();
+    if (FIELD_OF[k]) return fieldRuns(FIELD_OF[k][0], FIELD_OF[k][1]);
+    if (k === '{date}') return fieldRuns('DATE \\@ "MMMM d, yyyy"', now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }));
+    return `<w:r>${textRuns(t)}</w:r>`;
+  }).join('');
+}
+function hfXml(kind, parts, width, now) {
+  const tw = Math.round(width / 635);
+  const pieces = parts ? [parts.left || '', parts.center || '', parts.right || ''] : null;
+  const body = pieces ? `${hfRuns(pieces[0], now)}${pieces[1] || pieces[2] ? '<w:r><w:tab/></w:r>' : ''}${hfRuns(pieces[1], now)}${pieces[2] ? '<w:r><w:tab/></w:r>' : ''}${hfRuns(pieces[2], now)}` : '';
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><${HF[kind].root} ${NS}><w:p><w:pPr><w:pStyle w:val="${HF[kind].style}"/><w:tabs><w:tab w:val="center" w:pos="${Math.round(tw / 2)}"/><w:tab w:val="right" w:pos="${tw}"/></w:tabs></w:pPr>${body}</w:p></${HF[kind].root}>`;
+}
+// A new header or footer part with its relationship and content type: -> its relationship id.
+async function addHfPart(zip, files, entries, kind, xml) {
+  const relsName = 'word/_rels/document.xml.rels';
+  const rels = files.get(relsName) ?? (zip.has(relsName) ? await zip.text(relsName) : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>');
+  const taken = new Set([...entries.map((e) => e.name), ...files.keys()]);
+  let n = 1; while (taken.has(`word/${kind}${n}.xml`)) n++;
+  const rid = `rId${Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1]))) + 1}`;
+  files.set(relsName, rels.replace('</Relationships>', `<Relationship Id="${rid}" Type="${HF[kind].rel}" Target="${kind}${n}.xml"/></Relationships>`));
+  const ctName = '[Content_Types].xml';
+  const ct = files.get(ctName) ?? (await zip.text(ctName));
+  files.set(ctName, ct.replace('</Types>', `<Override PartName="/word/${kind}${n}.xml" ContentType="${HF[kind].ct}"/></Types>`));
+  files.set(`word/${kind}${n}.xml`, xml);
+  return rid;
+}
+
+// ---- section and column breaks before paragraphs. A section ends at the w:sectPr in its last paragraph (the body's own w:sectPr ends the last
+// one), and a w:sectPr's w:type says how its section starts: so a break before P copies the w:sectPr that P's section ends with into the paragraph
+// before P, and that w:sectPr's w:type becomes the break's kind.
+function sectionBreak(xml, p, kind, ctx) {
+  const body = bodyOf(xml);
+  const i = body.blocks.findIndex((b) => b.start === p.start);
+  if (i <= 0) return { xml, added: false };
+  const prev = body.blocks[i - 1];
+  if (prev.name === 'p' && /<w:sectPr\b/.test(xml.slice(prev.start, prev.end))) return { xml, added: false };
+  const after = [...xml.matchAll(/<w:sectPr\b/g)].map((m) => m.index).find((x) => x > p.start);
+  if (after === undefined) return { xml, added: false };
+  const next = elementAt(xml, after);
+  const copy = xml.slice(next.start, next.end);
+  [xml] = upsert(xml, next, 'w:type', () => `<w:type w:val="${kind}"/>`, SECT_ORDER); // (P's section now starts with this break)
+  if (prev.name === 'p') {
+    let ppr; [xml, ppr] = upsert(xml, elementAt(xml, prev.start), 'w:pPr', (had) => had || '<w:pPr></w:pPr>', ['w:pPr']);
+    [xml] = upsert(xml, ppr, 'w:sectPr', () => copy, P_ORDER);
+  } else xml = splice(xml, p.start, p.start, `<w:p><w:pPr>${copy}${ctx.track ? `<w:rPr>${insMark(ctx)}</w:rPr>` : ''}</w:pPr></w:p>`);
+  return { xml, added: true };
+}
+function columnBreak(xml, p, ctx) {
+  const own = xml.slice(p.start, p.end);
+  if (/^<w:p\b[^>]*>(?:<w:pPr>[\s\S]*?<\/w:pPr>)?(?:<w:ins\b[^>]*>)?<w:r>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:br w:type="column"\/>/.test(own)) return { xml, added: false };
+  const el = elementAt(xml, p.start);
+  const ppr = kidOf(xml, el, 'w:pPr');
+  const at = ppr ? ppr.end : innerOf(xml, el).from;
+  const run = '<w:r><w:br w:type="column"/></w:r>';
+  return { xml: splice(xml, at, at, ctx.track ? `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${run}</w:ins>` : run), added: true };
 }
 
 // A part of the package by its relationship type from document.xml (styles, settings): { name, rels } or null.
@@ -1052,7 +1132,36 @@ async function formatDocx(buf, f, { track = false, now = () => new Date() } = {}
     }
     done.text = { style: null, find: f.find || null, paragraphs: body.paragraphs };
   }
-  if (f.margins || f.orientation) {
+  // breaks first: a section number given with them counts the sections they make
+  for (const [key, fn, word] of [['sectionBreaks', (x, p) => sectionBreak(x, p, f.sectionBreak || 'nextPage', ctx), 'sectionBreaks'], ['columnBreaks', (x, p) => columnBreak(x, p, ctx), 'columnBreaks']]) {
+    if (!f[key]?.length) continue;
+    const targets = f[key].map((t) => ({ t, p: targetPara(xml, t) }));
+    const missing = targets.filter((x) => !x.p).map((x) => x.t);
+    if (missing.length) throw new WordError(`No paragraph matches ${missing.map((t) => `“${String(t).slice(0, 60)}”`).join(', ')}, so nothing was changed. Use read to see the text.`);
+    done[word] = { added: [], had: [] };
+    for (const x of targets.sort((a, b) => b.p.start - a.p.start)) {
+      const p = paras(xml).find((q) => q.start === x.p.start) || x.p;
+      const r = fn(xml, p);
+      xml = r.xml;
+      done[word][r.added ? 'added' : 'had'].unshift(x.p.text || x.t);
+    }
+  }
+  if (f.header || f.footer || f.firstPage) {
+    // a new part for each header or footer set here (the sections picked point at it), and empty first-page ones for a different first page
+    if (!/<w:document\b[^>]*\sxmlns:r=/.test(xml)) xml = xml.replace(/<w:document\b/, `<w:document xmlns:r="${R_NS}"`);
+    const st = await partOf(zip, files, 'styles');
+    files.set(st.name, ensureStyle(ensureStyle(st.text, 'Header'), 'Footer'));
+    const width = textWidth(xml);
+    const at = now();
+    const refs = {};
+    for (const kind of ['header', 'footer']) {
+      if (f[kind]) (refs[kind] ||= {}).default = await addHfPart(zip, files, entries, kind, hfXml(kind, f[kind], width, at));
+      if (f.firstPage === true) (refs[kind] ||= {}).first = await addHfPart(zip, files, entries, kind, hfXml(kind, null, width, at));
+    }
+    f = { ...f, refs };
+    done.headers = { header: Boolean(f.header), footer: Boolean(f.footer), firstPage: f.firstPage ?? null };
+  }
+  if (f.margins || f.orientation || f.refs || f.columns !== undefined || f.pageStart !== undefined || f.firstPage !== undefined) {
     const s = formatSections(xml, f);
     xml = s.xml;
     done.sections = s.sections;

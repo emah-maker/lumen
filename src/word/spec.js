@@ -185,6 +185,40 @@ function tableOf(input, out) {
   return out;
 }
 
+// format, pages: a header and a footer ("left | center | right", with {page}, {pages} and {date} as fields), page numbers, a different first
+// page, page numbering that starts at n, columns, and section and column breaks before paragraphs.
+const POS = ['left', 'center', 'right'];
+function hfOf(v, name) {
+  const t = str(v, name, 300) ?? '';
+  const parts = t.split(/\s*\|\s*/);
+  if (parts.length > 3) fail(`${name} has at most three parts: "left | center | right".`);
+  if (/\{(?!page\}|pages\}|date\})[^}]*\}/i.test(t)) fail(`${name} knows {page}, {pages} and {date}; other {...} are not fields.`);
+  return parts.length === 1 ? { center: parts[0] } : parts.length === 2 ? { left: parts[0], right: parts[1] } : { left: parts[0], center: parts[1], right: parts[2] };
+}
+function pagesOf(input, out) {
+  if (input.header !== undefined) out.header = hfOf(input.header, 'header');
+  if (input.footer !== undefined) out.footer = hfOf(input.footer, 'footer');
+  if (input.page_numbers !== undefined) {
+    const p = input.page_numbers === true ? 'bottom center' : String(input.page_numbers).trim().toLowerCase().replace(/[-_]+/g, ' ');
+    const words = p.replace(/centre/g, 'center').split(/\s+/);
+    const m = [null, words.find((w) => w === 'top' || w === 'bottom'), words.find((w) => POS.includes(w))];
+    if (!m[1] || words.some((w) => !['top', 'bottom', ...POS].includes(w))) fail('page_numbers must be true, or where they go: bottom center, bottom right, top right... (or write footer: "Page {page} of {pages}").');
+    const where = m[1] === 'top' ? 'header' : 'footer';
+    if (out[where]) fail(`page_numbers goes in the ${where}, which this call also sets: put {page} in ${where} instead.`);
+    out[where] = { [m[2] || 'center']: '{page}' };
+  }
+  if (input.different_first_page !== undefined) out.firstPage = bool(input.different_first_page, 'different_first_page');
+  if (input.page_number_start !== undefined) out.pageStart = whole(input.page_number_start, 'page_number_start', 0, 9999);
+  if (input.columns !== undefined) out.columns = whole(input.columns, 'columns', 1, 4);
+  if (input.section_break_before !== undefined) out.sectionBreaks = texts(input.section_break_before, 'section_break_before');
+  if (input.section_break !== undefined) {
+    out.sectionBreak = { 'next page': 'nextPage', next_page: 'nextPage', nextpage: 'nextPage', continuous: 'continuous', 'even page': 'evenPage', even_page: 'evenPage', 'odd page': 'oddPage', odd_page: 'oddPage' }[String(input.section_break).trim().toLowerCase()];
+    if (!out.sectionBreak) fail('section_break must be next_page, continuous, even_page or odd_page.');
+    if (!out.sectionBreaks) fail('section_break says what kind of break section_break_before makes; give section_break_before too.');
+  }
+  if (input.column_break_before !== undefined) out.columnBreaks = texts(input.column_break_before, 'column_break_before');
+}
+
 // image: how the picture sits in the text.
 const WRAPS = { inline: 'inline', in_line: 'inline', in_line_with_text: 'inline', square: 'square', tight: 'tight', through: 'tight', top_bottom: 'top_bottom', top_and_bottom: 'top_bottom', topbottom: 'top_bottom', behind: 'behind', behind_text: 'behind', front: 'front', in_front: 'front', in_front_of_text: 'front' };
 // A caption under a picture ("Figure 1: ...") or over a table ("Table 1: ..."): a numbered SEQ field, so the numbers stay right.
@@ -234,20 +268,22 @@ function formatOf(input) {
   if (input.orientation !== undefined) { if (!['portrait', 'landscape'].includes(input.orientation)) fail('orientation must be portrait or landscape.'); out.orientation = input.orientation; }
   if (input.section !== undefined) { if (!Number.isInteger(input.section) || input.section < 1) fail('section must be a section number (1 is the first).'); out.section = input.section; }
   if (input.page_break_before !== undefined) out.breaks = texts(input.page_break_before, 'page_break_before');
+  pagesOf(input, out);
   if (input.headings !== undefined) out.headings = texts(input.headings, 'headings').map((t) => { const m = /^(#{1,6})\s+(.+)$/.exec(t); return m ? { text: m[2].trim(), level: m[1].length } : { text: t, level: 1 }; });
   if (input.toc !== undefined) { if (typeof input.toc !== 'boolean') fail('toc must be true (a table of contents).'); if (input.toc) out.toc = true; }
   const at = str(input.heading, 'heading', MAX.find); if (at) { if (!out.toc) fail('heading (where the table of contents goes) needs toc: true.'); out.tocAt = at; }
   const text = hasAny(out, CHAR_KEYS) || hasAny(out, PARA_KEYS);
   if ((out.style || out.find || out.paras) && !text && !out.list && !out.basedOn) fail('style, find and paragraphs pick where the change goes; give one of those changes: font, size, bold, italic, underline, color, line_spacing, space_before, space_after, align, indent, first_line, keep_with_next (or list, or based_on for a style). help lists them.');
-  if (!text && !out.list && !out.basedOn && !out.margins && !out.orientation && !out.breaks && !out.headings && !out.toc) fail('Give something to change: font, size, line_spacing, space_before, space_after, align, indent, margins, orientation, page_break_before, headings, list or toc (help lists them all).');
-  if (out.section && !out.margins && !out.orientation) fail('section picks where margins or orientation change; give one of those.');
+  const page = ['header', 'footer', 'firstPage', 'pageStart', 'columns', 'sectionBreaks', 'columnBreaks'].some((k) => out[k] !== undefined);
+  if (!text && !page && !out.list && !out.basedOn && !out.margins && !out.orientation && !out.breaks && !out.headings && !out.toc) fail('Give something to change: font, size, line_spacing, space_before, space_after, align, indent, margins, orientation, page_break_before, headings, list, toc, header, footer, page_numbers, columns or section_break_before (help lists them all).');
+  if (out.section && !out.margins && !out.orientation && !['header', 'footer', 'firstPage', 'pageStart', 'columns'].some((k) => out[k] !== undefined)) fail('section picks where margins, orientation, header, footer, page numbers or columns change; give one of those.');
   return out;
 }
 
 // What each change takes besides action, doc and path (tab_id: the MCP listing adds it to every tool). An argument it does not take is refused,
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
 const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -413,6 +449,7 @@ const HELP = [
   'format styles: style + based_on makes the style when the document has none of that name (style "Figure Caption", based_on "Normal", size 9, italic true), or changes what it is based on; then apply it with style or insert.',
   'format lists: list bullet|number|none with paragraphs or find, level 1-9 (a numbered list starts at 1 each time).',
   'format pages: margins (normal|narrow|moderate|wide or inches "1" / "1 1.25" / "1 1 1 1"), orientation portrait|landscape, section (number) for one section only, page_break_before [paragraph texts], headings ["# Title", "## Sub"] (Heading 1-6), toc true (a real table of contents; heading: the paragraph to put it after).',
+  'format headers and footers: header / footer "text" or "left | center | right" with {page}, {pages}, {date} (footer "Page {page} of {pages}"), page_numbers true or bottom center|bottom right|top right..., different_first_page (a title page without them), page_number_start, columns 1-4; section (number) for one section only; section_break_before [paragraph texts] with section_break next_page|continuous|even_page|odd_page, column_break_before [paragraph texts].',
   'table (new): rows [[cells]], at, heading, header (first row repeats on each page, bold; default true), widths [inches per column], borders all|outside|none, shading (the header row\'s fill: lightgray, #D9E2F3...), align left|center|right.',
   'table (one that is there): index (1 is the first table, in reading order) or find (text in one of its cells), then cells [[row, col, "text"]] (1-based, counted after the rows and column this call adds), add_rows (after row n: 0 top, "end" bottom) with rows [[cells]], add_column (after column n, "end"; fill it with cells), header, widths, borders, shading, align.',
   'image: image (a file path or an https address), at, heading, width / height (inches; one keeps the shape), wrap inline|square|tight|top_bottom|behind|front, align left|center|right, caption ("Figure N: " is added, numbered by Word), alt (text for screen readers). table (new) takes caption too ("Table N: ", above it).',
