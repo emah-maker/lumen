@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.91 (2026-11-03)
+
 - **The AI can review a Word document: accept or reject tracked changes, replace with formatting, comment, and set its properties.** The word tool's `track` action now accepts or rejects tracked changes: all of them, one person's (`author: "AI (Lumen)"` undoes the AI's own edits), or those around some text. `replace` can match whole words only and give the new text a look (bold, a color, a highlight...). `format` sets the document's title, author, subject and keywords. `{date}` in text the AI puts into a paragraph becomes a date field. Without Word, all of this now works on the .docx file too, along with comments and turning tracking on. Saving as PDF and a replace across paragraphs still need Word, and the tool says so. Test: `test/units/word-units.js` (review and the rest).
 
 - **The AI can cite and cross-reference in Word documents.** The word tool's `insert` action, given `find`, now works inside a paragraph, right after that text. It adds words, a footnote or endnote (the mark there, the note at the bottom of the page or the end), or a cross-reference to "Figure 2", "Table 1" or a bookmark that Word keeps up to date. The `style` action turns the text it finds into a hyperlink (a web address, an email, or a bookmark in the document) or bookmarks it. Only web and email links are made, never `javascript:` or `file:`. It all works in Word and, without Word, in the .docx file itself. Test: `test/units/word-units.js` (references).
