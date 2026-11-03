@@ -30,7 +30,7 @@ function Is-Installed { return ($null -ne [type]::GetTypeFromProgID('Word.Applic
 
 # The Word to use: the running one (never a second window for the user), else, when asked to, one of our own.
 function Get-App([bool]$create) {
-  if ($script:app) { try { $null = $script:app.Version; return $script:app } catch { $script:app = $null } }
+  if ($script:app) { try { $null = $script:app.Version; if ($null -eq $script:app.Documents) { throw 'closing' }; return $script:app } catch { $script:app = $null } }   # (a Word the user closed, or one that is closing, is let go)
   if (-not $NEW) {
     try { $script:app = [Runtime.InteropServices.Marshal]::GetActiveObject('Word.Application'); $script:ours = $false; return $script:app } catch { $script:app = $null }
   }
@@ -100,6 +100,7 @@ function Cmd-Open($req) {
   foreach ($d in $a.Documents) { if ($d.Path -and (Norm $d.FullName) -eq $wn) { Show-App $a; return @{ doc = (Doc-Info $d $true); already = $true } } }
   # (a made-up password turns a password prompt into an error; no encoding or conversion dialogs; not added to the recent list)
   $d = $a.Documents.Open($path, $false, $false, $false, 'lumen-no-password', 'lumen-no-password', $false, 'lumen-no-password', 'lumen-no-password', 0, 65001, $true, $false, 0, $true)
+  if ($null -eq $d) { throw 'Word did not open the file: it may be showing a message, or the file is open in another Word window. Ask the user to look at Word, then try open again.' }
   Show-App $a
   return @{ doc = (Doc-Info $d $true); already = $false }
 }
@@ -268,7 +269,10 @@ function Cmd-Insert($req) {
 }
 
 # Find text is Word's own pattern language: "^" starts a special code, so a literal one is doubled. (Wildcards stay off.)
-function Esc-Find([string]$s) { return $s.Replace('^', '^^') }
+# Find text as Word's Find reads it: ^ is literal, and a line break (between two paragraphs, as read shows them) or a tab is Word's ^p or ^t.
+function Esc-Find([string]$s) { return ($s.Replace('^', '^^') -replace "`r`n|`r|`n", '^p').Replace("`t", '^t') }
+# Replacement text: a line break is a new paragraph, as insert makes one.
+function Rep-Text([string]$s) { return ($s -replace "`r`n|`r|`n", $CR) }
 
 # Every place `find` occurs (up to a cap): ranges.
 function Find-All($d, [string]$find, [int]$cap) {
@@ -292,7 +296,7 @@ function Find-All($d, [string]$find, [int]$cap) {
 function Cmd-Replace($req) {
   $d = Find-Doc $req
   $find = [string]$req['find']
-  $rep = [string](Arg $req 'replace' '')
+  $rep = Rep-Text ([string](Arg $req 'replace' ''))
   $cap = 1000
   # (every match is found first, then changed from the last to the first: with tracked changes the deleted text stays in the document, and
   # searching again after each change would find it again)
@@ -535,6 +539,8 @@ function Handle($req) {
     'frame' { return Cmd-Frame $req }
     'peek' { return Cmd-Peek $req }
     'echo' { if (-not $TEST) { throw 'Unknown command echo' }; return @{ echo = $req['value'] } }
+    'test_text' { if (-not $TEST) { throw 'Unknown command test_text' }; return @{ find = (Esc-Find ([string]$req['value'])); replace = (Rep-Text ([string]$req['value'])) } }
+    'test_fail' { if (-not $TEST) { throw 'Unknown command test_fail' }; $script:app = 'held'; $x = $null; $x.Open() }
     'test_cleanup' { if (-not $TEST) { throw 'Unknown command test_cleanup' }; return Cmd-TestCleanup $req }
     'quit' { Cmd-Quit; exit 0 }
     default { throw "Unknown command $($req['cmd'])" }
@@ -557,6 +563,13 @@ while ($true) {
     $res['ok'] = $true
     Send $res
   } catch {
-    Send @{ id = $rid; ok = $false; error = [string]$_.Exception.Message }
+    $msg = [string]$_.Exception.Message
+    # Word went away under us (the user closed it, or it is closing or busy with a dialog): let it go, so the next call finds the Word that is
+    # running now, and say what to do instead of PowerShell's words.
+    if ($msg -match 'null-valued expression|RPC server is unavailable|disconnected from its clients|0x800706BA|0x80010108|0x80010001|Call was rejected') {
+      $script:app = $null
+      $msg = 'Word stopped answering: it was closed, or it is showing a message. Call list to see what Word has open now, then open the document again.'
+    }
+    Send @{ id = $rid; ok = $false; error = $msg }
   }
 }

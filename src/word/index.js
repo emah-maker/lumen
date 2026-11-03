@@ -99,7 +99,7 @@ function createWord(deps = {}) {
     const want = String(v.action === 'save_as' ? (v.doc ?? '') : (v.doc ?? v.path ?? '')).trim().toLowerCase(); // (save_as: the path is where it goes, not which document)
     if (!docs.length) throw new Error('No document is open in Word. Use open (with a path) or new.');
     if (!want) return docs.find((d) => d.active) || docs[0];
-    const full = docs.find((d) => d.path && keyOf(d.path) === keyOf(want));
+    const full = docs.find((d) => spec.sameDoc(d.path, want)); // (a OneDrive document is listed by its web address)
     if (full) return full;
     const named = docs.filter((d) => String(d.name).toLowerCase() === want || String(d.name).toLowerCase().replace(/\.[^.]+$/, '') === want);
     if (named.length === 1) return named[0];
@@ -168,7 +168,7 @@ function createWord(deps = {}) {
     // The file route: a path to a .docx and either no Word to use, or Word does not have it open.
     if (A === 'read' && v.path) {
       let open = null;
-      if (win && (await installed())) { const docs = await openDocs(); open = docs.find((d) => d.path && keyOf(d.path) === keyOf(v.path)) || null; }
+      if (win && (await installed())) { const docs = await openDocs(); open = docs.find((d) => spec.sameDoc(d.path, v.path)) || null; }
       const ref = open ? docRef(open) : fileRef(v.path);
       await authorize(ctx, 'read', ref);
       noteRead(ctx, ref.key);
@@ -238,7 +238,7 @@ function createWord(deps = {}) {
     const hint = d.tracking ? '' : ' Tracked changes are off, so the edit is not marked; track with on:true shows later edits as revisions.';
     switch (A) {
       case 'insert': { const r = await H.insert({ doc: target, at: v.at, heading: v.heading, text: v.text, style: v.style, bold: v.bold, italic: v.italic }); return done(`Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
-      case 'replace': { const r = await H.replace({ doc: target, find: v.find, replace: v.replace }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed.`); }
+      case 'replace': { const r = await H.replace({ doc: target, find: v.find, replace: v.replace }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
       case 'style': { const r = await H.style({ doc: target, find: v.find, style: v.style, bold: v.bold, italic: v.italic }); return done(r.formatted ? `Formatted ${r.formatted} match${r.formatted === 1 ? '' : 'es'} in ${d.name}.` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed.`); }
       case 'table': { const r = await H.table({ doc: target, at: v.at, heading: v.heading, rows: v.rows }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
       case 'image': { checkImage(v.image); await H.image({ doc: target, at: v.at, heading: v.heading, image: v.image }); return done(`Added the picture ${spec.baseName(v.image)} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
@@ -257,7 +257,7 @@ function createWord(deps = {}) {
 
   async function wordHasIt(v) {
     if (platform !== 'win32' || !(await installed())) return false;
-    return (await openDocs()).some((d) => d.path && keyOf(d.path) === keyOf(v.path));
+    return (await openDocs()).some((d) => spec.sameDoc(d.path, v.path));
   }
 
   // open: a card only when the run has read content from elsewhere.

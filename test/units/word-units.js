@@ -49,7 +49,15 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('paths: only Word files open, only .docx and .pdf save, only .docx is created, only pictures insert', throws(() => v({ action: 'open', path: 'C:\\a\\b.docm' })) && throws(() => v({ action: 'open', path: 'C:\\a\\b.exe' })) && throws(() => v({ action: 'save_as', path: 'C:\\a\\b.doc' })) && throws(() => v({ action: 'new', path: 'C:\\a\\b.pdf' })) && throws(() => v({ action: 'image', image: 'C:\\a\\b.svg' })) && v({ action: 'image', image: 'C:\\a\\b.PNG' }).image);
     check('insert: needs text; "after" and "section_end" need a heading; a bad place is refused', throws(() => v({ action: 'insert' })) && throws(() => v({ action: 'insert', text: 'x', at: 'after' })) && throws(() => v({ action: 'insert', text: 'x', at: 'middle' })) && v({ action: 'insert', text: 'x' }).at === 'end');
     check('insert: styles are by name (case and spacing free) and an unknown one is refused', v({ action: 'insert', text: 'x', style: 'heading   2' }).style === 'Heading 2' && v({ action: 'insert', text: 'x', style: 'Numbered' }).style === 'List Number' && /Unknown style/.test(throws(() => v({ action: 'insert', text: 'x', style: 'Evil"; calc' }))));
-    check('replace: find is required and at most 255 (Word\'s limit), replace may be empty', throws(() => v({ action: 'replace' })) && throws(() => v({ action: 'replace', find: 'x'.repeat(256) })) && v({ action: 'replace', find: 'a' }).replace === '' && v({ action: 'replace', find: 'a', replace: 'b$(c)' }).replace === 'b$(c)');
+    check('replace: find is required and at most 255 (Word\'s limit), replace may be empty', throws(() => v({ action: 'replace' })) && throws(() => v({ action: 'replace', find: 'x'.repeat(256) })) && v({ action: 'replace', find: 'a', replace: '' }).replace === '' && v({ action: 'replace', find: 'a', replace: 'b$(c)' }).replace === 'b$(c)');
+    // (a chat's replace sent its new text as new_text: the missing replace became "" and every edit deleted the text it was to change)
+    check('replace: no replace is refused, not taken as "" (which would delete the found text)', /replace is required/.test(throws(() => v({ action: 'replace', find: 'Lab Section:' })) || ''), throws(() => v({ action: 'replace', find: 'Lab Section:' })));
+    const misnamed = throws(() => v({ action: 'replace', find: 'Lab Section:\t', new_text: 'Lab Section: 7' }));
+    check('edits: an argument the action does not take is refused by name, with the right ones', /does not take new_text/.test(misnamed || '') && /replace \(the new text/.test(misnamed || '') && /does not take old_text, new_text/.test(throws(() => v({ action: 'replace', old_text: 'a', new_text: 'b' })) || '') && /insert does not take content/.test(throws(() => v({ action: 'insert', content: 'x' })) || ''), misnamed);
+    check('edits: the listing\'s tab_id and the documented arguments still pass', v({ action: 'replace', find: 'a', replace: 'b', doc: 'R.docx', tab_id: 3 }).replace === 'b' && v({ action: 'comment', find: 'a', comment: 'c' }).text === 'c' && v({ action: 'read', query: 'x' }).action === 'read');
+    const local = `C:${B}Users${B}me${B}OneDrive - Northeastern University${B}Fall 2026${B}Lab${B}ME2356 Lab2.docx`;
+    check('sameDoc: a OneDrive file named by its local path is the document Word lists by its web address', spec.sameDoc('https://northeastern-my.sharepoint.com/personal/me_northeastern_edu/Documents/Fall 2026/Lab/ME2356 Lab2.docx', local) && spec.sameDoc('https://d.docs.live.net/ab12/Fall%202026/Lab/ME2356%20Lab2.docx', local.replace('OneDrive - Northeastern University', 'OneDrive')) && spec.sameDoc(`C:${B}Docs${B}R.docx`, 'c:/docs/r.docx'));
+    check('sameDoc: another folder, another file or a file outside OneDrive is not', !spec.sameDoc('https://x.sharepoint.com/personal/me/Documents/Other/ME2356 Lab2.docx', local) && !spec.sameDoc('https://x.sharepoint.com/personal/me/Documents/Fall 2026/Lab/Lab1.docx', local) && !spec.sameDoc('https://x.sharepoint.com/personal/me/Documents/Lab/R.docx', `C:${B}Docs${B}Lab${B}R.docx`) && !spec.sameDoc('', local));
     check('limits: text 60000, table 200 x 30 with cells 2000, comment 4000', throws(() => v({ action: 'insert', text: 'x'.repeat(60001) })) && throws(() => v({ action: 'table', rows: Array.from({ length: 201 }, () => ['a']) })) && throws(() => v({ action: 'table', rows: [Array.from({ length: 31 }, () => 'a')] })) && throws(() => v({ action: 'table', rows: [['x'.repeat(2001)]] })) && throws(() => v({ action: 'comment', find: 'a', text: 'x'.repeat(4001) })));
     check('table: ragged rows are padded, numbers become text, text must be a list of lists', J(v({ action: 'table', rows: [['a', 'b'], [1]] }).rows) === J([['a', 'b'], ['1', '']]) && throws(() => v({ action: 'table', rows: 'a,b' })) && throws(() => v({ action: 'table', rows: ['a'] })));
     check('track: on must be a boolean; read: offset a whole number', throws(() => v({ action: 'track' })) && throws(() => v({ action: 'track', on: 'yes' })) && v({ action: 'track', on: true }).on === true && throws(() => v({ action: 'read', offset: -1 })) && throws(() => v({ action: 'read', offset: 1.5 })));
@@ -73,6 +81,9 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('offer: when the chat is about a Word document', ['Open my report.docx and fix the heading', 'add a table to the Word document', 'edit this in Word', 'use Microsoft Word to write the memo', 'summarize Lab1.doc'].every(offered));
     check('offer: ordinary requests do not pay for it', ['Summarize this page', 'what is the word for happy', 'search the web for pizza', 'write a word problem', 'fix the bug in my code', 'one word answer please'].every((t) => !offered(t)));
     check('offer: a call already made keeps the tool for the rest of the chat', agent.wordOffered([{ role: 'user', content: 'go on' }, { role: 'assistant', content: [{ type: 'tool_use', name: 'word', id: 'a', input: {} }] }, { role: 'user', content: 'thanks' }]) === true);
+    check('offer: a CLI chat\'s word call (kept in the message\'s meta.tools) keeps the tool too', agent.wordOffered([{ role: 'user', content: 'go on' }, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], meta: { tools: [{ name: 'word', input: { action: 'replace' }, ok: true }] } }, { role: 'user', content: 'double check everything' }]) === true);
+    const cliDef = agent.cliWordToolDefs({ cliWord: true })[0];
+    check('CLI engines: the word tool they are given keeps offset, so a long document can be paged', Boolean(cliDef?.input_schema?.properties?.offset) && Boolean(cliDef?.input_schema?.properties?.replace), J(Object.keys(cliDef?.input_schema?.properties || {})));
     const ag = read('src/ai/agent.js');
     check('lists: tab-free; list / read / open taint web actions (app only); every acting action is in the hands-off list', /TAB_FREE_TOOLS = new Set\([^)]*'word'/.test(ag) && /WORD_READS = new Set\(\['list', 'read', 'open'\]\)/.test(ag) && /WORD_ACTING = new Set\(\['open', 'new', 'show', 'insert', 'replace', 'style', 'table', 'image', 'comment', 'track', 'save', 'save_as'\]\)/.test(ag));
     check('hands-off: a changing Word action is refused when the user does not let the AI act, reading still works', /name === 'word' && WORD_ACTING\.has/.test(ag) && new Agent({ handsOff: () => true }).handsOffCheck !== undefined);
@@ -135,7 +146,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const r = makeRig({ enabled: false });
     check('off: with the switch off the tool says how to turn it on and touches nothing', /Settings → AI/.test(await rejects(() => r.word.run({ action: 'list' }, r.ctx)) || '') && r.store.calls.length === 0);
     const r2 = makeRig({ platform: 'darwin' });
-    check('other systems: a plain "Windows for now" and the file route is named; nothing is started', /Windows for now/.test(await rejects(() => r2.word.run({ action: 'list' }, r2.ctx)) || '') && /Windows for now/.test(await rejects(() => r2.word.run({ action: 'replace', find: 'a' }, r2.ctx)) || ''));
+    check('other systems: a plain "Windows for now" and the file route is named; nothing is started', /Windows for now/.test(await rejects(() => r2.word.run({ action: 'list' }, r2.ctx)) || '') && /Windows for now/.test(await rejects(() => r2.word.run({ action: 'replace', find: 'a', replace: 'b' }, r2.ctx)) || ''));
     const r3 = makeRig({ installed: false });
     check('no Word: list says so plainly and offers the .docx route', /not installed/.test(await r3.word.run({ action: 'list' }, r3.ctx)) && /not installed/.test(await rejects(() => r3.word.run({ action: 'insert', text: 'x' }, r3.ctx)) || ''));
   }
@@ -445,6 +456,11 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       for (const text of [...NASTY, big, '', ' ']) { const got = (await host.raw('echo', { value: text }, 30000)).echo; if (got !== text) { ok = false; why = `${J(text).slice(0, 60)} came back as ${J(got).slice(0, 60)}`; break; } }
       const bad = await rejects(() => host.raw('nonsense', {}, 20000));
       check('real helper: unknown commands are an error, not code', /Unknown command/.test(bad || ''), bad);
+      const tt = await host.raw('test_text', { value: 'Submitted by\n[Your name]\tx ^p\r\ny' }, 20000);
+      check('real helper: find text across paragraphs (a line break, as read shows them) and tabs become Word\'s ^p and ^t; a literal ^ stays literal', tt.find === 'Submitted by^p[Your name]^tx ^^p^py', tt.find);
+      check('real helper: a line break in replacement text is a new paragraph, as insert makes one', tt.replace === 'Submitted by\r[Your name]\tx ^p\ry', J(tt.replace));
+      const gone = await rejects(() => host.raw('test_fail', {}, 20000));
+      check('real helper: Word going away mid-call is a plain next step, not PowerShell\'s "null-valued expression"', /Word stopped answering/.test(gone || '') && /open the document again/.test(gone || '') && !/null-valued/.test(gone || ''), gone);
       const pids = await host.raw('ping', {}, 20000);
       check('real helper: ping answers', pids.pong === true);
     } catch (e) { ok = false; why = e.message; }
@@ -569,6 +585,24 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     tainted.ctx.ask = async (c) => { qs.push(c); return true; };
     await tainted.word.run({ action: 'read', path: file }, tainted.ctx);
     check('file route: a tainted run is asked before reading a file by path', qs.length === 1 && /Allow it to read/.test(qs[0].title));
+  }
+
+  // ---- a OneDrive document: Word lists it by its web address and the AI names its local file (a chat opened it, then every read and edit by that path failed)
+  {
+    const url = 'https://northeastern-my.sharepoint.com/personal/me_northeastern_edu/Documents/Fall 2026/Lab/Lab2.docx';
+    const local = `C:${B}Users${B}me${B}OneDrive - Northeastern University${B}Fall 2026${B}Lab${B}Lab2.docx`;
+    for (const m of ['auto', 'app', 'file']) {
+      const r = makeRig({ mode: m, docs: [{ name: 'Lab2.docx', path: url, active: false, saved: true, tracking: false, paragraphs: 9, text: 'Submitted by\n[Your name here]' }, { name: 'Other.docx', path: `C:${B}Docs${B}Other.docx`, active: true, saved: true, tracking: false, paragraphs: 2, text: 'x' }] });
+      let got = '';
+      const out = await rejects(async () => { got = await r.word.run({ action: 'read', path: local }, r.ctx); });
+      check(`OneDrive (${m}): read by the local path reads the open document from Word`, out === null && /Your name here/.test(got) && r.store.calls.some((c) => c[0] === 'read' && c[1].doc === url) && !r.store.opened.length, out || got);
+      const ed = await rejects(() => r.word.run({ action: 'replace', path: local, find: '[Your name here]', replace: 'Ann' }, r.ctx));
+      const ins = await rejects(() => r.word.run({ action: 'insert', path: local, text: 'More' }, r.ctx));
+      check(`OneDrive (${m}): replace and insert by the local path change that document in Word (not the active one, not the file)`, ed === null && ins === null && r.store.calls.filter((c) => (c[0] === 'replace' || c[0] === 'insert') && c[1].doc === url).length === 2 && !r.store.opened.length, J([ed, ins, r.store.calls]));
+    }
+    const r = makeRig({ docs: [{ name: 'Lab2.docx', path: url, active: true, saved: true, tracking: false, paragraphs: 9, text: 'a' }] });
+    const bad = await rejects(() => r.word.run({ action: 'replace', find: 'Lab Section:', new_text: 'Lab Section: 7' }, r.ctx));
+    check('misnamed replace: refused before anything is asked or changed', /does not take new_text/.test(bad || '') && !r.store.calls.some((c) => c[0] === 'replace') && !r.store.cards.length, bad);
   }
 
   // ---- real Word, only when it is installed and runs fully hidden on a temp document
