@@ -33,6 +33,24 @@ function checkPath(value, what = 'path') {
   return p;
 }
 
+// Is the open document at docPath (as Word lists it) the file `want` names? Word lists a document it opened from a OneDrive folder by its web
+// address (https://…sharepoint.com/personal/…/Documents/Lab/Report.docx, or https://d.docs.live.net/…/Lab/Report.docx), while the AI names the
+// local file (C:\Users\me\OneDrive - School\Lab\Report.docx): the same document when the address ends with the path below the OneDrive folder.
+function sameDoc(docPath, want) {
+  const a = String(docPath || '').trim();
+  const w = String(want || '').trim();
+  if (!a || !w) return false;
+  const key = (p) => p.replace(/\//g, '\\').toLowerCase();
+  if (key(a) === key(w)) return true;
+  if (!/^https?:\/\//i.test(a) || /^[a-z]+:\/\//i.test(w)) return false;
+  let page;
+  try { page = decodeURIComponent(new URL(a).pathname).toLowerCase(); } catch { return false; }
+  const parts = w.split(/[\\/]+/).filter(Boolean);
+  const root = parts.findLastIndex((s) => /^onedrive( - .+)?$/i.test(s));
+  if (root < 0 || root === parts.length - 1) return false;
+  return page.endsWith(`/${parts.slice(root + 1).join('/').toLowerCase()}`);
+}
+
 const str = (v, name, max, { required = false } = {}) => {
   if (v === undefined || v === null || v === '') { if (required) fail(`${name} is required for this action.`); return undefined; }
   if (typeof v !== 'string') fail(`${name} must be text.`);
@@ -70,11 +88,21 @@ function tableRows(rows) {
   return out.map((r) => { while (r.length < width) r.push(''); return r; });
 }
 
+// What each change takes besides action, doc and path (tab_id: the MCP listing adds it to every tool). An argument it does not take is refused,
+// not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', 'bold', 'italic'], table: ['at', 'heading', 'rows'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'] };
+const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
+
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
 function validate(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail('Give an action.');
   const action = input.action;
   if (!ACTIONS.includes(action)) fail(`action must be one of: ${ACTIONS.join(', ')}.`);
+  if (EDIT_ARGS[action]) {
+    const takes = new Set(['action', 'doc', 'path', 'tab_id', ...EDIT_ARGS[action]]);
+    const odd = Object.keys(input).filter((k) => !takes.has(k) && input[k] !== undefined);
+    if (odd.length) fail(`${action} does not take ${odd.map((k) => k.slice(0, 40)).join(', ')}, so nothing was changed. It takes ${ARG_HINT[action] || EDIT_ARGS[action].join(', ')}.`);
+  }
   const out = { action };
   const doc = str(input.doc, 'doc', MAX.name);
   if (doc) out.doc = doc;
@@ -102,7 +130,8 @@ function validate(input) {
     case 'replace': {
       if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
       out.find = str(input.find, 'find', MAX.find, { required: true });
-      out.replace = input.replace === undefined || input.replace === null ? '' : str(input.replace, 'replace', MAX.text) ?? '';
+      if (typeof input.replace !== 'string') fail('replace is required: the new text (give "" to delete the found text), so nothing was changed.');
+      out.replace = str(input.replace, 'replace', MAX.text) ?? '';
       break;
     }
     case 'style': {
@@ -176,4 +205,4 @@ const OFF_TEXT = 'Using Microsoft Word is off. The user can turn it on in Settin
 const NO_WORD = 'Microsoft Word is not installed on this computer, so it cannot be driven. Documents can still be read (action read with path to a .docx file), and a .docx file can get new paragraphs, headings and tables written straight into it (insert or table with path), without Word.';
 const NOT_WINDOWS = 'Using Word works on Windows for now. On this computer a .docx file can still be read (action read with path) and given new paragraphs, headings and tables (insert or table with path).';
 
-module.exports = { ACTIONS, EDITS, SAVES, ACTING, STYLES, MAX, WordError, validate, checkPath, kind, stepLabel, wrap, defang, baseName, clip, OFF_TEXT, NO_WORD, NOT_WINDOWS, OPEN_EXT };
+module.exports = { ACTIONS, EDITS, SAVES, ACTING, STYLES, MAX, WordError, validate, checkPath, sameDoc, kind, stepLabel, wrap, defang, baseName, clip, OFF_TEXT, NO_WORD, NOT_WINDOWS, OPEN_EXT };

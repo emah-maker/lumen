@@ -701,7 +701,7 @@ const OTHER_NOTES = slimTool(NOTES_TOOL); // [notes]
 const OTHER_READING = slimTool(READING_LIST_TOOL); // [reading list]
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
-const OTHER_WORD = slimTool(WORD_TOOL); // [word]
+const OTHER_WORD = (() => { const t = slimTool(WORD_TOOL); t.input_schema.properties.offset = slimProp(WORD_TOOL.input_schema.properties.offset); return t; })(); // [word] (offset kept: it is how a read pages through a long document, and a model that is not shown it asks for paragraphs "1-30" instead)
 // [word] One line for the CLI engines (Claude Code, Codex, Grok Build, Antigravity), added to a message only on Word intent (wordOffered): they have shells or script tools, so without it a model edits a .docx by writing a script or a copy.
 const CLI_WORD_RULE = {
   auto: 'Word documents: use the word tool (mcp__lumen__word): open the file in Word, read only what the edit needs, edit in place (replace, or insert after a heading), save; do not re-read to check. Never write scripts or new files unless asked.',
@@ -6830,7 +6830,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     try {
       for (let i = messages.length - 1, seen = 0; i >= 0 && i >= messages.length - 40; i--) {
         const m = messages[i];
-        if (m?.role === 'assistant' && Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && b.name === 'word')) return true; // (a call already made keeps the tool)
+        if (m?.role === 'assistant' && ((Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && b.name === 'word')) || (Array.isArray(m.meta?.tools) && m.meta.tools.some((t) => t?.name === 'word')))) return true; // (a call already made keeps the tool; a CLI chat keeps its calls in meta.tools)
         if (m?.role !== 'user' || seen >= 6) continue;
         seen++;
         const text = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : '';

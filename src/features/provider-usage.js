@@ -16,8 +16,9 @@ const { limitOf, isLimitText, parseResetTime } = require('./grok-limit');
 const DAY = 24 * 60 * 60 * 1000;
 
 // plan: what the provider lets Lumen read about its limits.
-//   'windows'   5-hour / weekly windows with a percent and a reset (Claude Code; Codex from its session logs)
-//   'message'   only the limit-reached text and its reset time, when a run hits it (Grok Build, Antigravity)
+//   'windows'   5-hour / weekly windows with a percent and a reset (Claude Code; Codex from its session logs; Antigravity from its
+//               status line, ai/agy-quota.js, on Windows, with its quota message as before when that can't be read)
+//   'message'   only the limit-reached text and its reset time, when a run hits it (Grok Build)
 //   'headers'   rate-limit headers on the responses Lumen already gets (OpenAI, Anthropic, xAI, OpenRouter): per-minute
 //               request / token limits, not a plan balance
 //   'none'      nothing at all (Gemini's OpenAI-compatible endpoint sends no limit headers)
@@ -25,7 +26,7 @@ const PROVIDERS = [
   { key: 'claudecode', name: 'Claude Code', kind: 'cli', plan: 'windows' },
   { key: 'grokbuild', name: 'Grok Build', kind: 'cli', plan: 'message' },
   { key: 'codex', name: 'Codex CLI', kind: 'cli', plan: 'windows' },
-  { key: 'antigravity', name: 'Antigravity', kind: 'cli', plan: 'message' },
+  { key: 'antigravity', name: 'Antigravity', kind: 'cli', plan: 'windows' },
   { key: 'anthropic', name: 'Claude (API key)', kind: 'api', plan: 'headers' },
   { key: 'openai', name: 'OpenAI', kind: 'api', plan: 'headers' },
   { key: 'xai', name: 'Grok (API key)', kind: 'api', plan: 'headers' },
@@ -38,9 +39,9 @@ const nameOf = (key) => (PROVIDERS.find((p) => p.key === key) || {}).name || key
 // Why a provider has no plan numbers, in the words the panel uses.
 function noPlanText(key) {
   const p = PROVIDERS.find((x) => x.key === key);
+  if (key === 'antigravity') return 'Antigravity’s plan quota comes from agy’s own status line: Lumen starts agy for a moment, out of sight, with no prompt, while you use it (Windows only). When it can’t be read, Lumen shows its own counts, and the quota message with its reset time (for example “Resets in 110h”) when a run hits the limit.';
   if (!p || p.plan === 'windows') return ''; // (Claude Code and Codex publish windows: nothing to explain)
   if (key === 'grokbuild') return 'Grok Build publishes no plan limits: no command or field carries them. Lumen shows its own counts, and the limit message with its reset time if Grok reports one.';
-  if (key === 'antigravity') return 'Antigravity publishes no plan limits. Lumen shows its own counts, and the quota message with its reset time (for example “Resets in 110h”) when a run hits the limit.';
   if (p.plan === 'headers') return `Plan limits are not available from ${p.name}: an API key has no plan balance Lumen can read. It shows its own counts, and ${p.name}’s per-minute rate limits when a reply carried them.`;
   return `Plan limits are not available from ${p.name}. Lumen shows what it counted itself.`;
 }

@@ -1,6 +1,7 @@
 // The usage bar for the engines other than Claude Code, with fake readings only: Codex's plan windows of every length (the
 // 5-hour and weekly ones, and a free plan's single 30-day window, which used to give no bar at all), the remaining share and the
-// reset date, and that Grok Build and Antigravity, which report no plan numbers, get no plan bar (a limit message at most).
+// reset date, and that Grok Build, which reports no plan numbers, and Antigravity with no quota reading get no plan bar (a limit message at most;
+// Antigravity's quota bar is in test/units/agy-quota-units.js).
 // Pure node: no window, no network, no real ~/.codex.
 const cu = require('../../src/ai/codex-usage');
 const U = require('../../src/features/usage');

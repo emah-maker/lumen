@@ -14,7 +14,7 @@ One tool, `word`, with these actions:
 | `open` / `new` | Open a `.docx`, `.doc`, `.rtf`, `.odt` or `.txt` file (by full path) in Word, or start a new document (optionally saved straight to a new `.docx`). |
 | `read` | The document's text with its structure (`#` headings, `-` lists, `\| tables \|`), comments and a tracked-changes summary, in chunks (`offset` pages through a long one). |
 | `insert` | New paragraphs at the end, the start, after a heading or paragraph, or at the end of a heading's section, in a style (Normal, Heading 1 to 3, Title, List Bullet, List Number, Quote), optionally bold or italic. |
-| `replace` | Find and replace text (exact case, every match, with the count). |
+| `replace` | Find and replace text (exact case, every match, with the count). `replace` is required (`""` deletes the found text); a line break in `find` matches across paragraphs, and one in `replace` starts a new paragraph. An edit given an argument it does not take (such as `new_text`) is refused and changes nothing. |
 | `style` | Apply a style, bold or italic to text found in the document. |
 | `table` / `image` | Insert a table from rows, or a picture (`.png`, `.jpg`, `.gif`, `.bmp`) from a file. |
 | `comment` / `track` | Add a comment on some text; turn tracked changes on or off, so the AI's edits show as revisions you can accept or reject. |
@@ -23,7 +23,7 @@ One tool, `word`, with these actions:
 
 ## How it works
 
-**On Windows with Word installed**, Lumen drives Word's own automation (COM) through one hidden PowerShell helper. It starts the first time the AI uses the tool and ends after a quiet spell. Every value (document text, find text, file names) travels to the helper as data in a JSON line; nothing the AI or a document says is ever put into a script or a command line. If Word is already running, the AI works in that Word; otherwise Lumen starts Word. Lumen never closes your documents, and it quits a Word only if Lumen started it and no document is open in it. Macros never run (documents are opened with macros disabled).
+**On Windows with Word installed**, Lumen drives Word's own automation (COM) through one hidden PowerShell helper. It starts the first time the AI uses the tool and ends after a quiet spell. Every value (document text, find text, file names) travels to the helper as data in a JSON line; nothing the AI or a document says is ever put into a script or a command line. If Word is already running, the AI works in that Word; otherwise Lumen starts Word. A document opened from a OneDrive folder is listed by Word under its web address; the AI can still name it by its local path. If Word is closed or stops answering mid-task, the helper lets it go and the AI is told to list and reopen the document. Lumen never closes your documents, and it quits a Word only if Lumen started it and no document is open in it. Macros never run (documents are opened with macros disabled).
 
 **Without Word** (not installed, or not Windows), a `.docx` file can still be read, and given new paragraphs, headings and tables by writing into the file itself. Those edits are written as tracked changes by "AI (Lumen)", the file is replaced in one step (a failure leaves the original untouched), and a card shows the file's path first. Find and replace, formatting, pictures and comments need Word. `.doc`, `.rtf` and `.odt` files need Word.
 
