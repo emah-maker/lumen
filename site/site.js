@@ -28,9 +28,10 @@
   }
 })();
 
-// The download button: the file for this computer, labelled with what it is. On a Mac the chip
-// matters (an Apple silicon build won't run on Intel and vice versa), so it is detected, and when it
-// can't be known for sure the button says "Apple silicon" out loud with the Intel link beside it.
+// The download buttons: the file for this computer, labelled with what it is. On a Mac the chip
+// matters (an Apple silicon build won't run on Intel and vice versa), so both Mac files get a button
+// that says which Mac it is for. When the chip is detected, its button is the primary one and says
+// "Recommended for your Mac"; when it can't be, the two are equal and a line says how to check.
 (async function download() {
   const slot = document.querySelector('[data-latest]');
   const btn = slot && slot.closest('a');
@@ -51,7 +52,7 @@
     }
   }
   // { arch: 'arm64' | 'x64', sure }. Client hints where the browser has them (Chromium), then the GPU
-  // name, else Apple silicon as the likely answer (every Mac since late 2020), marked as a guess.
+  // name; else Apple silicon as the likely answer (every Mac since late 2020), marked as a guess.
   async function macChip() {
     try {
       const hi = navigator.userAgentData && await navigator.userAgentData.getHighEntropyValues(['architecture']);
@@ -66,10 +67,34 @@
     return { arch: 'arm64', sure: false }; // "Apple GPU" (Safari hides the chip) or nothing: a guess
   }
 
-  // Label first, before any network: the button says what it is even when the API can't be reached.
+  const MAC = {
+    arm64: { name: 'Mac with Apple silicon', hint: 'M1, M2, M3, M4…' },
+    x64: { name: 'Mac with Intel chip', hint: 'Intel Core i5, i7, i9…' },
+  };
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const fileOf = (url) => { try { return decodeURIComponent(new URL(url).pathname.split('/').pop()); } catch { return ''; } };
+
+  // Label first, before any network: the buttons say what they are even when the API can't be reached.
   const chip = os === 'mac' ? await macChip() : null;
-  const name = os === 'mac' ? `Mac (${chip.arch === 'arm64' ? 'Apple silicon' : 'Intel'})` : os === 'win' ? 'Windows' : '';
-  if (name && btn.firstChild && btn.firstChild.nodeType === 3) btn.firstChild.nodeValue = `Download for ${name}`;
+  if (os === 'win' && btn.firstChild && btn.firstChild.nodeType === 3) btn.firstChild.nodeValue = 'Download for Windows';
+  let macBtns = null;
+  if (os === 'mac') {
+    const first = chip.arch;
+    const second = first === 'arm64' ? 'x64' : 'arm64';
+    const inner = (arch, lead) => `<span class="dl-l">${lead && chip.sure ? '<small class="dl-rec">Recommended for your Mac</small>' : ''}<span class="dl-t">${lead ? 'Download for ' : ''}${MAC[arch].name}${lead ? '<span class="ver" data-latest></span>' : ''}</span><small class="dl-f">${MAC[arch].hint}</small></span>`;
+    btn.classList.add('dl-mac');
+    if (!chip.sure) btn.classList.replace('primary', 'choice');
+    btn.innerHTML = inner(first, true);
+    btn.insertAdjacentHTML('afterend', `<a class="btn ${chip.sure ? 'ghost' : 'choice'} dl-mac" href="${REL}/latest">${inner(second, false)}</a>`);
+    macBtns = { [first]: btn, [second]: btn.nextElementSibling };
+    const cta = btn.closest('.cta');
+    if (cta) {
+      cta.insertAdjacentHTML('afterend', chip.sure
+        ? `<p class="dl-help">To check: Apple menu → <b>About This Mac</b> shows a <b>Chip</b> (Apple M…) on Apple silicon, or a <b>Processor</b> (Intel…) on an Intel Mac.</p>`
+        : `<p class="dl-help"><b>Which Mac do you have?</b> Apple menu → <b>About This Mac</b>. If it lists a <b>Chip</b> (Apple M1, M2, M3, M4…), get Apple silicon. If it lists a <b>Processor</b> (Intel Core…), get Intel.</p>`);
+    }
+  }
+  const slotNow = () => btn.querySelector('[data-latest]');
 
   // The release files: from the API when it answers; else the last version this browser saw, with the
   // files named the way package.json names them; else the releases page stays as the link.
@@ -105,7 +130,7 @@
       console.warn('latest release: nothing remembered', err);
     }
   }
-  if (tag) slot.textContent = tag;
+  if (tag && slotNow()) slotNow().textContent = tag;
   if (!links) return; // the button keeps linking to the latest release page
 
   if (os === 'win') {
@@ -113,9 +138,18 @@
     // the zip needs no installer: for PCs where Smart App Control blocks the setup
     btn.insertAdjacentHTML('afterend', `<a class="btn ghost" href="${links.winzip}" title="A plain zip: unzip it and run Lumen.exe, no installer (for PCs where Smart App Control blocks the setup)">Zip, no installer</a>`);
   }
-  if (os === 'mac') {
-    btn.href = links[chip.arch];
-    const other = chip.arch === 'arm64' ? 'x64' : 'arm64';
-    btn.insertAdjacentHTML('afterend', `<a class="btn ghost" href="${links[other]}">${other === 'x64' ? 'Intel Mac' : 'Apple silicon'}</a>`);
+  if (macBtns) {
+    for (const arch of ['arm64', 'x64']) {
+      const a = macBtns[arch];
+      a.href = links[arch];
+      const file = fileOf(links[arch]);
+      if (file) a.querySelector('.dl-f').textContent = `${MAC[arch].hint} · ${file}`;
+    }
+  }
+
+  // The install table: the real file names, linked.
+  for (const el of document.querySelectorAll('[data-file]')) {
+    const url = links[el.dataset.file];
+    if (url) el.innerHTML = `<a href="${esc(url)}"><code>${esc(fileOf(url))}</code></a>`;
   }
 })();
