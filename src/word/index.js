@@ -184,7 +184,7 @@ function createWord(deps = {}) {
       return formatRead(got, ref.name, 'file');
     }
 
-    if ((A === 'new' || A === 'insert' || A === 'table' || A === 'format' || A === 'style') && v.path && !(await wordHasIt(v))) {
+    if ((A === 'new' || A === 'insert' || A === 'table' || A === 'format' || A === 'style' || A === 'image') && v.path && !(await wordHasIt(v))) {
       if (win && (mode() !== 'file' || !isDocx(v.path)) && (await installed())) { // (file: a .docx is changed in the file itself; any other kind still needs Word)
         if (A !== 'new') await openThen(v, ctx); // Word is there: the document is opened in it and changed there
         else return newViaWord(v, ctx);
@@ -243,8 +243,8 @@ function createWord(deps = {}) {
       case 'replace': { const r = await H.replace({ doc: target, find: v.find, replace: v.replace }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
       case 'format': { const r = await H.format({ doc: target, ...formatFields(v) }); return done(`${formatDone(r.done || {}, d.name, v, false)} Not saved yet.${d.tracking ? '' : ' Tracked changes are off, so the edit is not marked.'}`); }
       case 'style': { const r = await H.style({ doc: target, ...formatFields(v) }); return done(styleDone(r, d.name, v)); }
-      case 'table': { if (isEdit(v)) { const r = await H.table({ doc: target, ...formatFields(v) }); return done(`${tableDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.table({ doc: target, ...formatFields(v) }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
-      case 'image': { checkImage(v.image); await H.image({ doc: target, at: v.at, heading: v.heading, image: v.image }); return done(`Added the picture ${spec.baseName(v.image)} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
+      case 'table': { if (isEdit(v)) { const r = await H.table({ doc: target, ...formatFields(v) }); return done(`${tableDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.table({ doc: target, ...formatFields(v) }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''}. Not saved yet.${hint}`); }
+      case 'image': { const pic = await pictureFor(v); let r; try { r = await H.image({ doc: target, ...formatFields(v), url: undefined, image: pic.file }); } finally { pic.done(); } return done(`${imageDone(r, d.name, v, pic)} Not saved yet.${hint}`); }
       case 'comment': await H.comment({ doc: target, find: v.find, text: v.text }); return done(`Added a comment on “${spec.clip(v.find, 40)}” in ${d.name}.`);
       case 'track': { const r = await H.track({ doc: target, on: v.on }); return `Tracked changes are ${r.tracking ? 'on' : 'off'} in ${d.name}.`; }
       default: throw new Error('Unknown action.');
@@ -289,6 +289,35 @@ function createWord(deps = {}) {
     const real = checkFile(p);
     const st = fs.statSync(real);
     if (!st.isFile() || st.size > spec.MAX.image) throw new Error('That picture is not a file of a size that can be inserted (at most 20 MB).');
+    return real;
+  }
+  // The picture an image call names: a file (checked by the AI's file rules, and by its bytes) or a web address (fetched only after the card,
+  // into a temp file for Word). -> { buf, info, file, name, done() (removes a temp file) }
+  async function pictureFor(v) {
+    const P = require('./picture');
+    if (v.url) {
+      const got = await (deps.fetchPicture || P.fetchPicture)(v.url);
+      const name = (() => { try { return decodeURIComponent(new URL(v.url).pathname.split('/').pop() || '') || 'picture'; } catch { return 'picture'; } })().replace(/[^\w .()-]/g, '_').slice(0, 80);
+      let file = null;
+      if (platform === 'win32') {
+        const dir = require('path').join(require('os').tmpdir(), 'lumen-word-pictures');
+        fs.mkdirSync(dir, { recursive: true });
+        file = require('path').join(dir, `${process.pid}-${Date.now().toString(36)}.${got.info.ext}`);
+        fs.writeFileSync(file, got.buf, { flag: 'wx' });
+      }
+      return { ...got, file, name, from: new URL(v.url).hostname, done: () => { if (file) try { fs.unlinkSync(file); } catch { /* gone */ } } };
+    }
+    const real = checkImage(v.image);
+    const buf = fs.readFileSync(real);
+    const info = P.pictureInfo(buf);
+    if (!info) throw new Error('That file is not a PNG, JPEG, GIF or BMP picture (by its contents), so nothing was inserted.');
+    return { buf, info, file: real, name: spec.baseName(real), done: () => {} };
+  }
+  function imageDone(r, name, v, pic) {
+    const size = r?.size ? ` (${r.size.width} × ${r.size.height} in)` : '';
+    const wrap = v.wrap && v.wrap !== 'inline' ? `, text wrapped ${v.wrap.replace('_', ' and ')}` : '';
+    const cap = r?.caption ? `, captioned “Figure ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : '';
+    return `Added the picture ${pic.from ? `from ${pic.from}` : pic.name}${size} to ${name}${placeText(v)}${wrap}${cap}.`;
   }
 
   async function wordHasIt(v) {
@@ -332,6 +361,7 @@ function createWord(deps = {}) {
       return `Created ${spec.baseName(v.path)}. Microsoft Word is not in use here, so the file was written directly.`;
     }
     if (!isDocx(v.path)) throw new Error('Without Word only .docx files can be changed.');
+    if (A === 'image' && !v.url) checkImage(v.image); // (a picture that is not there says so before the card)
     const { real, buf } = readFile(v.path);
     checkTarget(real);
     const ref = fileRef(real);
@@ -339,14 +369,16 @@ function createWord(deps = {}) {
     const op = A === 'insert' ? { insert: { at: v.at, heading: v.heading, text: v.text, style: v.style, levels: v.levels, bold: v.bold, italic: v.italic } } : { table: formatFields(v) };
     cardUse(ctx, ref, spec.stepLabel(v, ref.name), { com: false });
     const before = (await docx().readDocx(buf, { budget: 1e6 })).text.split(String.fromCharCode(10));
-    const r = A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await docx().tableDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
+    const pic = A === 'image' ? await pictureFor(v) : null;
+    const r = A === 'image' ? await docx().imageDocx(buf, { ...formatFields(v), data: pic.buf, info: pic.info, name: pic.name }, { track: true }) : A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await docx().tableDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
     writeAtomic(real, r.buf);
     try { await cardChanged(ctx, ref, { lines: require('./card').pageAround(before, (await docx().readDocx(r.buf, { budget: 1e6 })).text.split(String.fromCharCode(10))) }); } catch { /* the preview is a courtesy */ }
     noteRead(ctx, ref.key);
+    if (A === 'image') return `${imageDone(r, ref.name, v, pic)} Saved in the file, as a tracked change.`;
     if (A === 'table' && isEdit(v)) return `${tableDone(r.done, ref.name, v)} Saved in the file; new and replaced text and new rows are tracked changes, the look is not.`;
     if (A === 'style') return `${styleDone(r, ref.name, v)} Saved in the file (formatting is not a tracked change).`;
     if (A === 'format') return `${formatDone(r.done, ref.name, v, true)} Saved in the file; new text, page breaks and removed lines are tracked changes, and style and page changes are not.`;
-    return A === 'insert' ? `Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${ref.name}${placeText(v)} (saved in the file, as a tracked change).` : `Added a table (${r.rows} rows, ${r.columns} columns) to ${ref.name}${placeText(v)} (saved in the file, as a tracked change).`;
+    return A === 'insert' ? `Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${ref.name}${placeText(v)} (saved in the file, as a tracked change).` : `Added a table (${r.rows} rows, ${r.columns} columns) to ${ref.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''} (saved in the file, as a tracked change).`;
   }
 
   return {

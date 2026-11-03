@@ -159,11 +159,13 @@ function tableOf(input, out) {
     for (const k of ['cells', 'add_rows', 'add_column']) if (input[k] !== undefined) fail(`${k} changes a table that is there: give index (its number, 1 is the first table) or find (text in one of its cells).`);
     Object.assign(out, placeOf(input));
     out.rows = tableRows(input.rows);
+    captionOf(input, out);
     if (out.widths && out.widths.length !== out.rows[0].length) fail(`widths has ${out.widths.length} columns but the table has ${out.rows[0].length}.`);
     return out;
   }
   if (input.index !== undefined) out.index = whole(input.index, 'index (the table\'s number, 1 is the first)', 1, 1000);
   else out.find = str(input.find, 'find', MAX.find);
+  if (input.caption !== undefined) fail('caption goes on a new table (with rows).');
   if (input.at !== undefined || input.heading !== undefined) fail('at and heading place a new table; a table that is there is picked by index or find.');
   if (input.cells !== undefined) {
     if (!Array.isArray(input.cells) || !input.cells.length || input.cells.length > 500) fail('cells must be a list of [row, column, "text"] (1 is the first row and column).');
@@ -181,6 +183,14 @@ function tableOf(input, out) {
   if (input.add_column !== undefined) out.addColumn = input.add_column === 'end' ? -1 : whole(input.add_column, 'add_column (the column to add after: 0 is the first, "end" the last)', 0, MAX.cols);
   if (!out.cells && out.addRows === undefined && out.addColumn === undefined && !['header', 'widths', 'borders', 'shading', 'align'].some((k) => out[k] !== undefined)) fail('Give what changes in the table: cells, add_rows (with rows), add_column, header, widths, borders, shading or align.');
   return out;
+}
+
+// image: how the picture sits in the text.
+const WRAPS = { inline: 'inline', in_line: 'inline', in_line_with_text: 'inline', square: 'square', tight: 'tight', through: 'tight', top_bottom: 'top_bottom', top_and_bottom: 'top_bottom', topbottom: 'top_bottom', behind: 'behind', behind_text: 'behind', front: 'front', in_front: 'front', in_front_of_text: 'front' };
+// A caption under a picture ("Figure 1: ...") or over a table ("Table 1: ..."): a numbered SEQ field, so the numbers stay right.
+function captionOf(input, out) {
+  if (input.caption === undefined) return;
+  out.caption = str(input.caption, 'caption', 500) ?? '';
 }
 
 // format: fonts and spacing (for a style, the paragraphs holding some text, or the whole document), margins and orientation (every section, or
@@ -237,7 +247,7 @@ function formatOf(input) {
 // What each change takes besides action, doc and path (tab_id: the MCP listing adds it to every tool). An argument it does not take is refused,
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
 const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -297,7 +307,19 @@ function validate(input) {
       tableOf(input, out);
       break;
     }
-    case 'image': Object.assign(out, placeOf(input)); out.image = checkPath(input.image, 'image path'); if (!IMAGE_EXT.test(out.image)) fail('Only .png, .jpg, .gif and .bmp pictures are inserted.'); break;
+    case 'image': {
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      Object.assign(out, placeOf(input));
+      const src = typeof input.image === 'string' ? input.image.trim() : '';
+      if (/^https?:\/\//i.test(src)) { if (src.length > 2000) fail('That picture address is too long.'); out.url = src; } else { out.image = checkPath(input.image, 'image path (or an https address)'); if (!IMAGE_EXT.test(out.image)) fail('Only .png, .jpg, .gif and .bmp pictures are inserted.'); }
+      if (input.width !== undefined) out.width = num(input.width, 'width (inches)', 0.1, 22);
+      if (input.height !== undefined) out.height = num(input.height, 'height (inches)', 0.1, 30);
+      if (input.wrap !== undefined) { out.wrap = WRAPS[String(input.wrap).trim().toLowerCase().replace(/[\s-]+/g, '_')]; if (!out.wrap) fail('wrap must be inline, square, tight, top_bottom, behind or front.'); }
+      if (input.align !== undefined) { out.align = ALIGN[String(input.align).trim().toLowerCase()]; if (!['left', 'center', 'right'].includes(out.align)) fail('align (for a picture) must be left, center or right.'); }
+      captionOf(input, out);
+      if (input.alt !== undefined) out.alt = str(input.alt, 'alt', 500);
+      break;
+    }
     case 'comment': {
       out.find = str(input.find ?? input.heading, 'find', MAX.find, { required: true });
       out.text = str(input.comment ?? input.text, 'comment', MAX.comment, { required: true });
@@ -364,7 +386,7 @@ function stepLabel(input = {}, name = '') {
     case 'style': { const extra = formatParts({ ...input, style: undefined, based_on: undefined }); return `Formatting ${doc}: “${clip(input.find, 30)}”${input.style ? ` as ${input.style}` : ''}${extra.length ? `, ${extra.join(', ')}` : ''}`; }
     case 'table': if (input.index !== undefined || input.find) return `Editing ${doc}: ${input.index !== undefined ? `table ${clip(input.index, 6)}` : `the table with “${clip(input.find, 30)}”`}${Array.isArray(input.cells) ? `, ${count(input.cells.length, 'cell', 'cells')}` : ''}${input.add_rows !== undefined ? `, adding ${count(Array.isArray(input.rows) ? input.rows.length : 1, 'row', 'rows')}` : ''}${input.add_column !== undefined ? ', adding a column' : ''}`;
       return `Writing in ${doc}: adding a table of ${count(Array.isArray(input.rows) ? input.rows.length : 0, 'row', 'rows')}${where(input)}`;
-    case 'image': return `Writing in ${doc}: adding the picture ${baseName(input.image) || ''}${where(input)}`.trim();
+    case 'image': { const src = String(input.image || ''); const name = /^https?:/i.test(src) ? (() => { try { return `from ${new URL(src).hostname}`; } catch { return ''; } })() : baseName(src); return `Writing in ${doc}: adding the picture ${name || ''}${input.caption ? ` with the caption “${clip(input.caption, 30)}”` : ''}${where(input)}`.trim(); }
     case 'comment': return `Commenting in ${doc} on “${clip(input.find ?? input.heading, 30)}”`;
     case 'format': return `Formatting ${doc}: ${formatParts(input).join(', ') || 'the layout'}`;
     case 'track': return `${input.on ? 'Turning on' : 'Turning off'} tracked changes in ${doc}`;
@@ -393,7 +415,8 @@ const HELP = [
   'format pages: margins (normal|narrow|moderate|wide or inches "1" / "1 1.25" / "1 1 1 1"), orientation portrait|landscape, section (number) for one section only, page_break_before [paragraph texts], headings ["# Title", "## Sub"] (Heading 1-6), toc true (a real table of contents; heading: the paragraph to put it after).',
   'table (new): rows [[cells]], at, heading, header (first row repeats on each page, bold; default true), widths [inches per column], borders all|outside|none, shading (the header row\'s fill: lightgray, #D9E2F3...), align left|center|right.',
   'table (one that is there): index (1 is the first table, in reading order) or find (text in one of its cells), then cells [[row, col, "text"]] (1-based, counted after the rows and column this call adds), add_rows (after row n: 0 top, "end" bottom) with rows [[cells]], add_column (after column n, "end"; fill it with cells), header, widths, borders, shading, align.',
-  'image: image (a file path), at, heading. comment: find, comment. track: on. save; save_as: path (.docx or .pdf). show.',
+  'image: image (a file path or an https address), at, heading, width / height (inches; one keeps the shape), wrap inline|square|tight|top_bottom|behind|front, align left|center|right, caption ("Figure N: " is added, numbered by Word), alt (text for screen readers). table (new) takes caption too ("Table N: ", above it).',
+  'comment: find, comment. track: on. save; save_as: path (.docx or .pdf). show.',
 ];
 function help(topic) {
   const t = String(topic || '').toLowerCase();

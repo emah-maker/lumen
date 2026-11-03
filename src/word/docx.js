@@ -41,6 +41,7 @@ function lineOf(p) {
   const pPr = kid(p, 'pPr');
   const style = attr(kid(pPr, 'pStyle'), 'val') || '';
   const text = paragraphText(p);
+  if (!text.trim() && [...walk(p)].some((n) => n.name === 'drawing' || n.name === 'pict')) return '[picture]';
   const heading = /^Heading([1-6])$/i.exec(style) || (/^Title$/i.test(style) ? [0, '1'] : null);
   if (heading && text.trim()) return `${'#'.repeat(Number(heading[1]))} ${text.trim()}`;
   const num = kid(pPr, 'numPr');
@@ -444,9 +445,20 @@ async function editDocx(buf, op, { track = false, now = () => new Date() } = {})
   } else if (op.table) {
     piece = tableXml(op.table.rows, ctx, op.table);
     summary = { rows: op.table.rows.length, columns: op.table.rows[0].length };
+    if (op.table.caption !== undefined) {
+      // a caption above the table, kept with it: "Table N: ..."
+      const at0 = position(xml, body, op.table);
+      const sp = await partOf(zip, files, 'styles');
+      files.set(sp.name, ensureStyle(sp.text, 'Caption'));
+      const n = seqBefore(xml, 'Table', at0) + 1;
+      piece = captionXml('Table', n, op.table.caption, ctx, { keepNext: true, align: op.table.align }) + piece;
+      summary.caption = n;
+    }
   } else throw new WordError('That change needs Microsoft Word.');
   const at = position(xml, body, op.insert || op.table);
-  files.set('word/document.xml', xml.slice(0, at) + piece + xml.slice(at));
+  let next = xml.slice(0, at) + piece + xml.slice(at);
+  if (summary.caption) next = renumber(next, 'Table');
+  files.set('word/document.xml', next);
   return { buf: pack(entries, files), ...summary, tracked: track };
 }
 
@@ -465,6 +477,7 @@ const STYLE_DEFS = {
   Quote: styleXml('Quote', 'Quote', '<w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr>'),
   ListBullet: styleXml('ListBullet', 'List Bullet'),
   ListNumber: styleXml('ListNumber', 'List Number'),
+  Caption: '<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="35"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:spacing w:after="200" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="44546A"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>',
 };
 const LIST_KIND = { 'List Bullet': 'bullet', 'List Number': 'number' };
 
@@ -592,7 +605,7 @@ function putPara(xml, holder, f, order) {
   return xml;
 }
 
-const STYLE_IDS = { Normal: 'Normal', Title: 'Title', 'Heading 1': 'Heading1', 'Heading 2': 'Heading2', 'Heading 3': 'Heading3', 'Heading 4': 'Heading4', 'Heading 5': 'Heading5', 'Heading 6': 'Heading6', Quote: 'Quote', 'List Bullet': 'ListBullet', 'List Number': 'ListNumber' };
+const STYLE_IDS = { Caption: 'Caption', Normal: 'Normal', Title: 'Title', 'Heading 1': 'Heading1', 'Heading 2': 'Heading2', 'Heading 3': 'Heading3', 'Heading 4': 'Heading4', 'Heading 5': 'Heading5', 'Heading 6': 'Heading6', Quote: 'Quote', 'List Bullet': 'ListBullet', 'List Number': 'ListNumber' };
 const stylesRoot = (xml) => { const r = /<w:styles[\s>]/.exec(xml); if (!r) throw damaged(); return elementAt(xml, r.index); };
 const reEsc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function styleEl(xml, id) {
@@ -1047,6 +1060,89 @@ async function formatDocx(buf, f, { track = false, now = () => new Date() } = {}
   files.set('word/document.xml', xml);
   return { buf: pack(entries, files), done, tracked: track };
 }
+// ---- captions: "Figure 1: ..." under a picture, "Table 1: ..." over a table, in the Caption style, the number a SEQ field (as Word's own
+// Insert Caption makes it), so a list of figures and cross-references find it. The numbers already in the document are put in order again.
+const fieldRuns = (instr, result) => `<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ${instr} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>${esc(result)}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>`;
+const seqRe = (label) => new RegExp(`(<w:instrText[^>]*>\\s*SEQ ${label}\\b[^<]*</w:instrText></w:r>(?:<w:r>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:fldChar w:fldCharType="separate"/></w:r>)<w:r>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t(?:\\s[^>]*)?>)(\\d*)(</w:t>)|(<w:fldSimple w:instr="\\s*SEQ ${label}\\b[^"]*">(?:<w:r>(?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?<w:t(?:\\s[^>]*)?>))(\\d*)(</w:t>)`, 'g');
+const seqBefore = (xml, label, at) => [...xml.slice(0, at).matchAll(seqRe(label))].length;
+function renumber(xml, label) { let n = 0; return xml.replace(seqRe(label), (m, a, _d, c, e, _g, h) => { n++; return a ? `${a}${n}${c}` : `${e}${n}${h}`; }); }
+function captionXml(label, n, text, ctx, { keepNext = false, align = '' } = {}) {
+  const body = `<w:r><w:t xml:space="preserve">${label} </w:t></w:r>${fieldRuns(`SEQ ${label} \\* ARABIC`, String(n))}${text ? `<w:r><w:t xml:space="preserve">: ${esc(cleanText(text))}</w:t></w:r>` : ''}`;
+  const ppr = `<w:pStyle w:val="Caption"/>${keepNext ? '<w:keepNext/>' : ''}${align ? `<w:jc w:val="${JC[align]}"/>` : ''}${ctx.track ? `<w:rPr>${insMark(ctx)}</w:rPr>` : ''}`;
+  return `<w:p><w:pPr>${ppr}</w:pPr>${ctx.track ? `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${body}</w:ins>` : body}</w:p>`;
+}
+
+// ---- pictures: the file goes into word/media (with its relationship and content type), and a drawing into a paragraph of its own: inline in
+// the text, or floating with the text wrapped around it (square, tight, top and bottom, behind or in front of the text).
+const WP = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
+const DML = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+const PIC = 'http://schemas.openxmlformats.org/drawingml/2006/picture';
+const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const IMAGE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
+const EMU_IN = 914400;
+// The text column's width in EMU (the last section's page width less its margins; 6.5 inches when the document does not say).
+function textWidth(xml) {
+  const sect = [...xml.matchAll(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/g)].pop()?.[0] || '';
+  const w = Number((/<w:pgSz\b[^>]*w:w="(\d+)"/.exec(sect) || [])[1] || 12240);
+  const l = Number((/<w:pgMar\b[^>]*w:left="(\d+)"/.exec(sect) || [])[1] || 1440);
+  const r = Number((/<w:pgMar\b[^>]*w:right="(\d+)"/.exec(sect) || [])[1] || 1440);
+  return Math.max(EMU_IN, (w - l - r) * 635);
+}
+// [cx, cy] in EMU: the size asked for (one side keeps the shape), else the picture's own at 96 dpi, no wider than the text.
+function sizeOf(info, f, max) {
+  const pw = info.width || 640; const ph = info.height || 480;
+  if (f.width && f.height) return [Math.round(f.width * EMU_IN), Math.round(f.height * EMU_IN)];
+  if (f.width) return [Math.round(f.width * EMU_IN), Math.round((f.width * EMU_IN * ph) / pw)];
+  if (f.height) return [Math.round((f.height * EMU_IN * pw) / ph), Math.round(f.height * EMU_IN)];
+  let cx = pw * 9525; let cy = ph * 9525;
+  if (cx > max) { cy = Math.round((cy * max) / cx); cx = max; }
+  return [cx, cy];
+}
+const WRAP_XML = { square: '<wp:wrapSquare wrapText="bothSides"/>', tight: '<wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0"><wp:start x="0" y="0"/><wp:lineTo x="0" y="21600"/><wp:lineTo x="21600" y="21600"/><wp:lineTo x="21600" y="0"/><wp:lineTo x="0" y="0"/></wp:wrapPolygon></wp:wrapTight>', top_bottom: '<wp:wrapTopAndBottom/>', behind: '<wp:wrapNone/>', front: '<wp:wrapNone/>' };
+function drawingXml({ rid, cx, cy, id, name, alt, wrap, align }) {
+  const docPr = `<wp:docPr id="${id}" name="Picture ${id}"${alt ? ` descr="${esc(cleanText(alt))}"` : ''}/>`;
+  const frame = `<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="${DML}" noChangeAspect="1"/></wp:cNvGraphicFramePr>`;
+  const graphic = `<a:graphic xmlns:a="${DML}"><a:graphicData uri="${PIC}"><pic:pic xmlns:pic="${PIC}"><pic:nvPicPr><pic:cNvPr id="0" name="${esc(name)}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="${R_NS}" r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>`;
+  const size = `<wp:extent cx="${cx}" cy="${cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>`;
+  if (!wrap || wrap === 'inline') return `<w:drawing><wp:inline xmlns:wp="${WP}" distT="0" distB="0" distL="0" distR="0">${size}${docPr}${frame}${graphic}</wp:inline></w:drawing>`;
+  return `<w:drawing><wp:anchor xmlns:wp="${WP}" distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="${251659264 + id}" behindDoc="${wrap === 'behind' ? 1 : 0}" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="column"><wp:align>${align || 'center'}</wp:align></wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>${size}${WRAP_XML[wrap]}${docPr}${frame}${graphic}</wp:anchor></w:drawing>`;
+}
+// op: { at, heading, data (the picture's bytes), info (picture.js pictureInfo), name, width, height, wrap, align, caption, alt } -> { buf, caption }
+async function imageDocx(buf, op, { track = false, now = () => new Date() } = {}) {
+  const { xml, zip, entries } = await openForEdit(buf);
+  const body = bodyOf(xml);
+  const ctx = { track, nextId: makeIds(xml), date: now().toISOString().replace(/\.\d+Z$/, 'Z') };
+  const files = new Map();
+  const names = new Set(entries.map((e) => e.name));
+  let k = 1; while ([...names].some((n) => n.startsWith(`word/media/image${k}.`))) k++;
+  const media = `word/media/image${k}.${op.info.ext}`;
+  const relsName = 'word/_rels/document.xml.rels';
+  const rels = zip.has(relsName) ? await zip.text(relsName) : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  const rid = `rId${Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1]))) + 1}`;
+  files.set(relsName, rels.replace('</Relationships>', `<Relationship Id="${rid}" Type="${IMAGE_REL}" Target="media/image${k}.${op.info.ext}"/></Relationships>`));
+  const ct = await zip.text('[Content_Types].xml');
+  if (!new RegExp(`<Default Extension="${op.info.ext}"`, 'i').test(ct)) files.set('[Content_Types].xml', ct.replace('</Types>', `<Default Extension="${op.info.ext}" ContentType="${op.info.mime}"/></Types>`));
+  const id = Math.max(0, ...[...xml.matchAll(/<wp:docPr\b[^>]*\sid="(\d+)"/g)].map((m) => Number(m[1]))) + 1;
+  const [cx, cy] = sizeOf(op.info, op, textWidth(xml));
+  const run = `<w:r>${drawingXml({ rid, cx, cy, id, name: op.name || `image${k}.${op.info.ext}`, alt: op.alt, wrap: op.wrap, align: op.align })}</w:r>`;
+  const inline = !op.wrap || op.wrap === 'inline';
+  const ppr = `${op.caption !== undefined ? '<w:keepNext/>' : ''}${inline ? `<w:jc w:val="${JC[op.align || 'center']}"/>` : ''}${track ? `<w:rPr>${insMark(ctx)}</w:rPr>` : ''}`;
+  let piece = `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${track ? `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${run}</w:ins>` : run}</w:p>`;
+  const at = position(xml, body, op);
+  let n = 0;
+  if (op.caption !== undefined) {
+    const sp = await partOf(zip, files, 'styles');
+    files.set(sp.name, ensureStyle(sp.text, 'Caption'));
+    n = seqBefore(xml, 'Figure', at) + 1;
+    piece += captionXml('Figure', n, op.caption, ctx, { align: inline ? op.align || 'center' : '' });
+  }
+  let next = xml.slice(0, at) + piece + xml.slice(at);
+  if (n) next = renumber(next, 'Figure');
+  files.set('word/document.xml', next);
+  const out = [...entries, { name: media, data: op.data }];
+  return { buf: pack(out, files), caption: n || null, size: { width: +(cx / EMU_IN).toFixed(2), height: +(cy / EMU_IN).toFixed(2) }, tracked: track };
+}
+
 function newDocx() {
   const files = {
     '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
@@ -1058,4 +1154,4 @@ function newDocx() {
   return buildZip(Object.entries(files).map(([name, text]) => ({ name, data: Buffer.from(text, 'utf8') })));
 }
 
-module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };
+module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, imageDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };

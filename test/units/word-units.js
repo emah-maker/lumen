@@ -951,6 +951,97 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const ps2 = read('src/word/host.ps1');
       check('helper: tables by number or cell text, cells, rows and columns added with Word\'s own Rows.Add and Columns.Add, the look (HeadingFormat, Borders, Shading, Columns width), and still no Delete', /function Cmd-TableEdit/.test(ps2) && /\$t\.Rows\.Add\(\$t\.Rows\.Item\(\$at \+ 1\)\)/.test(ps2) && /\$t\.Columns\.Add\(\$t\.Columns\.Item\(\$after \+ 1\)\)/.test(ps2) && /HeadingFormat/.test(ps2) && /BackgroundPatternColor/.test(ps2) && !/Delete\(/.test(ps2));
     }
+    // ---- pictures and captions: a picture from a file or the web (only a public address, only real picture bytes), its size and wrap, and
+    // "Figure N" / "Table N" captions as SEQ fields that stay in order
+    {
+      const P = require('../../src/word/picture');
+      const chunk = (t, b) => { const l = Buffer.alloc(4); l.writeUInt32BE(b.length); const tb = Buffer.concat([Buffer.from(t), b]); const c = Buffer.alloc(4); c.writeUInt32BE(docx.crc32(tb)); return Buffer.concat([l, tb, c]); };
+      const makePng = (w, h) => { const ih = Buffer.alloc(13); ih.writeUInt32BE(w, 0); ih.writeUInt32BE(h, 4); ih[8] = 8; ih[9] = 2; return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ih), chunk('IDAT', zlib.deflateSync(Buffer.alloc(h * (1 + w * 3)))), chunk('IEND', Buffer.alloc(0))]); };
+      const png = makePng(800, 400);
+      const jpg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]), Buffer.alloc(14), Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0x2c, 0x02, 0x58, 0x03]), Buffer.alloc(20)]);
+      check('picture: the type and pixel size come from the bytes (PNG, JPEG, GIF, BMP), never the name; anything else is not a picture', J(P.pictureInfo(png)) === J({ type: 'png', ext: 'png', mime: 'image/png', width: 800, height: 400 }) && P.pictureInfo(jpg).width === 600 && P.pictureInfo(jpg).height === 300 && P.pictureInfo(Buffer.from('GIF89a\x20\x00\x10\x00' + 'x'.repeat(20), 'latin1')).width === 32 && P.pictureInfo(Buffer.from('<html>not a picture at all, really</html>')) === null, J(P.pictureInfo(jpg)));
+      check('picture: private, local and link-local addresses are not public (v4, v6, v4 in v6)', ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:192.168.0.1'].every(P.privateIp) && !['93.184.216.34', '8.8.8.8', '2606:4700::1111'].some(P.privateIp));
+      const res = (status, body, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k.toLowerCase()] ?? null }, body: (async function* () { if (body) yield body; })() });
+      const seen = [];
+      const okFetch = async (u, o) => { seen.push([u, o]); return res(200, png, { 'content-type': 'image/png' }); };
+      const pub = async () => [{ address: '93.184.216.34' }];
+      const got = await P.fetchPicture('https://example.org/fig.png', { fetch: okFetch, lookup: pub });
+      check('picture (web): a public https picture is fetched without cookies and redirects followed by hand, and its bytes are checked', got.info.type === 'png' && got.buf.length === png.length && seen[0][1].credentials === 'omit' && seen[0][1].redirect === 'manual');
+      const wErrs = [
+        ['http://localhost/a.png', okFetch, pub, /only from public web addresses/],
+        ['https://intranet.example/a.png', okFetch, async () => [{ address: '10.0.0.5' }], /only from public web addresses/],
+        ['https://169.254.169.254/latest/meta-data', okFetch, pub, /only from public web addresses/],
+        ['https://example.org/r', async () => res(302, null, { location: 'http://127.0.0.1:8080/secret.png' }), pub, /only from public web addresses/],
+        ['ftp://example.org/a.png', okFetch, pub, /http or https address/],
+        ['https://user:pw@example.org/a.png', okFetch, pub, /user name or password/],
+        ['https://example.org/page', async () => res(200, Buffer.from('<html>hi there, this is a page</html>')), pub, /did not give a PNG, JPEG, GIF or BMP/],
+        ['https://example.org/big.png', async () => res(200, png, { 'content-length': String(30 * 1024 * 1024) }), pub, /larger than 20 MB/],
+        ['https://example.org/404.png', async () => res(404, null), pub, /answered 404/],
+      ];
+      const wBad = [];
+      for (const [u, fe, lk, re] of wErrs) { const m = await rejects(() => P.fetchPicture(u, { fetch: fe, lookup: lk })); if (!re.test(m || '')) wBad.push([u, m]); }
+      check('picture (web): this computer, its network (also after a redirect), other schemes, credentials in the address, a page, too big or an error are refused in a sentence', !wBad.length, J(wBad));
+
+      const iv = v({ action: 'image', image: 'https://example.org/fig.png', width: 3, wrap: 'Top and bottom', align: 'left', caption: 'The rig', alt: 'A clamp stand' });
+      check('image: a file path or an https address, width/height, wrap, align, caption and alt come out as clean fields', iv.url === 'https://example.org/fig.png' && !iv.image && iv.width === 3 && iv.wrap === 'top_bottom' && iv.align === 'left' && iv.caption === 'The rig' && iv.alt === 'A clamp stand' && v({ action: 'image', image: `C:${B}p${B}a.png`, path: `C:${B}d${B}r.docx` }).path === `C:${B}d${B}r.docx` && v({ action: 'table', rows: [['a']], caption: 'Data' }).caption === 'Data', J(iv));
+      const iErrs = [
+        [{ action: 'image', image: `C:${B}p${B}a.svg` }, /Only \.png, \.jpg, \.gif and \.bmp/],
+        [{ action: 'image', image: `C:${B}p${B}a.png`, wrap: 'diagonal' }, /wrap must be inline, square, tight, top_bottom, behind or front/],
+        [{ action: 'image', image: `C:${B}p${B}a.png`, width: 50 }, /width \(inches\) must be a number from 0\.1 to 22/],
+        [{ action: 'image', image: `C:${B}p${B}a.png`, align: 'justify' }, /align \(for a picture\) must be left, center or right/],
+        [{ action: 'table', index: 1, caption: 'x' }, /caption goes on a new table/],
+      ];
+      const iBad = iErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+      check('image: every bad argument is refused with a sentence that says what to send', !iBad.length, J(iBad.map(([i]) => [i, throws(() => v(i))])));
+
+      // the file route: media, relationship, content type, the drawing, captions in order
+      let ib = docx.newDocx();
+      for (const t of ['Setup', 'Results']) ib = (await docx.editDocx(ib, { insert: { at: 'end', text: t, style: 'Heading 1' } })).buf;
+      const i1 = await docx.imageDocx(ib, { at: 'end', data: png, info: P.pictureInfo(png), name: 'rig.png', caption: 'The rig', alt: 'A clamp & stand' });
+      const i2 = await docx.imageDocx(i1.buf, { at: 'after', heading: 'Setup', data: jpg, info: P.pictureInfo(jpg), name: 'first.jpg', caption: 'First', wrap: 'square', align: 'right', width: 2 });
+      const i3 = await docx.editDocx(i2.buf, { table: { at: 'end', rows: [['Trial', 'Mass'], ['1', '12']], caption: 'Masses' } });
+      const ip = await partsOf(i3.buf);
+      const ix = ip['word/document.xml'];
+      const names3 = docx.centralEntries(i3.buf).map((e) => e.name);
+      check('image (file): the picture goes into word/media byte for byte, with an image relationship and a Default content type for its extension', names3.includes('word/media/image1.png') && names3.includes('word/media/image2.jpg') && zlib.inflateRawSync(docx.centralEntries(i3.buf).find((e) => e.name === 'word/media/image1.png').bytes).equals(png) && /<Relationship Id="rId2" Type="http:\/\/schemas.openxmlformats.org\/officeDocument\/2006\/relationships\/image" Target="media\/image1.png"\/>/.test(ip['word/_rels/document.xml.rels']) && /<Default Extension="png" ContentType="image\/png"\/>/.test(ip['[Content_Types].xml']) && /<Default Extension="jpg" ContentType="image\/jpeg"\/>/.test(ip['[Content_Types].xml']), J(names3));
+      check('image (file): an inline picture is a centered paragraph with a wp:inline drawing at its own size, no wider than the text (800 px is 6.5 in here), its alt text escaped', /<w:p><w:pPr><w:keepNext\/><w:jc w:val="center"\/><\/w:pPr><w:r><w:drawing><wp:inline xmlns:wp="http:\/\/schemas.openxmlformats.org\/drawingml\/2006\/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="5943600" cy="2971800"\/><wp:effectExtent l="0" t="0" r="0" b="0"\/><wp:docPr id="1" name="Picture 1" descr="A clamp &amp; stand"\/>/.test(ix) && /<a:blip xmlns:r="http:\/\/schemas.openxmlformats.org\/officeDocument\/2006\/relationships" r:embed="rId2"\/>/.test(ix) && i1.size.width === 6.5, ix.slice(ix.indexOf('<w:drawing>') - 80, ix.indexOf('<w:drawing>') + 400));
+      check('image (file): a wrapped picture floats (wp:anchor, aligned right in the column, wrapSquare), at the width asked with its shape kept, a new docPr id', /<wp:anchor [^>]*behindDoc="0"[^>]*><wp:simplePos x="0" y="0"\/><wp:positionH relativeFrom="column"><wp:align>right<\/wp:align><\/wp:positionH><wp:positionV relativeFrom="paragraph"><wp:posOffset>0<\/wp:posOffset><\/wp:positionV><wp:extent cx="1828800" cy="914400"\/><wp:effectExtent l="0" t="0" r="0" b="0"\/><wp:wrapSquare wrapText="bothSides"\/><wp:docPr id="2"/.test(ix) && i2.size.width === 2 && i2.size.height === 1, ix.slice(ix.indexOf('<wp:anchor'), ix.indexOf('<wp:anchor') + 500));
+      const seqs = [...ix.matchAll(/<w:instrText xml:space="preserve"> SEQ (\w+) \\\* ARABIC <\/w:instrText><\/w:r><w:r><w:fldChar w:fldCharType="separate"\/><\/w:r><w:r><w:t>(\d+)<\/w:t>/g)].map((m) => m[1] + m[2]);
+      check('captions (file): "Figure N: text" under each picture and "Table N: text" over the table, in the Caption style, numbered by SEQ fields; a figure added earlier in the document renumbers the later one', J(seqs) === J(['Figure1', 'Figure2', 'Table1']) && /<w:p><w:pPr><w:pStyle w:val="Caption"\/><w:keepNext\/><\/w:pPr><w:r><w:t xml:space="preserve">Table <\/w:t><\/w:r>/.test(ix) && /w:styleId="Caption"><w:name w:val="caption"\/>/.test(ip['word/styles.xml']) && (await docx.readDocx(i3.buf)).text.split('\n').filter(Boolean).join('|') === '# Setup|[picture]|Figure 1: First|# Results|[picture]|Figure 2: The rig|Table 1: Masses|| Trial | Mass ||| 1 | 12 |' && i2.caption === 1 && (await valid(i3.buf)) === null, (await docx.readDocx(i3.buf)).text);
+      const it = await docx.imageDocx(ib, { at: 'end', data: png, info: P.pictureInfo(png), caption: '' }, { track: true });
+      const itx = (await partsOf(it.buf))['word/document.xml'];
+      check('image (file, tracked): the picture and its caption are tracked insertions by the AI; a caption with no text is just "Figure 1"', /<w:ins w:id="\d+" w:author="AI \(Lumen\)"[^>]*><w:r><w:drawing>/.test(itx) && /Figure <\/w:t><\/w:r><w:r><w:fldChar w:fldCharType="begin"\/>[\s\S]*?<w:t>1<\/w:t>[\s\S]*?<w:fldChar w:fldCharType="end"\/><\/w:r><\/w:ins><\/w:p>/.test(itx) && (await valid(it.buf)) === null);
+
+      // the controller: a file picture is checked by its bytes; a web one is fetched after the card, to a temp file for Word that is removed
+      const picFile = path.join(tmp, 'rig photo.png');
+      fs.writeFileSync(picFile, png);
+      const fake = path.join(tmp, 'not a picture.png');
+      fs.writeFileSync(fake, 'hello, I am text');
+      const wr3 = makeRig();
+      await wr3.word.run({ action: 'image', image: picFile, width: 3, caption: 'Rig', wrap: 'tight' }, wr3.ctx);
+      const ic = wr3.store.calls.find((c) => c[0] === 'image')[1];
+      check('image (Word): a file picture reaches the helper by path with width, caption and wrap', ic.image === picFile && ic.width === 3 && ic.caption === 'Rig' && ic.wrap === 'tight' && !('url' in JSON.parse(J(ic))), J(ic));
+      check('image: a .png that is not a picture is refused by its contents, before anything changes', /not a PNG, JPEG, GIF or BMP picture \(by its contents\)/.test(await rejects(() => wr3.word.run({ action: 'image', image: fake }, wr3.ctx)) || '') && wr3.store.calls.filter((c) => c[0] === 'image').length === 1);
+      let fetched = 0;
+      const wr4 = makeRig({ answers: [false] });
+      const host4 = { installed: () => true, status: async () => ({ installed: true }), list: async () => ({ docs: [{ name: 'Report.docx', path: `C:${B}Docs${B}Report.docx`, active: true, saved: true, tracking: false, paragraphs: 3 }] }), image: async () => ({}) };
+      const w4 = createWord({ settings: { enabled: () => true }, host: host4, platform: 'win32', fs, checkFile: (p) => p, checkTarget: () => {}, fetchPicture: async () => { fetched++; return { buf: png, info: P.pictureInfo(png) }; } });
+      const refusedWeb = await rejects(() => w4.run({ action: 'image', image: 'https://example.org/fig.png' }, wr4.ctx));
+      check('image (web): nothing is fetched before the card is answered, and a No fetches nothing', /did not allow/.test(refusedWeb || '') && fetched === 0, refusedWeb);
+      const wr5 = makeRig();
+      const calls5 = [];
+      const host5 = { installed: () => true, status: async () => ({ installed: true }), list: async () => ({ docs: [{ name: 'Report.docx', path: `C:${B}Docs${B}Report.docx`, active: true, saved: true, tracking: false, paragraphs: 3 }] }), image: async (a) => { calls5.push({ ...a, existed: fs.existsSync(a.image), bytes: fs.readFileSync(a.image).length }); return { caption: 1, size: { width: 6.5, height: 3.25 } }; } };
+      const w5 = createWord({ settings: { enabled: () => true }, host: host5, platform: 'win32', fs, checkFile: (p) => p, checkTarget: () => {}, fetchPicture: async () => ({ buf: png, info: P.pictureInfo(png) }) });
+      const said6 = await w5.run({ action: 'image', image: 'https://example.org/fig.png', caption: 'Rig' }, wr5.ctx);
+      check('image (web, Word): the fetched picture goes to Word as a temp file, which is gone afterwards; the answer names the site, size and caption', calls5.length === 1 && calls5[0].existed && calls5[0].bytes === png.length && !fs.existsSync(calls5[0].image) && /Added the picture from example\.org \(6\.5 × 3\.25 in\) to Report\.docx at the end, captioned “Figure 1: Rig”/.test(said6), said6 + J(calls5));
+      const idf = path.join(tmp, 'Pictures (lab).docx');
+      fs.writeFileSync(idf, ib);
+      const fr4 = makeRig({ platform: 'linux' });
+      const said7 = await fr4.word.run({ action: 'image', path: idf, image: picFile, caption: 'Rig', at: 'after', heading: 'Setup' }, fr4.ctx);
+      check('image (file route): without Word the picture is written into the .docx after a card that shows the path, and the answer says where and with which caption', /Added the picture rig photo\.png \(6\.5 × 3\.25 in\) to Pictures \(lab\)\.docx after “Setup”, captioned “Figure 1: Rig”\. Saved in the file/.test(said7) && fr4.store.cards.length === 1 && fr4.store.cards[0].args.includes(idf) && (await docx.readDocx(fs.readFileSync(idf))).text.split('\n').slice(0, 3).join('|') === '# Setup|[picture]|Figure 1: Rig' && (await valid(fs.readFileSync(idf))) === null, said7);
+      const ps3 = read('src/word/host.ps1');
+      check('helper: size, alt text, wrap (ConvertToShape, WrapFormat) and Word\'s own InsertCaption with its SEQ numbers updated; still no Delete', /InsertCaption\(\$label, \$title, '', \$where\)/.test(ps3) && /ConvertToShape\(\)/.test(ps3) && /WrapFormat\.Type/.test(ps3) && /AlternativeText/.test(ps3) && /Add-Caption \$d \$t\.Range 'Table'/.test(ps3) && !/Delete\(/.test(ps3));
+    }
   }
 
   // ---- real Word, only when it is installed and runs fully hidden on a temp document
