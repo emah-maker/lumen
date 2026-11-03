@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **The Word card shows Word itself again, and Claude Code keeps its word tool.** The card's live picture was always skipped as "hidden" because the helper asked Word's Application for a window handle it does not have; it now uses the document window's, so the card shows Word while the AI works and Show in Word brings that window forward. In a Claude Code chat that was loaded again, the word tool was listed but refused ("Unknown tool: word"), and the AI fell back to rewriting the .docx with PowerShell; a chat's earlier Word steps now keep the tool.
+- Tests: the usage log trims old records by its own clock, so the Grok usage checks (fixed on 2026-09-29) stopped failing once that date was 35 days old.
 
 ## 0.5.92 (2026-11-03)
 
