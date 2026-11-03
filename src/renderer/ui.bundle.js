@@ -3086,7 +3086,7 @@ explain describe list find give compare difference summarize summary write rewri
     thumb.setAttribute('role', 'button'); thumb.tabIndex = 0;
     thumb.onclick = go;
     thumb.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } };
-    open.onclick = () => { open.disabled = true; Promise.resolve(window.assistant?.desktopOpen?.(card.dataset.id)).catch(() => {}).finally(() => { open.disabled = false; }); };
+    open.onclick = () => { open.disabled = true; Promise.resolve(window.assistant?.desktopOpen?.(card.dataset.id)).then((r) => { if (!(r === true || r?.ok)) { status.textContent = typeof r?.message === 'string' && r.message ? r.message : tr('desktopcard.openFailed'); } }, () => { status.textContent = tr('desktopcard.openFailed'); }).finally(() => { open.disabled = false; }); };
     resume.onclick = () => window.assistant?.desktopControl?.('resume');
     stop.onclick = () => window.assistant?.desktopControl?.('stop');
     card.append(

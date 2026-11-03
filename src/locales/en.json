@@ -4450,6 +4450,7 @@
   "desktopcard.paused": "Paused · you took over. Resume?",
   "desktopcard.stopped": "Stopped",
   "desktopcard.open": "Open",
+  "desktopcard.openFailed": "That window could not be brought forward. It may have been closed.",
   "desktopcard.resume": "Resume",
   "desktopcard.stop": "Stop",
   "desktopcard.app": "App",

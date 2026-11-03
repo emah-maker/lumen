@@ -164,7 +164,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         if (cmd === 'invoke') return { ok: true, method: 'invoke' };
         if (cmd === 'settext') return { ok: true, method: 'value' };
         if (cmd === 'keys') { if (store.hangKeys) return new Promise((resolve, reject) => { pending.add(reject); store.rejectKeys = reject; }); return { ok: true, sent: true }; }
-        if (cmd === 'focus') return { ok: true, foreground: true };
+        if (cmd === 'focus') return { ok: true, foreground: store.focusForeground !== false };
         if (cmd === 'shot') return { ok: true, image: 'QUJD'.repeat(40) + Math.random().toString(36).slice(2) };
         if (cmd === 'resolve') return { ok: true, found: store.found || [] };
         if (cmd === 'launch') { for (const w of store.launches || []) (Array.isArray(apps) ? apps : []).push(w); return { ok: true }; }
@@ -487,6 +487,33 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     rig5.d._poll();
     await flying;
     check('"You took over" mid-call: the in-flight call is cut off at once (helper killed), with a note that it may have partly happened', rig5.d.paused() && rig5.store.aborted >= 1 && /took over the app while this was running/.test(out5), J([out5, rig5.store.aborted]));
+  }
+
+  // ---- the card's Open / "Show in application": the helper is a background process, which Windows keeps from taking the foreground, so the click
+  // did nothing; Lumen (which has the foreground at the click) lets it and raises the window itself, and says why when it cannot
+  {
+    const fg = [];
+    const api = { ok: true, cursor: () => ({ x: 0, y: 0 }), pidUnderCursor: () => 0, foregroundPid: () => 0, escapeDown: () => false, mouseDown: () => false, typing: () => false, allowForeground: () => { fg.push('allow'); return true; }, raise: (h) => { fg.push(['raise', h]); return fg.raiseOk !== false; } };
+    const rig = makeRig({ apps: [word], allowed: [{ app: key(WORDX), name: 'Microsoft Word' }], winapi: api });
+    await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
+    const cardId = rig.events.find((e) => e.type === 'desktop_card')?.id;
+    const r1 = await rig.d.openCard(cardId);
+    check('Open: Lumen lets the helper take the foreground before it asks, and the answer is { ok }', r1 && r1.ok === true && fg[0] === 'allow' && rig.calls.some((c) => c[0] === 'focus' && c[1].hwnd === word.hwnd && c[1].raise === true), J([r1, fg]));
+    const r2 = await rig.d.openCard('desktop-999');
+    check('Open: a card from an earlier session says why instead of doing nothing', r2.ok === false && /earlier session/.test(r2.message), J(r2));
+  }
+  {
+    const fg = [];
+    const api = { ok: true, cursor: () => ({ x: 0, y: 0 }), pidUnderCursor: () => 0, foregroundPid: () => 0, escapeDown: () => false, mouseDown: () => false, typing: () => false, allowForeground: () => { fg.push('allow'); return true; }, raise: (h) => { fg.push(['raise', h]); return h === word.hwnd; } };
+    const rig = makeRig({ apps: [word], allowed: [{ app: key(WORDX), name: 'Microsoft Word' }], winapi: api });
+    await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
+    const cardId = rig.events.find((e) => e.type === 'desktop_card')?.id;
+    rig.store.focusForeground = false;
+    const r = await rig.d.openCard(cardId);
+    check('Open: when the helper\'s raise did not take (still not in front), Lumen raises the window itself', r.ok === true && fg.some((x) => Array.isArray(x) && x[1] === word.hwnd), J([r, fg]));
+    api.raise = (h) => { fg.push(['raise', h]); return false; };
+    const r3 = await rig.d.openCard(cardId);
+    check('Open: and when nothing can bring it forward, it says so', r3.ok === false && /could not be brought forward/.test(r3.message), J(r3));
   }
 
   // ---- the helper client
