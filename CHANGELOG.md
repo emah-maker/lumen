@@ -3,6 +3,8 @@
 Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [Releases](https://github.com/emah-maker/lumen/releases).
 
 ## Unreleased
+
+## 0.5.90 (2026-11-02)
 - **Show in Word and a card's Open button bring the window forward again.** A click often did nothing. Word was asked to come forward by Lumen's background helper, which Windows does not let take the foreground. A OneDrive document was looked up by its local path, while Word lists it by its web address. A document Word had closed was not opened, and a failure was never shown. Now Lumen, which has the foreground at the click, raises the window itself. A document Word no longer has open opens in the app set for it, even from a card made before Lumen restarted. When it can't open, the card says why. Tests: `test/units/word-units.js`, `test/units/desktop-units.js`.
 
 - **A working chat no longer makes the chat list jump.** In the sidebar's Chat history and the full-page chat list, a chat that is working (or waiting for its turn) used to grow a second line with a Stop button, which pushed every row below it down when the chat started and back up when it ended. Stop is now a small square at the right end of the title's line, there the whole time the chat works, so the row keeps the height of any other row. The title still ends in "…" before it, the hover buttons sit to its left, it is reachable with Tab, its tooltip says "Stop" (or "Stop waiting"), and screen readers hear "Stop" plus the chat's title. New test: `test/e2e/chat-row-steady.js` checks every row's height and place within 0.5 px before a run, while it runs, on hover, with focus on Stop, and after Stop is clicked.
