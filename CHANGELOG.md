@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The Word card shows Word itself again, and Claude Code keeps its word tool.** The card's live picture was always skipped as "hidden" because the helper asked Word's Application for a window handle it does not have; it now uses the document window's, so the card shows Word while the AI works and Show in Word brings that window forward. In a Claude Code chat that was loaded again, the word tool was listed but refused ("Unknown tool: word"), and the AI fell back to rewriting the .docx with PowerShell; a chat's earlier Word steps now keep the tool.
+
 ## 0.5.92 (2026-11-03)
 
 - **The AI can delete rows and columns from Word tables.** The word tool's `table` action takes `delete_rows` and `delete_columns`, one or a range, on a table picked by its number or by a cell's text. Before anything goes, the remove card shows exactly which rows or columns, every time. A deleted column leaves the table's grid, merged cells across it get narrower, and a cell merged down from a deleted row starts its merge in the next row. The last row or column is never deleted; the AI is told to remove the whole table instead. It works in Word (recorded as tracked changes when tracking is on) and in the .docx file itself. Test: `test/units/word-units.js` (deleting table rows and columns).

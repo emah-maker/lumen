@@ -85,6 +85,21 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('offer: ordinary requests do not pay for it', ['Summarize this page', 'what is the word for happy', 'search the web for pizza', 'write a word problem', 'fix the bug in my code', 'one word answer please'].every((t) => !offered(t)));
     check('offer: a call already made keeps the tool for the rest of the chat', agent.wordOffered([{ role: 'user', content: 'go on' }, { role: 'assistant', content: [{ type: 'tool_use', name: 'word', id: 'a', input: {} }] }, { role: 'user', content: 'thanks' }]) === true);
     check('offer: a CLI chat\'s word call (kept in the message\'s meta.tools) keeps the tool too', agent.wordOffered([{ role: 'user', content: 'go on' }, { role: 'assistant', content: [{ type: 'text', text: 'Done.' }], meta: { tools: [{ name: 'word', input: { action: 'replace' }, ok: true }] } }, { role: 'user', content: 'double check everything' }]) === true);
+    {
+      // A CLI chat's steps are kept by chat-branches (a WeakMap), not on the message: a chat loaded again (restart, a tab's chat coming back) has no
+      // cliWord mark, and its process, which listed the word tool, was refused it ("Unknown tool: word") and rewrote the .docx with a script instead.
+      const branches = require('../../src/features/chat-branches');
+      const reply = { role: 'assistant', content: [{ type: 'text', text: 'Saved.' }] };
+      branches.setMeta(reply, { tools: [{ name: 'word', label: 'Word', input: { action: 'save' }, ok: true }] });
+      const loaded = [{ role: 'user', content: 'add the section number' }, reply, { role: 'user', content: 'fix date submitted as well' }];
+      check('offer: a CLI chat\'s saved word step (chat-branches meta) keeps the tool', agent.wordOffered(loaded) === true);
+      check('CLI engines: a chat loaded again still gets the word tool listed and callable (no cliWord mark yet)', loaded.cliWord === undefined && agent.cliWordToolDefs(loaded).length === 1 && loaded.cliWord === true);
+      const mcpNamed = { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] };
+      branches.setMeta(mcpNamed, { tools: [{ name: 'mcp__lumen__word', label: 'Word', ok: true }] });
+      check('offer: a step saved under the MCP name counts too', agent.wordOffered([{ role: 'user', content: 'go on' }, mcpNamed, { role: 'user', content: 'thanks' }]) === true);
+      const plain = [{ role: 'user', content: 'what is the capital of France' }];
+      check('CLI engines: a chat that never used Word gets nothing', agent.cliWordToolDefs(plain).length === 0 && plain.cliWord === undefined);
+    }
     const cliDef = agent.cliWordToolDefs({ cliWord: true })[0];
     check('CLI engines: the word tool they are given keeps offset, so a long document can be paged', Boolean(cliDef?.input_schema?.properties?.offset) && Boolean(cliDef?.input_schema?.properties?.replace), J(Object.keys(cliDef?.input_schema?.properties || {})));
     const ag = read('src/ai/agent.js');
@@ -490,6 +505,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     h2.destroy(); host.destroy();
     check('protocol: not Windows, no helper (a plain "Windows for now")', /Windows for now/.test(await rejects(() => createWordHost({ platform: 'linux' }).list()) || ''));
     check('script: host.ps1 is plain ASCII (PowerShell reads a BOM-less file as ANSI) and takes every value as data', !/[^\x00-\x7f]/.test(read('src/word/host.ps1')) && !/Invoke-Expression|\biex\b|Add-Type -TypeDefinition|-EncodedCommand|Start-Process|\[Diagnostics\.Process\]/.test(read('src/word/host.ps1')));
+    { const ps = read('src/word/host.ps1'); check('script: the live picture and Show in Word use a document window\'s handle (Word\'s Application has no Hwnd: the picture was always "hidden")', !/\$a\.Hwnd/.test(ps) && /Frame\(\(Word-Hwnd \$a/.test(ps) && /\$hwnd = Word-Hwnd \$a \$d/.test(ps) && /ActiveWindow[\s\S]{0,200}\.Hwnd/.test(ps)); }
   }
 
   // ---- the real PowerShell helper decodes what it is sent (no Word is started: the echo command)

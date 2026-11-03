@@ -44,6 +44,16 @@ function Get-App([bool]$create) {
   return $a
 }
 
+# Word's main window. Word's Application has no Hwnd (it reads as empty, so the card's picture was always "hidden" and Show in Word raised nothing):
+# a document window has one (Word 2013+); Word's own process's main window when no document window answers. Never another program's window.
+function Word-Hwnd($a, $d) {
+  foreach ($w in @($(if ($d) { try { $d.ActiveWindow } catch { $null } }), $(try { $a.ActiveWindow } catch { $null }))) {
+    if ($w) { try { $h = [int64]$w.Hwnd; if ($h -ne 0) { return $h } } catch { } }
+  }
+  try { $p = Get-Process WINWORD -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1; if ($p) { return [int64]$p.MainWindowHandle } } catch { }
+  return [int64]0
+}
+
 function Show-App($a) { if (-not $HIDDEN) { try { if (-not $a.Visible) { $a.Visible = $true } } catch { } } }
 
 function Norm([string]$p) { try { return [IO.Path]::GetFullPath($p).TrimEnd('\').ToLowerInvariant() } catch { return $p.ToLowerInvariant() } }
@@ -883,7 +893,7 @@ function Cmd-Show($req) {
     }
     if ($span) { try { $sel = $a.Selection; $sel.SetRange([int]$span[0], [int]$span[1]); $d.ActiveWindow.ScrollIntoView($sel.Range, $true) } catch { } }
   }
-  $hwnd = 0; try { $hwnd = [int64]$a.Hwnd } catch { }
+  $hwnd = Word-Hwnd $a $d
   return @{ doc = [string]$d.Name; shown = (-not $HIDDEN); hwnd = $hwnd }   # (hwnd: Lumen raises the window, having the foreground at the click)
 }
 
@@ -945,7 +955,7 @@ function Cmd-Frame($req) {
   try { $vis = [bool]$a.Visible } catch { }
   if (-not $vis) { return @{ skip = 'hidden' } }
   Ensure-Native
-  $f = [LumenWordShot]::Frame([int64]$a.Hwnd, [int]$req['w'], [int64]$req['q'], [bool]$req['reset'])
+  $f = [LumenWordShot]::Frame((Word-Hwnd $a $null), [int]$req['w'], [int64]$req['q'], [bool]$req['reset'])
   if ($f.Skip) { return @{ skip = [string]$f.Skip } }
   if ($f.Same) { return @{ same = $true; ms = [int64]$f.Ms } }
   return @{ image = $f.Image; w = [int]$f.W; h = [int]$f.H; ms = [int64]$f.Ms }

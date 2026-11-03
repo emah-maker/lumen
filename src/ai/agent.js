@@ -6797,7 +6797,12 @@ ${out.text}${note}
 ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     } catch { return ''; }
   }
-  cliWordToolDefs(chat) { return chat?.cliWord === true ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []; }
+  cliWordToolDefs(chat) {
+    // (a chat whose array was loaded again (a restart, a tab's chat coming back) lost the cliWord mark: its earlier word calls bring it back, so a process
+    // that listed the tool is not refused it mid-chat ("Unknown tool: word", and the model fell back to rewriting the .docx with a script))
+    try { if (chat && chat.cliWord !== true && this.wordUsed(chat)) chat.cliWord = true; } catch { /* not offered */ }
+    return chat?.cliWord === true ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : [];
+  }
   // [engine parity] Two more extras of a CLI chat's run, as the API chats have them: use_skill when the chat's system prompt lists the user's
   // skills (cliSystemFor), and the tools of the MCP servers the user added (Settings → AI → MCP servers) that are running, where the chat's
   // project allows them. Their calls take the same approval path as an API chat's (allowExternal: a card per call unless always allowed).
@@ -6832,11 +6837,24 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     return false;
   }
   // ---- [word] src/word/ (loaded on first use): Microsoft Word documents, docs/word.md
+  // A word call this chat already made, in its last 40 messages: an API chat's tool_use blocks, a CLI chat's saved steps (their meta is kept by
+  // chat-branches, not on the message; a CLI step can carry the MCP name).
+  wordUsed(messages) {
+    const isWord = (n) => n === 'word' || n === 'mcp__lumen__word';
+    for (let i = messages.length - 1; i >= 0 && i >= messages.length - 40; i--) {
+      const m = messages[i];
+      if (m?.role !== 'assistant') continue;
+      if (Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && isWord(b.name))) return true;
+      const tools = (branches.getMeta(m) || m.meta)?.tools;
+      if (Array.isArray(tools) && tools.some((t) => isWord(t?.name))) return true;
+    }
+    return false;
+  }
   wordOffered(messages) {
     try {
+      if (this.wordUsed(messages)) return true; // (a call already made keeps the tool)
       for (let i = messages.length - 1, seen = 0; i >= 0 && i >= messages.length - 40; i--) {
         const m = messages[i];
-        if (m?.role === 'assistant' && ((Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && b.name === 'word')) || (Array.isArray(m.meta?.tools) && m.meta.tools.some((t) => t?.name === 'word')))) return true; // (a call already made keeps the tool; a CLI chat keeps its calls in meta.tools)
         if (m?.role !== 'user' || seen >= 6) continue;
         seen++;
         const text = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : '';
