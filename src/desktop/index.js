@@ -490,11 +490,21 @@ function createDesktop(deps = {}) {
   // The run ended (agent.js): the banner goes and the card says Completed.
   function finishRun(signal) { if (session && (!signal || session.signal === signal)) endSession(session, 'completed'); }
 
-  // The card's "Open": bring that window forward (only one the AI used in this session of Lumen).
+  // The card's "Open": bring that window forward (only one the AI used in this session of Lumen). -> { ok } or { ok: false, message }.
+  // The helper is a background process, which Windows does not let take the foreground: Lumen, which has it at the click, lets it, and raises
+  // the window itself when the helper could not.
   async function openCard(id) {
     const c = cards.get(String(id));
-    if (!c) return false;
-    try { await getClient().call('focus', { hwnd: c.hwnd, raise: true }); return true; } catch { return false; }
+    if (!c) return { ok: false, message: 'This card is from an earlier session of Lumen, so its window is not known any more. Open the program from the taskbar.' };
+    const w = getApi();
+    try { w?.allowForeground?.(); } catch { /* raised below */ }
+    let r;
+    try { r = await getClient().call('focus', { hwnd: c.hwnd, raise: true }); } catch (err) { r = { error: err?.message || String(err) }; }
+    if (r?.foreground) return { ok: true };
+    let raised;
+    try { raised = Boolean(w?.raise?.(c.hwnd)); } catch { raised = false; }
+    if (raised) return { ok: true };
+    return { ok: false, message: r?.error ? `${c.name || 'That program'} could not be brought forward: ${String(r.error).slice(0, 160)}` : `${c.name || 'That program'}'s window could not be brought forward. It may have been closed.` };
   }
 
   return {

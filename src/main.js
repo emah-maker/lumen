@@ -9506,15 +9506,23 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
 // [desktop apps] src/desktop/ is loaded on first use: the AI's desktop tool, or a click on the Computer card. The Settings list needs only its small settings module.
 let desktopWired = null;
 const desktopLazy = () => (desktopWired ||= require('./desktop/wire').wire({ electron: require('electron'), readSettings, writeSettings, stopRun: () => agent.stop(), hidden: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND),
+  foreground: { allow: () => wordWinapi()?.allowForeground?.(), raise: (hwnd) => wordWinapi()?.raise?.(hwnd) }, openPath: (p) => require('electron').shell.openPath(p), // "Show in Word" (word/card.js): Lumen has the foreground at the click; a document Word no longer has opens in the app set for it
   live: { visible: () => thumbsVisible(), light: () => (TEST && typeof global.__desktopLight === 'boolean' ? global.__desktopLight : graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false) } })); // (tests choose the mode) the Computer card's live picture: only while a card is on screen (the shared 'agent:thumbs-visible'), slower in Light graphics
 const desktopSettings = () => require('./desktop/settings').createDesktopSettings({ readSettings, writeSettings });
 ipcMain.handle('settings:desktop-apps', () => desktopSettings().allowed());
 ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().remove(String(appKey ?? '')));
 ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
-ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && id.startsWith('word-') ? (wordCtl ? wordCtl.openCard(id) : false) : typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false)); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
+ipcMain.handle('desktop:open', async (_e, id, hint) => { // -> { ok } or { ok: false, message } (the card says why)
+  if (typeof id !== 'string') return { ok: false, message: 'Nothing to open.' };
+  const path = hint && typeof hint.path === 'string' ? hint.path.slice(0, 1000) : '';
+  if (id.startsWith('word-')) return wordCtl || path ? wordLazy().openCard(id, { path }) : { ok: false, message: 'This card is from before Lumen restarted, so its document is not known. Open it from Files or File Explorer.' };
+  return desktopWired ? desktopWired.controller.openCard(id) : { ok: false, message: 'This card is from an earlier session of Lumen, so its window is not known any more. Open the program from the taskbar.' };
+}); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
 // [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings → AI → "Let the AI use Microsoft Word" (aiWordControl, on by default).
 let wordCtl = null;
+let wordWin = null;
+const wordWinapi = () => { if (!wordWin) { const l = require('./desktop/winapi').load(); wordWin = l.ok ? l : { ok: false }; } return wordWin.ok ? wordWin : null; }; // (loaded on the first "Show in Word")
 const wordAlways = () => require('./word/always').createWordAlways({ readSettings, writeSettings }); // (loaded on first use: not at startup)
 ipcMain.handle('settings:word-always', () => wordAlways().list());
 ipcMain.handle('settings:remove-word-always', (_e, key) => wordAlways().remove(String(key ?? '')));

@@ -395,7 +395,7 @@ function Cmd-Show($req) {
   $a = Get-App $false
   $d = Find-Doc $req
   if (-not $HIDDEN) {
-    try { $a.Visible = $true; $a.Activate(); $d.Activate() } catch { }
+    try { $a.Visible = $true; if ([int]$a.WindowState -eq 2) { $a.WindowState = 0 }; $a.Activate(); $d.Activate() } catch { }   # (a minimized Word is restored)
     $span = $script:last[(Doc-Key $d)]
     # at: the paragraph a read began at (the card's "Show in Word" before anything was changed); data, clamped, never text of a script
     $at = Arg $req 'at' $null
@@ -404,7 +404,8 @@ function Cmd-Show($req) {
     }
     if ($span) { try { $sel = $a.Selection; $sel.SetRange([int]$span[0], [int]$span[1]); $d.ActiveWindow.ScrollIntoView($sel.Range, $true) } catch { } }
   }
-  return @{ doc = [string]$d.Name; shown = (-not $HIDDEN) }
+  $hwnd = 0; try { $hwnd = [int64]$a.Hwnd } catch { }
+  return @{ doc = [string]$d.Name; shown = (-not $HIDDEN); hwnd = $hwnd }   # (hwnd: Lumen raises the window, having the foreground at the click)
 }
 
 # ---- the card's live picture: Word's own window (never any other), scaled to the card, compared with the last picture, a JPEG only when it changed

@@ -323,7 +323,7 @@ contextBridge.exposeInMainWorld('assistant', {
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   sendUndo: (id) => ipcRenderer.send('agent:send-undo', id), // Gmail send: Undo within the 10 seconds
   sendStop: () => ipcRenderer.send('agent:send-stop'), // Gmail send: Stop "sending without asking in this chat"
-  desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps] the Computer card's Open / Resume / Stop
+  desktopOpen: (id, hint) => ipcRenderer.invoke('desktop:open', id, hint && typeof hint.path === 'string' ? { path: hint.path } : undefined), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps] the Computer card's Open / Resume / Stop
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
   undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId), // [content guard]
   annotate: (action) => ipcRenderer.invoke('agent:annotate', action), // [annotate] 'show' | 'clear': the last drawing the AI made on the tab

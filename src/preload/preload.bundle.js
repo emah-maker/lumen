@@ -731,7 +731,7 @@ contextBridge.exposeInMainWorld('assistant', {
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
   sendUndo: (id) => ipcRenderer.send('agent:send-undo', id),
   sendStop: () => ipcRenderer.send('agent:send-stop'),
-  desktopOpen: (id) => ipcRenderer.invoke('desktop:open', id), desktopControl: (what) => ipcRenderer.send('desktop:control', what),
+  desktopOpen: (id, hint) => ipcRenderer.invoke('desktop:open', id, hint && typeof hint.path === 'string' ? { path: hint.path } : undefined), desktopControl: (what) => ipcRenderer.send('desktop:control', what),
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
   undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId),
   annotate: (action) => ipcRenderer.invoke('agent:annotate', action),
