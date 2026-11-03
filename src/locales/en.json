@@ -4825,6 +4825,7 @@
   "notes.addFailed": "Could not add to notes",
   "chat.queued.label": "Queued",
   "chat.queued.nextStep": "goes in at the AI’s next step",
+  "chat.queued.written": "sent, the AI reads it at its next step",
   "chat.queued.atEnd": "sends when this reply ends (this AI can’t take messages mid-reply)",
   "chat.queued.steered": "Sent to the AI while it worked",
   "chat.queued.nth": "Queued · {n}",

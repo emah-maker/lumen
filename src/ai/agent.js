@@ -3284,10 +3284,12 @@ class Agent {
       sidebarEmit(event);
     };
     // [mid-run messages] What the user types while this turn runs goes to the CLI at its next step (claude-code.js pump); once it is seen to
-    // reach the model it is in the chat, before the reply it went into, and the view marks it sent.
+    // reach the model it is in the chat, before the reply it went into, and the view marks it sent. Written to the CLI, it can no longer be taken
+    // back ('steer_written': the view drops its Edit and ×, which would do nothing).
     const steers = rec?.steers ? {
       pump: null,
       take: () => rec.steers.take(),
+      written: (entries) => sidebarEmit({ type: 'steer_written', uids: entries.map((e) => e.uid) }),
       delivered: (entries) => { messages.push({ role: 'user', content: steerLib.blocksFor(entries) }); sidebarEmit({ type: 'steered', uids: entries.map((e) => e.uid) }); },
     } : null;
     if (rec && steers) rec.pump = () => steers.pump?.();
