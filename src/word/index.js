@@ -184,7 +184,7 @@ function createWord(deps = {}) {
       return formatRead(got, ref.name, 'file');
     }
 
-    if ((A === 'new' || A === 'insert' || A === 'table' || A === 'format' || A === 'style' || A === 'image') && v.path && !(await wordHasIt(v))) {
+    if (['new', 'insert', 'table', 'format', 'style', 'image', 'replace', 'comment', 'track'].includes(A) && v.path && !(await wordHasIt(v))) {
       if (win && (mode() !== 'file' || !isDocx(v.path)) && (await installed())) { // (file: a .docx is changed in the file itself; any other kind still needs Word)
         if (A !== 'new') await openThen(v, ctx); // Word is there: the document is opened in it and changed there
         else return newViaWord(v, ctx);
@@ -240,13 +240,13 @@ function createWord(deps = {}) {
     const hint = d.tracking ? '' : ' Tracked changes are off, so the edit is not marked; track with on:true shows later edits as revisions.';
     switch (A) {
       case 'insert': { if (v.find) { const r = await H.insert({ doc: target, ...formatFields(v) }); return done(`${atDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.insert({ doc: target, at: v.at, heading: v.heading, text: v.text, style: v.style, levels: v.levels, bold: v.bold, italic: v.italic }); return done(`Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
-      case 'replace': { const r = await H.replace({ doc: target, find: v.find, replace: v.replace }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
+      case 'replace': { const r = await H.replace({ doc: target, ...formatFields(v) }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
       case 'format': { const r = await H.format({ doc: target, ...formatFields(v) }); return done(`${formatDone(r.done || {}, d.name, v, false)} Not saved yet.${d.tracking ? '' : ' Tracked changes are off, so the edit is not marked.'}`); }
       case 'style': { const r = await H.style({ doc: target, ...formatFields(v) }); return done(styleDone(r, d.name, v)); }
       case 'table': { if (isEdit(v)) { const r = await H.table({ doc: target, ...formatFields(v) }); return done(`${tableDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.table({ doc: target, ...formatFields(v) }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''}. Not saved yet.${hint}`); }
       case 'image': { const pic = await pictureFor(v); let r; try { r = await H.image({ doc: target, ...formatFields(v), url: undefined, image: pic.file }); } finally { pic.done(); } return done(`${imageDone(r, d.name, v, pic)} Not saved yet.${hint}`); }
       case 'comment': await H.comment({ doc: target, find: v.find, text: v.text }); return done(`Added a comment on “${spec.clip(v.find, 40)}” in ${d.name}.`);
-      case 'track': { const r = await H.track({ doc: target, on: v.on }); return `Tracked changes are ${r.tracking ? 'on' : 'off'} in ${d.name}.`; }
+      case 'track': { const r = await H.track({ doc: target, ...formatFields(v) }); if (v.review) return done(reviewDone(r.reviewed, d.name, v)); return `Tracked changes are ${r.tracking ? 'on' : 'off'} in ${d.name}.`; }
       default: throw new Error('Unknown action.');
     }
   }
@@ -273,6 +273,7 @@ function createWord(deps = {}) {
     }
     const hfText = (p) => [p.left, p.center, p.right].filter(Boolean).join(' | ');
     const page = [v.margins && 'margins', v.orientation, v.header && `header “${spec.clip(hfText(v.header), 40)}”`, v.footer && `footer “${spec.clip(hfText(v.footer), 40)}”`, v.firstPage === true && 'a first page without them', v.firstPage === false && 'the same header and footer on the first page', v.pageStart !== undefined && `page numbers from ${v.pageStart}`, v.columns !== undefined && (v.columns > 1 ? `${v.columns} columns` : 'one column')].filter(Boolean);
+    if (r.properties?.length) out.push(`the document's ${r.properties.join(', ')} (File > Info)`);
     if (r.sections && page.length) out.push(`${page.join(', ')} in ${r.sections} section${r.sections === 1 ? '' : 's'}`);
     return `Formatted ${name}: ${out.join('; ') || 'nothing needed changing'}.`;
   }
@@ -292,6 +293,7 @@ function createWord(deps = {}) {
     if (look.length) out.push(look.join(', '));
     return `Changed table ${r.index ?? v.index ?? ''}${r.tables ? ` of ${r.tables}` : ''} in ${name}: ${out.join('; ') || 'nothing needed changing'}.`;
   }
+  const reviewDone = (n, name, v) => (n ? `${v.review === 'accept' ? 'Accepted' : 'Rejected'} ${n} tracked change${n === 1 ? '' : 's'}${v.author ? ` by ${v.author}` : ''}${v.find ? ` around “${spec.clip(v.find, 40)}”` : ''} in ${name}.` : `There are no tracked changes${v.author ? ` by ${v.author}` : ''}${v.find ? ` around “${spec.clip(v.find, 40)}”` : ''} in ${name}; nothing changed.`);
   const placeText = (v) => (v.at === 'start' ? ' at the start' : v.at === 'after' ? ` after “${spec.clip(v.heading, 40)}”` : v.at === 'section_end' ? ` at the end of “${spec.clip(v.heading, 40)}”` : ' at the end');
   function checkImage(p) {
     const real = checkFile(p);
@@ -378,10 +380,13 @@ function createWord(deps = {}) {
     cardUse(ctx, ref, spec.stepLabel(v, ref.name), { com: false });
     const before = (await docx().readDocx(buf, { budget: 1e6 })).text.split(String.fromCharCode(10));
     const pic = A === 'image' ? await pictureFor(v) : null;
-    const r = A === 'insert' && v.find ? await docx().insertDocx(buf, formatFields(v), { track: true }) : A === 'image' ? await docx().imageDocx(buf, { ...formatFields(v), data: pic.buf, info: pic.info, name: pic.name }, { track: true }) : A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await docx().tableDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
-    writeAtomic(real, r.buf);
+    const r = A === 'replace' ? await docx().replaceDocx(buf, formatFields(v), { track: true }) : A === 'comment' ? await docx().commentDocx(buf, formatFields(v)) : A === 'track' ? (v.review ? await docx().reviewDocx(buf, formatFields(v)) : await docx().trackDocx(buf, v.on)) : A === 'insert' && v.find ? await docx().insertDocx(buf, formatFields(v), { track: true }) : A === 'image' ? await docx().imageDocx(buf, { ...formatFields(v), data: pic.buf, info: pic.info, name: pic.name }, { track: true }) : A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await docx().tableDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
+    if (r.buf !== buf) writeAtomic(real, r.buf);
     try { await cardChanged(ctx, ref, { lines: require('./card').pageAround(before, (await docx().readDocx(r.buf, { budget: 1e6 })).text.split(String.fromCharCode(10))) }); } catch { /* the preview is a courtesy */ }
     noteRead(ctx, ref.key);
+    if (A === 'replace') return r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${ref.name}${charWords(v).length ? ` (the new text ${charWords(v).join(', ')})` : ''}. Saved in the file, as tracked changes.` : `No match for “${spec.clip(v.find, 40)}” in ${ref.name}; nothing changed. find must be the text exactly as read shows it, inside one paragraph.`;
+    if (A === 'comment') return `Added a comment on “${spec.clip(v.find, 40)}” in ${ref.name} (saved in the file).`;
+    if (A === 'track') return v.review ? `${reviewDone(r.count, ref.name, v)}${r.count ? ' Saved in the file.' : ''}` : `Tracked changes are ${v.on ? 'on' : 'off'} in ${ref.name} (saved in the file): Word marks the next edits as revisions.`;
     if (A === 'insert' && v.find) return `${atDone(r.done, ref.name, v)} Saved in the file, as a tracked change.`;
     if (A === 'image') return `${imageDone(r, ref.name, v, pic)} Saved in the file, as a tracked change.`;
     if (A === 'table' && isEdit(v)) return `${tableDone(r.done, ref.name, v)} Saved in the file; new and replaced text and new rows are tracked changes, the look is not.`;

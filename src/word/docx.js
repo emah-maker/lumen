@@ -481,6 +481,8 @@ const STYLE_DEFS = {
   EndnoteText: '<w:style w:type="paragraph" w:styleId="EndnoteText"><w:name w:val="endnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>',
   FootnoteReference: '<w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>',
   EndnoteReference: '<w:style w:type="character" w:styleId="EndnoteReference"><w:name w:val="endnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>',
+  CommentText: '<w:style w:type="paragraph" w:styleId="CommentText"><w:name w:val="annotation text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>',
+  CommentReference: '<w:style w:type="character" w:styleId="CommentReference"><w:name w:val="annotation reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:sz w:val="16"/><w:szCs w:val="16"/></w:rPr></w:style>',
   Hyperlink: '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>',
   Header: '<w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>',
   Footer: '<w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>',
@@ -941,6 +943,167 @@ function putRunStyle(x, id) {
   return out.slice(5, -6);
 }
 
+// ---- review: the tracked changes accepted or rejected (all, one author's, or those in the paragraphs holding some text), as Word's Accept and
+// Reject do: an insertion kept or taken out, a deletion taken out or put back, a formatting change kept or undone, a paragraph mark or a row
+// inserted or deleted. -> { xml, count }
+const PR_KEEP = { 'w:pPr': ['w:rPr', 'w:sectPr'], 'w:rPr': ['w:ins', 'w:del', 'w:moveFrom', 'w:moveTo'], 'w:trPr': ['w:ins', 'w:del'], 'w:tcPr': ['w:cellIns', 'w:cellDel'] };
+const restoreText = (x) => x.replace(/<w:delText(\s[^>]*)?>/g, '<w:t$1>').replace(/<\/w:delText>/g, '</w:t>').replace(/<w:delInstrText(\s[^>]*)?>/g, '<w:instrText$1>').replace(/<\/w:delInstrText>/g, '</w:instrText>');
+function reviewXml(xml, kind, { author = null, ranges = null } = {}) {
+  const who = (tag) => !author || String((/w:author="([^"]*)"/.exec(tag) || [])[1] || '').toLowerCase() === author.toLowerCase();
+  const inScope = (at) => !ranges || ranges.some(([a, b]) => at >= a && at < b);
+  const accept = kind === 'accept';
+  let count = 0;
+  const starts = (re) => { const out = []; let m; re.lastIndex = 0; while ((m = re.exec(xml))) if (inScope(m.index)) out.push({ at: m.index, tag: m[0] }); return out.reverse(); };
+  // 1. text: insertions and deletions (and moves) around runs
+  for (const { at, tag } of starts(/<w:(ins|del|moveFrom|moveTo)\b(?:[^>"']|"[^"]*")*>/g)) {
+    if (tag.endsWith('/>') || !who(tag)) continue;
+    const el = elementAt(xml, at);
+    const name = el.name.slice(2);
+    const r = innerOf(xml, el);
+    const inner = r ? xml.slice(r.from, r.to) : '';
+    const keep = accept ? name === 'ins' || name === 'moveTo' : name === 'del' || name === 'moveFrom';
+    xml = splice(xml, el.start, el.end, keep ? (name === 'del' || name === 'moveFrom' ? restoreText(inner) : inner) : '');
+    count++;
+  }
+  xml = xml.replace(/<w:move(?:From|To)Range(?:Start|End)\b[^>]*\/>/g, '');
+  // 2. formatting changes: kept (the record goes) or undone (the old properties come back, with what the record does not cover)
+  for (const { at, tag } of starts(/<w:(rPr|pPr|sectPr|tblPr|trPr|tcPr|tblPrEx|tblGrid)Change\b(?:[^>"']|"[^"]*")*>/g)) {
+    if (!who(tag)) continue;
+    const el = elementAt(xml, at);
+    if (accept) { xml = splice(xml, el.start, el.end, ''); count++; continue; }
+    const base = `w:${el.name.slice(2, -6)}`;
+    const pAt = Math.max(...[' ', '>', '/'].map((c) => xml.lastIndexOf(`<${base}${c}`, at)));
+    if (pAt < 0) continue;
+    const parent = elementAt(xml, pAt);
+    const old = kidOf(xml, el, base);
+    const oldInner = old && innerOf(xml, old) ? xml.slice(innerOf(xml, old).from, innerOf(xml, old).to) : '';
+    const kept = kidsOf(xml, parent).filter((k) => (PR_KEEP[base] || []).includes(k.name)).map((k) => xml.slice(k.start, k.end)).join('');
+    const open = /^<[^>]*?(?=\/?>)/.exec(xml.slice(parent.start, parent.end))[0];
+    xml = splice(xml, parent.start, parent.end, `${open}>${oldInner}${kept}</${base}>`);
+    count++;
+  }
+  // 3. rows inserted or deleted
+  for (const { at } of starts(/<w:tr\b/g)) {
+    const tr = elementAt(xml, at);
+    const pr = kidOf(xml, tr, 'w:trPr');
+    const mark = pr && kidsOf(xml, pr).find((k) => (k.name === 'w:ins' || k.name === 'w:del') && who(xml.slice(k.start, k.end)));
+    if (!mark) continue;
+    const gone = accept ? mark.name === 'w:del' : mark.name === 'w:ins';
+    xml = gone ? splice(xml, tr.start, tr.end, '') : splice(xml, mark.start, mark.end, '');
+    count++;
+  }
+  // 4. paragraph marks inserted or deleted: a mark that goes joins its paragraph to the next one (which keeps its own properties)
+  for (const { at } of starts(/<w:p(?=[\s>/])/g)) {
+    const p = elementAt(xml, at);
+    if (!p || p.name !== 'w:p') continue;
+    const ppr = kidOf(xml, p, 'w:pPr');
+    const rpr = ppr && kidOf(xml, ppr, 'w:rPr');
+    const mark = rpr && kidsOf(xml, rpr).find((k) => (k.name === 'w:ins' || k.name === 'w:del') && who(xml.slice(k.start, k.end)));
+    if (!mark) continue;
+    count++;
+    const join = accept ? mark.name === 'w:del' : mark.name === 'w:ins';
+    xml = splice(xml, mark.start, mark.end, '');
+    if (!join) continue;
+    const P = elementAt(xml, at);
+    const N = elementAt(xml, P.end);
+    if (!N || N.name !== 'w:p' || N.start !== P.end) continue;
+    const pIn = innerOf(xml, P); const pPr = kidOf(xml, P, 'w:pPr');
+    const body = pIn ? xml.slice(pPr ? pPr.end : pIn.from, pIn.to) : '';
+    const nIn = innerOf(xml, N); const nPr = kidOf(xml, N, 'w:pPr');
+    const head = nIn ? xml.slice(N.start, nPr ? nPr.end : nIn.from) : xml.slice(N.start, N.end).replace(/\s*\/>$/, '>');
+    const rest = nIn ? xml.slice(nPr ? nPr.end : nIn.from, N.end) : '</w:p>';
+    xml = splice(xml, P.start, N.end, head + body + rest);
+  }
+  return { xml: xml.replace(/<w:rPr><\/w:rPr>/g, '').replace(/<w:pPr><\/w:pPr>/g, ''), count };
+}
+// op: { review: accept|reject, author, find } -> { buf, count }
+async function reviewDocx(buf, op) {
+  const { xml: original, entries } = await openForEdit(buf);
+  bodyOf(original);
+  let ranges = null;
+  if (op.find) {
+    const want = String(op.find).toLowerCase();
+    ranges = allParas(original).filter((p) => [...original.slice(p.start, p.end).matchAll(/<w:(?:t|delText)(?:\s[^>]*)?>([^<]*)<\/w:(?:t|delText)>/g)].map((m) => unesc(m[1])).join('').toLowerCase().includes(want)).map((p) => [p.start, p.end]);
+    if (!ranges.length) throw new WordError(`No paragraph contains “${String(op.find).slice(0, 60)}”. Use read to see the text.`);
+  }
+  const r = reviewXml(original, op.review, { author: op.author, ranges });
+  return { buf: r.count ? pack(entries, new Map([['word/document.xml', r.xml]])) : buf, count: r.count };
+}
+
+// ---- replace in the file: every match (inside one paragraph) is changed, its look kept (and any look asked for put on the new text); tracked,
+// the old text is a deletion and the new one an insertion beside it. -> { buf, replaced }
+async function replaceDocx(buf, op, { track = false, now = () => new Date() } = {}) {
+  if (/[\r\n]/.test(op.find)) throw new WordError('A find that spans paragraphs needs Microsoft Word.');
+  const { xml: original, entries } = await openForEdit(buf);
+  bodyOf(original);
+  const ctx = { track, nextId: makeIds(original), date: now().toISOString().replace(/\.\d+Z$/, 'Z') };
+  const look = Object.fromEntries(['font', 'size', 'bold', 'italic', 'strike', 'underline', 'color', 'highlight'].filter((k) => op[k] !== undefined).map((k) => [k, op[k]]));
+  let xml = original;
+  let count = 0;
+  const word = (c) => /[\p{L}\p{N}_]/u.test(c || '');
+  for (const p of allParas(xml).reverse()) {
+    let one = xml.slice(p.start, p.end);
+    const text = runsWithText(one).map((r) => r.text).join('');
+    const hits = matchesIn(one, String(op.find)).filter(([a, b]) => !op.wholeWord || (!word(text[a - 1]) && !word(text[b])));
+    if (!hits.length) continue;
+    for (const [a, b] of hits.reverse()) {
+      one = cutAt(cutAt(one, b), a);
+      const inside = runsWithText(one).filter((x) => x.from >= a && x.to <= b && x.to > x.from);
+      if (!inside.length) continue;
+      const start = inside[0].start; const end = inside[inside.length - 1].end;
+      if (!balanced(one, start, end)) throw new WordError(`“${String(op.find).slice(0, 40)}” is partly inside a tracked change or a link here, so the file route does not replace it. Use Word for it.`);
+      const rprEl = kidOf(one, elementAt(one, start), 'w:rPr');
+      let run = op.replace === '' ? '' : `<w:r>${rprEl ? one.slice(rprEl.start, rprEl.end).replace(/<w:(ins|del)\b[^>]*\/>/g, '') : ''}${textRuns(String(op.replace))}</w:r>`;
+      if (run && Object.keys(look).length) run = putRun(run, { name: 'w:r', start: 0, end: run.length }, look, ['w:rPr']);
+      const piece = track ? `${delRuns(one.slice(start, end), ctx)}${run ? `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${run}</w:ins>` : ''}` : run;
+      one = one.slice(0, start) + piece + one.slice(end);
+      count++;
+    }
+    xml = splice(xml, p.start, p.end, one);
+  }
+  return { buf: count ? pack(entries, new Map([['word/document.xml', xml]])) : buf, replaced: count, tracked: track };
+}
+
+// ---- comments in the file: the found text marked (commentRangeStart / End and a reference run), the comment in comments.xml, by the AI.
+async function commentDocx(buf, op, { now = () => new Date() } = {}) {
+  const { xml: original, zip, entries } = await openForEdit(buf);
+  bodyOf(original);
+  const files = new Map();
+  const find = String(op.find);
+  const p = allParas(original).find((q) => matchesIn(original.slice(q.start, q.end), find).length);
+  if (!p) throw new WordError(`No match for “${find.slice(0, 60)}” (find is the exact text, with its case, inside one paragraph), so there is nothing to comment on.`);
+  const cp = await partOf(zip, files, 'comments');
+  const id = Math.max(-1, ...[...cp.text.matchAll(/<w:comment\b[^>]*w:id="(\d+)"/g)].map((m) => Number(m[1]))) + 1;
+  const date = now().toISOString().replace(/\.\d+Z$/, 'Z');
+  const paras2 = String(op.text).split(/\r\n|\r|\n/).map((l, i) => `<w:p><w:pPr><w:pStyle w:val="CommentText"/></w:pPr>${i ? '' : '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:annotationRef/></w:r>'}<w:r>${textRuns(l)}</w:r></w:p>`).join('');
+  files.set(cp.name, cp.text.replace(/<\/w:comments>\s*$/, `<w:comment w:id="${id}" w:author="${AUTHOR}" w:date="${date}" w:initials="AI">${paras2}</w:comment></w:comments>`));
+  const sp = await partOf(zip, files, 'styles');
+  files.set(sp.name, ensureStyle(ensureStyle(files.get(sp.name) ?? sp.text, 'CommentText'), 'CommentReference'));
+  const one = original.slice(p.start, p.end);
+  const [a, b] = matchesIn(one, find)[0];
+  const marked = wrapText(one, a, b, `<w:commentRangeStart w:id="${id}"/>`, `<w:commentRangeEnd w:id="${id}"/><w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:commentReference w:id="${id}"/></w:r>`);
+  files.set('word/document.xml', splice(original, p.start, p.end, marked));
+  return { buf: pack(entries, files), id };
+}
+
+// ---- tracking on or off in the file (w:trackRevisions in settings.xml): Word marks the next edits as revisions.
+async function trackDocx(buf, on) {
+  const { zip, entries } = await openForEdit(buf);
+  const files = new Map();
+  const st = await partOf(zip, files, 'settings');
+  let x = st.text.replace(/<w:trackRevisions\b[^>]*\/>/g, '');
+  if (on) {
+    // (after the settings that come before it in the schema, so Word reads the file without a repair)
+    const BEFORE = ['w:writeProtection', 'w:view', 'w:zoom', 'w:removePersonalInformation', 'w:removeDateAndTime', 'w:doNotDisplayPageBoundaries', 'w:displayBackgroundShape', 'w:printPostScriptOverText', 'w:printFractionalCharacterWidth', 'w:printFormsData', 'w:embedTrueTypeFonts', 'w:embedSystemFonts', 'w:saveSubsetFonts', 'w:saveFormsData', 'w:mirrorMargins', 'w:alignBordersAndEdges', 'w:bordersDoNotSurroundHeader', 'w:bordersDoNotSurroundFooter', 'w:gutterAtTop', 'w:hideSpellingErrors', 'w:hideGrammaticalErrors', 'w:activeWritingStyle', 'w:proofState', 'w:formsDesign', 'w:attachedTemplate', 'w:linkStyles', 'w:stylePaneFormatFilter', 'w:stylePaneSortMethod', 'w:documentType', 'w:mailMerge', 'w:revisionView'];
+    const root = elementAt(x, /<w:settings[\s>]/.exec(x).index);
+    const prev = kidsOf(x, root).filter((k) => BEFORE.includes(k.name)).pop();
+    const at = prev ? prev.end : innerOf(x, root).from;
+    x = splice(x, at, at, '<w:trackRevisions/>');
+  }
+  files.set(st.name, x);
+  return { buf: pack(entries, files), tracking: on };
+}
+
 // ---- notes and cross-references (the insert action with find): text, a footnote or endnote (its mark here, its text in footnotes.xml or
 // endnotes.xml), or a REF field to a caption ("Figure 2": a _Ref bookmark around the caption's label and number, as Word's Insert
 // Cross-reference makes) or to a bookmark.
@@ -1019,7 +1182,8 @@ async function insertDocx(buf, op, { track = false, now = () => new Date() } = {
   if (piece === null) {
     const prev = runsWithText(one).filter((x) => x.to === b && x.from < b).pop();
     const rprEl = prev ? kidOf(one, prev, 'w:rPr') : null;
-    piece = ins(`<w:r>${rprEl ? one.slice(rprEl.start, rprEl.end) : ''}${textRuns(String(op.text))}</w:r>`);
+    const rp = rprEl ? one.slice(rprEl.start, rprEl.end) : '';
+    piece = ins(String(op.text).split(/(\{date\})/i).filter((t) => t !== '').map((t) => (t.toLowerCase() === '{date}' ? fieldRuns('DATE \\@ "MMMM d, yyyy"', now().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })) : `<w:r>${rp}${textRuns(t)}</w:r>`)).join(''));
     done.text = true;
   } else if (op.ref && !op.text && !/\s$/.test(find)) piece = ins('<w:r><w:t xml:space="preserve"> </w:t></w:r>') + piece;
   one = one.slice(0, at) + piece + one.slice(at);
@@ -1203,10 +1367,10 @@ function columnBreak(xml, p, ctx) {
 }
 
 // A part of the package by its relationship type from document.xml (styles, settings): { name, rels } or null.
-const REL = { footnotes: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes', endnotes: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes', styles: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles', settings: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings', numbering: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering' };
-const CT = { footnotes: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml', endnotes: 'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml', styles: 'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml', settings: 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml', numbering: 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml' };
+const REL = { comments: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments', footnotes: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes', endnotes: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes', styles: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles', settings: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings', numbering: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering' };
+const CT = { comments: 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml', footnotes: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml', endnotes: 'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml', styles: 'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml', settings: 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml', numbering: 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml' };
 const NOTE_SEP = (el) => `<${el} w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></${el}><${el} w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></${el}>`;
-const EMPTY_PART = { footnotes: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes ${NS}>${NOTE_SEP('w:footnote')}</w:footnotes>`, endnotes: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:endnotes ${NS}>${NOTE_SEP('w:endnote')}</w:endnotes>`, styles: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}>${STYLE_DEFS.Normal}</w:styles>`, settings: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}></w:settings>`, numbering: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}></w:numbering>` };
+const EMPTY_PART = { comments: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments ${NS}></w:comments>`, footnotes: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes ${NS}>${NOTE_SEP('w:footnote')}</w:footnotes>`, endnotes: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:endnotes ${NS}>${NOTE_SEP('w:endnote')}</w:endnotes>`, styles: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}>${STYLE_DEFS.Normal}</w:styles>`, settings: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}></w:settings>`, numbering: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}></w:numbering>` };
 async function partOf(zip, files, kind) {
   const relsName = 'word/_rels/document.xml.rels';
   let rels = files.get(relsName) ?? (zip.has(relsName) ? await zip.text(relsName) : null);
@@ -1358,8 +1522,41 @@ async function formatDocx(buf, f, { track = false, now = () => new Date() } = {}
     xml = s.xml;
     done.sections = s.sections;
   }
+  if (f.properties) {
+    files.set(...(await coreWith(zip, files, f.properties, now())));
+    done.properties = Object.keys(f.properties);
+  }
   files.set('word/document.xml', xml);
   return { buf: pack(entries, files), done, tracked: track };
+}
+
+// The document's own properties (docProps/core.xml: title, author, subject, keywords), made with its relationship and content type when
+// missing. -> [name, xml]
+const CORE_REL = 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties';
+const CORE_EL = { title: 'dc:title', author: 'dc:creator', subject: 'dc:subject', keywords: 'cp:keywords' };
+async function coreWith(zip, files, props, at) {
+  const relsName = '_rels/.rels';
+  const rels = files.get(relsName) ?? (zip.has(relsName) ? await zip.text(relsName) : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>');
+  const rel = [...rels.matchAll(/<Relationship\b[^>]*>/g)].map((m) => m[0]).find((r) => r.includes(`Type="${CORE_REL}"`));
+  let name = rel ? ((/Target="\/?([^"]+)"/.exec(rel) || [])[1] || 'docProps/core.xml') : 'docProps/core.xml';
+  let xml = files.get(name) ?? (rel && zip.has(name) ? await zip.text(name) : null);
+  if (xml === null) {
+    name = 'docProps/core.xml';
+    const ids = [...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1]));
+    files.set(relsName, rels.replace('</Relationships>', `<Relationship Id="rId${Math.max(0, ...ids) + 1}" Type="${CORE_REL}" Target="docProps/core.xml"/></Relationships>`));
+    const ct = files.get('[Content_Types].xml') ?? (await zip.text('[Content_Types].xml'));
+    if (!ct.includes('PartName="/docProps/core.xml"')) files.set('[Content_Types].xml', ct.replace('</Types>', '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>'));
+    xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dcterms:created xsi:type="dcterms:W3CDTF">${at.toISOString().replace(/\.\d+Z$/, 'Z')}</dcterms:created></cp:coreProperties>`;
+  }
+  if (!/<cp:coreProperties\b/.test(xml) || !/xmlns:dc=/.test(xml)) throw new WordError('This document keeps its properties in a way Lumen does not edit. Set them in Word (File > Info).');
+  for (const [k, v] of Object.entries(props)) {
+    const el = CORE_EL[k];
+    const piece = v === '' ? '' : `<${el}>${esc(cleanText(v))}</${el}>`;
+    const re = new RegExp(`<${el}(?:\\s[^>]*)?(?:/>|>[\\s\\S]*?</${el}>)`);
+    xml = re.test(xml) ? xml.replace(re, () => piece) : xml.replace(/<\/cp:coreProperties>\s*$/, `${piece}</cp:coreProperties>`);
+  }
+  if (!/xmlns:cp=/.test(xml)) throw new WordError('This document keeps its properties in a way Lumen does not edit. Set them in Word (File > Info).');
+  return [name, xml];
 }
 // ---- captions: "Figure 1: ..." under a picture, "Table 1: ..." over a table, in the Caption style, the number a SEQ field (as Word's own
 // Insert Caption makes it), so a list of figures and cross-references find it. The numbers already in the document are put in order again.
@@ -1455,4 +1652,4 @@ function newDocx() {
   return buildZip(Object.entries(files).map(([name, text]) => ({ name, data: Buffer.from(text, 'utf8') })));
 }
 
-module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, imageDocx, insertDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };
+module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, imageDocx, insertDocx, reviewDocx, replaceDocx, commentDocx, trackDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };

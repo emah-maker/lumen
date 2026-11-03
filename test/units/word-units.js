@@ -613,7 +613,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     check('file route: read gives the text with its structure inside the untrusted wrapper, plus the tracked-changes summary', /# Title/.test(t) && /Body "quoted" \$\(x\)/.test(t) && /Tracked changes: [1-9]/.test(t) && /^<untrusted_page_content/.test(t), t);
     const tb = await r.word.run({ action: 'table', path: file, rows: [['a', 'b'], ['c', 'd']] }, r.ctx);
     check('file route: a table is added too', /Added a table \(2 rows, 2 columns\)/.test(tb) && /\| a \| b \|/.test(await r.word.run({ action: 'read', path: file }, r.ctx)), tb);
-    check('file route: replace, style, picture, comment and tracking need Word, said plainly', /not installed|needs Microsoft Word/.test(await rejects(() => r.word.run({ action: 'replace', path: file, find: 'a', replace: 'b' }, r.ctx)) || ''));
+    check('file route: what still needs Word (a find across paragraphs, saving as PDF) is said plainly', /needs Microsoft Word/.test(await rejects(() => r.word.run({ action: 'replace', path: file, find: `Title${String.fromCharCode(10)}Body`, replace: 'b' }, r.ctx)) || '') && /not installed/.test(await rejects(() => r.word.run({ action: 'save_as', path: path.join(tmp, 'x.pdf') }, r.ctx)) || ''));
     const denied = makeRig({ installed: false, answers: [false] });
     const before = fs.readFileSync(file);
     check('file route: "No" leaves the file untouched', /did not allow that save/.test(await rejects(() => denied.word.run({ action: 'insert', path: file, text: 'x' }, denied.ctx)) || '') && Buffer.compare(fs.readFileSync(file), before) === 0);
@@ -1167,6 +1167,73 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       check('references (file route): without Word, notes and cross-references go into the .docx after a card with its path (one per write), and the answers say what went where', /Added a footnote \(footnote 1\) after “grows linearly” in Refs \(lab\)\.docx\. Saved in the file/.test(said10) && /Added a cross-reference to Figure 1 after “as shown in”/.test(said11) && fr6.store.cards.length === 2 && fr6.store.cards[0].args.includes(rf) && (await valid(fs.readFileSync(rf))) === null, said10 + ' / ' + said11);
       const ps5 = read('src/word/host.ps1');
       check('helper: notes with Footnotes.Add and Endnotes.Add, cross-references with InsertCrossReference (captions by label and number, bookmarks), links with Hyperlinks.Add, bookmarks with Bookmarks.Add; still no Delete', /function Cmd-InsertAt/.test(ps5) && /Footnotes\.Add\(\$r, \$miss/.test(ps5) && /Endnotes\.Add\(\$r, \$miss/.test(ps5) && /InsertCrossReference\(\$label, 3/.test(ps5) && /InsertCrossReference\(2, -1, \$ref/.test(ps5) && /Hyperlinks\.Add\(\$hits\[\$k\]/.test(ps5) && /Bookmarks\.Add\(/.test(ps5) && !/Delete\(/.test(ps5));
+    }
+    // ---- review and the rest: tracked changes accepted or rejected, replace with formatting, comments and tracking in the file, document
+    // properties, a date field in the text
+    {
+      const vv = v({ action: 'track', reject: true, author: 'AI (Lumen)', find: 'Results' });
+      check('review: track takes on, or accept / reject with an author and find; replace takes the new text\'s look and whole_word; format takes properties', vv.review === 'reject' && vv.author === 'AI (Lumen)' && vv.find === 'Results' && v({ action: 'track', accept: 'all' }).review === 'accept' && v({ action: 'track', on: true }).on === true && v({ action: 'replace', find: 'TODO', replace: 'Done', bold: true, whole_word: true }).wholeWord === true && J(v({ action: 'format', properties: { title: 'Lab 2', keywords: ['a', 'b'] } }).properties) === J({ title: 'Lab 2', keywords: 'a, b' }), J(vv));
+      const vErrs = [
+        [{ action: 'track' }, /track takes one of: on/],
+        [{ action: 'track', on: true, accept: true }, /track takes one of: on/],
+        [{ action: 'track', accept: 'some' }, /accept must be true/],
+        [{ action: 'track', on: true, author: 'x' }, /author and find go with accept or reject/],
+        [{ action: 'format', properties: { title: 'x', company: 'y' } }, /properties takes title, author, subject and keywords, not company/],
+        [{ action: 'format', properties: 'x' }, /properties is \{ title, author, subject, keywords \}/],
+        [{ action: 'replace', find: 'a', replace: 'b', colour: 'red' }, /replace does not take colour/],
+      ];
+      const vBad = vErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+      check('review: every bad argument is refused with a sentence that says what to send', !vBad.length, J(vBad.map(([i]) => [i, throws(() => v(i))])));
+      check('review: the steps say what happens', spec.stepLabel({ action: 'track', reject: true, author: 'AI (Lumen)' }, 'L.docx') === "Rejecting AI (Lumen)'s tracked changes in L.docx" && spec.stepLabel({ action: 'track', accept: true, find: 'Results' }, 'L.docx') === 'Accepting the tracked changes around “Results” in L.docx');
+
+      let vb = docx.newDocx();
+      for (const t of ['First line stays.', 'TODO: write the intro.', 'Last TODO here, not TODOS.']) vb = (await docx.editDocx(vb, { insert: { at: 'end', text: t } })).buf;
+      const withAi = (await docx.editDocx(vb, { insert: { at: 'end', text: 'The AI added this.' } }, { track: true })).buf;
+      const rp = await docx.replaceDocx(withAi, { find: 'TODO', replace: 'Done', bold: true, highlight: 'yellow', wholeWord: true }, { track: true, now: () => new Date('2026-11-02T12:00:00Z') });
+      const rx = (await partsOf(rp.buf))['word/document.xml'];
+      check('replace (file, tracked): each whole-word match is a deletion beside an insertion of the new text in the old look plus the look asked for; TODOS is left alone', rp.replaced === 2 && /<w:del w:id="\d+" w:author="AI \(Lumen\)" w:date="2026-11-02T12:00:00Z"><w:r><w:delText xml:space="preserve">TODO<\/w:delText><\/w:r><\/w:del><w:ins w:id="\d+" w:author="AI \(Lumen\)" w:date="2026-11-02T12:00:00Z"><w:r><w:rPr><w:b\/><w:highlight w:val="yellow"\/><\/w:rPr><w:t xml:space="preserve">Done<\/w:t><\/w:r><\/w:ins><w:r><w:t xml:space="preserve">: write the intro\./.test(rx) && /not TODOS\./.test(rx) && (await valid(rp.buf)) === null, rx.slice(rx.indexOf('TODO') - 120, rx.indexOf('TODO') + 400));
+      const rej = await docx.reviewDocx(rp.buf, { review: 'reject', author: 'AI (Lumen)' });
+      const acc = await docx.reviewDocx(rp.buf, { review: 'accept' });
+      const lines2 = async (b) => (await docx.readDocx(b)).text.split('\n').filter(Boolean);
+      check('review (file): rejecting the AI\'s changes puts the old text back and takes out its paragraph (mark and all); accepting keeps the new text and drops every revision mark', J(await lines2(rej.buf)) === J(['First line stays.', 'TODO: write the intro.', 'Last TODO here, not TODOS.']) && J(await lines2(acc.buf)) === J(['First line stays.', 'Done: write the intro.', 'Last Done here, not TODOS.', 'The AI added this.']) && !/<w:(ins|del)\b|delText|<w:pPr><\/w:pPr>|<w:rPr><\/w:rPr>/.test((await partsOf(acc.buf))['word/document.xml']) && !/<w:(ins|del)\b|delText/.test((await partsOf(rej.buf))['word/document.xml']) && rej.count === 6 && acc.count === 6 && (await valid(rej.buf)) === null && (await valid(acc.buf)) === null, J([await lines2(rej.buf), await lines2(acc.buf), rej.count, acc.count]));
+      const only = await docx.reviewDocx(rp.buf, { review: 'reject', find: 'intro' });
+      check('review (file): find limits it to the paragraphs holding that text (deleted text counts); another author\'s changes are left alone', J(await lines2(only.buf)) === J(['First line stays.', 'TODO: write the intro.', 'Last Done here, not TODOS.', 'The AI added this.']) && only.count === 2 && (await docx.reviewDocx(rp.buf, { review: 'accept', author: 'Ann' })).count === 0, J(await lines2(only.buf)));
+      // a person's formatting change and a deleted paragraph mark
+      const other = setPart(vb, 'word/document.xml', (await partsOf(vb))['word/document.xml'].replace('<w:r><w:t xml:space="preserve">First line stays.</w:t></w:r></w:p>', '<w:r><w:rPr><w:b/><w:rPrChange w:id="77" w:author="Ann" w:date="2026-01-01T00:00:00Z"><w:rPr><w:i/></w:rPr></w:rPrChange></w:rPr><w:t xml:space="preserve">First line stays.</w:t></w:r></w:p>').replace('<w:p><w:r><w:t xml:space="preserve">TODO: write', '<w:p><w:pPr><w:rPr><w:del w:id="78" w:author="Ann" w:date="2026-01-01T00:00:00Z"/></w:rPr></w:pPr><w:r><w:t xml:space="preserve">TODO: write'));
+      const oa = await docx.reviewDocx(other, { review: 'accept', author: 'ann' });
+      const orj = await docx.reviewDocx(other, { review: 'reject', author: 'Ann' });
+      const oax = (await partsOf(oa.buf))['word/document.xml']; const orx = (await partsOf(orj.buf))['word/document.xml'];
+      check('review (file): a formatting change is kept (accept: bold, the record gone) or undone (reject: italic again); a deleted paragraph mark joins the paragraph to the next on accept, and stays on reject', /<w:rPr><w:b\/><\/w:rPr><w:t xml:space="preserve">First line stays\./.test(oax) && /<w:rPr><w:i\/><\/w:rPr><w:t xml:space="preserve">First line stays\./.test(orx) && (await lines2(oa.buf))[1] === 'TODO: write the intro.Last TODO here, not TODOS.' && (await lines2(orj.buf)).length === 3 && oa.count === 2 && (await valid(oa.buf)) === null && (await valid(orj.buf)) === null, J([await lines2(oa.buf), oax.slice(0, 400)]));
+      const none2 = await docx.reviewDocx(vb, { review: 'accept' });
+      check('review (file): with no tracked changes the file is left as it was', none2.count === 0 && none2.buf === vb);
+
+      const cm = await docx.commentDocx(vb, { find: 'the intro', text: 'Too short.\nAdd the aim.' }, { now: () => new Date('2026-11-02T12:00:00Z') });
+      const cp2 = await partsOf(cm.buf);
+      check('comments (file): the found text is marked (commentRangeStart/End and a CommentReference run) and comments.xml has the comment by the AI, one paragraph a line; read shows it', /<w:commentRangeStart w:id="0"\/><w:r><w:t xml:space="preserve">the intro<\/w:t><\/w:r><w:commentRangeEnd w:id="0"\/><w:r><w:rPr><w:rStyle w:val="CommentReference"\/><\/w:rPr><w:commentReference w:id="0"\/><\/w:r>/.test(cp2['word/document.xml']) && /<w:comment w:id="0" w:author="AI \(Lumen\)" w:date="2026-11-02T12:00:00Z" w:initials="AI"><w:p><w:pPr><w:pStyle w:val="CommentText"\/><\/w:pPr><w:r><w:rPr><w:rStyle w:val="CommentReference"\/><\/w:rPr><w:annotationRef\/><\/w:r><w:r><w:t xml:space="preserve">Too short\.<\/w:t><\/w:r><\/w:p><w:p>/.test(cp2['word/comments.xml'] || '') && /relationships\/comments" Target="comments.xml"/.test(cp2['word/_rels/document.xml.rels']) && (await docx.readDocx(cm.buf)).comments[0].text.startsWith('Too short.') && (await valid(cm.buf)) === null, cp2['word/comments.xml']);
+      const pr2 = await docx.formatDocx(vb, { properties: { title: 'Lab 2 <final>', author: 'Ana & Lee' } }, { now: () => new Date('2026-11-02T12:00:00Z') });
+      const pp2 = await partsOf(pr2.buf);
+      const pr3 = await docx.formatDocx(pr2.buf, { properties: { title: 'Lab 2 v2', subject: '' } });
+      check('properties (file): docProps/core.xml is made (with its package relationship and content type) holding the title and author, escaped; a second call replaces the title', /<dc:title>Lab 2 &lt;final&gt;<\/dc:title><dc:creator>Ana &amp; Lee<\/dc:creator>/.test(pp2['docProps/core.xml'] || '') && /metadata\/core-properties" Target="docProps\/core.xml"/.test(pp2['_rels/.rels']) && /PartName="\/docProps\/core.xml" ContentType="application\/vnd.openxmlformats-package.core-properties\+xml"/.test(pp2['[Content_Types].xml']) && (/<dc:title>[^<]*<\/dc:title>/g.exec((await partsOf(pr3.buf))['docProps/core.xml']) || [])[0] === '<dc:title>Lab 2 v2</dc:title>' && J(pr2.done.properties) === J(['title', 'author']) && (await valid(pr3.buf)) === null, pp2['docProps/core.xml']);
+      const tk = await docx.trackDocx(vb, true);
+      const tk2 = await docx.trackDocx(tk.buf, false);
+      check('tracking (file): on puts w:trackRevisions in settings.xml (made if missing), off takes it out', /<w:trackRevisions\/>/.test((await partsOf(tk.buf))['word/settings.xml'] || '') && !/trackRevisions/.test((await partsOf(tk2.buf))['word/settings.xml']));
+      const dt = await docx.insertDocx(vb, { find: 'stays.', text: ' Checked {date}.' }, { now: () => new Date('2026-11-02T12:00:00Z') });
+      check('date (file): {date} in text put into a paragraph is a DATE field showing today', /<w:instrText xml:space="preserve"> DATE \\@ "MMMM d, yyyy" <\/w:instrText>/.test((await partsOf(dt.buf))['word/document.xml']) && (await lines2(dt.buf))[0] === 'First line stays. Checked November 2, 2026.', (await lines2(dt.buf))[0]);
+
+      const wr8 = makeRig();
+      await wr8.word.run({ action: 'replace', find: 'TODO', replace: 'Done', color: 'red', whole_word: true }, wr8.ctx);
+      const said12 = await wr8.word.run({ action: 'track', reject: true, author: 'AI (Lumen)' }, wr8.ctx).catch((e) => e.message);
+      const rc = wr8.store.calls.find((c) => c[0] === 'replace')[1]; const tc = wr8.store.calls.find((c) => c[0] === 'track')[1];
+      check('review (Word): replace sends the new text\'s look and whole_word; track sends review and author', rc.color === 'FF0000' && rc.wholeWord === true && tc.review === 'reject' && tc.author === 'AI (Lumen)' && !('on' in tc) && typeof said12 === 'string', J([rc, tc, said12]));
+      const vf = path.join(tmp, 'Review (lab).docx');
+      fs.writeFileSync(vf, withAi);
+      const fr7 = makeRig({ platform: 'linux' });
+      const said13 = await fr7.word.run({ action: 'replace', path: vf, find: 'TODO', replace: 'Done', whole_word: true }, fr7.ctx);
+      const said14 = await fr7.word.run({ action: 'track', path: vf, reject: true, author: 'AI (Lumen)' }, fr7.ctx);
+      const said15 = await fr7.word.run({ action: 'comment', path: vf, find: 'First line', comment: 'Nice.' }, fr7.ctx);
+      check('review (file route): replace, rejecting the AI\'s changes and a comment all work on the .docx without Word, each after a card with the path', /Replaced 2 matches of “TODO” in Review \(lab\)\.docx\. Saved in the file, as tracked changes/.test(said13) && /Rejected \d+ tracked changes by AI \(Lumen\) in Review \(lab\)\.docx\. Saved in the file/.test(said14) && /Added a comment on “First line”/.test(said15) && fr7.store.cards.length === 3 && J(await lines2(fs.readFileSync(vf))) === J(['First line stays.', 'TODO: write the intro.', 'Last TODO here, not TODOS.']) && (await valid(fs.readFileSync(vf))) === null, [said13, said14, said15].join(' / '));
+      const ps6 = read('src/word/host.ps1');
+      check('helper: Revisions Accept / Reject (all, an author\'s, or those in the paragraphs holding find), MatchWholeWord and the new text\'s look on replace, BuiltInDocumentProperties by name, a DATE field in text; still no Delete', /function Cmd-Review/.test(ps6) && /\$rv\.Accept\(\)/.test(ps6) && /\$rv\.Reject\(\)/.test(ps6) && /MatchWholeWord = \$whole/.test(ps6) && /Set-Char \$hits\[\$k\]\.Font \$req/.test(ps6) && /BuiltInDocumentProperties/.test(ps6) && /Fields\.Add\(\$r, 31/.test(ps6) && !/Delete\(/.test(ps6));
     }
   }
 
