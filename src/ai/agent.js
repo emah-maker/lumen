@@ -36,6 +36,8 @@ const chatImages = require('../features/chat-images'); // images a message carri
 const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
 const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
+const steerLib = lazy(() => require('./steer')); // [mid-run messages] what the user types while a reply runs reaches it at its next step
+const sentMidRun = (text) => (String(text || '').includes('<sent_while_working>') ? steerLib.unwrap(text) : null); // (steer.js loads only for a chat that has one)
 const handoff = lazy(() => require('./handoff')); // [no handoff] the give-up detector: a reply that hands the work back gets one more try
 const pdfText = require('../features/pdf-text');
 const remotePdf = require('./remote-pdf'); // read_urls on a web PDF: its text, rows kept
@@ -1764,7 +1766,8 @@ function transcriptFor(chatMessages, settings = chatMessages.settings, track = n
     const m = chatMessages[mi];
     const blocks = Array.isArray(m.content) ? m.content : [{ type: 'text', text: String(m.content) }];
     if (m.role === 'user') {
-      const text = blocks.filter((b) => b.type === 'text').map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(uploadFiles.FILES_BLOCK, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '').replace(compactLib.SUMMARY_BLOCK, '').replace(screenContext.SCREEN_BLOCK, '').replace(screenContext.DROPPED_NOTE, '').replace(handoff.RETRY_BLOCK, '')).join('\n').trim();
+      const sentWhile = blocks.filter((b) => b.type === 'text').map((b) => sentMidRun(b.text)).filter((x) => x !== null); // [mid-run messages] typed while the reply ran
+      const text = blocks.filter((b) => b.type === 'text' && sentMidRun(b.text) === null).map((b) => b.text.replace(/<browser_state>[\s\S]*?<\/browser_state>\s*/, '').replace(uploadFiles.FILES_BLOCK, '').replace(PAGE_BLOCK, '').replace(/^<earlier_conversation>[\s\S]*?<\/earlier_conversation>\s*/, '').replace(compactLib.SUMMARY_BLOCK, '').replace(screenContext.SCREEN_BLOCK, '').replace(screenContext.DROPPED_NOTE, '').replace(handoff.RETRY_BLOCK, '')).join('\n').trim();
       const marks = blocks.map((b, i) => (b.type === 'text' ? [i, screenContext.parseMarker(b.text)] : null)).filter((x) => x && x[1]); // [screen context]
       const screenAt = new Set(marks.map(([i]) => i + 1)); // the picture right after a marker is the screenshot, not the user's own
       const shot = marks.length ? marks[0][1] : null;
@@ -1777,6 +1780,7 @@ function transcriptFor(chatMessages, settings = chatMessages.settings, track = n
       const fileField = { ...(files.length ? { files } : {}), ...(shot ? { screen: { id: shot.id, kind: shot.kind, title: shot.title, ...(shotBlock ? { image: `data:${shotBlock.source.media_type};base64,${shotBlock.source.data}` } : {}) } } : {}) };
       if (text === 'The user attached the image(s) above without a message.' || text === uploadFiles.FILES_ONLY_TEXT) push({ role: 'user', text: '', images, ...fileField }, m, mi);
       else if (text || images.length || files.length) push({ role: 'user', text, images, ...fileField }, m, mi);
+      for (const said of sentWhile) { items.push({ role: 'user', text: said, images: [], steered: true }); if (track) track.push(mi); } // (the reply it went into goes on: its steps still count together)
     } else {
       steps += blocks.filter((b) => b.type === 'tool_use' || b.type === 'server_tool_use').length;
       acted ||= blocks.some((b) => b.type === 'tool_use' && ACTING_TOOL_NAMES.has(b.name));
@@ -2218,6 +2222,36 @@ class Agent {
     this.runs.get(messages)?.controller.abort();
   }
 
+  // [mid-run messages] (ai/steer.js) A message typed while this chat's reply runs ({ uid, text }), for the run's next step. { ok: true, state }
+  // when the run takes it ('waiting', or 'sent': it already went); { ok: false, why: 'engine' } on an engine that takes nothing mid-run;
+  // { ok: false } with no run, or one whose reply is already whole. When not ok, the view keeps it for the next message, as before.
+  steer(messages, entry) {
+    const rec = this.runs.get(messages);
+    if (!rec?.steers || rec.settling || rec.controller.signal.aborted) return { ok: false };
+    if (rec.noSteer || /^(codex|grokbuild|antigravity):/.test(String(messages.settings?.model))) return { ok: false, why: 'engine' };
+    const state = rec.steers.add(entry);
+    if (!state) return { ok: false };
+    if (state === 'waiting') { try { rec.pump?.(); } catch { /* it goes at the step after */ } }
+    return { ok: true, state };
+  }
+  // Edit or × on a message handed to the run: true when it had not gone yet (it never will); false when it already went.
+  unsteer(messages, uid) {
+    const rec = this.runs.get(messages);
+    if (!rec?.steers) return true;
+    return rec.steers.remove(uid) || !rec.steers.wasSent(uid);
+  }
+  // Codex, Grok Build and Antigravity take no input mid-run (Auto may route a message to one): what the user types waits for the reply to end.
+  noSteerFor(messages) {
+    const rec = this.runs.get(messages);
+    if (rec) rec.noSteer = true;
+  }
+  // The messages waiting for this run's next step, taken (each once); `emit` tells the view they went.
+  takeSteers(messages, emit) {
+    const taken = this.runs.get(messages)?.steers?.take() || [];
+    if (taken.length) emit({ type: 'steered', uids: taken.map((e) => e.uid) });
+    return taken;
+  }
+
   // The open conversation's own run only. Unlike stop(), never the one other run that is going: a Stop pressed in a chat
   // with nothing running (its run just ended, a stale button) must not reach another chat.
   stopOpen() {
@@ -2236,7 +2270,7 @@ class Agent {
     const messages = extra.messages || this.messages;
     if (!skill) this.recordTyped?.(messages, userText, emit); // [connectors] what the user typed (Gmail sending: only this can say a send is fine)
     const previous = this.runs.get(messages);
-    const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts, settling: false };
+    const rec = { controller: new AbortController(), promise: null, hosts: extra.hosts || this.approvedHosts, settling: false, steers: steerLib.createBox() };
     const next = (async () => {
       if (previous) {
         // A run whose reply the screen already has whole (an engine's 'reply_complete', see claudeCodeTurn) is only waiting
@@ -3249,10 +3283,19 @@ class Agent {
       }
       sidebarEmit(event);
     };
+    // [mid-run messages] What the user types while this turn runs goes to the CLI at its next step (claude-code.js pump); once it is seen to
+    // reach the model it is in the chat, before the reply it went into, and the view marks it sent.
+    const steers = rec?.steers ? {
+      pump: null,
+      take: () => rec.steers.take(),
+      delivered: (entries) => { messages.push({ role: 'user', content: steerLib.blocksFor(entries) }); sidebarEmit({ type: 'steered', uids: entries.map((e) => e.uid) }); },
+    } : null;
+    if (rec && steers) rec.pump = () => steers.pump?.();
     // The CLI began a turn of its own (a helper ended): a follow-up in this chat (claudeFollowUp).
     const onFollowUp = ({ proc }) => this.claudeFollowUp(messages, { engine, proc, spawn, routed, emit: sidebarEmit, onFollowUp, onLateUsage, hosts: rec?.hosts, scope: scope0 });
     let out = await engine.run({
       onFollowUp,
+      steers,
       scope: taskScope.getStore(), // [parallel CLI chats] this message's tab, approvals and signal, for its MCP tool calls
       ...spawn, // sessionId, resume, model ('default', a `claude --model` alias, or the alias auto-routing chose), maxTurns (Settings: Max steps per task, 0: no cap), systemPrompt
       prompt: first.text,
@@ -3271,7 +3314,7 @@ class Agent {
       delete settings.ccSession;
       snapshot.reads.clear(); // the model of the new session has seen none of the earlier reads
       const again = handoff();
-      out = await engine.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage, scope: taskScope.getStore(), onFollowUp });
+      out = await engine.run({ ...spawn, sessionId: crypto.randomUUID(), resume: false, prompt: again.text, images: again.images, signal, emit, prestart: false, lateUsage: onLateUsage, scope: taskScope.getStore(), onFollowUp, steers });
     }
     await this.finishClaudeCodeTurn(messages, out, { routed, spawn, emit, engine, startedAt });
   }
@@ -3373,6 +3416,7 @@ class Agent {
   // Images are capped inside grok-build.js's run() (capImages), not here.
   async grokBuildTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
+    this.noSteerFor(messages);
     // [work folder] Grok Build keeps its sessions per working folder: a different folder starts a new session (handed the chat so far).
     const gbDir = projectFolders.workFolderOf(settings);
     if (settings.gbSession && (settings.gbDir || '') !== gbDir) { delete settings.gbSession; delete settings.gbModel; delete settings.gbSeen; }
@@ -3477,6 +3521,7 @@ class Agent {
   // chat's settings (agySession): follow-ups continue it, New chat starts a new one. Its first message carries the system note.
   async antigravityTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
+    this.noSteerFor(messages);
     // [full access] Settings → AI (antigravity.js FULL_FLAGS). The conversation's system note rides on its first message only, so a
     // change of the setting starts a new conversation (handed the chat so far, as after a model switch).
     const fullAccess = this.browser.antigravityFullAccess?.() === true;
@@ -3548,6 +3593,7 @@ class Agent {
   // since are handed over in front of the next message, and a fresh thread is handed the whole chat (authorName "Codex" labels its replies).
   async codexTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
+    this.noSteerFor(messages);
     // [full access] Settings → AI (codex.js FULL_ON). The thread's system note rides on its first message only, so a change of the setting
     // starts a new thread (handed the chat so far, as after a model switch).
     const fullAccess = this.browser.codexFullAccess?.() === true;
@@ -4437,6 +4483,8 @@ ${prompt}` : prompt), historyImages: [] };
         const advice = wrap ? WRAP_UP[wrap] : budget.stepNote(step);
         if (advice) results[results.length - 1].content = withNote(results[results.length - 1].content, advice);
       }
+      // [mid-run messages] What the user typed meanwhile goes in with this round's results: the next model call reads it.
+      if (!tabClosed) results.push(...steerLib.blocksFor(this.takeSteers(messages, emit)));
       messages.push({ role: 'user', content: results });
       if (tabClosed) {
         emit({ type: 'notice', text: 'The tab this task was working in was closed, so the task stopped. Send a message to carry on.' });

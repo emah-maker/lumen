@@ -174,6 +174,8 @@ contextBridge.exposeInMainWorld('assistant', {
   },
   askTabs: () => ipcRenderer.invoke('tabs:ask-list'), // the "@" picker's tabs (renderer/tabs-ask.js)
   stop: (chatId) => ipcRenderer.send('agent:stop', chatId), // the chat the view shows: Stop never reaches another chat's run
+  steer: (chatId, uid, text) => ipcRenderer.invoke('agent:steer', chatId, uid, text), // [mid-run messages] a message typed mid-run, for the run's next step: { ok, state, why }
+  unsteer: (chatId, uid) => ipcRenderer.invoke('agent:unsteer', chatId, uid), // Edit or × on it: true when it had not gone yet
   sidebarTarget: (o) => ipcRenderer.invoke('chat:sidebar-target', o && o.liveOnly === true ? { liveOnly: true } : undefined), // the sidebar is about to open: the chat on this tab that works, waits for an OK or finished unread ({ id, reason, view }), or null
   resync: () => ipcRenderer.invoke('chat:resync'), // the chat this window's front tab shows, with its own run state
   prewarm: (text) => ipcRenderer.send('agent:prewarm', typeof text === 'string' ? text.slice(0, 2000) : ''), // the composer was focused / typed in: Claude Code's process starts ahead of the message
