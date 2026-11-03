@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Muse loads again: new Use secure DNS setting.** On some networks (the user's campus Wi-Fi, 2026-11-03) the network's own DNS sends muse.ai to a Meta server that never answers, so Muse timed out in Lumen and in Chrome alike; Lumen's rules and the 0.5.87 video-overlay change were not the cause. Settings → Advanced → Network and proxy → **Use secure DNS** now works as in Chrome: Automatic (the default, unchanged), Off, Cloudflare, Google, Quad9 or a custom server. With a provider chosen, Muse loads at once. It applies to every window straight away, and the timed-out page now points to it. Tests: `test/units/secure-dns-units.js`.
+
 - **/btw works with only Claude Code installed, no API key needed.** When no API model is connected, a side question goes to your own Claude Code (signed in) on Haiku, as a one-shot run with no tools, no MCP servers and an empty folder, and the card says "Answered by Claude Code (Haiku)". It answers whole after a few seconds instead of streaming. With nothing connected at all, the card now says to add a key or install Claude Code. Tests: `test/units/btw-units.js`.
 
 ## 0.5.93 (2026-11-03)
