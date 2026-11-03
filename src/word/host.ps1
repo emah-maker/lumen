@@ -681,6 +681,27 @@ function Cmd-TableEdit($d, $req) {
   else { $want = ([string]$req['find']).ToLowerInvariant(); for ($i = 1; $i -le $n; $i++) { if (([string]$d.Tables.Item($i).Range.Text).ToLowerInvariant().Contains($want)) { $t = $d.Tables.Item($i); $no = $i; break } } }
   if ($null -eq $t) { throw ('No table has a cell with "' + [string]$req['find'] + '". Use read to see the tables.') }
   $done = @{ index = $no; tables = $n }
+  # rows or columns taken out (a call of their own): preview says what would go, for the card that asks first; the guard keeps one of each
+  foreach ($kind in @('deleteRows', 'deleteColumns')) {
+    if (-not $req.ContainsKey($kind)) { continue }
+    $a = [int]$req[$kind][0]; $b = [int]$req[$kind][1]
+    $isRows = ($kind -eq 'deleteRows')
+    if ($isRows) { $total = [int]$t.Rows.Count; $what = 'row' } else { $total = [int]$t.Columns.Count; $what = 'column' }
+    if ($b -gt $total) { throw ('The table has ' + $total + ' ' + $what + '(s), so there is no ' + $what + ' ' + $b + '. Nothing was changed.') }
+    if ($b - $a + 1 -ge $total) { throw ('That is every ' + $what + ' of the table, so nothing was deleted. To take the table out, remove the whole table instead (in Word: select it, then Layout > Delete > Delete Table); a table keeps at least one ' + $what + ' here.') }
+    $lines = @()
+    for ($i = $a; $i -le $b; $i++) {
+      $texts = @()
+      foreach ($c in $t.Range.Cells) { if (($isRows -and [int]$c.RowIndex -eq $i) -or (-not $isRows -and [int]$c.ColumnIndex -eq $i)) { $texts += (Clean-Cell ([string]$c.Range.Text)) } }
+      if ($isRows) { $lines += ('Row ' + $i + ': | ' + ($texts -join ' | ') + ' |') } else { $lines += ('Column ' + $i + ': ' + ($texts -join ' / ')) }
+    }
+    if ($req.ContainsKey('preview')) { return @{ doc = [string]$d.Name; preview = @{ lines = $lines; count = ($b - $a + 1); index = $no } } }
+    try {
+      for ($i = $b; $i -ge $a; $i--) { if ($isRows) { $t.Rows.Item($i).Delete() } else { $t.Columns.Item($i).Delete() } }
+    } catch { throw ('Word could not take those ' + $what + 's out of this table (it has merged cells across them). Unmerge the cells first, or use the file route.') }
+    if ($isRows) { $done.deletedRows = $b - $a + 1 } else { $done.deletedColumns = $b - $a + 1 }
+    $done.deleted = $lines
+  }
   $cells = @(Arg $req 'cells' @())
   foreach ($c in $cells) { $r = [int]$c[0]; $k = [int]$c[1]; try { $cell = $t.Cell($r, $k) } catch { throw ('The table has no cell at row ' + $r + ', column ' + $k + '. Nothing more was changed.') }; $cell.Range.Text = (Rep-Text ([string]$c[2])) }
   if ($cells.Count) { $done.cells = $cells.Count }

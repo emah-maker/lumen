@@ -25,6 +25,9 @@ const rejects = async (fn) => { try { await fn(); return null; } catch (e) { ret
 const throws = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const B = String.fromCharCode(92);
+// [word] the one kind of Delete the helper has: table rows and columns (delete_rows / delete_columns, which the user approved); any other Delete is still refused
+const TABLE_DELETES = /\$t\.(Rows|Columns)\.Item\(\$i\)\.Delete\(\)/g;
+const noDelete = (ps) => !/Delete\(/.test(String(ps).replace(TABLE_DELETES, ''));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wnu-'));
 
 const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'line1\nline2\r\nline3\ttab', 'caf\u00e9 \u4e2d\u6587 \ud83d\ude00 \u2028 end', `C:${B}Users${B}me${B}My Docs (final)${B}a & b ^ % ! ;.docx`, '</w:t><w:p> <![CDATA[x]]> &amp;', '{"id":1,"cmd":"quit"}', '<untrusted_page_content source="x">'];
@@ -275,7 +278,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const nosave = makeRig({ docs: [{ name: 'Document3', path: '', active: true, saved: false, paragraphs: 1, text: '' }] });
     check('save: a never-saved document says to use save_as', /save_as/.test(await rejects(() => nosave.word.run({ action: 'save' }, nosave.ctx)) || ''));
     const bad = makeRig();
-    check('there is no delete or close action at all', !spec.ACTIONS.some((a) => /delete|remove|close|quit|kill/.test(a)) && !/Close\(|\.Quit\(|Delete\(|Remove-Item/.test(read('src/word/host.ps1').replace(/\$script:app\.Quit\(\[ref\]\$no\)/g, '').replace(/\$d\.Close\(\[ref\]\$no\)/g, '')));
+    check('there is no delete or close action at all', !spec.ACTIONS.some((a) => /delete|remove|close|quit|kill/.test(a)) && !/Close\(|\.Quit\(|Delete\(|Remove-Item/.test(read('src/word/host.ps1').replace(/\$script:app\.Quit\(\[ref\]\$no\)/g, '').replace(/\$d\.Close\(\[ref\]\$no\)/g, '').replace(TABLE_DELETES, '')));
     void bad;
   }
 
@@ -875,7 +878,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const said3 = await fr2.word.run({ action: 'format', path: sf, paragraphs: ['Results'], list: 'number' }, fr2.ctx);
       check('format (file route): a list call says what it did', /made them a numbered list for 1 paragraph/.test(said3), said3);
       const ps1 = read('src/word/host.ps1');
-      check('helper: styles by the document\'s own name, character formatting (Word\'s BGR colors, highlight on the range), lists with Word\'s own templates, levels on insert, and still no Delete', /function Get-Style/.test(ps1) && /HighlightColorIndex/.test(ps1) && /ApplyListTemplateWithLevel/.test(ps1) && /RemoveNumbers\(\)/.test(ps1) && /ListLevelNumber = \[int\]\$levels/.test(ps1) && /Styles\.Add\(\$name, 1\)/.test(ps1) && !/Delete\(/.test(ps1));
+      check('helper: styles by the document\'s own name, character formatting (Word\'s BGR colors, highlight on the range), lists with Word\'s own templates, levels on insert, and still no Delete', /function Get-Style/.test(ps1) && /HighlightColorIndex/.test(ps1) && /ApplyListTemplateWithLevel/.test(ps1) && /RemoveNumbers\(\)/.test(ps1) && /ListLevelNumber = \[int\]\$levels/.test(ps1) && /Styles\.Add\(\$name, 1\)/.test(ps1) && noDelete(ps1));
     }
     // ---- tables: a new table's look (header row, widths, borders, the header's fill, alignment), and a table that is there (by number or by a
     // cell's text): its cells, new rows, a new column and its look
@@ -895,7 +898,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
         [{ action: 'table', index: 1, cells: [[1, 'x']] }, /Each of cells is \[row, column, "text"\]/],
         [{ action: 'table', index: 1, rows: [['a']] }, /rows on a table that is there go with add_rows/],
         [{ action: 'table', index: 1, at: 'end', header: true }, /a table that is there is picked by index or find/],
-        [{ action: 'table', index: 1, delete_rows: [2] }, /table does not take delete_rows/],
+        [{ action: 'table', index: 1, merge_cells: [[1, 1], [1, 2]] }, /table does not take merge_cells/],
       ];
       const tBad = tErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
       check('table: every bad argument is refused with a sentence that says what to send', !tBad.length, J(tBad.map(([i]) => [i, throws(() => v(i))])));
@@ -949,7 +952,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const said5 = await fr3.word.run({ action: 'table', path: tf, index: 1, cells: [[3, 2, '13.1']], add_rows: 'end', rows: [['3', '14']] }, fr3.ctx);
       check('table (file route): without Word the .docx itself is changed after a card that shows the path, and says what was done', /Changed table 1 of 2 in Tables \(lab\)\.docx: 1 cell filled in; 1 row added\. Saved in the file/.test(said5) && fr3.store.cards.length === 1 && fr3.store.cards[0].args.includes(tf) && (await docx.readDocx(fs.readFileSync(tf))).text.includes('| 2 | 13.1 |') && (await valid(fs.readFileSync(tf))) === null, said5);
       const ps2 = read('src/word/host.ps1');
-      check('helper: tables by number or cell text, cells, rows and columns added with Word\'s own Rows.Add and Columns.Add, the look (HeadingFormat, Borders, Shading, Columns width), and still no Delete', /function Cmd-TableEdit/.test(ps2) && /\$t\.Rows\.Add\(\$t\.Rows\.Item\(\$at \+ 1\)\)/.test(ps2) && /\$t\.Columns\.Add\(\$t\.Columns\.Item\(\$after \+ 1\)\)/.test(ps2) && /HeadingFormat/.test(ps2) && /BackgroundPatternColor/.test(ps2) && !/Delete\(/.test(ps2));
+      check('helper: tables by number or cell text, cells, rows and columns added with Word\'s own Rows.Add and Columns.Add, the look (HeadingFormat, Borders, Shading, Columns width), and still no Delete', /function Cmd-TableEdit/.test(ps2) && /\$t\.Rows\.Add\(\$t\.Rows\.Item\(\$at \+ 1\)\)/.test(ps2) && /\$t\.Columns\.Add\(\$t\.Columns\.Item\(\$after \+ 1\)\)/.test(ps2) && /HeadingFormat/.test(ps2) && /BackgroundPatternColor/.test(ps2) && noDelete(ps2));
     }
     // ---- pictures and captions: a picture from a file or the web (only a public address, only real picture bytes), its size and wrap, and
     // "Figure N" / "Table N" captions as SEQ fields that stay in order
@@ -1040,7 +1043,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const said7 = await fr4.word.run({ action: 'image', path: idf, image: picFile, caption: 'Rig', at: 'after', heading: 'Setup' }, fr4.ctx);
       check('image (file route): without Word the picture is written into the .docx after a card that shows the path, and the answer says where and with which caption', /Added the picture rig photo\.png \(6\.5 × 3\.25 in\) to Pictures \(lab\)\.docx after “Setup”, captioned “Figure 1: Rig”\. Saved in the file/.test(said7) && fr4.store.cards.length === 1 && fr4.store.cards[0].args.includes(idf) && (await docx.readDocx(fs.readFileSync(idf))).text.split('\n').slice(0, 3).join('|') === '# Setup|[picture]|Figure 1: Rig' && (await valid(fs.readFileSync(idf))) === null, said7);
       const ps3 = read('src/word/host.ps1');
-      check('helper: size, alt text, wrap (ConvertToShape, WrapFormat) and Word\'s own InsertCaption with its SEQ numbers updated; still no Delete', /InsertCaption\(\$label, \$title, '', \$where\)/.test(ps3) && /ConvertToShape\(\)/.test(ps3) && /WrapFormat\.Type/.test(ps3) && /AlternativeText/.test(ps3) && /Add-Caption \$d \$t\.Range 'Table'/.test(ps3) && !/Delete\(/.test(ps3));
+      check('helper: size, alt text, wrap (ConvertToShape, WrapFormat) and Word\'s own InsertCaption with its SEQ numbers updated; still no Delete', /InsertCaption\(\$label, \$title, '', \$where\)/.test(ps3) && /ConvertToShape\(\)/.test(ps3) && /WrapFormat\.Type/.test(ps3) && /AlternativeText/.test(ps3) && /Add-Caption \$d \$t\.Range 'Table'/.test(ps3) && noDelete(ps3));
     }
     // ---- headers, footers and page numbers; sections, columns and section and column breaks
     {
@@ -1093,7 +1096,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const said9 = await fr5.word.run({ action: 'format', path: pf2, page_numbers: 'bottom center', different_first_page: true, section_break_before: ['Appendix'] }, fr5.ctx);
       check('pages (file route): without Word, the answer says what was done and that fields fill in when Word updates them', /section break \(new page\) before “Appendix”/.test(said9) && /footer “\{page\}”, a first page without them in 2 sections/.test(said9) && /show their real values when Word updates them/.test(said9) && fr5.store.cards.length === 1 && (await valid(fs.readFileSync(pf2))) === null, said9);
       const ps4 = read('src/word/host.ps1');
-      check('helper: headers and footers with Word\'s PAGE, NUMPAGES and DATE fields, a different first page, page numbering, columns, section and column breaks with InsertBreak; still no Delete', /function Set-HeaderText/.test(ps4) && /Fields\.Add\(\$end, 33\)/.test(ps4) && /Fields\.Add\(\$end, 26\)/.test(ps4) && /DifferentFirstPageHeaderFooter/.test(ps4) && /TextColumns\.SetCount/.test(ps4) && /RestartNumberingAtSection/.test(ps4) && /InsertBreak\(\$code\)/.test(ps4) && !/Delete\(/.test(ps4));
+      check('helper: headers and footers with Word\'s PAGE, NUMPAGES and DATE fields, a different first page, page numbering, columns, section and column breaks with InsertBreak; still no Delete', /function Set-HeaderText/.test(ps4) && /Fields\.Add\(\$end, 33\)/.test(ps4) && /Fields\.Add\(\$end, 26\)/.test(ps4) && /DifferentFirstPageHeaderFooter/.test(ps4) && /TextColumns\.SetCount/.test(ps4) && /RestartNumberingAtSection/.test(ps4) && /InsertBreak\(\$code\)/.test(ps4) && noDelete(ps4));
     }
     // ---- references: footnotes and endnotes, cross-references to captions and bookmarks, hyperlinks and bookmarks, text inside a paragraph
     {
@@ -1166,7 +1169,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const said11 = await fr6.word.run({ action: 'insert', path: rf, find: 'as shown in', ref: 'Figure 1' }, fr6.ctx);
       check('references (file route): without Word, notes and cross-references go into the .docx after a card with its path (one per write), and the answers say what went where', /Added a footnote \(footnote 1\) after “grows linearly” in Refs \(lab\)\.docx\. Saved in the file/.test(said10) && /Added a cross-reference to Figure 1 after “as shown in”/.test(said11) && fr6.store.cards.length === 2 && fr6.store.cards[0].args.includes(rf) && (await valid(fs.readFileSync(rf))) === null, said10 + ' / ' + said11);
       const ps5 = read('src/word/host.ps1');
-      check('helper: notes with Footnotes.Add and Endnotes.Add, cross-references with InsertCrossReference (captions by label and number, bookmarks), links with Hyperlinks.Add, bookmarks with Bookmarks.Add; still no Delete', /function Cmd-InsertAt/.test(ps5) && /Footnotes\.Add\(\$r, \$miss/.test(ps5) && /Endnotes\.Add\(\$r, \$miss/.test(ps5) && /InsertCrossReference\(\$label, 3/.test(ps5) && /InsertCrossReference\(2, -1, \$ref/.test(ps5) && /Hyperlinks\.Add\(\$hits\[\$k\]/.test(ps5) && /Bookmarks\.Add\(/.test(ps5) && !/Delete\(/.test(ps5));
+      check('helper: notes with Footnotes.Add and Endnotes.Add, cross-references with InsertCrossReference (captions by label and number, bookmarks), links with Hyperlinks.Add, bookmarks with Bookmarks.Add; still no Delete', /function Cmd-InsertAt/.test(ps5) && /Footnotes\.Add\(\$r, \$miss/.test(ps5) && /Endnotes\.Add\(\$r, \$miss/.test(ps5) && /InsertCrossReference\(\$label, 3/.test(ps5) && /InsertCrossReference\(2, -1, \$ref/.test(ps5) && /Hyperlinks\.Add\(\$hits\[\$k\]/.test(ps5) && /Bookmarks\.Add\(/.test(ps5) && noDelete(ps5));
     }
     // ---- review and the rest: tracked changes accepted or rejected, replace with formatting, comments and tracking in the file, document
     // properties, a date field in the text
@@ -1233,7 +1236,84 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       const said15 = await fr7.word.run({ action: 'comment', path: vf, find: 'First line', comment: 'Nice.' }, fr7.ctx);
       check('review (file route): replace, rejecting the AI\'s changes and a comment all work on the .docx without Word, each after a card with the path', /Replaced 2 matches of “TODO” in Review \(lab\)\.docx\. Saved in the file, as tracked changes/.test(said13) && /Rejected \d+ tracked changes by AI \(Lumen\) in Review \(lab\)\.docx\. Saved in the file/.test(said14) && /Added a comment on “First line”/.test(said15) && fr7.store.cards.length === 3 && J(await lines2(fs.readFileSync(vf))) === J(['First line stays.', 'TODO: write the intro.', 'Last TODO here, not TODOS.']) && (await valid(fs.readFileSync(vf))) === null, [said13, said14, said15].join(' / '));
       const ps6 = read('src/word/host.ps1');
-      check('helper: Revisions Accept / Reject (all, an author\'s, or those in the paragraphs holding find), MatchWholeWord and the new text\'s look on replace, BuiltInDocumentProperties by name, a DATE field in text; still no Delete', /function Cmd-Review/.test(ps6) && /\$rv\.Accept\(\)/.test(ps6) && /\$rv\.Reject\(\)/.test(ps6) && /MatchWholeWord = \$whole/.test(ps6) && /Set-Char \$hits\[\$k\]\.Font \$req/.test(ps6) && /BuiltInDocumentProperties/.test(ps6) && /Fields\.Add\(\$r, 31/.test(ps6) && !/Delete\(/.test(ps6));
+      check('helper: Revisions Accept / Reject (all, an author\'s, or those in the paragraphs holding find), MatchWholeWord and the new text\'s look on replace, BuiltInDocumentProperties by name, a DATE field in text; still no Delete', /function Cmd-Review/.test(ps6) && /\$rv\.Accept\(\)/.test(ps6) && /\$rv\.Reject\(\)/.test(ps6) && /MatchWholeWord = \$whole/.test(ps6) && /Set-Char \$hits\[\$k\]\.Font \$req/.test(ps6) && /BuiltInDocumentProperties/.test(ps6) && /Fields\.Add\(\$r, 31/.test(ps6) && noDelete(ps6));
+    }
+    // ---- deleting table rows and columns: one or a range, merged cells mended, never the last row or column, the remove card first
+    {
+      const rowsText = (s) => [...s.matchAll(/<w:tr>[\s\S]*?<\/w:tr>/g)].map((r) => [...r[0].matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map((c) => [...c[0].matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')).join('')).join('|')).join(',');
+      check('delete: delete_rows / delete_columns take one number or [from, to], in a call of their own', J(v({ action: 'table', index: 1, delete_rows: 3 }).deleteRows) === J([3, 3]) && J(v({ action: 'table', find: 'Mass', delete_columns: [2, 3] }).deleteColumns) === J([2, 3]) && spec.stepLabel({ action: 'table', index: 1, delete_rows: [2, 4] }, 'L.docx') === 'Editing L.docx: table 1, deleting rows 2–4');
+      const dErrs = [
+        [{ action: 'table', index: 1, delete_rows: [3, 2] }, /needs from <= to/],
+        [{ action: 'table', index: 1, delete_rows: [1, 2, 3] }, /one row number \(3\) or a range/],
+        [{ action: 'table', index: 1, delete_rows: 2, add_rows: 'end' }, /go in a call of their own/],
+        [{ action: 'table', index: 1, delete_rows: 2, delete_columns: 1 }, /one at a time/],
+        [{ action: 'table', rows: [['a']], delete_rows: 1 }, /delete_rows changes a table that is there/],
+      ];
+      const dBad = dErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+      check('delete: every bad argument is refused with a sentence that says what to send', !dBad.length, J(dBad.map(([i]) => [i, throws(() => v(i))])));
+      const tbl = (await (async () => { let b = docx.newDocx(); b = (await docx.editDocx(b, { table: { at: 'end', rows: [['Trial', 'Mass', 'Temp'], ['1', '12', '20'], ['2', '13', '21'], ['3', '14', '22']], widths: [1, 2, 1.5] } })).buf; return b; })());
+      const tx2 = (await partsOf(tbl))['word/document.xml'];
+      const one = async (b) => /<w:tbl>[\s\S]*?<\/w:tbl>/.exec((await partsOf(b))['word/document.xml'])[0];
+      const dr = await docx.tableDocx(tbl, { index: 1, deleteRows: [2, 3] });
+      const drx = await one(dr.buf);
+      check('delete rows (file): rows 2 and 3 go; the header row (still repeating, bold) and row 4 stay; the grid is untouched', rowsText(drx) === 'Trial|Mass|Temp,3|14|22' && /<w:tr><w:trPr><w:tblHeader\/><\/w:trPr>/.test(drx) && (drx.match(/<w:gridCol /g) || []).length === 3 && dr.done.deletedRows === 2 && J(dr.done.deleted) === J(['Row 2: | 1 | 12 | 20 |', 'Row 3: | 2 | 13 | 21 |']) && (await valid(dr.buf)) === null, drx);
+      const dc = await docx.tableDocx(tbl, { index: 1, deleteColumns: [2, 2] });
+      const dcx = await one(dc.buf);
+      check('delete columns (file): column 2 goes from every row and from w:tblGrid (its gridCol), the other widths stay; the header row keeps its look', rowsText(dcx) === 'Trial|Temp,1|20,2|21,3|22' && /<w:tblGrid><w:gridCol w:w="1440"\/><w:gridCol w:w="2160"\/><\/w:tblGrid>/.test(dcx) && /<w:tr><w:trPr><w:tblHeader\/><\/w:trPr><w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"\/><\/w:tcPr><w:p><w:r><w:rPr><w:b\/>/.test(dcx) && J(dc.done.deleted) === J(['Column 2: Mass · 12 · 13 · 14']) && (await valid(dc.buf)) === null, dcx);
+      // merged cells: a title cell across all three columns (gridSpan 3), and "Group A" merged down rows 3-4 (vMerge restart / continue)
+      const mergedX = tx2.replace(/<w:tr><w:trPr><w:tblHeader\/><\/w:trPr>/, '<w:tr><w:tc><w:tcPr><w:tcW w:w="6480" w:type="dxa"/><w:gridSpan w:val="3"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">Lab 2 data</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:trPr><w:tblHeader/></w:trPr>')
+        .replace('<w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">2</w:t>', '<w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"/><w:vMerge w:val="restart"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">2</w:t>')
+        .replace('<w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"/></w:tcPr><w:p><w:r><w:t xml:space="preserve">3</w:t></w:r></w:p></w:tc>', '<w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"/><w:vMerge/></w:tcPr><w:p/></w:tc>');
+      const merged = setPart(tbl, 'word/document.xml', mergedX);
+      check('delete (fixture): the merged table is a valid package', (await valid(merged)) === null, await valid(merged));
+      const mr = await docx.tableDocx(merged, { index: 1, deleteRows: [4, 4] });
+      const mrx = await one(mr.buf);
+      check('delete rows (file, merged): deleting the row where a vertical merge starts makes the next row start it (vMerge restart), so the merge does not reach into the row above', !/>2</.test(mrx) && /<w:tcW w:w="1440" w:type="dxa"\/><w:vMerge w:val="restart"\/><\/w:tcPr><w:p\/><\/w:tc><w:tc><w:tcPr><w:tcW w:w="2880" w:type="dxa"\/><\/w:tcPr><w:p><w:r><w:t xml:space="preserve">14</.test(mrx) && (mrx.match(/<w:vMerge/g) || []).length === 1 && (await valid(mr.buf)) === null, mrx);
+      const mc = await docx.tableDocx(merged, { index: 1, deleteColumns: [2, 3] });
+      const mcx = await one(mc.buf);
+      check('delete columns (file, merged): a cell spanning the deleted columns gets narrower (gridSpan 3 -> gone, its width less theirs), cells inside them go, vertical merges in the kept column stay', /<w:tr><w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"\/><\/w:tcPr><w:p><w:r><w:t xml:space="preserve">Lab 2 data<\/w:t>/.test(mcx) && !/gridSpan/.test(mcx) && /<w:tblGrid><w:gridCol w:w="1440"\/><\/w:tblGrid>/.test(mcx) && rowsText(mcx) === 'Lab 2 data,Trial,1,2,' && /<w:vMerge w:val="restart"\/>[\s\S]*<w:vMerge\/>/.test(mcx) && (await valid(mc.buf)) === null, mcx);
+      const span2 = setPart(tbl, 'word/document.xml', mergedX.replace('<w:gridSpan w:val="3"/>', '<w:gridSpan w:val="3"/>'));
+      const ms3 = await docx.tableDocx(span2, { index: 1, deleteColumns: [3, 3] });
+      check('delete columns (file, merged): a span of 3 across one deleted column becomes a span of 2, its width 6480 -> 4320', /<w:tcW w:w="4320" w:type="dxa"\/><w:gridSpan w:val="2"\/>/.test(await one(ms3.buf)) && (await valid(ms3.buf)) === null, await one(ms3.buf));
+      const gErrs2 = [
+        [() => docx.tableDocx(tbl, { index: 1, deleteRows: [1, 4] }), /That is every row of the table, so nothing was deleted\. To take the table out, remove the whole table instead/],
+        [() => docx.tableDocx(tbl, { index: 1, deleteColumns: [1, 3] }), /That is every column of the table, so nothing was deleted\. To take the table out, remove the whole table instead/],
+        [() => docx.tableDocx(tbl, { index: 1, deleteRows: [5, 5] }), /The table has 4 rows, so there is no row 5/],
+        [() => docx.tableDocx(tbl, { index: 1, deleteColumns: [4, 4] }), /The table has 3 columns, so there is no column 4/],
+        [() => docx.tableDeletion(tbl, { index: 1, deleteRows: [1, 4] }), /every row/],
+      ];
+      const gBad2 = [];
+      for (const [fn, re] of gErrs2) { const m = await rejects(fn); if (!re.test(m || '')) gBad2.push(m); }
+      check('delete (file): the last row or column is never deleted (the AI is told to remove the whole table instead), nor one that is not there', !gBad2.length, J(gBad2));
+      const prev = await docx.tableDeletion(merged, { find: 'Trial', deleteRows: [3, 4] });
+      check('delete (file): what would go is listed for the card, row by row', J(prev) === J({ count: 2, lines: ['Row 3: | 1 | 12 | 20 |', 'Row 4: | 2 | 13 | 21 |'], index: 1 }), J(prev));
+
+      // the card: the content guard's remove card, every time, with what goes; a No changes nothing (both routes)
+      const df = path.join(tmp, 'Delete rows (lab).docx');
+      fs.writeFileSync(df, tbl);
+      const fr8 = makeRig({ platform: 'linux' });
+      const said16 = await fr8.word.run({ action: 'table', path: df, index: 1, delete_rows: [2, 3] }, fr8.ctx);
+      const loss = fr8.store.cards.find((c) => c.kind === 'content-loss');
+      check('delete (file route): after the save card, the remove card (content-loss) shows the rows that go; then they go and the answer says so', loss && /The AI is about to delete 2 rows from table 1 in Delete rows \(lab\)\.docx/.test(loss.title) && loss.args === 'Row 2: | 1 | 12 | 20 |\nRow 3: | 2 | 13 | 21 |' && fr8.store.cards.length === 2 && /Changed table 1 of 1 in Delete rows \(lab\)\.docx: 2 rows deleted\. Saved in the file; the deletion is not a tracked change/.test(said16) && rowsText(await one(fs.readFileSync(df))) === 'Trial|Mass|Temp,3|14|22' && (await valid(fs.readFileSync(df))) === null, said16 + J(fr8.store.cards));
+      fs.writeFileSync(df, tbl);
+      const fr9 = makeRig({ platform: 'linux', answers: [true, false] });
+      const refused2 = await rejects(() => fr9.word.run({ action: 'table', path: df, index: 1, delete_columns: 2 }, fr9.ctx));
+      check('delete (file route): a No on the remove card leaves the file as it was', /did not allow deleting those column/.test(refused2 || '') && Buffer.compare(fs.readFileSync(df), tbl) === 0, refused2);
+      const wr9 = makeRig();
+      const calls9 = [];
+      wr9.word = createWord({ settings: { enabled: () => true }, host: { installed: () => true, status: async () => ({ installed: true }), list: async () => ({ docs: [{ name: 'Report.docx', path: `C:${B}Docs${B}Report.docx`, active: true, saved: true, tracking: true, paragraphs: 3 }] }), table: async (a) => { calls9.push(a); return a.preview ? { preview: { count: 1, lines: ['Row 2: | 1 | 12 |'], index: 1 } } : { done: { index: 1, tables: 1, deletedRows: 1 } }; } }, platform: 'win32', fs, checkFile: (p) => p, checkTarget: () => {} });
+      const said17 = await wr9.word.run({ action: 'table', index: 1, delete_rows: 2 }, wr9.ctx);
+      const loss2 = wr9.store.cards.find((c) => c.kind === 'content-loss');
+      check('delete (Word): the helper is asked what would go (preview), the remove card shows it, then the rows are deleted', calls9.length === 2 && calls9[0].preview === true && J(calls9[0].deleteRows) === J([2, 2]) && !calls9[1].preview && loss2 && loss2.args === 'Row 2: | 1 | 12 |' && /The AI is about to delete 1 row from table 1 in Report\.docx/.test(loss2.title) && /1 row deleted/.test(said17), J(calls9) + said17);
+      const wr10 = makeRig({ answers: [true, false] });
+      const calls10 = [];
+      const w10 = createWord({ settings: { enabled: () => true }, host: { installed: () => true, status: async () => ({ installed: true }), list: async () => ({ docs: [{ name: 'Report.docx', path: `C:${B}Docs${B}Report.docx`, active: true, saved: true, tracking: false, paragraphs: 3 }] }), table: async (a) => { calls10.push(a); return { preview: { count: 1, lines: ['Column 2: Mass'], index: 1 } }; } }, platform: 'win32', fs, checkFile: (p) => p, checkTarget: () => {} });
+      const refused3 = await rejects(() => w10.run({ action: 'table', index: 1, delete_columns: 2 }, wr10.ctx));
+      check('delete (Word): a No on the remove card deletes nothing (only the preview was asked)', /did not allow deleting those column/.test(refused3 || '') && calls10.length === 1 && calls10[0].preview === true, refused3);
+      const ps7 = read('src/word/host.ps1');
+      check('helper: rows and columns go with Word\'s own Rows / Columns .Delete() (tracked when tracking is on), after the same guard and a preview; no other Delete', /\$t\.Rows\.Item\(\$i\)\.Delete\(\)/.test(ps7) && /\$t\.Columns\.Item\(\$i\)\.Delete\(\)/.test(ps7) && /That is every ' \+ \$what \+ ' of the table/.test(ps7) && /preview = @\{ lines = \$lines/.test(ps7) && noDelete(ps7));
+      const agentSrc = read('src/ai/agent.js');
+      check('agent: a word card of kind content-loss is the content guard\'s remove card (action content-loss), not an app card', /card\.kind === 'content-loss'[\s\S]{0,400}action: 'content-loss'/.test(agentSrc));
     }
   }
 
