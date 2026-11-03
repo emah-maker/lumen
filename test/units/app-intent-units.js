@@ -88,6 +88,30 @@ const rejects = async (fn) => { try { await fn(); return null; } catch (e) { ret
     const read = (p) => fs.readFileSync(path.join(__dirname, '..', '..', p), 'utf8');
     check('cli: the shared tool list is untouched (the word tool is a per-run extra: ai-agents.js runTools, main.js wordTools)', !require('../../src/ai/agent').EXTERNAL_TOOLS.some((t) => t.name === 'word') && read('src/features/ai-agents.js').includes('deps.wordTools?.(chat)') && read('src/main.js').includes('wordTools: (chat) => agent.cliWordToolDefs(chat)') && read('src/ai/agent.js').includes('this.cliWordNote(messages)'));
   }
+  // ---- the model reaches for the word tool: writing a report, essay, letter or formatted document is Word work too, on both paths
+  {
+    const writing = ['write a report on the French Revolution', 'draft a cover letter for this job', 'write me an essay about climate change', 'make a formatted document of these notes', 'create a lab report from my data', 'type up a memo to the team', 'write a short persuasive essay'];
+    check('prefer word: a request to write a report, essay, letter or formatted document offers the tool', writing.every((t) => offerWord(user(t))), J(writing.filter((t) => !offerWord(user(t)))));
+    const chat = ['write a word problem', 'write a function to sort a list', 'make a table of prices', 'write a haiku about rain', 'what is a report card', 'summarize this report', 'how do I start an essay intro?'];
+    check('prefer word: other writing and chat still do not pay for it', chat.every((t) => !offerWord(user(t))), J(chat.filter((t) => offerWord(user(t)))));
+    const wdesc = def('word', { word: true }).description;
+    check('prefer word: the description says to use it for any .docx, an open Word file and a report, essay, letter or formatted document, not Markdown in chat (still under 410 characters)', /^Word: any \.docx, open Word file, or report, essay, letter or formatted document to write \(new\): use this, not Markdown in chat or scripts\./.test(wdesc) && wdesc.length <= 410, `${wdesc.length} ${wdesc}`);
+    const ccDef = new Agent({}).cliWordToolDefs({ cliWord: true })[0];
+    check('prefer word: Claude Code and the other CLI engines are listed the same stronger description', ccDef.description === wdesc, ccDef.description);
+    const runIn = (agent, chatObj, fn) => agent.inScope({ chat: chatObj, gate: {}, signal: new AbortController().signal }, fn);
+    const cc = new Agent({});
+    const ccNote = runIn(cc, { settings: {} }, () => cc.cliWordNote(user('write a report on the French Revolution')));
+    check('prefer word: a CLI chat asked to write a report gets the rule: the word tool (mcp__lumen__word), new, not Markdown in chat, under 260 characters', /use the word tool \(mcp__lumen__word\)/.test(ccNote) && /report, essay, letter/.test(ccNote) && /not Markdown in chat/.test(ccNote) && /\bnew\b/.test(ccNote) && ccNote.trim().length < 260, ccNote);
+    const api = new Agent({});
+    const apiNote = api.apiWordNote([], 'write me an essay about climate change');
+    check('prefer word: an API chat gets the same rule with its message, naming the tool as it is listed (word)', /use the word tool \(word\)/.test(apiNote) && !/mcp__lumen__/.test(apiNote) && /not Markdown in chat/.test(apiNote) && /edit in place/.test(apiNote), apiNote);
+    check('prefer word: an API chat gets nothing for an ordinary request', api.apiWordNote([], 'what is the capital of France') === '');
+    const usedWord = [{ role: 'user', content: 'write a report' }, { role: 'assistant', content: [{ type: 'tool_use', name: 'word', id: 'w1', input: { action: 'new' } }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'w1', content: 'ok' }] }];
+    check('prefer word: once the chat has called the tool, the note is not repeated (the description is enough)', api.apiWordNote(usedWord, 'now add a conclusion') === '');
+    const fileNote = new Agent({ filesInApps: () => 'file' }).apiWordNote([], 'edit Report.docx');
+    check('prefer word: "from the file" says to use the tool with the file path, never to open Word', /with the file path/.test(fileNote) && !/open the file/.test(fileNote), fileNote);
+    check('prefer word: the API note rides on the message text (agent.js run)', fs.readFileSync(path.join(__dirname, '..', '..', 'src/ai/agent.js'), 'utf8').includes('note + this.apiWordNote(messages, userText) }'));
+  }
   check('apps setting prompt: nothing is added when the tool is not offered', !requestFor(settings, user('hi'), undefined, { filesInApps: 'app' }).tools.some((t) => t.name === 'word' || t.name === 'desktop'));
 
   // ---- open_app path checks
