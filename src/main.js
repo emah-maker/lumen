@@ -332,7 +332,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -11876,6 +11876,12 @@ ipcMain.on('agent:stop', (event, id) => {
   else if (run?.messages) agent.stopFor(run.messages); // [stop always works] the chat's own run, even when the agent's open conversation is another
   else agent.stopOpen(); // (no run of its own: only the open conversation's, never another chat's that happens to be the only one going)
 });
+// [mid-run messages] A message typed while a chat's reply runs, handed to that run for its next step (ai/steer.js; agent.js steer): { ok, state }
+// or { ok: false, why } (the view then keeps it for the next message). `id`: the chat it was typed in; none: the sender's chat. Unsteer: Edit or ×
+// on it before it went (true: it never will).
+const steerRun = (event, id) => { if (typeof id === 'string' && id) return chatRuns.get(id); syncToSender(event); return chatRuns.get(chatId); };
+ipcMain.handle('agent:steer', (event, id, uid, text) => { const run = steerRun(event, id); return run?.messages && !run.queued && !run.deleted ? agent.steer(run.messages, { uid, text }) : { ok: false }; });
+ipcMain.handle('agent:unsteer', (event, id, uid) => { const run = steerRun(event, id); return run?.messages ? agent.unsteer(run.messages, uid) : true; });
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.

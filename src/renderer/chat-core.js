@@ -1195,13 +1195,51 @@ function queueUp(entry) {
   setMark(bubble, 'queued');
   line.add(entry);
   if (!entry.fresh) queueControls(entry);
+  if (running && window.chatQueue.steerable(entry)) steerOut(entry);
   renderQueue();
   return entry;
+}
+// [mid-run messages] Words typed while the reply runs go to it at its next step (ai/steer.js), as in Claude Code: "Queued · goes in at the AI's
+// next step", then "Sent to the AI while it worked" once it did (steered). An AI that takes nothing mid-reply (Codex, Grok Build, Antigravity) keeps
+// it for the next message, and the bubble says so. Pictures, files, "@" tabs and a screen always wait for the next message.
+const steerChat = (entry) => entry.chatId || shownChatId || undefined;
+function steerOut(entry) {
+  if (!window.assistant.steer) return;
+  entry.steer = 'asking';
+  window.assistant.steer(steerChat(entry), entry.uid, entry.text).then((r) => {
+    if (!line.has(entry)) return;
+    entry.steer = r?.ok ? 'waiting' : r?.why === 'engine' ? 'engine' : null;
+    if (r?.state === 'sent') steered([entry.uid]); else renderQueue();
+  }, () => { entry.steer = null; });
+}
+// Edit and ×: a message handed to the run is taken back first. false: it already went (its 'steered' is drawn instead).
+async function takeBack(entry) {
+  if (entry.steer !== 'asking' && entry.steer !== 'waiting') return line.has(entry);
+  const back = await window.assistant.unsteer(steerChat(entry), entry.uid).catch(() => true);
+  if (back) entry.steer = null;
+  return back && line.has(entry);
+}
+function steered(uids) {
+  let moved = false;
+  for (const uid of uids || []) {
+    const q = line.list.find((e) => e.uid === uid);
+    if (!q || !line.remove(q)) continue;
+    q.bubble.className = 'msg user steered';
+    q.meta.replaceChildren(t('chat.queued.steered'));
+    if (turn) appendToTurn(q.bubble); else append(q.bubble);
+    setMark(q.bubble, 'read');
+    moved = true;
+  }
+  if (moved && turn) { finishReply(turn.text, turn.textSource); endStream(); turn.text = null; turn.textSource = ''; } // (what it says next starts under it)
+  renderQueue();
 }
 // "Queued", "Queued · 2nd", ...: the places in this chat's line; and the bar that sends several as one turn.
 function renderQueue() {
   const mine = line.mine(queueOther);
-  mine.forEach((q, i) => { q.label.textContent = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label'); });
+  mine.forEach((q, i) => {
+    const place = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label');
+    q.label.textContent = q.steer === 'waiting' ? `${place} · ${t('chat.queued.nextStep')}` : q.steer === 'engine' ? `${place} · ${t('chat.queued.atEnd')}` : place; // [mid-run messages]
+  });
   const several = mine.filter(window.chatQueue.mergeable);
   if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
   if (!queueBar) {
@@ -1215,7 +1253,8 @@ function renderQueue() {
 function queueControls(entry) {
   const drop = () => { line.remove(entry); entry.bubble.remove(); renderQueue(); };
   const edit = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.edit') });
-  edit.onclick = () => {
+  edit.onclick = async () => {
+    if (!(await takeBack(entry))) return;
     drop();
     prompt.value = prompt.value.trim() ? `${prompt.value.replace(/\s+$/, '')}\n${entry.text}` : entry.text; // (a draft is kept)
     if (entry.images?.length) { attachments = [...attachments, ...entry.images].slice(0, MAX_ATTACH); renderAttachments(); }
@@ -1225,7 +1264,7 @@ function queueControls(entry) {
   };
   const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: '×', title: t('chat.queued.cancel') });
   cancel.setAttribute('aria-label', t('chat.queued.cancel'));
-  cancel.onclick = () => { for (const ref of refsOf(entry.images || [])) window.assistant.uploads?.discard(ref); drop(); };
+  cancel.onclick = async () => { if (!(await takeBack(entry))) return; for (const ref of refsOf(entry.images || [])) window.assistant.uploads?.discard(ref); drop(); };
   const now = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendNow'), title: t('composer.sendNow.title') });
   now.onclick = () => sendNow(entry);
   const actions = Object.assign(document.createElement('span'), { className: 'queue-actions' });
@@ -1247,17 +1286,19 @@ function sendNow(entry) {
 }
 // "Send all as one": the messages waiting in this chat become ONE message (their texts one after the other, all their pictures and files),
 // which stops the reply and goes next, like Send now. One that carries a plan to run, or opens a new chat, keeps its own turn.
-function sendAllNow() {
+async function sendAllNow() {
+  for (const q of line.mine(queueOther)) if (q.steer === 'waiting' || q.steer === 'asking') await takeBack(q); // (one that already went is out of the line)
   const merged = window.chatQueue.merge(line.mine(queueOther), MAX_ATTACH);
   if (!merged) return;
   for (const q of merged.merged) { line.remove(q); q.bubble.remove(); }
   const { text, images, tabs, screen, chatId } = merged;
-  sendNow(queueUp({ text, images, tabs, screen, opts: null, chatId }));
+  sendNow(queueUp({ text, images, tabs, screen, opts: null, chatId, now: true }));
 }
 function sendQueued() {
   if (running) return; // (a message typed in the meantime started its own turn: the line goes on when that one ends)
   // No AI connected (signed out, or its key gone while the reply ran): ask() would only park the text where nothing shows it. It is unsent text in the box instead.
   if (!modelReady) { queuedToDraft(); return; }
+  for (const q of line.list) q.steer = null; // (the run they were handed to is over: what is left never went)
   // Only what was typed in the chat shown now goes: a message queued in another chat belongs to that chat's run.
   const next = line.take(queueOther);
   if (!next) return;
@@ -2095,6 +2136,9 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'steered': // [mid-run messages] the run took these at its step
+      steered(event.uids);
+      break;
     case 'reply_complete': // the engine's reply is whole; its 'done' (cost, undo, label) follows a moment later
       finishTurn(event, { early: true });
       break;
@@ -2248,7 +2292,7 @@ function restoreCarried() {
   const entries = got.map((e) => ({ ...e, images: (e.images || []).map((a) => (a.media_type && a.data ? { ...a, url: `data:${a.media_type};base64,${a.data}` } : a)) }));
   const rest = [];
   for (const e of entries) {
-    if (running && !e.fresh) queueUp({ text: e.text, images: e.images, tabs: e.tabs, screen: e.screen, opts: e.opts, chatId: shownChatId });
+    if (running && !e.fresh) queueUp({ uid: e.uid, text: e.text, images: e.images, tabs: e.tabs, screen: e.screen, opts: e.opts, chatId: shownChatId }); // (the same uid: a message the run already took shows as sent)
     else rest.push(e);
   }
   entriesToBox(rest);
@@ -3087,6 +3131,7 @@ function drawItems(items, userEntries, replyEntries) {
       if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
       if (item.read) setMark(bubble, 'read'); // (a chat saved before the marks existed shows none)
+      if (item.steered) { bubble.classList.add('steered'); bubble.append(Object.assign(document.createElement('div'), { className: 'queue-meta', textContent: t('chat.queued.steered') })); bubble.classList.add('restored'); append(bubble); continue; } // [mid-run messages] (no Edit: it went into a reply)
       userEntries.push({ bubble, item });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length || item.outFiles?.length)) {
       const fileCards = () => { // [ai files] the file cards of a restored reply, under it
@@ -3143,7 +3188,7 @@ function renderLatest(items) {
   // Its last exchange can be asked again: the last message, with its images.
   const lastIndex = items.length - 1;
   let u = lastIndex - 1;
-  while (u >= 0 && items[u].role !== 'user') u--;
+  while (u >= 0 && (items[u].role !== 'user' || items[u].steered)) u--; // (a message sent mid-reply is not the one asked again)
   const lastUser = u >= 0 ? items[u] : null;
   // (A reply of only pictures is its own bubble; with words, the words' bubble is the reply and the pictures sit under it.)
   const lastReply = items[lastIndex]?.role === 'assistant' && !items[lastIndex].text
