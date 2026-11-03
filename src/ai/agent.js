@@ -4976,9 +4976,15 @@ ${prompt}` : prompt), historyImages: [] };
       states.set(n, { key, task: t.task, status: 'starting', step: '', tabId: null, scope: null, ctl, release: () => { signal.removeEventListener('abort', onStop); this.helperStops.delete(key); } });
     });
     // The helper's own tab, opened on its first tool call: behind the user's tab, marked as the AI's (the run's), in the run's window.
+    // A tab this chat already opened on the helper's site and no longer works in (an earlier helper's, a step's) is used again instead.
+    const claimed = new Set();
     const tabFor = (st, n) => {
       if (st.scope) return st.scope;
-      const tab = taskScope.run({ ...scope, gate: null, helper: true }, () => this.browser.openTab(undefined, { ai: true, show: false }));
+      const start = tasks[n - 1]?.urls?.[0] || '';
+      let tab = null;
+      if (start) { try { tab = this.browser.idleAiTab?.(start, { chatId: scope.chatId, exclude: claimed }) || null; } catch { tab = null; } }
+      if (!tab) tab = taskScope.run({ ...scope, gate: null, helper: true }, () => this.browser.openTab(undefined, { ai: true, show: false }));
+      if (tab?.id != null) claimed.add(tab.id);
       if (!tab || tab.id == null) throw new Error('Could not open a tab for this helper.');
       st.scope = { ...scope, chat: null, helper: true, actingHelper: n, tabId: tab.id, gate: null, hosts, tainted: chatTaint, appOnly: false, idsFresh: false, fullPage: false, aboutPage: false, skill: null };
       this.scopes.add(st.scope); // tab sleeping leaves it alone (usingTab), and a close keeps it while the helper works (runTabIds)
@@ -7195,7 +7201,7 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
 
   // ---- [signed-in sites] read_urls as_user (features/signed-in-sites.js). browser.signedIn (main.js;
   // only the sidebar's Agent has it): { hosts(), add(host), hasLogin(url), privateWindow(), open(url),
-  // close(id, { force }), unlock(id) }. Returns url -> { grant, host, sensitive } for a signed-in read,
+  // reuse(id) (that open tab again, locked, or null), close(id, { force }), unlock(id) }. Returns url -> { grant, host, sensitive } for a signed-in read,
   // or { note } saying why an as_user read stays signed out. Outside agents (MCP, gate.external) and a
   // call with no gate are never signed in: decide() treats them as external. One card per host per call.
   async planSignedIn(urls, asUser, gate = taskScope.getStore()?.gate) {
@@ -7234,11 +7240,25 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
   // and locks it: no popups while it is read). Only the approved host may load there: a redirect or
   // page jump anywhere else is stopped, the tab is closed, and { redirected: true } tells read_urls to
   // read the address signed out instead. The tab closes when the run ends unless the user switched to it.
-  async readSignedIn(url, how) {
+  // One tab per site per run: a repeated read of that site (a later step, the same call's other addresses) waits its turn and
+  // loads in the same tab, so a run that reads a site ten times adds one tab, not ten (test/e2e/ai-tabs-hidden.js).
+  readSignedIn(url, how) {
+    const lanes = taskScope.getStore() ? (taskScope.getStore().signedInLanes ||= new Map()) : null; // host -> { tabId, busy }
+    if (!lanes) return this.readSignedInOnce(url, how, null);
+    const lane = lanes.get(how.host) || { tabId: null, busy: Promise.resolve() };
+    lanes.set(how.host, lane);
+    const read = lane.busy.then(() => this.readSignedInOnce(url, how, lane));
+    lane.busy = read.catch(() => {});
+    return read;
+  }
+  async readSignedInOnce(url, how, lane) {
     const deps = this.browser.signedIn;
     const grant = { host: how.host, sensitive: how.sensitive };
-    let tab;
-    try { tab = deps.open(url); } catch { tab = null; }
+    let tab = null;
+    if (lane?.tabId != null) { try { tab = deps.reuse?.(lane.tabId) || null; } catch { tab = null; } } // (null: closed, or the user took it over)
+    const reused = Boolean(tab?.webContents);
+    if (!reused) { try { tab = deps.open(url); } catch { tab = null; } }
+    if (lane) lane.tabId = tab?.webContents ? tab.id : null;
     if (!tab?.webContents) return { redirected: true };
     const scope = taskScope.getStore();
     if (scope) (scope.signedInTabs ||= new Set()).add(tab.id);
@@ -7255,8 +7275,9 @@ ${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
     wc.on('will-redirect', onRedirect);
     wc.on('will-navigate', onNavigate);
     const away = () => left || !signedIn.hopAllowed(grant, wc.getURL() || url);
-    const fallBack = () => { try { deps.close(tab.id, { force: true }); } catch {} scope?.signedInTabs?.delete(tab.id); return { redirected: true }; };
+    const fallBack = () => { try { deps.close(tab.id, { force: true }); } catch {} scope?.signedInTabs?.delete(tab.id); if (lane) lane.tabId = null; return { redirected: true }; };
     try {
+      if (reused) await Promise.race([wc.loadURL(url).catch(() => {}), sleep(15000)]); // (after the redirect guards above are on)
       await Promise.race([waitForLoad(wc, 15000), sleep(15000)]);
       if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
       await quietWait(wc); // (waitForLoad already waited for quiet; this covers the sleep(15000) race winning)

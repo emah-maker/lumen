@@ -4364,6 +4364,16 @@ function leaveAiGroup(tab) {
   const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
   if (group?.aiTabs) tabGroups.remove(tab.id, { byUser: true });
 }
+// Research tabs and signed-in reads (below) are the AI's tabs too: with the setting on they join this one group instead of a purple
+// "AI: <site>" group each (a run that read one site fifteen times filled the strip with them: test/e2e/ai-tabs-hidden.js). Returns the
+// group's id, or null (setting off, an outside agent's unmarked tab, an agent window): the caller makes its own group then.
+function aiGroupIdOf(ids) {
+  const list = ids.map((id) => tabs.find((x) => x.id === id)).filter(Boolean);
+  if (!list.length) return null;
+  for (const x of list) joinAiGroup(x);
+  const group = aiGroup();
+  return group && list.every((x) => x.groupId === group.id) ? group.id : null;
+}
 
 function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
   const index = tabs.findIndex((t) => t.id === id);
@@ -9485,7 +9495,7 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
   openTab: inRun((url, opts) => openTab(url, { background: true, ...(mcpCall() ? {} : { openedBy: runOf() }), ...opts }).id), // [ai manners] research tabs are the AI's too
   navigateTab: inRun((id, url) => { const t = tabs.find((x) => x.id === id); if (alive(t)) t.view.webContents.loadURL(url).catch(() => {}); }),
   tabExists: inRun((id) => { const t = tabs.find((x) => x.id === id); return Boolean(t && !t.closing && (alive(t) || t.sleeping)); }),
-  createGroup: inRun((name, ids) => { const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
+  createGroup: inRun((name, ids) => { const ai = aiGroupIdOf(ids); if (ai != null) { sendTabs(); return ai; } const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
   groupExists: inRun((groupId) => tabGroups.groups.has(groupId)),
   setReading: inRun((id, on) => { const t = tabs.find((x) => x.id === id); if (t && Boolean(t.aiReading) !== on) { t.aiReading = on; sendTabs(); } }),
 });
@@ -9549,11 +9559,22 @@ const signedInReader = {
       t.aiSignedIn = { openedAt: Date.now() };
       t.aiLock = true;
       t.aiReading = true;
-      try { tabGroups.create(`AI: ${require('./features/signed-in-sites').hostOfUrl(url)} (signed in)`, [t.id], { color: require('./features/research-tabs').GROUP_COLOR }); } catch {}
+      if (aiGroupIdOf([t.id]) == null) { try { tabGroups.create(`AI: ${require('./features/signed-in-sites').hostOfUrl(url)} (signed in)`, [t.id], { color: require('./features/research-tabs').GROUP_COLOR }); } catch {} } // [ai tabs] the one folded "AI tabs" group, when that setting is on
       sendTabs();
     }
     return tab;
   }),
+  // The run's signed-in tab for a site, read again (agent.js readSignedIn): locked again, or null when it is gone, asleep, or the user
+  // looked at it or took it over (then it is theirs, and the next read opens a tab of its own).
+  reuse: (id) => {
+    const found = tabAnywhere(id);
+    const t = found?.t;
+    if (!t?.aiSignedIn || t.closing || !alive(t) || !manners.isAiTab(t) || (t.viewedAt || 0) >= t.aiSignedIn.openedAt) return null;
+    t.aiLock = true;
+    t.aiReading = true;
+    withWindow(found.rec, () => sendTabs());
+    return { id: t.id, webContents: t.view.webContents };
+  },
   unlock: (id) => {
     const found = tabAnywhere(id);
     if (!found) return;
@@ -9656,6 +9677,14 @@ const agent = new Agent({
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI → helpers: the delegate tool is offered; which model they use (agent.js delegate)
   actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings → AI → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
+  idleAiTab: inRun((url, { chatId = null, exclude = new Set() } = {}) => { // [ai tabs] a helper's site already open in a tab this chat opened and no longer works in: the helper uses that one (agent.js parallelTasks)
+    const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
+    const want = hostOf(url);
+    if (!want || chatId == null) return null;
+    const busy = new Set(agent.runTabIds());
+    const t = tabs.find((x) => manners.isAiTab(x) && x.openedBy?.chatId === chatId && alive(x) && !x.closing && !x.aiSignedIn && !x.isolated && !x.pinned && x.id !== activeId && !busy.has(x.id) && !exclude.has(x.id) && hostOf(realUrl(x.view.webContents)) === want);
+    return t ? { id: t.id, webContents: t.view.webContents } : null;
+  }),
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
@@ -11706,6 +11735,13 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     if (msg.type === 'tool_done' && Number.isInteger(run.tabId)) { // [canvas pages] a Canvas read works in a background tab of its own: the step names it, ended or failed (a sign-in page is worth opening)
       const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
       if (tool && tool.name === 'connector' && tool.input?.app === 'canvas') msg = { ...msg, tabId: run.tabId };
+    }
+    if (msg.type === 'tool' && msg.name === 'read_urls' && Array.isArray(msg.input?.urls)) (run.readHosts ||= new Map()).set(msg.id, require('./features/signed-in-sites').hostOfUrl(msg.input.urls[0])); // (the saved step keeps no urls)
+    if (msg.type === 'tool_done' && msg.tabId == null && run.readHosts?.has(msg.id)) { // [ai tabs] a read's own tab (signed in, or a research tab) sits folded in "AI tabs": the step names it, so the card's Tabs list and Go to tab reach it
+      const host = run.readHosts.get(msg.id);
+      run.readHosts.delete(msg.id);
+      const own = host ? allTabsEverywhere().filter((x) => x.openedBy?.runId === runId && (x.aiSignedIn || x.isolated) && !x.closing && require('./features/signed-in-sites').hostOfUrl(x.pendingCloseUrl ?? (alive(x) ? realUrl(x.view.webContents) : x.sleepUrl || '')) === host) : [];
+      if (own.length) msg = { ...msg, tabId: own[own.length - 1].id };
     }
     trackRunDetails(run, msg);
     // [background helpers] A helper Claude Code ran in the background reports on the card of the run that started it, after that run's 'done': its steps
