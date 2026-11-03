@@ -266,8 +266,42 @@ function Set-Char($font, $req) {
 }
 function Set-Highlight($range, $req) { if ($req.ContainsKey('highlight')) { $range.HighlightColorIndex = [int]$HIGHLIGHT[[string]$req['highlight']] } }
 
+# In the text, right after the first place find matches: text, a footnote or endnote, or a cross-reference (a caption "Figure 2" / "Table 1",
+# or a bookmark), with Word's own Footnotes.Add / Endnotes.Add / InsertCrossReference.
+function Cmd-InsertAt($d, $req) {
+  $hits = Find-All $d ([string]$req['find']) 1
+  if ($hits.Count -eq 0) { throw ('No match for "' + [string]$req['find'] + '" (find is the exact text, with its case). Use read to see the text.') }
+  $r = $d.Range([int]$hits[0].End, [int]$hits[0].End)
+  $done = @{}
+  if ($req.ContainsKey('ref')) {
+    $ref = [string]$req['ref']
+    if ($req.ContainsKey('text')) { $r.InsertAfter([string]$req['text']); $r.Collapse(0) }
+    elseif (-not ([string]$req['find']).EndsWith(' ')) { $r.InsertAfter(' '); $r.Collapse(0) }
+    if ($ref -match '^(?i)(figure|table) (\d+)$') {
+      $label = $Matches[1].Substring(0, 1).ToUpper() + $Matches[1].Substring(1).ToLower()
+      $items = @($d.GetCrossReferenceItems($label))
+      if ([int]$Matches[2] -gt $items.Count) { throw ('There is no ' + $label + ' ' + $Matches[2] + ' caption to point at. Add one with a caption, or use read to see the captions.') }
+      $r.InsertCrossReference($label, 3, [int]$Matches[2], $true)
+    } else {
+      if (-not $d.Bookmarks.Exists($ref)) { throw ('There is no bookmark named ' + $ref + '. Make one with style (find, bookmark).') }
+      $r.InsertCrossReference(2, -1, $ref, $true)
+    }
+    $done.ref = $ref
+  } elseif ($req.ContainsKey('note')) {
+    $miss = [Type]::Missing
+    if ([string]$req['note'] -eq 'endnote') { [void]$d.Endnotes.Add($r, $miss, [string]$req['text']) } else { [void]$d.Footnotes.Add($r, $miss, [string]$req['text']) }
+    $done.note = @{ kind = [string]$req['note'] }
+  } else {
+    $r.InsertAfter([string]$req['text'])
+    $done.text = $true
+  }
+  $script:last[(Doc-Key $d)] = @([int]$hits[0].Start, [int]$hits[0].End + 1)
+  return @{ doc = [string]$d.Name; done = $done; tracking = [bool]$d.TrackRevisions }
+}
+
 function Cmd-Insert($req) {
   $d = Find-Doc $req
+  if ($req.ContainsKey('find')) { return (Cmd-InsertAt $d $req) }
   $text = ([string]$req['text']) -replace "`r`n", "`n" -replace "`r", "`n"
   $text = $text.TrimEnd("`n")
   $paras = $text.Split("`n")
@@ -341,8 +375,18 @@ function Cmd-Style($req) {
     Set-Highlight $h $req
     $done++
   }
+  $extra = @{ formatted = $done }
+  if ($req.ContainsKey('bookmark') -and $done -gt 0) {
+    if ($d.Bookmarks.Exists([string]$req['bookmark'])) { throw ('There is already a bookmark named ' + [string]$req['bookmark'] + '. Use another name.') }
+    [void]$d.Bookmarks.Add([string]$req['bookmark'], $hits[0]); $extra.bookmark = [string]$req['bookmark']
+  }
+  if ($req.ContainsKey('link') -and $done -gt 0) {
+    $l = [string]$req['link']; $links = 0
+    for ($k = $hits.Count - 1; $k -ge 0; $k--) { if ($l.StartsWith('#')) { [void]$d.Hyperlinks.Add($hits[$k], '', $l.Substring(1)) } else { [void]$d.Hyperlinks.Add($hits[$k], $l) }; $links++ }
+    $extra.links = $links
+  }
   if ($done -gt 0) { $script:last[(Doc-Key $d)] = @([int]$hits[0].Start, [int]$hits[0].End) }
-  return @{ doc = [string]$d.Name; formatted = $done }
+  return (@{ doc = [string]$d.Name } + $extra)
 }
 
 # ---- format: fonts and spacing through the styles (Normal and the headings, or one style), or on the paragraphs holding some text; margins and

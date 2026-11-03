@@ -239,7 +239,7 @@ function createWord(deps = {}) {
     const done = async (text) => { await cardChanged(ctx, ref); return text; };
     const hint = d.tracking ? '' : ' Tracked changes are off, so the edit is not marked; track with on:true shows later edits as revisions.';
     switch (A) {
-      case 'insert': { const r = await H.insert({ doc: target, at: v.at, heading: v.heading, text: v.text, style: v.style, levels: v.levels, bold: v.bold, italic: v.italic }); return done(`Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
+      case 'insert': { if (v.find) { const r = await H.insert({ doc: target, ...formatFields(v) }); return done(`${atDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.insert({ doc: target, at: v.at, heading: v.heading, text: v.text, style: v.style, levels: v.levels, bold: v.bold, italic: v.italic }); return done(`Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
       case 'replace': { const r = await H.replace({ doc: target, find: v.find, replace: v.replace }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
       case 'format': { const r = await H.format({ doc: target, ...formatFields(v) }); return done(`${formatDone(r.done || {}, d.name, v, false)} Not saved yet.${d.tracking ? '' : ' Tracked changes are off, so the edit is not marked.'}`); }
       case 'style': { const r = await H.style({ doc: target, ...formatFields(v) }); return done(styleDone(r, d.name, v)); }
@@ -278,7 +278,9 @@ function createWord(deps = {}) {
   }
   const charWords = (v) => [v.font && `font ${v.font}`, v.size && `size ${v.size} pt`, v.bold !== undefined && (v.bold ? 'bold' : 'not bold'), v.italic !== undefined && (v.italic ? 'italic' : 'not italic'), v.underline && (v.underline === 'none' ? 'no underline' : `${v.underline === 'single' ? '' : `${v.underline} `}underline`), v.strike !== undefined && (v.strike ? 'struck through' : 'not struck through'), v.color && `color ${v.color === 'auto' ? 'automatic' : `#${v.color}`}`, v.highlight && (v.highlight === 'none' ? 'no highlight' : `${v.highlight} highlight`)].filter(Boolean);
   const hasLook = (v) => charWords(v).length > 0 || ['line', 'before', 'after', 'align', 'indent', 'firstLine', 'keepNext'].some((k) => v[k] !== undefined);
-  const styleDone = (r, name, v) => (r.formatted ? `Formatted ${r.formatted} match${r.formatted === 1 ? '' : 'es'} of ${`“${spec.clip(v.find, 40)}”`} in ${name}: ${[v.style && `style ${v.style}`, ...charWords(v)].filter(Boolean).join(', ')}.` : `No match for “${spec.clip(v.find, 40)}” in ${name}; nothing changed.`);
+  const styleDone = (r, name, v) => (r.formatted ? `Formatted ${r.formatted} match${r.formatted === 1 ? '' : 'es'} of ${`“${spec.clip(v.find, 40)}”`} in ${name}: ${[v.style && `style ${v.style}`, ...charWords(v), r.links && `${r.links === 1 ? 'a link' : `${r.links} links`} to ${v.link.startsWith('#') ? `the bookmark ${v.link.slice(1)}` : spec.clip(v.link, 60)}`, r.bookmark && `bookmarked as ${r.bookmark} (ref and #links can point at it)`].filter(Boolean).join(', ')}.` : `No match for “${spec.clip(v.find, 40)}” in ${name}; nothing changed.`);
+  // insert with find: what went in after the match
+  const atDone = (r, name, v) => `${r.ref ? `Added a cross-reference to ${r.ref}` : r.note ? `Added ${r.note.kind === 'endnote' ? 'an endnote' : 'a footnote'}${r.note.id ? ` (${r.note.kind} ${r.note.id})` : ''}` : 'Added the text'} after “${spec.clip(v.find, 40)}” in ${name}.${r.ref ? ' Word keeps it up to date (it updates fields on opening and printing).' : ''}`;
   const isEdit = (v) => v.index !== undefined || v.find !== undefined;
   // a table that is there, changed: what was done, in words
   function tableDone(r, name, v) {
@@ -376,10 +378,11 @@ function createWord(deps = {}) {
     cardUse(ctx, ref, spec.stepLabel(v, ref.name), { com: false });
     const before = (await docx().readDocx(buf, { budget: 1e6 })).text.split(String.fromCharCode(10));
     const pic = A === 'image' ? await pictureFor(v) : null;
-    const r = A === 'image' ? await docx().imageDocx(buf, { ...formatFields(v), data: pic.buf, info: pic.info, name: pic.name }, { track: true }) : A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await docx().tableDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
+    const r = A === 'insert' && v.find ? await docx().insertDocx(buf, formatFields(v), { track: true }) : A === 'image' ? await docx().imageDocx(buf, { ...formatFields(v), data: pic.buf, info: pic.info, name: pic.name }, { track: true }) : A === 'format' ? await docx().formatDocx(buf, formatFields(v), { track: true }) : A === 'style' ? await docx().styleDocx(buf, formatFields(v)) : A === 'table' && isEdit(v) ? await docx().tableDocx(buf, formatFields(v), { track: true }) : await docx().editDocx(buf, op, { track: true });
     writeAtomic(real, r.buf);
     try { await cardChanged(ctx, ref, { lines: require('./card').pageAround(before, (await docx().readDocx(r.buf, { budget: 1e6 })).text.split(String.fromCharCode(10))) }); } catch { /* the preview is a courtesy */ }
     noteRead(ctx, ref.key);
+    if (A === 'insert' && v.find) return `${atDone(r.done, ref.name, v)} Saved in the file, as a tracked change.`;
     if (A === 'image') return `${imageDone(r, ref.name, v, pic)} Saved in the file, as a tracked change.`;
     if (A === 'table' && isEdit(v)) return `${tableDone(r.done, ref.name, v)} Saved in the file; new and replaced text and new rows are tracked changes, the look is not.`;
     if (A === 'style') return `${styleDone(r, ref.name, v)} Saved in the file (formatting is not a tracked change).`;

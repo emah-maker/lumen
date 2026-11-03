@@ -477,6 +477,11 @@ const STYLE_DEFS = {
   Quote: styleXml('Quote', 'Quote', '<w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr>'),
   ListBullet: styleXml('ListBullet', 'List Bullet'),
   ListNumber: styleXml('ListNumber', 'List Number'),
+  FootnoteText: '<w:style w:type="paragraph" w:styleId="FootnoteText"><w:name w:val="footnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>',
+  EndnoteText: '<w:style w:type="paragraph" w:styleId="EndnoteText"><w:name w:val="endnote text"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:sz w:val="20"/><w:szCs w:val="20"/></w:rPr></w:style>',
+  FootnoteReference: '<w:style w:type="character" w:styleId="FootnoteReference"><w:name w:val="footnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>',
+  EndnoteReference: '<w:style w:type="character" w:styleId="EndnoteReference"><w:name w:val="endnote reference"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:vertAlign w:val="superscript"/></w:rPr></w:style>',
+  Hyperlink: '<w:style w:type="character" w:styleId="Hyperlink"><w:name w:val="Hyperlink"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr></w:style>',
   Header: '<w:style w:type="paragraph" w:styleId="Header"><w:name w:val="header"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>',
   Footer: '<w:style w:type="paragraph" w:styleId="Footer"><w:name w:val="footer"/><w:basedOn w:val="Normal"/><w:uiPriority w:val="99"/><w:unhideWhenUsed/><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:style>',
   Caption: '<w:style w:type="paragraph" w:styleId="Caption"><w:name w:val="caption"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:uiPriority w:val="35"/><w:unhideWhenUsed/><w:qFormat/><w:pPr><w:spacing w:after="200" w:line="240" w:lineRule="auto"/></w:pPr><w:rPr><w:i/><w:iCs/><w:color w:val="44546A"/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>',
@@ -832,8 +837,194 @@ async function styleDocx(buf, op) {
     if (r.count) { xml = splice(xml, p.start, p.end, r.xml); count += r.count; }
   }
   if (!count) throw new WordError(`No match for “${String(op.find).slice(0, 60)}” (find is the exact text, with its case, inside one paragraph). Use read to see the text.`);
+  const done = {};
+  if (op.bookmark) {
+    if (new RegExp(`<w:bookmarkStart\\b[^>]*w:name="${op.bookmark}"`, 'i').test(xml)) throw new WordError(`There is already a bookmark named ${op.bookmark}. Use another name.`);
+    const id = makeIds(xml)();
+    const p = allParas(xml).find((q) => matchesIn(xml.slice(q.start, q.end), String(op.find)).length);
+    const one = xml.slice(p.start, p.end);
+    const [a, b] = matchesIn(one, String(op.find))[0];
+    const r = wrapText(one, a, b, `<w:bookmarkStart w:id="${id}" w:name="${op.bookmark}"/>`, `<w:bookmarkEnd w:id="${id}"/>`);
+    xml = splice(xml, p.start, p.end, r);
+    done.bookmark = op.bookmark;
+  }
+  if (op.link) {
+    let open;
+    if (op.link.startsWith('#')) open = `<w:hyperlink w:anchor="${esc(op.link.slice(1))}" w:history="1">`;
+    else {
+      const relsName = 'word/_rels/document.xml.rels';
+      const rels = files.get(relsName) ?? (zip.has(relsName) ? await zip.text(relsName) : '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>');
+      const rid = `rId${Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1]))) + 1}`;
+      files.set(relsName, rels.replace('</Relationships>', `<Relationship Id="${rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${esc(op.link)}" TargetMode="External"/></Relationships>`));
+      if (!/<w:document\b[^>]*\sxmlns:r=/.test(xml)) xml = xml.replace(/<w:document\b/, `<w:document xmlns:r="${R_NS}"`);
+      open = `<w:hyperlink r:id="${rid}" w:history="1">`;
+    }
+    const sp = await partOf(zip, files, 'styles');
+    files.set(sp.name, ensureStyle(files.get(sp.name) ?? sp.text, 'Hyperlink'));
+    let links = 0;
+    for (const p of allParas(xml).reverse()) {
+      let one = xml.slice(p.start, p.end);
+      const hits = matchesIn(one, String(op.find));
+      if (!hits.length) continue;
+      for (const [a, b] of hits.reverse()) { one = wrapText(one, a, b, open, '</w:hyperlink>', (x) => putRunStyle(x, 'Hyperlink')); links++; }
+      xml = splice(xml, p.start, p.end, one);
+    }
+    done.links = links;
+  }
   files.set('word/document.xml', xml);
-  return { buf: pack(entries, files), formatted: count };
+  return { buf: pack(entries, files), formatted: count, ...done };
+}
+
+// ---- in the text: a boundary between runs at a character offset of a paragraph (the run there is split), and what goes there or around a span.
+// The offsets are those of the paragraph's text as runsIn reads it.
+function runsWithText(s) {
+  const rs = runsIn(s, elementAt(s, 0)).map((r) => ({ ...r, ...runInfo(s, r) }));
+  let pos = 0;
+  for (const r of rs) { r.from = pos; pos += r.text.length; r.to = pos; }
+  return rs;
+}
+// Every [start, end) where find is in paragraph s (with case).
+function matchesIn(s, find) {
+  const text = runsWithText(s).map((r) => r.text).join('');
+  const out = [];
+  for (let i = text.indexOf(find); find && i >= 0; i = text.indexOf(find, i + find.length)) out.push([i, i + find.length]);
+  return out;
+}
+// s with a run boundary at offset (a plain run there split in two); a run that is not plain text (a field, a picture) is not split.
+function cutAt(s, offset) {
+  const r = runsWithText(s).find((x) => x.from < offset && offset < x.to);
+  if (!r) return s;
+  if (!r.plain) throw new WordError('That text runs through a field or a picture, so it is not changed here. Use Word for it.');
+  const tag = /^<w:r(?:\s[^>]*)?>/.exec(s.slice(r.start, r.end))[0];
+  const rprEl = kidOf(s, elementAt(s, r.start), 'w:rPr');
+  const rpr = rprEl ? s.slice(rprEl.start, rprEl.end) : '';
+  const k = offset - r.from;
+  return splice(s, r.start, r.end, `${tag}${rpr}${textRuns(r.text.slice(0, k))}</w:r>${tag}${rpr}${textRuns(r.text.slice(k))}</w:r>`);
+}
+// Where a piece goes at a boundary (after cutAt): the end of the run that ends there, or the start of the first run (or after pPr).
+function boundaryAt(s, offset) {
+  const rs = runsWithText(s);
+  const before = rs.filter((x) => x.to === offset && x.from < offset).pop();
+  if (before) return before.end;
+  const first = rs.find((x) => x.from >= offset && x.to > x.from);
+  if (first) return first.start;
+  const ppr = kidOf(s, elementAt(s, 0), 'w:pPr');
+  return ppr ? ppr.end : innerOf(s, elementAt(s, 0)).from;
+}
+// Tags in s[a, b) close what they open (so a wrapper around them is valid XML).
+function balanced(s, a, b) {
+  const re = new RegExp(TAG.source, 'g'); re.lastIndex = a;
+  let depth = 0; let m;
+  while ((m = re.exec(s)) && m.index < b) { if (m[1] === '/') { if (--depth < 0) return false; } else if (m[4] !== '/') depth++; }
+  return depth === 0;
+}
+// Paragraph s with open/close around its text [a, b) (each run in it first passed through each(), if given).
+function wrapText(s, a, b, open, close, each = null) {
+  s = cutAt(cutAt(s, b), a);
+  const rs = runsWithText(s);
+  const inside = rs.filter((x) => x.from >= a && x.to <= b && x.to > x.from);
+  const start = inside[0]?.start ?? boundaryAt(s, a);
+  const end = inside.length ? inside[inside.length - 1].end : start;
+  if (!balanced(s, start, end)) throw new WordError('That text is partly inside a tracked change or a link, so it is not wrapped here. Use Word for it.');
+  let mid = s.slice(start, end);
+  if (each) mid = each(mid);
+  return s.slice(0, start) + open + mid + close + s.slice(end);
+}
+// Every run in a piece of a paragraph gets a character style (rStyle, first in its rPr).
+function putRunStyle(x, id) {
+  const wrapper = `<w:p>${x}</w:p>`;
+  let out = wrapper;
+  for (const r of runsIn(out, elementAt(out, 0)).reverse()) {
+    let rpr; [out, rpr] = upsert(out, elementAt(out, r.start), 'w:rPr', (had) => had || '<w:rPr></w:rPr>', ['w:rPr']);
+    [out] = upsert(out, rpr, 'w:rStyle', () => `<w:rStyle w:val="${id}"/>`, R_ORDER);
+  }
+  return out.slice(5, -6);
+}
+
+// ---- notes and cross-references (the insert action with find): text, a footnote or endnote (its mark here, its text in footnotes.xml or
+// endnotes.xml), or a REF field to a caption ("Figure 2": a _Ref bookmark around the caption's label and number, as Word's Insert
+// Cross-reference makes) or to a bookmark.
+const NOTE = { footnote: { part: 'footnotes', el: 'w:footnote', ref: 'w:footnoteReference', mark: 'w:footnoteRef', text: 'FootnoteText', style: 'FootnoteReference' }, endnote: { part: 'endnotes', el: 'w:endnote', ref: 'w:endnoteReference', mark: 'w:endnoteRef', text: 'EndnoteText', style: 'EndnoteReference' } };
+// The caption paragraph that shows "<label> <n>" (its SEQ field's number): [start, end] in xml, or null.
+function captionPara(xml, label, n) {
+  for (const p of allParas(xml)) {
+    const one = xml.slice(p.start, p.end);
+    for (const m of one.matchAll(seqRe(label))) if (Number(m[2] || m[5]) === n) return p;
+  }
+  return null;
+}
+// The bookmark Word's cross-references use around a caption's label and number: found, or made (to the end of its SEQ field). -> [xml, name]
+function captionBookmark(xml, p, ctx) {
+  let one = xml.slice(p.start, p.end);
+  const had = /<w:bookmarkStart\b[^>]*w:name="(_Ref[^"]*)"/.exec(one);
+  if (had) return [xml, had[1]];
+  const name = `_Ref${String(ctx.nextId()).padStart(9, '0')}`;
+  const id = ctx.nextId();
+  const endField = (() => { const i = one.search(/SEQ /); const e = one.indexOf('<w:fldChar w:fldCharType="end"/></w:r>', i); if (e >= 0) return e + '<w:fldChar w:fldCharType="end"/></w:r>'.length; const f2 = one.indexOf('</w:fldSimple>', i); return f2 >= 0 ? f2 + '</w:fldSimple>'.length : -1; })();
+  if (endField < 0) throw new WordError('That caption has no number field Lumen can point at. Use Word for this cross-reference.');
+  one = one.slice(0, endField) + `<w:bookmarkEnd w:id="${id}"/>` + one.slice(endField);
+  const at = boundaryAt(one, 0);
+  one = one.slice(0, at) + `<w:bookmarkStart w:id="${id}" w:name="${name}"/>` + one.slice(at);
+  return [splice(xml, p.start, p.end, one), name];
+}
+// op: { find, text, note, ref } -> { buf, done: { note, ref } }
+async function insertDocx(buf, op, { track = false, now = () => new Date() } = {}) {
+  const { xml: original, zip, entries } = await openForEdit(buf);
+  bodyOf(original);
+  const ctx = { track, nextId: makeIds(original), date: now().toISOString().replace(/\.\d+Z$/, 'Z') };
+  const files = new Map();
+  let xml = original;
+  const find = String(op.find);
+  if (!allParas(xml).some((q) => matchesIn(xml.slice(q.start, q.end), find).length)) throw new WordError(`No match for “${find.slice(0, 60)}” (find is the exact text, with its case, inside one paragraph). Use read to see the text.`);
+  const ins = (x) => (ctx.track ? `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${x}</w:ins>` : x);
+  const done = {};
+  let piece;
+  if (op.ref) {
+    let name; let shown;
+    const cap = /^(figure|table) (\d+)$/i.exec(op.ref);
+    if (cap) {
+      const label = cap[1][0].toUpperCase() + cap[1].slice(1).toLowerCase();
+      const p = captionPara(xml, label, Number(cap[2]));
+      if (!p) throw new WordError(`There is no ${label} ${cap[2]} caption to point at. Add one with a caption (image or table), or use read to see the captions.`);
+      [xml, name] = captionBookmark(xml, p, ctx);
+      shown = `${label} ${cap[2]}`;
+    } else {
+      const bm = new RegExp(`<w:bookmarkStart\\b[^>]*w:name="${op.ref}"[^>]*/>`, 'i').exec(xml);
+      if (!bm) throw new WordError(`There is no bookmark named ${op.ref}. Make one with style (find, bookmark).`);
+      name = /w:name="([^"]*)"/.exec(bm[0])[1];
+      const id = /w:id="([^"]*)"/.exec(bm[0])[1];
+      const end = xml.indexOf(`<w:bookmarkEnd w:id="${id}"/>`, bm.index);
+      shown = end > 0 ? unesc([...xml.slice(bm.index, end).matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => m[1]).join('')).slice(0, 200) || name : name;
+    }
+    piece = ins(`${op.text ? `<w:r>${textRuns(op.text)}</w:r>` : ''}${fieldRuns(`REF ${name} \\h`, shown)}`);
+    done.ref = shown;
+  } else if (op.note) {
+    const N = NOTE[op.note];
+    const np = await partOf(zip, files, N.part);
+    const id = Math.max(0, ...[...np.text.matchAll(new RegExp(`<${N.el}\\b[^>]*w:id="(-?\\d+)"`, 'g'))].map((m) => Number(m[1]))) + 1;
+    const body = `<${N.el} w:id="${id}"><w:p><w:pPr><w:pStyle w:val="${N.text}"/></w:pPr><w:r><w:rPr><w:rStyle w:val="${N.style}"/></w:rPr><${N.mark}/></w:r><w:r><w:t xml:space="preserve"> ${esc(cleanText(op.text))}</w:t></w:r></w:p></${N.el}>`;
+    files.set(np.name, np.text.replace(new RegExp(`</w:${N.part}>\\s*$`), `${body}</w:${N.part}>`));
+    const sp = await partOf(zip, files, 'styles');
+    files.set(sp.name, ensureStyle(ensureStyle(files.get(sp.name) ?? sp.text, N.text), N.style));
+    piece = ins(`<w:r><w:rPr><w:rStyle w:val="${N.style}"/></w:rPr><${N.ref} w:id="${id}"/></w:r>`);
+    done.note = { kind: op.note, id };
+  } else piece = null;
+  // the place: right after the first match, in the paragraph's look there
+  const p = allParas(xml).find((q) => matchesIn(xml.slice(q.start, q.end), find).length);
+  let one = xml.slice(p.start, p.end);
+  const [a, b] = matchesIn(one, find)[0];
+  void a;
+  one = cutAt(one, b);
+  const at = boundaryAt(one, b);
+  if (piece === null) {
+    const prev = runsWithText(one).filter((x) => x.to === b && x.from < b).pop();
+    const rprEl = prev ? kidOf(one, prev, 'w:rPr') : null;
+    piece = ins(`<w:r>${rprEl ? one.slice(rprEl.start, rprEl.end) : ''}${textRuns(String(op.text))}</w:r>`);
+    done.text = true;
+  } else if (op.ref && !op.text && !/\s$/.test(find)) piece = ins('<w:r><w:t xml:space="preserve"> </w:t></w:r>') + piece;
+  one = one.slice(0, at) + piece + one.slice(at);
+  files.set('word/document.xml', splice(xml, p.start, p.end, one));
+  return { buf: pack(entries, files), done, tracked: track };
 }
 
 // The body's paragraphs with their text (a tab counts: a typed contents line is often "Introduction<tab>3") and heading level.
@@ -1012,9 +1203,10 @@ function columnBreak(xml, p, ctx) {
 }
 
 // A part of the package by its relationship type from document.xml (styles, settings): { name, rels } or null.
-const REL = { styles: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles', settings: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings', numbering: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering' };
-const CT = { styles: 'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml', settings: 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml', numbering: 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml' };
-const EMPTY_PART = { styles: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}>${STYLE_DEFS.Normal}</w:styles>`, settings: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}></w:settings>`, numbering: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}></w:numbering>` };
+const REL = { footnotes: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes', endnotes: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes', styles: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles', settings: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings', numbering: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering' };
+const CT = { footnotes: 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml', endnotes: 'application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml', styles: 'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml', settings: 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml', numbering: 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml' };
+const NOTE_SEP = (el) => `<${el} w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></${el}><${el} w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></${el}>`;
+const EMPTY_PART = { footnotes: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes ${NS}>${NOTE_SEP('w:footnote')}</w:footnotes>`, endnotes: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:endnotes ${NS}>${NOTE_SEP('w:endnote')}</w:endnotes>`, styles: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}>${STYLE_DEFS.Normal}</w:styles>`, settings: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}></w:settings>`, numbering: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering ${NS}></w:numbering>` };
 async function partOf(zip, files, kind) {
   const relsName = 'word/_rels/document.xml.rels';
   let rels = files.get(relsName) ?? (zip.has(relsName) ? await zip.text(relsName) : null);
@@ -1263,4 +1455,4 @@ function newDocx() {
   return buildZip(Object.entries(files).map(([name, text]) => ({ name, data: Buffer.from(text, 'utf8') })));
 }
 
-module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, imageDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };
+module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, imageDocx, insertDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };

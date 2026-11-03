@@ -282,8 +282,9 @@ function formatOf(input) {
 
 // What each change takes besides action, doc and path (tab_id: the MCP listing adds it to every tool). An argument it does not take is refused,
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
+const BOOKMARK = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic', 'find', 'note', 'ref'], replace: ['find', 'replace'], style: ['find', 'style', ...CHAR_ARGS, 'link', 'bookmark'], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -314,6 +315,23 @@ function validate(input) {
     }
     case 'insert': {
       if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      if (input.find !== undefined && input.find !== '') {
+        // in the text: right after the first place find matches, as text, a footnote or endnote, or a cross-reference
+        if (input.at !== undefined || input.heading !== undefined || input.style !== undefined) fail('find puts the insert inside a paragraph, right after that text; at, heading and style place new paragraphs. Give one or the other.');
+        out.find = str(input.find, 'find', MAX.find);
+        if (input.note !== undefined) { out.note = { footnote: 'footnote', endnote: 'endnote' }[String(input.note).trim().toLowerCase()]; if (!out.note) fail('note must be footnote or endnote.'); }
+        if (input.ref !== undefined) {
+          out.ref = str(input.ref, 'ref', 60, { required: true }).trim();
+          if (out.note) fail('Give note or ref, not both.');
+          if (!/^(figure|table) \d{1,4}$/i.test(out.ref) && !BOOKMARK.test(out.ref)) fail('ref is "Figure 2", "Table 1" (a caption) or a bookmark\'s name (made with style: find, bookmark).');
+          if (input.text !== undefined) out.text = str(input.text, 'text', 200);
+          break;
+        }
+        out.text = str(input.text, 'text', out.note ? 4000 : MAX.text, { required: true });
+        if (!out.note && /[\r\n]/.test(out.text)) fail('Text put inside a paragraph (with find) is one line; insert with at or heading adds paragraphs.');
+        break;
+      }
+      if (input.note !== undefined || input.ref !== undefined) fail('note and ref go with find: the text the note mark or the cross-reference goes right after.');
       Object.assign(out, placeOf(input));
       out.text = str(input.text, 'text', MAX.text, { required: true });
       const style = styleName(input.style); if (style) out.style = style;
@@ -334,7 +352,16 @@ function validate(input) {
       out.find = str(input.find, 'find', MAX.find, { required: true });
       const style = styleName(input.style); if (style) out.style = style;
       charOf(input, out);
-      if (!out.style && !hasAny(out, CHAR_KEYS)) fail('Give a style, bold or italic to apply (or font, size, underline, color, highlight, strike).');
+      if (input.link !== undefined) {
+        const l = str(input.link, 'link', 2000, { required: true }).trim();
+        if (l.startsWith('#')) { if (!BOOKMARK.test(l.slice(1))) fail('link "#name" goes to a bookmark: letters, digits and _, starting with a letter.'); out.link = l; } else {
+          let u; try { u = new URL(l); } catch { fail('link must be a web address (https://...), mailto:, or #bookmark.'); }
+          if (!['https:', 'http:', 'mailto:'].includes(u.protocol)) fail('link must be a web address (https://...), mailto:, or #bookmark.');
+          out.link = u.href;
+        }
+      }
+      if (input.bookmark !== undefined) { out.bookmark = str(input.bookmark, 'bookmark', 40, { required: true }).trim(); if (!BOOKMARK.test(out.bookmark)) fail('bookmark is a name of letters, digits and _, starting with a letter (at most 40), such as Results or Fig_setup.'); }
+      if (!out.style && !hasAny(out, CHAR_KEYS) && !out.link && !out.bookmark) fail('Give a style, bold or italic to apply (or font, size, underline, color, highlight, strike, link, bookmark).');
       break;
     }
     case 'format': if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg); Object.assign(out, formatOf(input)); break;
@@ -389,6 +416,8 @@ function formatParts(i = {}) {
   if (i.underline && i.underline !== 'none' && i.underline !== false) parts.push('underline');
   if (i.color) parts.push(`color ${clip(i.color, 12)}`);
   if (i.highlight && i.highlight !== 'none') parts.push(`${clip(i.highlight, 12)} highlight`);
+  if (i.link) parts.push('a link');
+  if (i.bookmark) parts.push(`bookmark ${clip(i.bookmark, 30)}`);
   if (i.align) parts.push(`${clip(i.align, 10)} aligned`);
   if (i.indent !== undefined || (i.first_line ?? i.firstLine) !== undefined) parts.push('indents');
   if (i.list) parts.push(i.list === 'none' || i.list === 'off' ? 'no list' : /^bullet/.test(i.list) ? 'a bulleted list' : 'a numbered list');
@@ -417,7 +446,8 @@ function stepLabel(input = {}, name = '') {
     case 'open': return `Opening ${baseName(input.path) || 'a document'} in Word`;
     case 'new': return input.path ? `Creating ${baseName(input.path)}` : 'Starting a new Word document';
     case 'read': return `Reading ${doc}`;
-    case 'insert': { const n = lines(input.text); return `Writing in ${doc}: adding ${count(n, 'paragraph', 'paragraphs')}${where(input)}`; }
+    case 'insert': if (input.find) return input.ref ? `Writing in ${doc}: a cross-reference to ${clip(input.ref, 30)} after “${clip(input.find, 30)}”` : input.note ? `Writing in ${doc}: a${input.note === 'endnote' ? 'n endnote' : ' footnote'} after “${clip(input.find, 30)}”` : `Writing in ${doc}: text after “${clip(input.find, 30)}”`;
+      { const n = lines(input.text); return `Writing in ${doc}: adding ${count(n, 'paragraph', 'paragraphs')}${where(input)}`; }
     case 'replace': return `Editing ${doc}: replacing “${clip(input.find, 30)}” with “${clip(input.replace, 30)}”`;
     case 'style': { const extra = formatParts({ ...input, style: undefined, based_on: undefined }); return `Formatting ${doc}: “${clip(input.find, 30)}”${input.style ? ` as ${input.style}` : ''}${extra.length ? `, ${extra.join(', ')}` : ''}`; }
     case 'table': if (input.index !== undefined || input.find) return `Editing ${doc}: ${input.index !== undefined ? `table ${clip(input.index, 6)}` : `the table with “${clip(input.find, 30)}”`}${Array.isArray(input.cells) ? `, ${count(input.cells.length, 'cell', 'cells')}` : ''}${input.add_rows !== undefined ? `, adding ${count(Array.isArray(input.rows) ? input.rows.length : 1, 'row', 'rows')}` : ''}${input.add_column !== undefined ? ', adding a column' : ''}`;
@@ -443,8 +473,9 @@ const HELP = [
   'word tool, every field (doc: an open document by name or path, default the active one; path: a .docx file, worked on without Word when Word does not have it open):',
   'read: offset (next_offset of the last read). Headings show as #, lists as -, tables as | a | b |.',
   'insert: text (a line per paragraph), at end|start|after|section_end, heading (the paragraph to go after), style, bold, italic. Lists: style "List Bullet" or "List Number"; indent a line (two spaces or a tab) for a deeper level; a typed "- " or "1. " is dropped.',
+  'insert in the text (references): find (the text it goes right after), then text (a word or sentence), or note footnote|endnote with text (the note), or ref "Figure 2" / "Table 1" / a bookmark name (a cross-reference Word keeps up to date).',
   'replace: find, replace (required; "" deletes). A line break in find matches across paragraphs.',
-  'style (the exact text found): find, and style (any style the document has: Normal, Heading 1-6, Title, Quote, List Bullet, List Number, or its own) or character formatting: bold, italic, underline (true or single|double|thick|dotted|dash|wave|none), color (red, blue, #1F4E79...), highlight (yellow, green, cyan, lightGray, none...), strike, font, size.',
+  'style (the exact text found): find, and style (any style the document has: Normal, Heading 1-6, Title, Quote, List Bullet, List Number, or its own) or character formatting: bold, italic, underline (true or single|double|thick|dotted|dash|wave|none), color (red, blue, #1F4E79...), highlight (yellow, green, cyan, lightGray, none...), strike, font, size; link (https://..., mailto:, or #bookmark) makes it a hyperlink; bookmark (a name) marks it for ref and #links.',
   'format (styles, paragraphs and pages; where: style (that style everywhere, the cleanest), find (paragraphs holding that text), paragraphs [their texts], or nothing for the whole document): font, size, bold, italic, underline, color, line_spacing (1, 1.15, 1.5, 2; 6+ = exact points), space_before / space_after (points), align left|center|right|justify, indent (inches), first_line (inches; negative = hanging), keep_with_next.',
   'format styles: style + based_on makes the style when the document has none of that name (style "Figure Caption", based_on "Normal", size 9, italic true), or changes what it is based on; then apply it with style or insert.',
   'format lists: list bullet|number|none with paragraphs or find, level 1-9 (a numbered list starts at 1 each time).',
