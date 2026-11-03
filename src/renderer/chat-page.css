@@ -54,9 +54,11 @@ body.chat-page .composer-bar { margin-inline: 0; } /* the round buttons 12 px in
 .cp-list .chat-meta, .cp-list .chat-place { display: none; }
 .cp-list .chat-title { font-size: 13.5px; }
 .cp-list .chat-item:hover .chat-title, .cp-list .chat-item:focus-within .chat-title, .cp-list .chat-item.menu-open .chat-title { padding-right: var(--sp-14); }
-.cp-list .chat-item.has-running .chat-title, .cp-list .chat-item.has-queued .chat-title { padding-right: 0; }
+.cp-list .chat-item:is(.has-running, .has-queued) .chat-title { padding-right: var(--sp-16); } /* the Stop square at the row's end */
+.cp-list .chat-item:is(.has-running, .has-queued):is(:hover, :focus-within, .menu-open) .chat-title { padding-right: calc(var(--sp-16) + var(--sp-14)); } /* ...and the ⋯ beside it */
 .cp-list .chat-snippet { font-size: 11.5px; padding-bottom: var(--sp-3); }
-.cp-list .chat-stop-wait { margin-left: calc(var(--sp-16) + var(--sp-1)); } /* under the title's words (the row's 10 px + the badge column's 24), not under the badge */
+.cp-list .chat-stop-wait { top: 4px; width: 28px; height: 28px; background: transparent; } /* as tall as the ⋯, in the 36 px row */
+.cp-list .chat-item:is(.has-running, .has-queued) .chat-more { right: 34px; }
 .cp-list .chat-item.has-unread { box-shadow: none; }
 .cp-list .chat-item.has-unread .chat-title { font-weight: 600; }
 .cp-list .chat-rename-input { margin: var(--sp-1) 0; }
