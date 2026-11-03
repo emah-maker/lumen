@@ -3533,6 +3533,9 @@ else globalThis.screenIntent = api;
   }
 
 
+
+  const steerable = (q) => Boolean(q) && !q.fresh && !q.opts && !q.now && !q.screen && !q.images?.length && !q.tabs?.ids?.length && !q.tabs?.gone?.length && Boolean(String(q.text || '').trim());
+
   const mergeable = (q) => Boolean(q) && !q.fresh && !q.opts && (q.text || q.images?.length);
 
 
@@ -3561,7 +3564,7 @@ else globalThis.screenIntent = api;
     return null;
   }
 
-  const api = { advance, countsAsRead, ownerNow, otherChat, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
+  const api = { advance, countsAsRead, ownerNow, otherChat, ordinal, create, createStore, merge, mergeable, steerable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.chatQueue = api;
 })(typeof window !== 'undefined' ? window : globalThis);
@@ -4974,13 +4977,51 @@ function queueUp(entry) {
   setMark(bubble, 'queued');
   line.add(entry);
   if (!entry.fresh) queueControls(entry);
+  if (running && window.chatQueue.steerable(entry)) steerOut(entry);
   renderQueue();
   return entry;
 }
 
+
+
+const steerChat = (entry) => entry.chatId || shownChatId || undefined;
+function steerOut(entry) {
+  if (!window.assistant.steer) return;
+  entry.steer = 'asking';
+  window.assistant.steer(steerChat(entry), entry.uid, entry.text).then((r) => {
+    if (!line.has(entry)) return;
+    entry.steer = r?.ok ? 'waiting' : r?.why === 'engine' ? 'engine' : null;
+    if (r?.state === 'sent') steered([entry.uid]); else renderQueue();
+  }, () => { entry.steer = null; });
+}
+
+async function takeBack(entry) {
+  if (entry.steer !== 'asking' && entry.steer !== 'waiting') return line.has(entry);
+  const back = await window.assistant.unsteer(steerChat(entry), entry.uid).catch(() => true);
+  if (back) entry.steer = null;
+  return back && line.has(entry);
+}
+function steered(uids) {
+  let moved = false;
+  for (const uid of uids || []) {
+    const q = line.list.find((e) => e.uid === uid);
+    if (!q || !line.remove(q)) continue;
+    q.bubble.className = 'msg user steered';
+    q.meta.replaceChildren(t('chat.queued.steered'));
+    if (turn) appendToTurn(q.bubble); else append(q.bubble);
+    setMark(q.bubble, 'read');
+    moved = true;
+  }
+  if (moved && turn) { finishReply(turn.text, turn.textSource); endStream(); turn.text = null; turn.textSource = ''; }
+  renderQueue();
+}
+
 function renderQueue() {
   const mine = line.mine(queueOther);
-  mine.forEach((q, i) => { q.label.textContent = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label'); });
+  mine.forEach((q, i) => {
+    const place = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label');
+    q.label.textContent = q.steer === 'waiting' ? `${place} · ${t('chat.queued.nextStep')}` : q.steer === 'engine' ? `${place} · ${t('chat.queued.atEnd')}` : place;
+  });
   const several = mine.filter(window.chatQueue.mergeable);
   if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
   if (!queueBar) {
@@ -4994,7 +5035,8 @@ function renderQueue() {
 function queueControls(entry) {
   const drop = () => { line.remove(entry); entry.bubble.remove(); renderQueue(); };
   const edit = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.edit') });
-  edit.onclick = () => {
+  edit.onclick = async () => {
+    if (!(await takeBack(entry))) return;
     drop();
     prompt.value = prompt.value.trim() ? `${prompt.value.replace(/\s+$/, '')}\n${entry.text}` : entry.text;
     if (entry.images?.length) { attachments = [...attachments, ...entry.images].slice(0, MAX_ATTACH); renderAttachments(); }
@@ -5004,7 +5046,7 @@ function queueControls(entry) {
   };
   const cancel = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: '×', title: t('chat.queued.cancel') });
   cancel.setAttribute('aria-label', t('chat.queued.cancel'));
-  cancel.onclick = () => { for (const ref of refsOf(entry.images || [])) window.assistant.uploads?.discard(ref); drop(); };
+  cancel.onclick = async () => { if (!(await takeBack(entry))) return; for (const ref of refsOf(entry.images || [])) window.assistant.uploads?.discard(ref); drop(); };
   const now = Object.assign(document.createElement('button'), { type: 'button', className: 'queue-btn', textContent: t('chat.queued.sendNow'), title: t('composer.sendNow.title') });
   now.onclick = () => sendNow(entry);
   const actions = Object.assign(document.createElement('span'), { className: 'queue-actions' });
@@ -5026,17 +5068,19 @@ function sendNow(entry) {
 }
 
 
-function sendAllNow() {
+async function sendAllNow() {
+  for (const q of line.mine(queueOther)) if (q.steer === 'waiting' || q.steer === 'asking') await takeBack(q);
   const merged = window.chatQueue.merge(line.mine(queueOther), MAX_ATTACH);
   if (!merged) return;
   for (const q of merged.merged) { line.remove(q); q.bubble.remove(); }
   const { text, images, tabs, screen, chatId } = merged;
-  sendNow(queueUp({ text, images, tabs, screen, opts: null, chatId }));
+  sendNow(queueUp({ text, images, tabs, screen, opts: null, chatId, now: true }));
 }
 function sendQueued() {
   if (running) return;
 
   if (!modelReady) { queuedToDraft(); return; }
+  for (const q of line.list) q.steer = null;
 
   const next = line.take(queueOther);
   if (!next) return;
@@ -5874,6 +5918,9 @@ window.assistant.onEvent((event) => {
       }
       break;
     }
+    case 'steered':
+      steered(event.uids);
+      break;
     case 'reply_complete':
       finishTurn(event, { early: true });
       break;
@@ -6027,7 +6074,7 @@ function restoreCarried() {
   const entries = got.map((e) => ({ ...e, images: (e.images || []).map((a) => (a.media_type && a.data ? { ...a, url: `data:${a.media_type};base64,${a.data}` } : a)) }));
   const rest = [];
   for (const e of entries) {
-    if (running && !e.fresh) queueUp({ text: e.text, images: e.images, tabs: e.tabs, screen: e.screen, opts: e.opts, chatId: shownChatId });
+    if (running && !e.fresh) queueUp({ uid: e.uid, text: e.text, images: e.images, tabs: e.tabs, screen: e.screen, opts: e.opts, chatId: shownChatId });
     else rest.push(e);
   }
   entriesToBox(rest);
@@ -6866,6 +6913,7 @@ function drawItems(items, userEntries, replyEntries) {
       if (item.screen) screenChip(bubble, { id: item.screen.id, kind: item.screen.kind, title: item.screen.title, thumb: typeof item.screen.image === 'string' && item.screen.image.startsWith('data:image/') ? item.screen.image : '' });
       bubbleAsks.set(bubble, { text: item.text || '', images: [...images.map((src) => { const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/) || []; return { media_type, data, url: src }; }).filter((a) => a.data), ...files], tabs: null });
       if (item.read) setMark(bubble, 'read');
+      if (item.steered) { bubble.classList.add('steered'); bubble.append(Object.assign(document.createElement('div'), { className: 'queue-meta', textContent: t('chat.queued.steered') })); bubble.classList.add('restored'); append(bubble); continue; }
       userEntries.push({ bubble, item });
     } else if (item.role === 'assistant' && (item.text || item.generated?.length || item.outFiles?.length)) {
       const fileCards = () => {
@@ -6922,7 +6970,7 @@ function renderLatest(items) {
 
   const lastIndex = items.length - 1;
   let u = lastIndex - 1;
-  while (u >= 0 && items[u].role !== 'user') u--;
+  while (u >= 0 && (items[u].role !== 'user' || items[u].steered)) u--;
   const lastUser = u >= 0 ? items[u] : null;
 
   const lastReply = items[lastIndex]?.role === 'assistant' && !items[lastIndex].text
