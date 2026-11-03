@@ -2242,7 +2242,7 @@ class Agent {
   }
   // Codex, Grok Build and Antigravity take no input mid-run (Auto may route a message to one): what the user types waits for the reply to end.
   noSteerFor(messages) {
-    const rec = this.runs.get(messages);
+    const rec = this.runs?.get(messages);
     if (rec) rec.noSteer = true;
   }
   // The messages waiting for this run's next step, taken (each once); `emit` tells the view they went.
