@@ -237,6 +237,7 @@
     }
 
     // The tab strip's glyphs (app.js CHAT_MARKS), so a list row and its tab show the same mark.
+    const STOP_GLYPH = '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5"/></svg>'; // the composer's Stop square
     const GLYPHS = {
       running: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2"/><path class="cm-spin" d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><g class="cm-still"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="2" fill="currentColor"/></g></svg>',
       queued: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
@@ -460,17 +461,25 @@
       li.style.setProperty('--actions-w', `${actions.children.length * 24 + 8}px`); // the title leaves room for the floating buttons
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`); // (and for one fewer in a narrow list)
       li.append(openBtn);
-      // Waiting for its turn: it can be taken out of the line from here.
+      // Working, or waiting for its turn: it can be stopped (taken out of the line) from here. A small square at the end of the
+      // title's line, so the row keeps the height of an idle one; its name says which chat, its tooltip what it does.
       if ((chat.badge === 'queued' || chat.badge === 'running') && api.stopChat) {
         const stopLabel = chat.badge === 'running' ? tr('chats.stop', 'Stop') : tr('chats.stopWaiting', 'Stop waiting');
-        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: stopLabel });
-        const stopBack = () => { stop.disabled = false; stop.textContent = stopLabel; };
+        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait' });
+        stop.innerHTML = STOP_GLYPH;
+        const stopState = (busy) => { // busy: "Stopping…", and no second click until it answers
+          const word = busy ? tr('chats.stopping', 'Stopping…') : stopLabel;
+          stop.disabled = busy;
+          stop.title = word;
+          stop.setAttribute('aria-label', tr('chats.stopNamed', '{action} {title}').replace('{action}', word).replace('{title}', chat.title || tr('chats.untitled', 'Chat')));
+        };
+        stopState(false);
+        const stopBack = () => stopState(false);
         let stopsOut = 0, stoppedOnce = false; // (a second click after a timeout must not be failed by an answer about the first)
         stop.onclick = async (e) => {
           e.stopPropagation();
           stopsOut++;
-          stop.disabled = true;
-          stop.textContent = tr('chats.stopping', 'Stopping…');
+          stopState(true);
           const wait = window.chatItemsStopMs || (chat.badge === 'running' ? 12000 : 4000); // (a test shortens it; a working chat can take a while to abort)
           let timedOut = false;
           const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
@@ -484,10 +493,10 @@
           try {
             const answer = await api.stopChat(chat.id);
             stopsOut--;
-            if (answer === false) { clearTimeout(lost); if (chat.badge === 'running' && !stoppedOnce && stopsOut === 0) { rerender(); return; } if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
+            if (answer === false) { clearTimeout(lost); if (chat.badge === 'running' && !stoppedOnce && stopsOut === 0) { rerender(); return; } if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stopState(true); } return; } // (false: the chat had already moved on, unless an earlier stop worked)
             stoppedOnce = true;
             clearTimeout(lost);
-            if (timedOut && attached()) { unsay(); stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } // it did stop, only slowly
+            if (timedOut && attached()) { unsay(); stopState(true); } // it did stop, only slowly
             // Stopped. The list redraws when the run leaves; if it cannot (a rename field is open, the panel is hidden) the
             // button stays on "Stopping…" unless the chat is still waiting a while later.
             setTimeout(async () => {

@@ -162,6 +162,7 @@
       + '<div class="act-shot" hidden><img class="act-thumb" alt="" decoding="async"><div class="act-site"><img class="act-site-ico" alt="" hidden><span class="act-site-name"></span></div></div>'
       + '<div class="act-shot2" hidden><img class="act-thumb2" alt="" decoding="async"><div class="act-page" hidden></div></div>'
       + '<div class="act-status" hidden><span class="act-dot" aria-hidden="true"></span><span class="act-status-text"></span></div>'
+      + '<div class="act-many" role="list" hidden><span class="act-pill" aria-hidden="true"><span class="act-dot"></span><span class="act-pill-text">&nbsp;</span></span></div>' // (a stand-in chip: the row is as tall as a chip before the first one, see step-ui.css "steady")
       + '<div class="act-say" hidden></div>'
       + '<div class="act-files" hidden></div>'
       + '<details class="act-tabs" hidden><summary class="act-tabs-head"></summary><div class="act-tabs-list"></div></details>'
@@ -173,6 +174,8 @@
     const card = { el: el0, surface, entries: [], page: el0.querySelector('.act-page'), list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), shot2: el0.querySelector('.act-shot2'), img2: el0.querySelector('.act-thumb2'), say: el0.querySelector('.act-say'), filesBox: el0.querySelector('.act-files'), files: [], linkKey: '', sayText: '', resumeBtn: el0.querySelector('.act-resume'), stopBtn: el0.querySelector('.act-stop'), hadBrowser: surface === 'browser', firstSurface: surface, app: null, shellKind: 'terminal', tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
     el0._card = card;
     el0.setAttribute('role', 'group');
+    card.tabsHead.textContent = String.fromCharCode(160); // (stand-ins, so the slots a working Browser card keeps for them are a line tall: step-ui.css "steady")
+    card.btn.textContent = tr('card.openPreview');
     card.btn.onclick = () => openIt(card);
     card.resumeBtn.textContent = tr('desktopcard.resume');
     card.stopBtn.textContent = tr('desktopcard.stop');
@@ -217,26 +220,40 @@
     return out;
   }
   // Two things or more at once: the status line counts them, and what the reply itself runs meanwhile is a pill each under it (an agent has its
-  // own row in the card's Agents list, never said twice).
+  // own row in the card's Agents list, never said twice). The pills stay on one line: the ones that do not fit become a "+N" pill.
+  // (While a Browser card works, the row keeps its place when it has no pills: hidden is then only invisible, step-ui.css "steady".)
   function renderMany(card, all) {
-    let box = card.el.querySelector(':scope > .act-many');
+    const box = card.el.querySelector(':scope > .act-many');
     const list = all.length >= 2 ? all.filter((x) => !x.who) : [];
-    if (!list.length) { if (box) box.hidden = true; return; }
-    if (!box) { box = el('div', { className: 'act-many' }); box.setAttribute('role', 'list'); card.status.after(box); }
+    if (!list.length) { box.hidden = true; return; }
     box.hidden = false;
     const key = JSON.stringify(list);
     if (box.dataset.key === key) return;
     box.dataset.key = key;
-    box.replaceChildren(...list.map((x) => {
+    const pills = list.map((x) => {
       const pill = el('span', { className: 'act-pill', title: x.text });
       pill.setAttribute('role', 'listitem');
       pill.append(el('span', { className: 'act-dot' }), el('span', { className: 'act-pill-text', textContent: x.text }));
       return pill;
-    }));
+    });
+    const more = el('span', { className: 'act-pill act-pill-more' });
+    more.setAttribute('role', 'listitem');
+    more.hidden = true;
+    box.replaceChildren(...pills, more);
+    for (let shown = pills.length; shown > 1 && box.scrollWidth > box.clientWidth + 1; shown--) {
+      pills[shown - 1].hidden = true;
+      const rest = list.slice(shown - 1).map((x) => x.text);
+      more.hidden = false;
+      more.textContent = tr('card.many.more', { count: rest.length });
+      more.title = rest.join('\n');
+    }
   }
   function refreshCard(turn, card) {
     if (turn) card.turnRef = turn;
     const state = stateOf(turn, card);
+    // [steady] A Browser (or web) card holds every slot in place while it works (step-ui.css "steady"). A step that turns it into a Computer
+    // card (a command, a file, a program) is another kind of card: it lays out as one, the tab preview out of the way.
+    card.el.classList.toggle('act-hold', (card.surface === 'browser' || card.surface === 'web') && (state === 'working' || state === 'approval' || state === 'helper'));
     if (card.el.dataset.state !== state || (card.app && !card.hbApp) || (card.hadBrowser && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on; one that moved from a page to a program, too)
       card.el.dataset.state = state;
       if (card.app) { card.hb = true; card.hbApp = true; // (a program's window: its live picture runs only while a card is on screen)

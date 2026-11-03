@@ -63,13 +63,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   li = make(api, queued);
   let stop = li.find('chat-stop-wait')[0];
   await stop.onclick({ stopPropagation() {} });
-  check('stop: a false answer (the chat had moved on) restores the button and says it could not stop', stop.disabled === false && /Stop waiting/.test(stop.textContent) && /Could not stop/.test(meta(li).textContent), `${stop.disabled} ${stop.textContent} ${meta(li).textContent}`);
+  check('stop: a false answer (the chat had moved on) restores the button and says it could not stop', stop.disabled === false && /Stop waiting/.test(stop.title) && /Could not stop/.test(meta(li).textContent), `${stop.disabled} ${stop.title} ${meta(li).textContent}`);
   api.stopChat = async () => { throw new Error('gone'); };
   await stop.onclick({ stopPropagation() {} });
-  check('stop: a thrown error restores the button', stop.disabled === false && /Stop waiting/.test(stop.textContent));
+  check('stop: a thrown error restores the button', stop.disabled === false && /Stop waiting/.test(stop.title));
   api.stopChat = async () => true;
   await stop.onclick({ stopPropagation() {} });
-  check('stop: a true answer leaves "Stopping…" (the list redraws when the run leaves)', stop.disabled === true && /Stopping/.test(stop.textContent), stop.textContent);
+  check('stop: a true answer leaves "Stopping…" (the list redraws when the run leaves)', stop.disabled === true && /Stopping/.test(stop.title), stop.title);
 
   // a successful stop must not turn into a false "Could not stop it" when the list cannot redraw (a rename field open elsewhere)
   let listed = { chats: [] }; // the chat has left the line
@@ -78,7 +78,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   stop = li.find('chat-stop-wait')[0];
   await stop.onclick({ stopPropagation() {} });
   await sleep(150);
-  check('stop: after a true answer and no redraw, the row stays on "Stopping…" with no false failure note (the chat is gone from the line)', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
+  check('stop: after a true answer and no redraw, the row stays on "Stopping…" with no false failure note (the chat is gone from the line)', stop.disabled === true && /Stopping/.test(stop.title) && !/Could not stop/.test(meta(li).textContent), `${stop.title} / ${meta(li).textContent}`);
   listed = { chats: [{ id: 'c1', badge: 'queued' }] }; // ...but still waiting a while later: then it says so
   li = make(api, queued);
   stop = li.find('chat-stop-wait')[0];
@@ -91,7 +91,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   api = { exportChat: async () => ({ ok: true }), showTab: async () => {}, stopChat: async () => false, remove: async () => ({}), list: async () => ({ chats: [{ id: 'c1', badge: null }] }) };
   let redrew = 0; rerenderSpy = () => { redrew++; }; li = make(api, running);
   stop = li.find('chat-stop-wait')[0];
-  check('running: the row has a "Stop" control', !!stop && stop.textContent === 'Stop', stop && stop.textContent);
+  check('running: the row has a "Stop" control: its tooltip says Stop and its name says which chat', !!stop && stop.title === 'Stop' && stop.attrs['aria-label'] === 'Stop Chat one' && !stop.textContent.trim(), stop && JSON.stringify([stop.title, stop.attrs['aria-label']]));
   await stop.onclick({ stopPropagation() {} });
   check('running: a false answer (it had just finished) redraws the list and shows no failure', redrew === 1 && !/Could not stop/.test(meta(li).textContent), `${redrew}`);
   api.stopChat = async () => new Promise(() => {}); // an abort that never answers in time, while the run has ended meanwhile
@@ -154,7 +154,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(60);
   check('stop: a slow answer first restores the button with a note', stop.disabled === false && /Could not stop/.test(meta(li).textContent));
   await slow;
-  check('stop: ...and a late success takes the note back and shows "Stopping…"', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
+  check('stop: ...and a late success takes the note back and shows "Stopping…"', stop.disabled === true && /Stopping/.test(stop.title) && !/Could not stop/.test(meta(li).textContent), `${stop.title} / ${meta(li).textContent}`);
   // a second click after the first one timed out: a false answer about it must not fail the first stop that worked
   let calls = 0;
   api = { exportChat: async () => ({ ok: true }), showTab: async () => true, remove: async () => ({}), list: async () => ({ chats: [] }), stopChat: async () => { calls++; if (calls === 1) { await sleep(90); return true; } return false; } };
@@ -164,7 +164,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(60); // the first one timed out: the button is back
   const second = stop.onclick({ stopPropagation() {} });
   await Promise.all([first, second]);
-  check('stop: a false answer to a second click is ignored while the first stop worked', stop.disabled === true && /Stopping/.test(stop.textContent) && !/Could not stop/.test(meta(li).textContent), `${stop.textContent} / ${meta(li).textContent}`);
+  check('stop: a false answer to a second click is ignored while the first stop worked', stop.disabled === true && /Stopping/.test(stop.title) && !/Could not stop/.test(meta(li).textContent), `${stop.title} / ${meta(li).textContent}`);
   // a stop that works, then a slower earlier timeout: the timeout does not fail it
   calls = 0;
   api = { exportChat: async () => ({ ok: true }), showTab: async () => true, remove: async () => ({}), list: async () => ({ chats: [] }), stopChat: async () => { calls++; if (calls === 1) { await sleep(90); return true; } return true; } };

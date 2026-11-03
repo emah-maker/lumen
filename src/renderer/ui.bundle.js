@@ -8176,6 +8176,7 @@ function startChat() {
     }
 
 
+    const STOP_GLYPH = '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5"/></svg>';
     const GLYPHS = {
       running: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-width="2"/><path class="cm-spin" d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><g class="cm-still"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="6" cy="6" r="2" fill="currentColor"/></g></svg>',
       queued: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
@@ -8400,16 +8401,24 @@ function startChat() {
       li.style.setProperty('--actions-w-narrow', `${(actions.children.length - (dropsOne ? 1 : 0)) * 24 + 8}px`);
       li.append(openBtn);
 
+
       if ((chat.badge === 'queued' || chat.badge === 'running') && api.stopChat) {
         const stopLabel = chat.badge === 'running' ? tr('chats.stop', 'Stop') : tr('chats.stopWaiting', 'Stop waiting');
-        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait', textContent: stopLabel });
-        const stopBack = () => { stop.disabled = false; stop.textContent = stopLabel; };
+        const stop = Object.assign(document.createElement('button'), { type: 'button', className: 'chat-stop-wait' });
+        stop.innerHTML = STOP_GLYPH;
+        const stopState = (busy) => {
+          const word = busy ? tr('chats.stopping', 'Stopping…') : stopLabel;
+          stop.disabled = busy;
+          stop.title = word;
+          stop.setAttribute('aria-label', tr('chats.stopNamed', '{action} {title}').replace('{action}', word).replace('{title}', chat.title || tr('chats.untitled', 'Chat')));
+        };
+        stopState(false);
+        const stopBack = () => stopState(false);
         let stopsOut = 0, stoppedOnce = false;
         stop.onclick = async (e) => {
           e.stopPropagation();
           stopsOut++;
-          stop.disabled = true;
-          stop.textContent = tr('chats.stopping', 'Stopping…');
+          stopState(true);
           const wait = window.chatItemsStopMs || (chat.badge === 'running' ? 12000 : 4000);
           let timedOut = false;
           const fail = () => { stopBack(); say(tr('chats.stopFailed', 'Could not stop it')); };
@@ -8423,10 +8432,10 @@ function startChat() {
           try {
             const answer = await api.stopChat(chat.id);
             stopsOut--;
-            if (answer === false) { clearTimeout(lost); if (chat.badge === 'running' && !stoppedOnce && stopsOut === 0) { rerender(); return; } if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); } return; }
+            if (answer === false) { clearTimeout(lost); if (chat.badge === 'running' && !stoppedOnce && stopsOut === 0) { rerender(); return; } if (!stoppedOnce && stopsOut === 0) fail(); else if (attached()) { stopState(true); } return; }
             stoppedOnce = true;
             clearTimeout(lost);
-            if (timedOut && attached()) { unsay(); stop.disabled = true; stop.textContent = tr('chats.stopping', 'Stopping…'); }
+            if (timedOut && attached()) { unsay(); stopState(true); }
 
 
             setTimeout(async () => {

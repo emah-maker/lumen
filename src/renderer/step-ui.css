@@ -193,8 +193,25 @@
 .agents-card.in-card .ag-title { font-size: var(--fs-sm); }
 
 /* [at once] Two things or more running in one card: a pill each under the status line (step-ui.js renderMany). */
-.act-many { display: flex; flex-wrap: wrap; gap: var(--sp-3); min-width: 0; }
+.act-many { display: flex; flex-wrap: nowrap; gap: var(--sp-3); min-width: 0; overflow: hidden; } /* one line: what does not fit is a "+N" pill (step-ui.js renderMany) */
 .act-many[hidden] { display: none; }
+.act-many > .act-pill { flex: none; }
+.act-many > .act-pill:first-child { flex-shrink: 1; } /* (one pill alone is cut with an ellipsis) */
+.act-many > .act-pill[hidden] { display: none; }
+.act-many > .act-pill-more { color: var(--muted); }
+.act-many[hidden] .act-dot { animation: none; }
+/* steady: while a Browser (or web) card works, every slot that can fill during the run keeps its place from the first step, empty or not (the site
+   line, the "at once" pills, what the AI says, Tabs, Go to tab), so nothing in the card or under it moves until the run ends. An empty slot is
+   only invisible (!important: styles.css hides [hidden] with !important; these are more specific); when the run ends the empty ones fold away. */
+.act-card:is([data-surface="browser"], .act-hold) > .act-shot:is(:not([data-mode="frame"]), [hidden]) { height: var(--act-site-h, 34px); box-sizing: border-box; aspect-ratio: auto; }
+.act-card.act-hold > .act-shot[hidden], .act-card.act-hold[data-surface="web"] > .act-shot { display: flex !important; visibility: hidden; } /* (a web step, a search, keeps the site line's place) */
+.act-card.act-hold > .act-shot { animation: none; } /* (its place is kept already: it does not grow in) */
+.act-card.act-hold .act-tabref[hidden] { display: block !important; visibility: hidden; min-height: calc(22px + var(--sp-1)); } /* the tab chip under the title (tab-ref.css: 22 px and its margin) */
+.act-card.act-hold > .act-many[hidden] { display: flex !important; visibility: hidden; }
+.act-card.act-hold > .act-say { min-height: 2lh; } /* (two lines, its clamp) */
+.act-card.act-hold > .act-say[hidden] { display: -webkit-box !important; visibility: hidden; }
+.act-card.act-hold > .act-tabs[hidden] { display: block !important; visibility: hidden; }
+.act-card.act-hold > .act-actions > .act-btn[hidden] { display: block !important; visibility: hidden; }
 .act-pill { display: inline-flex; align-items: center; gap: var(--sp-4); max-width: 100%; min-width: 0; padding: var(--sp-3) var(--sp-5); border-radius: var(--r-pill); background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); font-size: var(--fs-sm); color: var(--text); }
 .act-pill .act-dot { background: var(--accent); animation: act-pulse 1.1s ease-in-out infinite; }
 .act-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
