@@ -582,9 +582,19 @@
   }
   document.addEventListener('lumen:hide-ai-tabs', () => { for (const c of document.querySelectorAll('.act-card')) if (c._card) refreshTabs(c._card, c.dataset.state); });
 
+  // What a click on Show in Word / Open did: nothing to say when it worked, else why not, under the buttons (it goes after a while).
+  function openNote(card, r) {
+    const ok = r === true || r?.ok === true;
+    let note = card.el.querySelector('.act-open-note');
+    if (ok) { if (note) note.hidden = true; return; }
+    if (!note) { note = el('div', { className: 'act-tabs-note act-open-note', role: 'status' }); card.el.querySelector('.act-actions')?.after(note); }
+    note.textContent = typeof r?.message === 'string' && r.message ? r.message : tr('desktopcard.openFailed');
+    note.hidden = false;
+    clearTimeout(note._t); note._t = setTimeout(() => { note.hidden = true; }, 8000);
+  }
   function openIt(card) {
     const api = window.assistant;
-    if (card.surface === 'app' && card.app?.id) { Promise.resolve(api?.desktopOpen?.(card.app.id)).catch(() => {}); return; }
+    if (card.surface === 'app' && card.app?.id) { Promise.resolve(api?.desktopOpen?.(card.app.id, { path: card.app.path || '' })).then((r) => openNote(card, r), () => openNote(card, false)); return; }
     if (card.surface === 'browser' && card.tab) { Promise.resolve(api?.openPreview?.({ tabId: card.tab.tabId ?? null, url: card.tab.url || '' })).catch(() => {}); return; }
     if (card.file && card.surface !== 'browser') { const f = card.file; Promise.resolve(api?.files?.open?.(f.id, f.canTab ? 'tab' : f.canSystem ? 'system' : 'reveal')).catch(() => {}); }
   }
@@ -878,7 +888,7 @@
     }
     if (event.frame && card.surface === 'app' && card.app?.id === event.id && typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail)) { setShot2(card, event.thumbnail); return true; } // a live picture: only the picture changes
     setSurface(card, 'app', event.word === true ? 'word' : 'desktop');
-    card.app = { id: event.id, name: String(event.app || ''), title: String(event.title || '').slice(0, 200), status: event.status || 'working' };
+    card.app = { id: event.id, name: String(event.app || ''), title: String(event.title || '').slice(0, 200), status: event.status || 'working', path: typeof event.path === 'string' ? event.path.slice(0, 1000) : '' }; // (path: a Word card's document, so Show in Word still opens it after a restart)
     if (event.word === true) card.word = { doc: String(event.doc || '').slice(0, 200) };
     if (event.status === 'working' && event.task) card.latest = String(event.task);
     if (event.word === true && event.page && Array.isArray(event.page.lines) && !(typeof event.thumbnail === 'string' && IMAGE.test(event.thumbnail))) { card.img2.removeAttribute('src'); setPage(card, event.page); } // (Word's window cannot be shown: the page around the change)

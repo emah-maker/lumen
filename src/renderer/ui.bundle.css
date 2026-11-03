@@ -2149,6 +2149,7 @@ body.agent-active .msg-version-step{pointer-events:none;opacity:0.35;}
 .msg.user.clamped:not(.expanded) > .msg-status{display:none;}
 .queued-bubble{margin:var(--sp-8) 0 var(--sp-10) var(--sp-20);padding:var(--sp-4) var(--sp-6);border-radius:var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl);background:var(--field);box-shadow:inset 0 0 0 1px var(--border);white-space:pre-wrap;word-wrap:break-word;opacity:0.66;transform-origin:bottom right;transition:opacity var(--t-fast) ease-out;animation:bubble-in var(--t-snappy) var(--spring-snappy);}
 .queued-bubble:hover, .queued-bubble:focus-within{opacity:1;}
+.msg.user.steered > .queue-meta{justify-content:flex-end;}
 .queue-meta{display:flex;align-items:center;gap:var(--sp-3);min-height:20px;margin-top:var(--sp-2);color:var(--muted);font-size:11.5px;white-space:normal;}
 .queue-actions{display:inline-flex;margin-left:auto;opacity:0;transition:opacity var(--t-fast) ease-out;}
 .queued-bubble:hover .queue-actions, .queued-bubble:focus-within .queue-actions{opacity:1;}

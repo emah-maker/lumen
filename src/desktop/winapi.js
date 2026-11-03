@@ -33,6 +33,11 @@ function load({ koffi: injected = null } = {}) {
     const getForeground = user32.func('__stdcall', 'GetForegroundWindow', 'void *', []);
     const getThreadProcess = user32.func('__stdcall', 'GetWindowThreadProcessId', 'uint32', ['void *', koffi.out(koffi.pointer('uint32'))]);
     const getKey = user32.func('__stdcall', 'GetAsyncKeyState', 'int16', ['int']);
+    // "Show in Word" / "Open" on a card: Lumen has the foreground at the click, so it lets the helper hand it on, and raises the window itself.
+    const allowSet = user32.func('__stdcall', 'AllowSetForegroundWindow', 'int', ['uint32']);
+    const setForeground = user32.func('__stdcall', 'SetForegroundWindow', 'int', ['intptr']);
+    const isIconic = user32.func('__stdcall', 'IsIconic', 'int', ['intptr']);
+    const showWindow = user32.func('__stdcall', 'ShowWindow', 'int', ['intptr', 'int']);
     const pidOf = (hwnd) => { if (!hwnd) return 0; const out = [0]; getThreadProcess(hwnd, out); return out[0] >>> 0; };
     return {
       ok: true,
@@ -44,6 +49,8 @@ function load({ koffi: injected = null } = {}) {
       escapeDown: () => (getKey(VK_ESCAPE) & 0x8000) !== 0,
       mouseDown: () => (getKey(VK_LBUTTON) & 0x8000) !== 0 || (getKey(VK_RBUTTON) & 0x8000) !== 0,
       typing: () => TYPING_KEYS.some((vk) => (getKey(vk) & 0x8000) !== 0),
+      allowForeground: () => Boolean(allowSet(0xffffffff)), // ASFW_ANY
+      raise(hwnd) { const h = Number(hwnd) || 0; if (!h) return false; if (isIconic(h)) showWindow(h, 9); return Boolean(setForeground(h)); }, // (SW_RESTORE when minimized)
     };
   } catch (err) { return { ok: false, reason: 'dll', detail: err.message }; }
 }

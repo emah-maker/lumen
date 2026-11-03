@@ -1,6 +1,6 @@
 /* global turn, appendToTurn, runId, moveWorkingToEnd -- chat-core.js globals, read inside ui.evaluate() */
 // Several messages in a row, and what is running while its card is out of sight (hidden window, a throwaway profile, a fake Claude client:
-// no network, no key). Messages typed while a reply runs wait as dimmed bubbles ("Queued", "Queued · 2nd") with a clock; sent ones get a check,
+// no network, no key). Messages typed while a reply runs wait as dimmed bubbles ("Queued · goes in at the AI’s next step", "Queued · 2nd · …": ai/steer.js) with a clock; sent ones get a check,
 // read ones (the AI began its reply) two, also in the saved chat; Stop and a failed reply bring the waiting ones back to the box; "Send all as one"
 // merges them; and a pill over the chat shows the live card's status with Stop while the card is scrolled away.
 // Run under the lock:  node scripts/test/e2e-lock.js run --owner chat-queue-ui -- node test/e2e/chat-queue-ui.js
@@ -78,7 +78,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     await type('third message');
     await waitFor(async () => (await bubbles()).length === 2);
     const q = await bubbles();
-    check('two queued messages show as bubbles with their place in the line', q.length === 2 && q[0].label === 'Queued' && q[1].label === 'Queued · 2nd', JSON.stringify(q));
+    check('two queued messages show as bubbles with their place in the line', q.length === 2 && q[0].label === 'Queued · goes in at the AI’s next step' && q[1].label === 'Queued · 2nd · goes in at the AI’s next step', JSON.stringify(q));
     check('each waiting bubble has the clock mark and its tooltip "Queued"', q.every((b) => b.st === 'queued' && b.title === 'Queued'), JSON.stringify(q));
     check('the waiting bubbles are not counted as sent messages (.msg.user)', (await ui.evaluate(() => document.querySelectorAll('#messages .msg.user').length)) === 1, '');
     check('the box is empty and keeps the focus after each Enter', (await promptValue()) === '' && (await ui.evaluate(() => document.activeElement?.id)) === 'prompt', await ui.evaluate(() => document.activeElement?.id));

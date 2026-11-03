@@ -76,6 +76,18 @@ code, pre, kbd { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 .btn.primary:hover { background: var(--accent-deep); }
 .btn.ghost { border-color: var(--line); color: var(--text); background: var(--card); }
 .btn.ghost:hover { border-color: var(--accent); }
+/* two equal Mac choices when the chip can't be detected */
+.btn.choice { border-color: var(--accent); color: var(--accent); background: var(--card); }
+.btn.choice:hover { background: var(--accent-soft); }
+/* Mac buttons: which Mac, and the file it gets */
+.btn.dl-mac { text-align: left; padding: 10px 20px; border-radius: 18px; }
+.dl-l { display: flex; flex-direction: column; gap: 2px; }
+.dl-t .ver { margin-left: 8px; white-space: nowrap; }
+.dl-f { font-size: 12.5px; font-weight: 500; opacity: .8; overflow-wrap: anywhere; }
+.dl-rec { align-self: flex-start; font-size: 11.5px; font-weight: 650; letter-spacing: .02em; text-transform: uppercase; background: rgba(255, 255, 255, 0.22); padding: 2px 8px; border-radius: 999px; margin-bottom: 2px; }
+.dl-help { margin: 14px auto 0; max-width: 560px; font-size: 14px; color: var(--muted); }
+.dl-help b { color: var(--text); font-weight: 600; }
+@media (max-width: 600px) { .hero .cta .btn.dl-mac { flex: 1 1 100%; } }
 
 /* ---- hero ---- */
 .hero { padding: 72px 24px 40px; text-align: center; }
@@ -84,7 +96,7 @@ code, pre, kbd { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospac
 .hero h1 { font-size: clamp(40px, 7vw, 72px); line-height: 1.04; letter-spacing: -0.035em; margin: 18px 0 16px; font-weight: 750; }
 .hero h1 .grad { background: linear-gradient(120deg, var(--accent), #7c5cff 55%, #ff5c93); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .hero p.lede { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); max-width: 720px; margin: 0 auto 28px; }
-.hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.hero .cta { display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap; }
 .hero .meta { margin-top: 14px; font-size: 13.5px; color: var(--muted); }
 
 .frame { margin: 48px auto 0; max-width: 980px; border-radius: 14px; overflow: hidden; background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow); }
@@ -154,6 +166,7 @@ table.dl th, table.dl td { text-align: left; padding: 14px 18px; border-bottom: 
 table.dl tr:last-child td { border-bottom: 0; }
 table.dl th { font-size: 13px; color: var(--muted); font-weight: 600; background: var(--bg-2); }
 .note { color: var(--muted); font-size: 14px; margin: 14px 0 0; }
+table.dl .sub { font-size: 13px; color: var(--muted); }
 @media (max-width: 600px) { table.dl th, table.dl td { padding: 12px; font-size: 14px; } }
 
 footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
