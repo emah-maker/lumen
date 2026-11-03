@@ -72,7 +72,12 @@ const sorted = (a) => JSON.stringify([...(a || [])].sort());
       const c = await waitFor(card);
       firstIds = c?.rows.map((r) => r.id) || [];
       check('update: the card shows the new settings on the empty chat', c?.title === 'New in Lumen' && c.rows.length === FO.CARD_MAX, JSON.stringify(c));
-      check('grouped by release, newest first', c?.releases[0] === 'In 0.5.88' && firstIds.slice(0, 3).join() === 'adBlocker,extensionSites,accountTabs' && c.releases.length >= 2, JSON.stringify(c?.releases));
+      // (the newest release in OFFERS heads the card, with its offers in OFFERS order; every heading after it is older)
+      const vnum = (v) => v.split('.').map(Number).reduce((n, x) => n * 1000 + x, 0);
+      const newest = FO.OFFERS.map((o) => o.since).sort((x, y) => vnum(y) - vnum(x))[0];
+      const newestIds = FO.OFFERS.filter((o) => o.since === newest && !SIX.includes(o.id)).map((o) => o.id).slice(0, FO.CARD_MAX);
+      const heads = (c?.releases || []).map((r) => r.replace(/^In /, ''));
+      check('grouped by release, newest first', c?.releases[0] === `In ${newest}` && newestIds.length > 0 && firstIds.slice(0, newestIds.length).join() === newestIds.join() && heads.length >= 2 && heads.every((v, i) => i === 0 || vnum(v) < vnum(heads[i - 1])), JSON.stringify({ releases: c?.releases, firstIds, newestIds }));
       check('a long batch is capped with "More in Settings"', c?.foot.join() === `${FO.OFFERS.length - SIX.length - FO.CARD_MAX} more in Settings,Not now,Don’t show again`, JSON.stringify(c?.foot));
       check('the card was loaded after start, not with the window', c?.lazy === true, JSON.stringify(c));
       const row = (id) => c?.rows.find((r) => r.id === id);
