@@ -293,7 +293,7 @@ function createUsage(deps) {
   let saveTimer = null;
   let saveGen = 0; // a write still queued or in flight when flush() runs is superseded
   const payload = () => {
-    const cutoff = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
+    const cutoff = clock() - KEEP_DAYS * 24 * 60 * 60 * 1000; // (the usage clock, as everything else here: the tests run on a fixed date)
     records = records.filter((r) => r.at >= cutoff);
     return { records, meter, grokLimit, agyLimit, agyQuota: agySnap, rates, codex: codexSnap, budget, budgets, notified };
   };
