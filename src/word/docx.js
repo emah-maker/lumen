@@ -303,6 +303,393 @@ async function editDocx(buf, op, { track = false, now = () => new Date() } = {})
 
 const NS = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
 function styleXml(id, name, extra = '') { return `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/>${extra}</w:style>`; }
+// The styles a new document has, and the ones format adds to a document that lacks them (a heading for the table of contents to find).
+const STYLE_DEFS = {
+  Normal: '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>',
+  Title: styleXml('Title', 'Title', '<w:pPr><w:keepNext/></w:pPr><w:rPr><w:sz w:val="52"/></w:rPr>'),
+  Heading1: styleXml('Heading1', 'heading 1', '<w:pPr><w:keepNext/><w:spacing w:before="240" w:after="0"/><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr>'),
+  Heading2: styleXml('Heading2', 'heading 2', '<w:pPr><w:keepNext/><w:spacing w:before="40" w:after="0"/><w:outlineLvl w:val="1"/></w:pPr><w:rPr><w:b/><w:sz w:val="26"/></w:rPr>'),
+  Heading3: styleXml('Heading3', 'heading 3', '<w:pPr><w:keepNext/><w:spacing w:before="40" w:after="0"/><w:outlineLvl w:val="2"/></w:pPr><w:rPr><w:b/><w:sz w:val="24"/></w:rPr>'),
+  Quote: styleXml('Quote', 'Quote', '<w:pPr><w:ind w:left="720" w:right="720"/></w:pPr><w:rPr><w:i/></w:rPr>'),
+  ListBullet: styleXml('ListBullet', 'List Bullet'),
+  ListNumber: styleXml('ListNumber', 'List Number'),
+};
+
+// ---- format: fonts and spacing through the styles (styles.xml), margins and orientation through each section (w:sectPr), page breaks,
+// heading styles and a real table of contents field (with updateFields in settings.xml, so Word fills it in when the document opens).
+// The XML is changed with small, order-aware edits: a child element goes where the schema puts it, so Word opens the file without a repair.
+const TAG = /<(\/?)([A-Za-z][\w.-]*(?::[\w.-]+)?)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+// The depth-0 elements between from and to: [{ name, start, end }].
+function kidsIn(xml, from, to) {
+  const re = new RegExp(TAG.source, 'g');
+  re.lastIndex = from;
+  const out = [];
+  let depth = 0; let s = -1; let name = ''; let m;
+  while ((m = re.exec(xml)) && m.index < to) {
+    if (m[1] !== '/') {
+      if (depth === 0) { s = m.index; name = m[2]; }
+      if (m[4] === '/') { if (depth === 0) out.push({ name, start: s, end: m.index + m[0].length }); } else depth++;
+    } else {
+      depth--;
+      if (depth === 0) out.push({ name, start: s, end: m.index + m[0].length });
+      if (depth < 0) break;
+    }
+  }
+  return out;
+}
+const elementAt = (xml, at) => kidsIn(xml, at, xml.length)[0] || null;
+// { from, to } of an element's inside (null when it is self-closing).
+function innerOf(xml, el) {
+  const re = new RegExp(TAG.source, 'g'); re.lastIndex = el.start;
+  const m = re.exec(xml);
+  if (!m || m[4] === '/') return null;
+  return { from: el.start + m[0].length, to: xml.lastIndexOf('</', el.end - 1) };
+}
+const kidsOf = (xml, el) => { const r = innerOf(xml, el); return r ? kidsIn(xml, r.from, r.to) : []; };
+const kidOf = (xml, el, name) => kidsOf(xml, el).find((k) => k.name === name) || null;
+const splice = (xml, a, b, piece) => xml.slice(0, a) + piece + xml.slice(b);
+// <w:x .../> -> <w:x ...></w:x>, so it can take children. Returns [xml, el].
+function opened(xml, el) {
+  if (innerOf(xml, el)) return [xml, el];
+  const tag = xml.slice(el.start, el.end).replace(/\s*\/>$/, '>');
+  const name = /^<([^\s/>]+)/.exec(tag)[1];
+  const piece = `${tag}</${name}>`;
+  return [splice(xml, el.start, el.end, piece), { name: el.name, start: el.start, end: el.start + piece.length }];
+}
+// The child `name` of el, made from make(existing XML or null), at its place in `order` (the schema's sequence; a one-name order is a
+// paragraph's or run's own properties, which come first). Returns [xml, child].
+function upsert(xml, el, name, make, order) {
+  [xml, el] = opened(xml, el);
+  const kids = kidsOf(xml, el);
+  const had = kids.find((k) => k.name === name);
+  const piece = make(had ? xml.slice(had.start, had.end) : null);
+  if (had) return [splice(xml, had.start, had.end, piece), { name, start: had.start, end: had.start + piece.length }];
+  const rank = order.indexOf(name);
+  const next = order.length === 1 ? kids[0] : kids.find((k) => order.indexOf(k.name) > rank);
+  const at = next ? next.start : innerOf(xml, el).to;
+  return [splice(xml, at, at, piece), { name, start: at, end: at + piece.length }];
+}
+// An element's start tag with attributes set (a value of null removes it).
+function withAttrs(elXml, attrs) {
+  const m = /^<([^\s/>]+)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/.exec(elXml);
+  let a = m[2];
+  for (const [k, v] of Object.entries(attrs)) {
+    a = a.replace(new RegExp(`\\s${k.replace(':', '\\:')}="[^"]*"`), '');
+    if (v !== null && v !== undefined) a += ` ${k}="${esc(v)}"`;
+  }
+  return `<${m[1]}${a}${m[3]}>${elXml.slice(m[0].length)}`;
+}
+const P_ORDER = ['w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:framePr', 'w:widowControl', 'w:numPr', 'w:suppressLineNumbers', 'w:pBdr', 'w:shd', 'w:tabs', 'w:suppressAutoHyphens', 'w:kinsoku', 'w:wordWrap', 'w:overflowPunct', 'w:topLinePunct', 'w:autoSpaceDE', 'w:autoSpaceDN', 'w:bidi', 'w:adjustRightInd', 'w:snapToGrid', 'w:spacing', 'w:ind', 'w:contextualSpacing', 'w:mirrorIndents', 'w:suppressOverlap', 'w:jc', 'w:textDirection', 'w:textAlignment', 'w:textboxTightWrap', 'w:outlineLvl', 'w:divId', 'w:cnfStyle', 'w:rPr', 'w:sectPr', 'w:pPrChange'];
+const R_ORDER = ['w:rStyle', 'w:rFonts', 'w:b', 'w:bCs', 'w:i', 'w:iCs', 'w:caps', 'w:smallCaps', 'w:strike', 'w:dstrike', 'w:outline', 'w:shadow', 'w:emboss', 'w:imprint', 'w:noProof', 'w:snapToGrid', 'w:vanish', 'w:webHidden', 'w:color', 'w:spacing', 'w:w', 'w:kern', 'w:position', 'w:sz', 'w:szCs', 'w:highlight', 'w:u', 'w:effect', 'w:bdr', 'w:shd', 'w:fitText', 'w:vertAlign', 'w:rtl', 'w:cs', 'w:em', 'w:lang', 'w:eastAsianLayout', 'w:specVanish', 'w:oMath', 'w:ins', 'w:del', 'w:rPrChange'];
+const STYLE_ORDER = ['w:name', 'w:aliases', 'w:basedOn', 'w:next', 'w:link', 'w:autoRedefine', 'w:hidden', 'w:uiPriority', 'w:semiHidden', 'w:unhideWhenUsed', 'w:qFormat', 'w:locked', 'w:personal', 'w:personalCompose', 'w:personalReply', 'w:rsid', 'w:pPr', 'w:rPr', 'w:tblPr', 'w:trPr', 'w:tcPr', 'w:tblStylePr'];
+const SECT_ORDER = ['w:headerReference', 'w:footerReference', 'w:footnotePr', 'w:endnotePr', 'w:type', 'w:pgSz', 'w:pgMar', 'w:paperSrc', 'w:pgBorders', 'w:lnNumType', 'w:pgNumType', 'w:cols', 'w:formProt', 'w:vAlign', 'w:noEndnote', 'w:titlePg', 'w:textDirection', 'w:bidi', 'w:rtlGutter', 'w:docGrid', 'w:printerSettings', 'w:sectPrChange'];
+const ROOT_STYLES_ORDER = ['w:docDefaults', 'w:latentStyles', 'w:style'];
+const DEFAULTS_ORDER = ['w:rPrDefault', 'w:pPrDefault'];
+// Where updateFields goes among settings.xml's children: before the first of these that is there.
+const SETTINGS_AFTER = ['w:hdrShapeDefaults', 'w:footnotePr', 'w:endnotePr', 'w:compat', 'w:docVars', 'w:rsids', 'm:mathPr', 'w:attachedSchema', 'w:themeFontLang', 'w:clrSchemeMapping', 'w:doNotIncludeSubdocsInStats', 'w:doNotAutoCompressPictures', 'w:forceUpgrade', 'w:captions', 'w:readModeInkLockDown', 'w:smartTagType', 'sl:schemaLibrary', 'w:shapeDefaults', 'w:doNotEmbedSmartTags', 'w:decimalSymbol', 'w:listSeparator'];
+
+const twips = (pt) => String(Math.round(pt * 20));
+const rFontsXml = (font) => `<w:rFonts w:ascii="${esc(font)}" w:hAnsi="${esc(font)}" w:eastAsia="${esc(font)}" w:cs="${esc(font)}"/>`;
+// The w:spacing attributes for { line, before, after } (line: a multiple of a line up to 5, else exact points).
+function spacingAttrs(f) {
+  const a = {};
+  if (f.line !== undefined) Object.assign(a, f.line <= 5 ? { 'w:line': String(Math.round(f.line * 240)), 'w:lineRule': 'auto' } : { 'w:line': twips(f.line), 'w:lineRule': 'exact' });
+  if (f.before !== undefined) Object.assign(a, { 'w:before': twips(f.before), 'w:beforeAutospacing': null });
+  if (f.after !== undefined) Object.assign(a, { 'w:after': twips(f.after), 'w:afterAutospacing': null });
+  return a;
+}
+const hasText = (f) => f.font !== undefined || f.size !== undefined;
+const hasSpacing = (f) => f.line !== undefined || f.before !== undefined || f.after !== undefined;
+// Font, size and spacing into a pPr/rPr holder (a w:style, or w:rPrDefault / w:pPrDefault's own rPr / pPr): [xml].
+function putRun(xml, holder, f, order) {
+  if (!hasText(f)) return xml;
+  let rpr; [xml, rpr] = upsert(xml, holder, 'w:rPr', (had) => had || '<w:rPr></w:rPr>', order);
+  const fresh = () => kidOf(xml, elementAt(xml, holder.start), 'w:rPr'); // (the holder grew: found again from where it starts)
+  if (f.font !== undefined) [xml] = upsert(xml, rpr, 'w:rFonts', () => rFontsXml(f.font), R_ORDER);
+  if (f.size !== undefined) {
+    [xml] = upsert(xml, fresh(), 'w:sz', () => `<w:sz w:val="${Math.round(f.size * 2)}"/>`, R_ORDER);
+    [xml] = upsert(xml, fresh(), 'w:szCs', () => `<w:szCs w:val="${Math.round(f.size * 2)}"/>`, R_ORDER);
+  }
+  return xml;
+}
+function putPara(xml, holder, f, order) {
+  if (!hasSpacing(f)) return xml;
+  let ppr; [xml, ppr] = upsert(xml, holder, 'w:pPr', (had) => had || '<w:pPr></w:pPr>', order);
+  [xml] = upsert(xml, ppr, 'w:spacing', (had) => withAttrs(had || '<w:spacing/>', spacingAttrs(f)), P_ORDER);
+  return xml;
+}
+
+const STYLE_IDS = { Normal: 'Normal', Title: 'Title', 'Heading 1': 'Heading1', 'Heading 2': 'Heading2', 'Heading 3': 'Heading3', Quote: 'Quote', 'List Bullet': 'ListBullet', 'List Number': 'ListNumber' };
+const stylesRoot = (xml) => { const r = /<w:styles[\s>]/.exec(xml); if (!r) throw damaged(); return elementAt(xml, r.index); };
+function styleEl(xml, id) {
+  const root = stylesRoot(xml);
+  return kidsOf(xml, root).find((k) => k.name === 'w:style' && new RegExp(`\\sw:styleId="${id}"`).test(xml.slice(k.start, k.start + 300).split('>')[0])) || null;
+}
+function ensureStyle(xml, id) {
+  if (styleEl(xml, id)) return xml;
+  const root = stylesRoot(xml);
+  const r = innerOf(xml, root);
+  return splice(xml, r.to, r.to, STYLE_DEFS[id] || styleXml(id, id));
+}
+// Font / size / spacing for a style, or (style null) the whole document: the defaults, Normal, and the font of every style that names one.
+function formatStyles(xml, f, styleId) {
+  if (styleId) {
+    xml = ensureStyle(xml, styleId);
+    xml = putPara(xml, styleEl(xml, styleId), f, STYLE_ORDER);
+    return putRun(xml, styleEl(xml, styleId), f, STYLE_ORDER);
+  }
+  let root = stylesRoot(xml);
+  let defs; [xml, defs] = upsert(xml, root, 'w:docDefaults', (had) => had || '<w:docDefaults></w:docDefaults>', ROOT_STYLES_ORDER);
+  if (hasText(f)) {
+    let rd; [xml, rd] = upsert(xml, defs, 'w:rPrDefault', (had) => had || '<w:rPrDefault></w:rPrDefault>', DEFAULTS_ORDER);
+    xml = putRun(xml, rd, f, ['w:rPr']);
+  }
+  if (hasSpacing(f)) {
+    root = stylesRoot(xml); defs = kidOf(xml, root, 'w:docDefaults');
+    let pd; [xml, pd] = upsert(xml, defs, 'w:pPrDefault', (had) => had || '<w:pPrDefault></w:pPrDefault>', DEFAULTS_ORDER);
+    xml = putPara(xml, pd, f, ['w:pPr']);
+  }
+  xml = ensureStyle(xml, 'Normal');
+  xml = putPara(xml, styleEl(xml, 'Normal'), f, STYLE_ORDER);
+  xml = putRun(xml, styleEl(xml, 'Normal'), f, STYLE_ORDER);
+  if (f.font !== undefined) xml = xml.replace(/<w:rFonts\b[^>]*\/>/g, rFontsXml(f.font)); // (headings and other styles take the font too, as "select all" would)
+  return xml;
+}
+
+const SPACE_LINE = /(<w:spacing\b[^>]*?)\s+w:line="[^"]*"([^>]*>)/g;
+// The document's own direct formatting that would hide the style change ("select all and set the font" reaches it too): run fonts, and line
+// spacing set on paragraphs, for a whole-document change; font, size and spacing set directly on the paragraphs that contain `find`.
+function formatBody(xml, f, find) {
+  if (!find) {
+    if (f.font !== undefined) xml = xml.replace(/<w:rFonts\b[^>]*\/>/g, '');
+    if (f.line !== undefined) xml = xml.replace(SPACE_LINE, '$1$2').replace(/(<w:spacing\b[^>]*?)\s+w:lineRule="[^"]*"([^>]*>)/g, '$1$2');
+    return { xml, paragraphs: null };
+  }
+  const want = String(find).toLowerCase();
+  let count = 0;
+  for (let i = bodyOf(xml).blocks.length - 1; i >= 0; i--) {
+    const b = bodyOf(xml).blocks[i];
+    if (b.name !== 'p' || !textOfBlock(xml, b).toLowerCase().includes(want)) continue;
+    count++;
+    let p = elementAt(xml, b.start);
+    if (hasSpacing(f)) { xml = putPara(xml, p, f, ['w:pPr']); p = elementAt(xml, b.start); }
+    if (hasText(f)) {
+      for (const r of kidsOf(xml, p).filter((k) => k.name === 'w:r').reverse()) xml = putRun(xml, elementAt(xml, r.start), f, ['w:rPr']);
+    }
+  }
+  if (!count) throw new WordError(`No paragraph contains “${String(find).slice(0, 60)}”. Use read to see the text.`);
+  return { xml, paragraphs: count };
+}
+
+// The body's paragraphs with their text (a tab counts: a typed contents line is often "Introduction<tab>3") and heading level.
+const paraText = (xml, b) => { const s = xml.slice(b.start, b.end).replace(/<w:tab\/>/g, '<w:t>\t</w:t>'); return textOfBlock(s, { start: 0, end: s.length }); };
+const paras = (xml) => bodyOf(xml).blocks.filter((b) => b.name === 'p').map((b) => ({ ...b, text: paraText(xml, b).trim(), level: levelOfBlock(xml, b) }));
+// The paragraph a format target names: a heading with that text first, then the last paragraph with exactly that text (a typed contents
+// list comes before the real heading), then one that starts with it, then one that contains it.
+function targetPara(xml, text) {
+  const want = String(text).replace(/^#+\s*/, '').trim().toLowerCase();
+  const ps = paras(xml);
+  const exact = ps.filter((p) => p.text.toLowerCase() === want);
+  return exact.find((p) => p.level <= 9) || exact[exact.length - 1] || ps.find((p) => want && p.text.toLowerCase().startsWith(want)) || ps.find((p) => want && p.text.toLowerCase().includes(want)) || null;
+}
+
+function setHeading(xml, p, level) {
+  let ppr; [xml, ppr] = upsert(xml, elementAt(xml, p.start), 'w:pPr', (had) => had || '<w:pPr></w:pPr>', ['w:pPr']);
+  return upsert(xml, ppr, 'w:pStyle', () => `<w:pStyle w:val="Heading${level}"/>`, P_ORDER)[0];
+}
+
+const PAGE_BREAK = /<w:br\b[^>]*w:type="page"/;
+function breakBefore(xml, p, ctx) {
+  const all = bodyOf(xml).blocks;
+  const i = all.findIndex((b) => b.start === p.start);
+  const prev = all[i - 1];
+  const own = xml.slice(p.start, p.end);
+  if (i <= 0 || /<w:pageBreakBefore(?:\s+w:val="(?:1|true|on)")?\s*\/>/.test(own) || /^<w:p\b[^>]*>(?:<w:pPr>[\s\S]*?<\/w:pPr>)?(?:<w:ins\b[^>]*>)?<w:r>(?:<w:rPr>[\s\S]*?<\/w:rPr>)?<w:br\b[^>]*w:type="page"/.test(own)) return { xml, added: false };
+  if (prev && prev.name === 'p' && PAGE_BREAK.test(xml.slice(prev.start, prev.end)) && !textOfBlock(xml, prev).trim()) return { xml, added: false };
+  if (prev && prev.name === 'p' && /<w:br\b[^>]*w:type="page"[^>]*\/>(?:<\/w:r>)?(?:<\/w:ins>)?<\/w:p>$/.test(xml.slice(prev.start, prev.end))) return { xml, added: false };
+  const run = '<w:r><w:br w:type="page"/></w:r>';
+  const piece = ctx.track ? `<w:p><w:pPr><w:rPr><w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}"/></w:rPr></w:pPr><w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${run}</w:ins></w:p>` : `<w:p>${run}</w:p>`;
+  return { xml: splice(xml, p.start, p.start, piece), added: true };
+}
+
+const TOC_TITLE = /^(table of contents|contents)$/i;
+const ENTRY_TAIL = /(?:\s*\.{2,}\s*|\t+|\s+)\d+\s*$/;
+// A typed contents list: the paragraphs right after a "Table of Contents" title that look like entries (a heading's text, or text ending in a
+// page number), with blank lines between them. -> { title, entries } (entries may be empty), or null when there is no such title.
+function typedContents(xml) {
+  const ps = paras(xml);
+  const t = ps.findIndex((p) => TOC_TITLE.test(p.text.replace(/:$/, '')));
+  if (t < 0) return null;
+  const heads = new Set(ps.filter((p, i) => i !== t && p.level <= 9).map((p) => p.text.toLowerCase()));
+  const later = ps.slice(t + 1);
+  const known = (text) => { const k = text.replace(ENTRY_TAIL, '').replace(/^[\d.]+\s+/, '').trim().toLowerCase(); return heads.has(k) || later.filter((p) => p.text.toLowerCase() === k).length > 1; };
+  const entries = []; let blanks = [];
+  for (const p of later) {
+    if (p.level <= 9) break;
+    if (!p.text) { if (!/<w:br\b[^>]*w:type="page"/.test(xml.slice(p.start, p.end))) { blanks.push(p); continue; } break; }
+    if (!(ENTRY_TAIL.test(p.text) || known(p.text))) break;
+    entries.push(...blanks, p); blanks = [];
+  }
+  return { title: ps[t], entries };
+}
+// A paragraph taken out: as a tracked deletion (its text and paragraph mark marked deleted) or for good.
+function removePara(xml, p, ctx) {
+  if (!ctx.track) return splice(xml, p.start, p.end, '');
+  let s = xml.slice(p.start, p.end);
+  const mark = `<w:del w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}"/>`;
+  s = s.replace(/<w:r>|<w:r\s[^>]*>/g, (m) => `<w:del w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${m}`).replace(/<\/w:r>/g, '</w:r></w:del>')
+    .replace(/<w:t(\s[^>]*)?>/g, '<w:delText$1>').replace(/<\/w:t>/g, '</w:delText>').replace(/<w:instrText(\s[^>]*)?>/g, '<w:delInstrText$1>').replace(/<\/w:instrText>/g, '</w:delInstrText>');
+  let ppr; [s, ppr] = upsert(s, { name: 'w:p', start: 0, end: s.length }, 'w:pPr', (had) => had || '<w:pPr></w:pPr>', ['w:pPr']);
+  [s] = upsert(s, ppr, 'w:rPr', (had) => (had ? upsert(had, { name: 'w:rPr', start: 0, end: had.length }, 'w:del', () => mark, R_ORDER)[0] : `<w:rPr>${mark}</w:rPr>`), P_ORDER);
+  return splice(xml, p.start, p.end, s);
+}
+const TOC_NOTE = 'The table of contents appears here when Word updates fields (it asks when the document opens; or right-click here → Update Field).';
+function tocXml(ctx) {
+  const runs = `<w:r><w:fldChar w:fldCharType="begin" w:dirty="true"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t xml:space="preserve">${esc(TOC_NOTE)}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>`;
+  return ctx.track ? `<w:p><w:pPr><w:rPr><w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}"/></w:rPr></w:pPr><w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${runs}</w:ins></w:p>` : `<w:p>${runs}</w:p>`;
+}
+
+// Margins (inches) and orientation for every section, or section n (1-based, in document order).
+function formatSections(xml, f) {
+  let found = [...xml.matchAll(/<w:sectPr\b/g)].map((m) => m.index);
+  if (!found.length) {
+    const body = bodyOf(xml);
+    xml = splice(xml, body.close, body.close, '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>');
+    found = [...xml.matchAll(/<w:sectPr\b/g)].map((m) => m.index);
+  }
+  if (f.section && f.section > found.length) throw new WordError(`The document has ${found.length} section${found.length === 1 ? '' : 's'}, so there is no section ${f.section}.`);
+  const picked = f.section ? [found[f.section - 1]] : found;
+  for (const at of picked.reverse()) {
+    let sect = elementAt(xml, at);
+    if (f.orientation) {
+      [xml] = upsert(xml, sect, 'w:pgSz', (had) => {
+        const cur = had || '<w:pgSz w:w="12240" w:h="15840"/>';
+        const w = Number((/w:w="(\d+)"/.exec(cur) || [])[1] || 12240); const h = Number((/w:h="(\d+)"/.exec(cur) || [])[1] || 15840);
+        const land = f.orientation === 'landscape';
+        return withAttrs(cur, { 'w:w': String(land ? Math.max(w, h) : Math.min(w, h)), 'w:h': String(land ? Math.min(w, h) : Math.max(w, h)), 'w:orient': land ? 'landscape' : null });
+      }, SECT_ORDER);
+      sect = elementAt(xml, at);
+    }
+    if (f.margins) {
+      const m = f.margins;
+      [xml] = upsert(xml, sect, 'w:pgMar', (had) => withAttrs(had || '<w:pgMar w:header="720" w:footer="720" w:gutter="0"/>', { 'w:top': String(Math.round(m.top * 1440)), 'w:right': String(Math.round(m.right * 1440)), 'w:bottom': String(Math.round(m.bottom * 1440)), 'w:left': String(Math.round(m.left * 1440)) }), SECT_ORDER);
+    }
+  }
+  return { xml, sections: picked.length };
+}
+
+// A part of the package by its relationship type from document.xml (styles, settings): { name, rels } or null.
+const REL = { styles: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles', settings: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings' };
+const CT = { styles: 'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml', settings: 'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml' };
+const EMPTY_PART = { styles: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles ${NS}>${STYLE_DEFS.Normal}</w:styles>`, settings: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings ${NS}></w:settings>` };
+async function partOf(zip, files, kind) {
+  const relsName = 'word/_rels/document.xml.rels';
+  let rels = files.get(relsName) ?? (zip.has(relsName) ? await zip.text(relsName) : null);
+  if (rels === null) rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+  const m = [...rels.matchAll(/<Relationship\b[^>]*>/g)].map((x) => x[0]).find((r) => r.includes(`Type="${REL[kind]}"`));
+  if (m) {
+    const target = (/Target="([^"]+)"/.exec(m) || [])[1] || '';
+    const name = target.startsWith('/') ? target.slice(1) : `word/${target}`.replace(/\/\.\//g, '/');
+    const text = files.get(name) ?? (zip.has(name) ? await zip.text(name) : null);
+    if (text !== null) return { name, text };
+  }
+  // missing: make it, with its relationship and content type
+  const name = `word/${kind}.xml`;
+  const ids = [...rels.matchAll(/Id="rId(\d+)"/g)].map((x) => Number(x[1]));
+  files.set(relsName, rels.replace('</Relationships>', `<Relationship Id="rId${Math.max(0, ...ids) + 1}" Type="${REL[kind]}" Target="${kind}.xml"/></Relationships>`));
+  const ctName = '[Content_Types].xml';
+  const ct = files.get(ctName) ?? (await zip.text(ctName));
+  if (!ct.includes(`PartName="/${name}"`)) files.set(ctName, ct.replace('</Types>', `<Override PartName="/${name}" ContentType="${CT[kind]}"/></Types>`));
+  return { name, text: EMPTY_PART[kind] };
+}
+function setUpdateFields(xml) {
+  const r = /<w:settings[\s>]/.exec(xml);
+  if (!r) throw damaged();
+  const root = elementAt(xml, r.index);
+  const order = ['w:updateFields', ...SETTINGS_AFTER];
+  return upsert(xml, root, 'w:updateFields', () => '<w:updateFields w:val="true"/>', order)[0];
+}
+
+// f: { font, size, line, before, after, style (an id from STYLE_IDS' names), find, margins {top,right,bottom,left}, orientation, section,
+// breaks [texts], toc, tocAt, headings [{ text, level }] }. -> { buf, done: { ... } } (what changed, for the AI's answer).
+async function formatDocx(buf, f, { track = false, now = () => new Date() } = {}) {
+  const { xml: original, entries } = await openForEdit(buf);
+  const zip = createZipReader(buf, { maxBytes: MAX_INFLATED, root: 'word/document.xml' });
+  bodyOf(original); // (refuses an unusual structure before anything is changed)
+  const ctx = { track, nextId: makeIds(original), date: now().toISOString().replace(/\.\d+Z$/, 'Z') };
+  const files = new Map();
+  let xml = original;
+  const done = {};
+  // headings first: the table of contents is built from them
+  if (f.headings?.length) {
+    const styles = await partOf(zip, files, 'styles');
+    let st = styles.text;
+    const missing = [];
+    let styled = 0;
+    for (const h of f.headings) {
+      const p = targetPara(xml, h.text);
+      if (!p) { missing.push(h.text); continue; }
+      xml = setHeading(xml, p, h.level);
+      st = ensureStyle(st, `Heading${h.level}`);
+      styled++;
+    }
+    if (missing.length) throw new WordError(`No paragraph matches ${missing.map((t) => `“${t.slice(0, 60)}”`).join(', ')}, so nothing was changed. Use read to see the text.`);
+    files.set(styles.name, st);
+    done.headings = styled;
+  }
+  if (f.toc) {
+    if (/<w:instrText[^>]*>\s*TOC\b/.test(xml)) done.toc = { already: true };
+    else {
+      const typed = typedContents(xml);
+      let at;
+      if (typed) {
+        for (const p of [...typed.entries].reverse()) xml = removePara(xml, p, ctx);
+        at = elementAt(xml, typed.title.start).end;
+      } else if (f.tocAt) {
+        const p = targetPara(xml, f.tocAt);
+        if (!p) throw new WordError(`No paragraph matches “${String(f.tocAt).slice(0, 60)}” to put the table of contents after. Use read to see the text.`);
+        at = p.end;
+      } else at = position(xml, bodyOf(xml), { at: 'start' });
+      xml = splice(xml, at, at, tocXml(ctx));
+      done.toc = { replaced: typed ? typed.entries.filter((p) => p.text).length : 0, title: typed ? typed.title.text : '' };
+    }
+    const settings = await partOf(zip, files, 'settings');
+    files.set(settings.name, setUpdateFields(settings.text));
+    const styles = await partOf(zip, files, 'styles');
+    if (!files.has(styles.name)) files.set(styles.name, styles.text);
+  }
+  if (f.breaks?.length) {
+    const targets = f.breaks.map((t) => ({ t, p: targetPara(xml, t) }));
+    const missing = targets.filter((x) => !x.p).map((x) => x.t);
+    if (missing.length) throw new WordError(`No paragraph matches ${missing.map((t) => `“${String(t).slice(0, 60)}”`).join(', ')}, so nothing was changed. Use read to see the text.`);
+    done.breaks = { added: [], had: [] };
+    for (const x of targets.sort((a, b) => b.p.start - a.p.start)) {
+      const p = paras(xml).find((q) => q.start === x.p.start) || x.p;
+      const r = breakBefore(xml, p, ctx);
+      xml = r.xml;
+      done.breaks[r.added ? 'added' : 'had'].unshift(x.p.text || x.t);
+    }
+  }
+  if (hasText(f) || hasSpacing(f)) {
+    const body = formatBody(xml, f, f.find);
+    xml = body.xml;
+    if (!f.find) {
+      const styles = await partOf(zip, files, 'styles');
+      files.set(styles.name, formatStyles(styles.text, f, f.style ? STYLE_IDS[f.style] : null));
+    }
+    done.text = { style: f.style || null, find: f.find || null, paragraphs: body.paragraphs };
+  }
+  if (f.margins || f.orientation) {
+    const s = formatSections(xml, f);
+    xml = s.xml;
+    done.sections = s.sections;
+  }
+  files.set('word/document.xml', xml);
+  const names = new Set(entries.map((e) => e.name));
+  const out = entries.map((e) => (files.has(e.name) ? { name: e.name, data: Buffer.from(files.get(e.name), 'utf8') } : e));
+  for (const [name, text] of files) if (!names.has(name)) out.push({ name, data: Buffer.from(text, 'utf8') });
+  return { buf: buildZip(out), done, tracked: track };
+}
 function newDocx() {
   const files = {
     '[Content_Types].xml': '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>',
@@ -314,4 +701,4 @@ function newDocx() {
   return buildZip(Object.entries(files).map(([name, text]) => ({ name, data: Buffer.from(text, 'utf8') })));
 }
 
-module.exports = { readDocx, editDocx, newDocx, buildZip, centralEntries, crc32, AUTHOR };
+module.exports = { readDocx, editDocx, formatDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };

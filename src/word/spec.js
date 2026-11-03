@@ -5,9 +5,9 @@
 
 const path = require('path');
 
-const ACTIONS = ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show'];
+const ACTIONS = ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show'];
 // Changes that open, edit, save or show something: refused in hands-off mode and asked about in a card.
-const EDITS = new Set(['insert', 'replace', 'style', 'table', 'image', 'comment', 'track']);
+const EDITS = new Set(['insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track']);
 const SAVES = new Set(['save', 'save_as']);
 const ACTING = new Set(['open', 'new', 'show', ...EDITS, ...SAVES]);
 const STYLES = { normal: 'Normal', 'heading 1': 'Heading 1', 'heading 2': 'Heading 2', 'heading 3': 'Heading 3', title: 'Title', 'list bullet': 'List Bullet', bullet: 'List Bullet', bullets: 'List Bullet', 'list number': 'List Number', numbered: 'List Number', number: 'List Number', quote: 'Quote' };
@@ -88,9 +88,47 @@ function tableRows(rows) {
   return out.map((r) => { while (r.length < width) r.push(''); return r; });
 }
 
+// format: fonts and spacing (for a style, the paragraphs holding some text, or the whole document), margins and orientation (every section, or
+// one), page breaks before paragraphs, heading styles and a table of contents. -> the clean fields (names as docx.formatDocx and host.ps1 take them).
+const MARGINS = { normal: [1, 1, 1, 1], narrow: [0.5, 0.5, 0.5, 0.5], moderate: [1, 0.75, 1, 0.75], wide: [1, 2, 1, 2] };
+const MARGIN_HELP = 'margins must be normal, narrow, moderate, wide, or inches: "1", "1 1.25" (top and bottom, then the sides) or "1 1 1 1" (top right bottom left).';
+const num = (v, name, lo, hi) => { const n = typeof v === 'string' && v.trim() !== '' ? Number(v.replace(/\s*(pt|in)$/i, '')) : v; if (typeof n !== 'number' || !Number.isFinite(n) || n < lo || n > hi) fail(`${name} must be a number from ${lo} to ${hi}.`); return n; };
+const texts = (v, name) => { const list = typeof v === 'string' ? [v] : v; if (!Array.isArray(list) || !list.length || list.length > 50 || list.some((t) => typeof t !== 'string' || !t.trim() || t.length > MAX.find)) fail(`${name} must be a list of paragraph texts (each as read shows it).`); return list.map((t) => t.trim()); };
+function marginsOf(v) {
+  if (typeof v === 'number') v = String(v);
+  if (typeof v !== 'string') fail(MARGIN_HELP);
+  const n = MARGINS[v.trim().toLowerCase()] || v.replace(/(inches|inch|in|")/gi, ' ').trim().split(/[\s,]+/).map(Number);
+  if (![1, 2, 4].includes(n.length) || n.some((x) => !Number.isFinite(x) || x < 0 || x > 10)) fail(MARGIN_HELP);
+  const [t, r, b, l] = n.length === 1 ? [n[0], n[0], n[0], n[0]] : n.length === 2 ? [n[0], n[1], n[0], n[1]] : n;
+  return { top: t, right: r, bottom: b, left: l };
+}
+function formatOf(input) {
+  const out = {};
+  if (input.font !== undefined) { const font = str(input.font, 'font', 60, { required: true }).trim(); if (!/^[\p{L}\p{N} .'&()-]+$/u.test(font)) fail('font must be a font name, such as Calibri or Times New Roman.'); out.font = font; }
+  if (input.size !== undefined) out.size = Math.round(num(input.size, 'size (points)', 1, 400) * 2) / 2;
+  if (input.line_spacing !== undefined) { out.line = num(input.line_spacing, 'line_spacing', 0.5, 200); if (out.line > 5 && out.line < 6) fail('line_spacing is a multiple of a line (1, 1.15, 1.5, 2; at most 5) or an exact height in points (6 or more).'); }
+  if (input.space_before !== undefined) out.before = num(input.space_before, 'space_before (points)', 0, 200);
+  if (input.space_after !== undefined) out.after = num(input.space_after, 'space_after (points)', 0, 200);
+  const style = styleName(input.style); if (style) out.style = style;
+  const find = str(input.find, 'find', MAX.find); if (find) out.find = find;
+  if (out.style && out.find) fail('Give style or find, not both: style changes a style, find the paragraphs holding that text.');
+  if (input.margins !== undefined) out.margins = marginsOf(input.margins);
+  if (input.orientation !== undefined) { if (!['portrait', 'landscape'].includes(input.orientation)) fail('orientation must be portrait or landscape.'); out.orientation = input.orientation; }
+  if (input.section !== undefined) { if (!Number.isInteger(input.section) || input.section < 1) fail('section must be a section number (1 is the first).'); out.section = input.section; }
+  if (input.page_break_before !== undefined) out.breaks = texts(input.page_break_before, 'page_break_before');
+  if (input.headings !== undefined) out.headings = texts(input.headings, 'headings').map((t) => { const m = /^(#{1,3})\s+(.+)$/.exec(t); return m ? { text: m[2].trim(), level: m[1].length } : { text: t, level: 1 }; });
+  if (input.toc !== undefined) { if (typeof input.toc !== 'boolean') fail('toc must be true (a table of contents).'); if (input.toc) out.toc = true; }
+  const at = str(input.heading, 'heading', MAX.find); if (at) { if (!out.toc) fail('heading (where the table of contents goes) needs toc: true.'); out.tocAt = at; }
+  const text = out.font !== undefined || out.size !== undefined || out.line !== undefined || out.before !== undefined || out.after !== undefined;
+  if ((out.style || out.find) && !text) fail('style and find pick where font, size, line_spacing, space_before or space_after change; give one of those.');
+  if (!text && !out.margins && !out.orientation && !out.breaks && !out.headings && !out.toc) fail('Give something to change: font, size, line_spacing, space_before, space_after, margins, orientation, page_break_before, headings or toc.');
+  if (out.section && !out.margins && !out.orientation) fail('section picks where margins or orientation change; give one of those.');
+  return out;
+}
+
 // What each change takes besides action, doc and path (tab_id: the MCP listing adds it to every tool). An argument it does not take is refused,
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', 'bold', 'italic'], table: ['at', 'heading', 'rows'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic'], replace: ['find', 'replace'], style: ['find', 'style', 'bold', 'italic'], table: ['at', 'heading', 'rows'], image: ['at', 'heading', 'image'], comment: ['find', 'heading', 'comment', 'text'], track: ['on'], format: ['font', 'size', 'line_spacing', 'space_before', 'space_after', 'style', 'find', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -142,6 +180,7 @@ function validate(input) {
       if (!out.style && out.bold === undefined && out.italic === undefined) fail('Give a style, bold or italic to apply.');
       break;
     }
+    case 'format': if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg); Object.assign(out, formatOf(input)); break;
     case 'table': {
       if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
       Object.assign(out, placeOf(input));
@@ -173,6 +212,25 @@ const clip = (s, n) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); 
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const lines = (text) => String(text || '').split(/\r\n|\r|\n/).filter((l) => l.length).length || 1;
 
+// What a format call changes, in words, for its step label ("font Calibri, 1.5 line spacing, margins normal, 3 page breaks, a table of contents").
+function formatParts(i = {}) {
+  const parts = [];
+  if (i.font) parts.push(`font ${clip(i.font, 30)}`);
+  if (i.size) parts.push(`size ${i.size} pt`);
+  const line = i.line_spacing ?? i.line; // (the tool's arguments, or validate's clean fields)
+  if (line !== undefined) parts.push(Number(line) > 5 ? `${line} pt lines` : `${line} line spacing`);
+  if ((i.space_before ?? i.before) !== undefined || (i.space_after ?? i.after) !== undefined) parts.push('paragraph spacing');
+  const m = i.margins;
+  if (m !== undefined) parts.push(m && typeof m === 'object' ? (m.top === m.right && m.top === m.bottom && m.top === m.left ? `${m.top} in margins` : 'margins') : `margins ${clip(m, 20)}`);
+  if (i.orientation) parts.push(i.orientation);
+  const pb = i.page_break_before ?? i.breaks;
+  const nb = typeof pb === 'string' ? 1 : Array.isArray(pb) ? pb.length : 0;
+  if (nb) parts.push(count(nb, 'page break', 'page breaks'));
+  if (Array.isArray(i.headings) && i.headings.length) parts.push(count(i.headings.length, 'heading', 'headings'));
+  if (i.toc) parts.push('a table of contents');
+  return parts;
+}
+
 // The sentence in the chat's live card, before it runs (name: the document's file name, when known).
 function stepLabel(input = {}, name = '') {
   const a = input?.action;
@@ -189,6 +247,7 @@ function stepLabel(input = {}, name = '') {
     case 'table': return `Writing in ${doc}: adding a table of ${count(Array.isArray(input.rows) ? input.rows.length : 0, 'row', 'rows')}${where(input)}`;
     case 'image': return `Writing in ${doc}: adding the picture ${baseName(input.image) || ''}${where(input)}`.trim();
     case 'comment': return `Commenting in ${doc} on “${clip(input.find ?? input.heading, 30)}”`;
+    case 'format': return `Formatting ${doc}: ${formatParts(input).join(', ') || 'the layout'}`;
     case 'track': return `${input.on ? 'Turning on' : 'Turning off'} tracked changes in ${doc}`;
     case 'save': return `Saving ${doc}`;
     case 'save_as': return `Saving ${doc} as ${baseName(input.path) || 'a new file'}`;

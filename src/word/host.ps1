@@ -321,6 +321,179 @@ function Cmd-Style($req) {
   return @{ doc = [string]$d.Name; formatted = $done }
 }
 
+# ---- format: fonts and spacing through the styles (Normal and the headings, or one style), or on the paragraphs holding some text; margins and
+# orientation per section; a page break before a paragraph; heading styles; a real table of contents (it replaces a typed contents list).
+$FF = [string][char]12
+function Para-Text($p) { return ([string]$p.Range.Text).TrimEnd([char]13, [char]7).Replace($FF, '').Trim() }
+# The paragraph a format target names, as the file route picks it: a heading with that text, then the last paragraph with exactly that text
+# (a typed contents list comes before the real heading), then the first that starts with it, then the first that contains it. 0: none.
+function Find-Para($d, [string]$text) {
+  $want = ($text -replace '^#+\s*', '').Trim().ToLowerInvariant()
+  $n = [int]$d.Paragraphs.Count
+  $head = 0; $last = 0; $starts = 0; $has = 0
+  for ($i = 1; $i -le $n; $i++) {
+    $p = $d.Paragraphs.Item($i)
+    $t = (Para-Text $p).ToLowerInvariant()
+    if ($t -eq '') { continue }
+    if ($t -eq $want) { $last = $i; if ($head -eq 0 -and (Para-Level $p) -le 9) { $head = $i } }
+    elseif ($starts -eq 0 -and $t.StartsWith($want)) { $starts = $i }
+    elseif ($has -eq 0 -and $t.Contains($want)) { $has = $i }
+  }
+  foreach ($k in @($head, $last, $starts, $has)) { if ($k) { return $k } }
+  return 0
+}
+function Need-Paras($d, $texts) {
+  $missing = @(); foreach ($t in @($texts)) { if ((Find-Para $d ([string]$t)) -eq 0) { $missing += ('"' + $t + '"') } }
+  if ($missing.Count) { throw ('No paragraph matches ' + ($missing -join ', ') + ', so nothing was changed. Use read to see the text.') }
+}
+function Set-Spacing($pf, $req) {
+  if ($req.ContainsKey('line')) {
+    $l = [double]$req['line']
+    if ($l -gt 5) { $pf.LineSpacingRule = 4; $pf.LineSpacing = $l }   # exactly, in points
+    elseif ($l -eq 1) { $pf.LineSpacingRule = 0 } elseif ($l -eq 1.5) { $pf.LineSpacingRule = 1 } elseif ($l -eq 2) { $pf.LineSpacingRule = 2 }
+    else { $pf.LineSpacingRule = 5; $pf.LineSpacing = 12 * $l }   # a multiple of a line
+  }
+  if ($req.ContainsKey('before')) { $pf.SpaceBefore = [double]$req['before'] }
+  if ($req.ContainsKey('after')) { $pf.SpaceAfter = [double]$req['after'] }
+}
+function Set-Font($font, $req) {
+  if ($req.ContainsKey('font')) { $font.Name = [string]$req['font'] }
+  if ($req.ContainsKey('size')) { $font.Size = [double]$req['size'] }
+}
+function Has-Text($req) { return ($req.ContainsKey('font') -or $req.ContainsKey('size')) }
+function Has-Spacing($req) { return ($req.ContainsKey('line') -or $req.ContainsKey('before') -or $req.ContainsKey('after')) }
+$ENTRY_TAIL = '(\s*\.{2,}\s*|\t+|\s+)\d+\s*$'
+
+# A typed contents list: the paragraphs after a "Table of Contents" title that look like entries (a heading's text, or text ending in a page
+# number), with blank lines between them. -> @{ title; entries } or $null.
+function Typed-Contents($d) {
+  $n = [int]$d.Paragraphs.Count
+  $t = 0
+  for ($i = 1; $i -le $n; $i++) { if ((Para-Text ($d.Paragraphs.Item($i))) -match '^(?i)(table of contents|contents):?$') { $t = $i; break } }
+  if (-not $t) { return $null }
+  $heads = @{}
+  for ($i = 1; $i -le $n; $i++) { $p = $d.Paragraphs.Item($i); if ($i -ne $t -and (Para-Level $p) -le 9) { $heads[(Para-Text $p).ToLowerInvariant()] = $true } }
+  $entries = New-Object System.Collections.ArrayList
+  $blanks = New-Object System.Collections.ArrayList
+  for ($i = $t + 1; $i -le $n; $i++) {
+    $p = $d.Paragraphs.Item($i)
+    if ((Para-Level $p) -le 9) { break }
+    $raw = [string]$p.Range.Text
+    if ($raw.Contains($FF)) { break }
+    $x = $raw.TrimEnd([char]13, [char]7).Trim()
+    if ($x -eq '') { [void]$blanks.Add($i); continue }
+    $k = (($x -replace $ENTRY_TAIL, '') -replace '^[\d.]+\s+', '').Trim().ToLowerInvariant()
+    if (-not (($x -match $ENTRY_TAIL) -or $heads.ContainsKey($k))) { break }
+    foreach ($b in $blanks) { [void]$entries.Add($b) }
+    $blanks.Clear()
+    [void]$entries.Add($i)
+  }
+  return @{ title = $t; entries = $entries.ToArray() }
+}
+
+function Cmd-Format($req) {
+  $d = Find-Doc $req
+  $done = @{}
+  # every paragraph a change names is found first: a missing one changes nothing
+  $heads = @(Arg $req 'headings' @())
+  $breaks = @(Arg $req 'breaks' @())
+  $texts = @(); foreach ($h in $heads) { $texts += [string]$h['text'] }; foreach ($b in $breaks) { $texts += [string]$b }
+  if ($req.ContainsKey('toc') -and $req.ContainsKey('tocAt')) { $texts += [string]$req['tocAt'] }
+  if ($texts.Count) { Need-Paras $d $texts }
+  if ($req.ContainsKey('find') -and ((Has-Text $req) -or (Has-Spacing $req))) { if ((Find-All $d ([string]$req['find']) 1).Count -eq 0) { throw ('No paragraph contains "' + [string]$req['find'] + '". Use read to see the text.') } }
+  $first = $null
+  if ($heads.Count) {
+    foreach ($h in $heads) { $p = $d.Paragraphs.Item((Find-Para $d ([string]$h['text']))); Set-Style $d $p.Range ('Heading ' + [int]$h['level']); if ($null -eq $first) { $first = [int]$p.Range.Start } }
+    $done.headings = $heads.Count
+  }
+  if ($req.ContainsKey('toc')) {
+    if ($d.TablesOfContents.Count -gt 0) {
+      foreach ($c in $d.TablesOfContents) { $c.Update() }
+      $done.toc = @{ already = $true }
+    } else {
+      $typed = Typed-Contents $d
+      $replaced = 0
+      $title = ''
+      if ($typed) {
+        $ents = @($typed.entries)
+        for ($k = $ents.Count - 1; $k -ge 0; $k--) { $d.Paragraphs.Item([int]$ents[$k]).Range.Text = ''; $replaced++ }   # (the lines' text goes, as a replace with "" takes it; tracked when tracking is on)
+        $tp = $d.Paragraphs.Item([int]$typed.title)
+        $title = Para-Text $tp
+        $tp.Range.InsertParagraphAfter()
+        $at = [int]$d.Paragraphs.Item([int]$typed.title + 1).Range.Start
+      } elseif ($req.ContainsKey('tocAt')) {
+        $p = $d.Paragraphs.Item((Find-Para $d ([string]$req['tocAt'])))
+        $p.Range.InsertParagraphAfter()
+        $at = [int]$p.Next(1).Range.Start
+      } else {
+        $d.Range(0, 0).InsertParagraphBefore()
+        $at = 0
+      }
+      $toc = $d.TablesOfContents.Add($d.Range($at, $at), $true, 1, 3)
+      $toc.Update()
+      $done.toc = @{ replaced = $replaced; title = $title }
+      if ($null -eq $first) { $first = $at }
+    }
+  }
+  if ($breaks.Count) {
+    $added = @(); $had = @()
+    $targets = @(); foreach ($b in $breaks) { $targets += [pscustomobject]@{ t = [string]$b; i = [int](Find-Para $d ([string]$b)) } }
+    foreach ($x in @($targets | Sort-Object -Property i -Descending)) {
+      $p = $d.Paragraphs.Item($x.i)
+      $name = Para-Text $p
+      $before = ''; if ($x.i -gt 1) { $before = ([string]$d.Paragraphs.Item($x.i - 1).Range.Text).TrimEnd([char]13) }
+      if ($x.i -eq 1 -or $p.Format.PageBreakBefore -or ([string]$p.Range.Text).StartsWith($FF) -or $before.EndsWith($FF)) { $had = @($name) + $had; continue }
+      $d.Range($p.Range.Start, $p.Range.Start).InsertBreak(7)
+      $added = @($name) + $added
+      $first = [int]$p.Range.Start
+    }
+    $done.breaks = @{ added = $added; had = $had }
+  }
+  if ((Has-Text $req) -or (Has-Spacing $req)) {
+    $paras = $null
+    if ($req.ContainsKey('find')) {
+      $hits = Find-All $d ([string]$req['find']) 200
+      $seen = @{}
+      foreach ($h in $hits) {
+        if (Has-Text $req) { Set-Font $h.Font $req }
+        if (Has-Spacing $req) { foreach ($hp in $h.Paragraphs) { $k = [int]$hp.Range.Start; if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; Set-Spacing $hp.Format $req } } }
+      }
+      $paras = $hits.Count
+      if ($hits.Count) { $first = [int]$hits[0].Start }
+    } elseif ($req.ContainsKey('style')) {
+      $st = $d.Styles.Item([int]$STYLE_ID[[string]$req['style']])
+      Set-Font $st.Font $req
+      Set-Spacing $st.ParagraphFormat $req
+    } else {
+      # the whole document: Normal (spacing, font, size), the headings' and title's font, then the paragraphs whose own formatting still hides it
+      $normal = $d.Styles.Item(-1)
+      Set-Font $normal.Font $req
+      Set-Spacing $normal.ParagraphFormat $req
+      if ($req.ContainsKey('font')) { foreach ($id in @(-2, -3, -4, -5, -63, -75)) { try { $d.Styles.Item($id).Font.Name = [string]$req['font'] } catch { } } }
+      $font = [string](Arg $req 'font' '')
+      $rule = [int]$normal.ParagraphFormat.LineSpacingRule; $ls = [double]$normal.ParagraphFormat.LineSpacing
+      foreach ($p in $d.Paragraphs) {
+        if ($font -and [string]$p.Range.Font.Name -ne $font) { $p.Range.Font.Name = $font }
+        if ($req.ContainsKey('line') -and (Para-Level $p) -gt 9 -and ([int]$p.Format.LineSpacingRule -ne $rule -or [double]$p.Format.LineSpacing -ne $ls)) { Set-Spacing $p.Format @{ line = $req['line'] } }
+      }
+    }
+    $done.text = @{ style = (Arg $req 'style' $null); find = (Arg $req 'find' $null); paragraphs = $paras }
+  }
+  if ($req.ContainsKey('margins') -or $req.ContainsKey('orientation')) {
+    $secs = @(); $i = 0
+    foreach ($s in $d.Sections) { $i++; if (-not $req.ContainsKey('section') -or [int]$req['section'] -eq $i) { $secs += $s } }
+    if ($req.ContainsKey('section') -and [int]$req['section'] -gt $i) { throw ('The document has ' + $i + ' section(s), so there is no section ' + [int]$req['section'] + '.') }
+    foreach ($s in $secs) {
+      $ps = $s.PageSetup
+      if ($req.ContainsKey('orientation')) { if ([string]$req['orientation'] -eq 'landscape') { $ps.Orientation = 1 } else { $ps.Orientation = 0 } }
+      if ($req.ContainsKey('margins')) { $m = $req['margins']; $ps.TopMargin = 72 * [double]$m['top']; $ps.RightMargin = 72 * [double]$m['right']; $ps.BottomMargin = 72 * [double]$m['bottom']; $ps.LeftMargin = 72 * [double]$m['left'] }
+    }
+    $done.sections = $secs.Count
+  }
+  if ($null -ne $first) { $script:last[(Doc-Key $d)] = @([int]$first, [int]$first + 1) }
+  return @{ doc = [string]$d.Name; done = $done }
+}
+
 function Cmd-Table($req) {
   $d = Find-Doc $req
   $rows = @($req['rows'])
@@ -529,6 +702,7 @@ function Handle($req) {
     'insert' { return Cmd-Insert $req }
     'replace' { return Cmd-Replace $req }
     'style' { return Cmd-Style $req }
+    'format' { return Cmd-Format $req }
     'table' { return Cmd-Table $req }
     'image' { return Cmd-Image $req }
     'comment' { return Cmd-Comment $req }
