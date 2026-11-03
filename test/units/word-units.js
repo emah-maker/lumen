@@ -33,7 +33,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
   // ---- validation and marshalling
   {
     const v = (i) => spec.validate(i);
-    check('actions: the fifteen actions are the whole list', J(spec.ACTIONS) === J(['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show']));
+    check('actions: the sixteen actions are the whole list', J(spec.ACTIONS) === J(['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show', 'help']));
     check('validate: an unknown action, no input, an array are refused with a plain sentence', /must be one of/.test(throws(() => v({ action: 'delete' }))) && /Give an action/.test(throws(() => v(null))) && /Give an action/.test(throws(() => v([]))));
     check('validate: list / save / show need nothing', v({ action: 'list' }).action === 'list' && v({ action: 'save' }).action === 'save' && v({ action: 'show', doc: 'Report.docx' }).doc === 'Report.docx');
     for (const text of NASTY) {
@@ -766,6 +766,117 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const fw = await fr.word.run({ action: 'format', path: file, font: 'Calibri', margins: 'normal', page_break_before: ['Introduction'], toc: true }, fr.ctx);
     const fp = await partsOf(fs.readFileSync(file));
     check('format (file route): without Word the .docx itself is changed after a card that shows the path, and says what was done', /Formatted Lab report \(2\)\.docx: added a table of contents under “Table of Contents” in place of the typed list \(3 lines\)/.test(fw) && /page break before “Introduction”/.test(fw) && /Saved in the file/.test(fw) && fr.store.cards.length === 1 && fr.store.cards[0].args.includes(file) && / TOC \\o/.test(fp['word/document.xml']) && /updateFields/.test(fp['word/settings.xml']) && (await valid(fs.readFileSync(file))) === null, fw);
+    // ---- styles, headings and lists: character formatting on the exact text found (runs split at its edges), paragraph formatting, a style made
+    // with based_on, Heading 1 to 6, real lists in numbering.xml, and help (the whole field list, so the tool's own description stays short)
+    {
+      const cv = v({ action: 'style', find: 'x', underline: true, color: 'Red', highlight: 'light gray', strike: 'true', font: 'Arial', size: '11pt' });
+      check('style: character formatting is checked and normalized (underline true is single, color names and #hex are hex, highlight names are Word\'s)', cv.underline === 'single' && cv.color === 'FF0000' && cv.highlight === 'lightGray' && cv.strike === true && cv.font === 'Arial' && cv.size === 11 && v({ action: 'style', find: 'x', color: '#1f4e79' }).color === '1F4E79' && v({ action: 'style', find: 'x', underline: 'wavy' }).underline === 'wave', J(cv));
+      const sErrs = [
+        [{ action: 'style', find: 'x', color: 'blurple' }, /color must be a color name/],
+        [{ action: 'style', find: 'x', highlight: 'chartreuse' }, /highlight must be one of/],
+        [{ action: 'style', find: 'x', underline: 'zigzag' }, /underline must be/],
+        [{ action: 'style', find: 'x', bold: 'yes' }, /bold must be true or false/],
+        [{ action: 'style', find: 'x' }, /Give a style, bold or italic/],
+        [{ action: 'style', find: 'x', style: 'Lab"/><w:b/>' }, /Unknown style/],
+        [{ action: 'format', based_on: 'Normal' }, /based_on needs style/],
+        [{ action: 'format', list: 'bullet' }, /list needs the paragraphs/],
+        [{ action: 'format', list: 'stars', paragraphs: ['a'] }, /list must be bullet, number or none/],
+        [{ action: 'format', level: 2, paragraphs: ['a'], bold: true }, /level goes with list/],
+        [{ action: 'format', align: 'middle' }, /align must be left, center, right or justify/],
+        [{ action: 'format', indent: 20 }, /indent .* must be a number from 0 to 10/],
+        [{ action: 'format', paragraphs: ['a'], find: 'b', bold: true }, /not both/],
+        [{ action: 'format', paragraphs: ['a'] }, /give one of those changes/],
+        [{ action: 'format', align: 'left', colour: 'red' }, /format does not take colour/],
+      ];
+      const sBad = sErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+      check('styles: every bad argument is refused with a sentence that says what to send', !sBad.length, J(sBad.map(([i]) => [i, throws(() => v(i))])));
+      check('styles: a style the document has by its own name is taken as it is; the built-in ones by name, Heading 1 to 6', v({ action: 'style', find: 'x', style: 'Lab  Caption' }).style === 'Lab Caption' && v({ action: 'insert', text: 'x', style: 'heading 5' }).style === 'Heading 5' && J(v({ action: 'format', headings: ['#### Deep', '###### Deeper'] }).headings) === J([{ text: 'Deep', level: 4 }, { text: 'Deeper', level: 6 }]));
+      const li = v({ action: 'insert', style: 'List Number', text: '1. Mix\n  a) Stir\n\t- Wait\n2. Pour' });
+      check('insert: a list style takes each line\'s indent as its level and drops a typed marker; other styles keep the text as it is', li.text === 'Mix\nStir\nWait\nPour' && J(li.levels) === J([1, 2, 2, 1]) && v({ action: 'insert', text: '- not a list' }).text === '- not a list' && !('levels' in v({ action: 'insert', style: 'List Bullet', text: '- a\n- b' })), J(li));
+      const fv = v({ action: 'format', paragraphs: ['Step one', 'Step two'], list: 'numbered', level: 2, align: 'justify', indent: 0.5, first_line: -0.25, keep_with_next: true });
+      check('format: paragraphs, list, level, align, indent, first_line and keep_with_next come out as the clean fields', J(fv.paras) === J(['Step one', 'Step two']) && fv.list === 'number' && fv.level === 2 && fv.align === 'justify' && fv.indent === 0.5 && fv.firstLine === -0.25 && fv.keepNext === true, J(fv));
+      check('style: takes a path (the file route without Word)', v({ action: 'style', path: `C:${B}x${B}a.docx`, find: 'a', bold: true }).path === `C:${B}x${B}a.docx`);
+      const all2 = spec.help();
+      const lists = spec.help('lists');
+      check('help: the whole field list (every action, the fields the description leaves out), or the lines for a topic; it reads nothing and changes nothing', /underline/.test(all2) && /based_on/.test(all2) && /List Number/.test(all2) && /keep_with_next/.test(all2) && /paragraphs/.test(all2) && /margins/.test(all2) && lists.split('\n').length < all2.split('\n').length && /format lists/.test(lists) && spec.kind('help') === 'read' && !spec.EDITS.has('help'), lists);
+      check('tool: help is an action, and the description points at it (lists, styles, colors), still in budget', tool.input_schema.properties.action.enum.includes('help') && /call help/.test(tool.description) && /Lists, styles/.test(tool.description), tool.description);
+      const hr = makeRig();
+      const helped = await hr.word.run({ action: 'help', topic: 'style' }, hr.ctx);
+      check('help (controller): answers from the field list with no card and no call to Word', /style \(the exact text found\)/.test(helped) && hr.store.calls.length === 0 && hr.store.cards.length === 0, helped);
+
+      // the file route: the exact text, split out of its run
+      let sb = docx.newDocx();
+      for (const t of ['Results', 'The mean was 4.2 mm and the max 4.2 mm.', 'Other text.']) sb = (await docx.editDocx(sb, { insert: { at: 'end', text: t } })).buf;
+      const sp = await partsOf(sb);
+      sb = setPart(sb, 'word/document.xml', sp['word/document.xml'].replace('<w:r><w:t xml:space="preserve">Other text.</w:t></w:r>', '<w:r w:rsidR="00A1"><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">Oth</w:t></w:r><w:r><w:rPr><w:sz w:val="30"/></w:rPr><w:t xml:space="preserve">er</w:t><w:tab/><w:t xml:space="preserve">text.</w:t></w:r>'));
+      const st1 = await docx.styleDocx(sb, { find: '4.2 mm', bold: true, color: 'FF0000', highlight: 'yellow' });
+      const d1 = (await partsOf(st1.buf))['word/document.xml'];
+      check('style (file): the exact text gets the formatting in a run of its own (both matches), the text around it keeps its run unchanged', d1.includes('<w:r><w:t xml:space="preserve">The mean was </w:t></w:r><w:r><w:rPr><w:b/><w:color w:val="FF0000"/><w:highlight w:val="yellow"/></w:rPr><w:t xml:space="preserve">4.2 mm</w:t></w:r><w:r><w:t xml:space="preserve"> and the max </w:t></w:r><w:r><w:rPr><w:b/><w:color w:val="FF0000"/><w:highlight w:val="yellow"/></w:rPr><w:t xml:space="preserve">4.2 mm</w:t></w:r><w:r><w:t xml:space="preserve">.</w:t></w:r>') && st1.formatted === 2 && (await valid(st1.buf)) === null, d1.slice(d1.indexOf('The mean') - 30, d1.indexOf('The mean') + 500));
+      const st2 = await docx.styleDocx(sb, { find: 'ther\ttex', underline: 'double' });
+      const d2 = (await partsOf(st2.buf))['word/document.xml'];
+      check('style (file): a match across runs (and a tab) splits each run at its edge and keeps each run\'s own properties and attributes', d2.includes('<w:r w:rsidR="00A1"><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">O</w:t></w:r><w:r w:rsidR="00A1"><w:rPr><w:i/><w:u w:val="double"/></w:rPr><w:t xml:space="preserve">th</w:t></w:r><w:r><w:rPr><w:sz w:val="30"/><w:u w:val="double"/></w:rPr><w:t xml:space="preserve">er</w:t><w:tab/><w:t xml:space="preserve">tex</w:t></w:r><w:r><w:rPr><w:sz w:val="30"/></w:rPr><w:t xml:space="preserve">t.</w:t></w:r>') && (await valid(st2.buf)) === null, d2.slice(d2.indexOf('00A1') - 30, d2.indexOf('00A1') + 560));
+      const tb = (await docx.editDocx(sb, { table: { at: 'end', rows: [['Trial', 'Mass'], ['1', '12 g']] } })).buf;
+      const st3 = await docx.styleDocx(tb, { find: '12 g', italic: true, style: 'Quote' });
+      const d3 = (await partsOf(st3.buf))['word/document.xml'];
+      check('style (file): text in a table cell is found too; a paragraph style goes on its paragraph (pStyle first)', /<w:tc><w:tcPr>[^]*?<w:p><w:pPr><w:pStyle w:val="Quote"\/><\/w:pPr><w:r><w:rPr><w:i\/><\/w:rPr><w:t xml:space="preserve">12 g<\/w:t>/.test(d3) && (await valid(st3.buf)) === null, d3.slice(d3.indexOf('12 g') - 200, d3.indexOf('12 g') + 20));
+      check('style (file): no match, or a style the document lacks, changes nothing and says so', /No match for “nowhere”/.test(await rejects(() => docx.styleDocx(sb, { find: 'nowhere', bold: true })) || '') && /no style named “Lab Caption”, so nothing was changed.*based_on/.test(await rejects(() => docx.styleDocx(sb, { find: 'Results', style: 'Lab Caption' })) || ''));
+      // a style made with based_on, then applied by its name
+      const mk = await docx.formatDocx(sb, { style: 'Figure Caption', basedOn: 'Normal', size: 9, italic: true, align: 'center', after: 12 });
+      const ms = (await partsOf(mk.buf))['word/styles.xml'];
+      const cap = /<w:style [^>]*w:styleId="FigureCaption">[\s\S]*?<\/w:style>/.exec(ms)?.[0] || '';
+      check('format (file): style + based_on makes a paragraph style (its name, based on Normal, spacing and alignment in pPr in schema order, then rPr)', cap === '<w:style w:type="paragraph" w:customStyle="1" w:styleId="FigureCaption"><w:name w:val="Figure Caption"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:after="240"/><w:jc w:val="center"/></w:pPr><w:rPr><w:i/><w:sz w:val="18"/><w:szCs w:val="18"/></w:rPr></w:style>' && mk.done.text.created === true && (await valid(mk.buf)) === null, cap);
+      const mk2 = await docx.formatDocx(mk.buf, { style: 'figure caption', basedOn: 'Quote', bold: true });
+      const ms2 = (await partsOf(mk2.buf))['word/styles.xml'];
+      check('format (file): the same style again (any case) is changed, not made twice; based_on moves it', (ms2.match(/w:styleId="FigureCaption"/g) || []).length === 1 && /w:styleId="FigureCaption"><w:name w:val="Figure Caption"\/><w:basedOn w:val="Quote"\/>[\s\S]*?<w:rPr><w:b\/><w:i\/>/.test(ms2) && mk2.done.text.created === false, /w:styleId="FigureCaption">[\s\S]*?<\/w:style>/.exec(ms2)?.[0]);
+      const applied = await docx.styleDocx(mk2.buf, { find: 'Other', style: 'Figure Caption' });
+      check('style (file): the new style applies by its name', /<w:pStyle w:val="FigureCaption"\/>/.test((await partsOf(applied.buf))['word/document.xml']));
+      check('format (file): a style the document lacks, with no based_on, is a plain error that names based_on', /no style named “Lab Caption”.*based_on/.test(await rejects(() => docx.formatDocx(sb, { style: 'Lab Caption', size: 9 })) || ''));
+      // paragraph formatting on named paragraphs
+      const pf = await docx.formatDocx(sb, { paras: ['Results', 'Other'], align: 'justify', indent: 0.5, firstLine: -0.25, keepNext: true, line: 2, color: '1F4E79' });
+      const pd = (await partsOf(pf.buf))['word/document.xml'];
+      check('format (file): paragraphs [texts] get keep-with-next, spacing, indents (negative first_line is hanging) and alignment in schema order, and the color on every run', pd.includes('<w:p><w:pPr><w:keepNext/><w:spacing w:line="480" w:lineRule="auto"/><w:ind w:left="720" w:hanging="360"/><w:jc w:val="both"/></w:pPr><w:r><w:rPr><w:color w:val="1F4E79"/></w:rPr><w:t xml:space="preserve">Results</w:t>') && (pd.match(/<w:jc w:val="both"\/>/g) || []).length === 2 && (pd.match(/<w:color w:val="1F4E79"\/>/g) || []).length === 3 && pf.done.text.paragraphs === 2 && (await valid(pf.buf)) === null, pd.slice(0, 900));
+      // lists
+      let lb = docx.newDocx();
+      lb = (await docx.editDocx(lb, { insert: { at: 'end', text: 'Procedure', style: 'Heading 1' } })).buf;
+      lb = (await docx.editDocx(lb, { insert: { at: 'end', text: 'Mix\nStir\nPour', style: 'List Number', levels: [1, 2, 1] } })).buf;
+      lb = (await docx.editDocx(lb, { insert: { at: 'end', text: 'Second list\nagain', style: 'List Number' } })).buf;
+      lb = (await docx.editDocx(lb, { insert: { at: 'end', text: 'Notes one\nNotes two\nNotes three' } })).buf;
+      const lp = await partsOf(lb);
+      const nx = lp['word/numbering.xml'] || '';
+      check('lists (file): a list style makes real list items (numPr with the level), numbering.xml has one nine-level decimal list and a w:num per list that restarts at 1', /<w:pPr><w:pStyle w:val="ListNumber"\/><w:numPr><w:ilvl w:val="1"\/><w:numId w:val="1"\/><\/w:numPr><\/w:pPr><w:r><w:t xml:space="preserve">Stir</.test(lp['word/document.xml']) && (nx.match(/<w:abstractNum /g) || []).length === 1 && (nx.match(/<w:lvl /g) || []).length === 9 && /<w:numFmt w:val="decimal"\/><w:lvlText w:val="%1."\/>/.test(nx) && /<w:numFmt w:val="lowerLetter"\/><w:lvlText w:val="%2."\/>/.test(nx) && (nx.match(/<w:num w:numId="\d"><w:abstractNumId w:val="0"\/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"\/><\/w:lvlOverride><\/w:num>/g) || []).length === 2 && order(nx, '</w:abstractNum>', '<w:num '), nx.slice(0, 300));
+      check('lists (file): numbering.xml comes with its relationship and content type; the package is valid and reads back as a list with levels', /relationships\/numbering" Target="numbering.xml"/.test(lp['word/_rels/document.xml.rels']) && /PartName="\/word\/numbering.xml" ContentType="application\/vnd.openxmlformats-officedocument.wordprocessingml.numbering\+xml"/.test(lp['[Content_Types].xml']) && (await valid(lb)) === null && (await docx.readDocx(lb)).text.split('\n').slice(1, 4).join('|') === '- Mix|  - Stir|- Pour', (await docx.readDocx(lb)).text);
+      const bl = await docx.formatDocx(lb, { paras: ['Notes one', 'Notes three'], list: 'bullet', level: 2 });
+      const bp = await partsOf(bl.buf);
+      check('lists (file): format list bullet on paragraphs adds a bullet list (• ◦ ▪) at the level, beside the numbered one', /<w:name w:val="Lumen Bullet"\/>/.test(bp['word/numbering.xml']) && /<w:lvlText w:val="•"\/>/.test(bp['word/numbering.xml']) && (bp['word/document.xml'].match(/<w:numPr><w:ilvl w:val="1"\/><w:numId w:val="3"\/><\/w:numPr>/g) || []).length === 2 && (await valid(bl.buf)) === null, bp['word/document.xml'].slice(-900));
+      const none = await docx.formatDocx(bl.buf, { find: 'again', list: 'none' });
+      const nd = (await partsOf(none.buf))['word/document.xml'];
+      check('lists (file): list none takes a paragraph out of its list (its numPr and its list style go)', /<w:p><w:pPr><\/w:pPr><w:r><w:t xml:space="preserve">again</.test(nd) && (await docx.readDocx(none.buf)).text.split('\n').includes('again'), nd.slice(nd.indexOf('again') - 120, nd.indexOf('again') + 10));
+      const h4 = await docx.formatDocx(lb, { headings: [{ text: 'Notes one', level: 4 }] });
+      const h4s = (await partsOf(h4.buf))['word/styles.xml'];
+      check('format (file): Heading 4 to 6 are real heading styles (added when missing, outline level 3 for Heading 4), and read back as ####', /w:styleId="Heading4"><w:name w:val="heading 4"\/>[\s\S]*?<w:outlineLvl w:val="3"\/>/.test(h4s) && (await docx.readDocx(h4.buf)).text.includes('#### Notes one'), h4s.slice(-400));
+      const ins4 = await docx.editDocx(lb, { insert: { at: 'end', text: 'Sub', style: 'Heading 5' } });
+      check('insert (file): a built-in style the document lacks is added to styles.xml (not faked with direct formatting)', /w:styleId="Heading5"/.test((await partsOf(ins4.buf))['word/styles.xml']) && /<w:pStyle w:val="Heading5"\/>/.test((await partsOf(ins4.buf))['word/document.xml']) && (await valid(ins4.buf)) === null);
+      const nostyles = docx.buildZip(docx.centralEntries(docx.newDocx()).filter((e) => e.name !== 'word/styles.xml'));
+      check('insert (file): with no styles.xml at all, one is made (relationship kept) and the heading is real', /w:styleId="Heading1"/.test((await partsOf((await docx.editDocx(nostyles, { insert: { at: 'end', text: 'T', style: 'Heading 1' } })).buf))['word/styles.xml'] || ''));
+
+      // the controller: Word gets the clean fields; without Word the file is changed after a card with its path
+      const wr = makeRig();
+      await wr.word.run({ action: 'style', find: 'Results', bold: true, underline: 'double', color: 'blue', highlight: 'yellow' }, wr.ctx);
+      await wr.word.run({ action: 'format', paragraphs: ['Intro', 'Results'], list: 'bullet', level: 2, align: 'center' }, wr.ctx);
+      await wr.word.run({ action: 'format', style: 'Lab Caption', based_on: 'Normal', size: 9 }, wr.ctx);
+      await wr.word.run({ action: 'insert', style: 'List Bullet', text: '- a\n  - b' }, wr.ctx);
+      const call = (n, i = 0) => wr.store.calls.filter((c) => c[0] === n)[i]?.[1] || {};
+      check('styles (Word): style, format and insert reach the helper with the clean fields (colors in hex, lists, levels, the new style and its base)', call('style').bold === true && call('style').underline === 'double' && call('style').color === '0070C0' && call('style').highlight === 'yellow' && J(call('format').paras) === J(['Intro', 'Results']) && call('format').list === 'bullet' && call('format').level === 2 && call('format').align === 'center' && call('format', 1).style === 'Lab Caption' && call('format', 1).basedOn === 'Normal' && call('insert').text === 'a\nb' && J(call('insert').levels) === J([1, 2]) && wr.store.cards.length === 1, J(wr.store.calls));
+      const sf = path.join(tmp, 'Styles (lab).docx');
+      fs.writeFileSync(sf, sb);
+      const fr2 = makeRig({ platform: 'linux' });
+      const said2 = await fr2.word.run({ action: 'style', path: sf, find: '4.2 mm', bold: true }, fr2.ctx);
+      check('style (file route): without Word the .docx itself is changed after a card that shows the path, and says what was done', /Formatted 2 matches of “4\.2 mm” in Styles \(lab\)\.docx: bold\. Saved in the file/.test(said2) && fr2.store.cards.length === 1 && fr2.store.cards[0].args.includes(sf) && /<w:b\/>/.test((await partsOf(fs.readFileSync(sf)))['word/document.xml']) && (await valid(fs.readFileSync(sf))) === null, said2);
+      const said3 = await fr2.word.run({ action: 'format', path: sf, paragraphs: ['Results'], list: 'number' }, fr2.ctx);
+      check('format (file route): a list call says what it did', /made them a numbered list for 1 paragraph/.test(said3), said3);
+      const ps1 = read('src/word/host.ps1');
+      check('helper: styles by the document\'s own name, character formatting (Word\'s BGR colors, highlight on the range), lists with Word\'s own templates, levels on insert, and still no Delete', /function Get-Style/.test(ps1) && /HighlightColorIndex/.test(ps1) && /ApplyListTemplateWithLevel/.test(ps1) && /RemoveNumbers\(\)/.test(ps1) && /ListLevelNumber = \[int\]\$levels/.test(ps1) && /Styles\.Add\(\$name, 1\)/.test(ps1) && !/Delete\(/.test(ps1));
+    }
   }
 
   // ---- real Word, only when it is installed and runs fully hidden on a temp document
