@@ -122,7 +122,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       replace: async (a) => { store.calls.push(['replace', a]); return { replaced: 3, capped: false }; },
       style: async (a) => { store.calls.push(['style', a]); return { formatted: 1 }; },
       format: async (a) => { store.calls.push(['format', a]); return { doc: 'x', done: { toc: { replaced: 2, title: 'Contents' }, breaks: { added: ['Abstract'], had: [] }, sections: 1 } }; },
-      table: async (a) => { store.calls.push(['table', a]); return { rows: a.rows.length, columns: a.rows[0].length }; },
+      table: async (a) => { store.calls.push(['table', a]); return a.index || a.find ? { done: { index: a.index || 1, tables: 2, cells: a.cells?.length } } : { rows: a.rows.length, columns: a.rows[0].length }; },
       image: async (a) => { store.calls.push(['image', a]); return {}; },
       comment: async (a) => { store.calls.push(['comment', a]); return {}; },
       track: async (a) => { store.calls.push(['track', a]); return { tracking: a.on }; },
@@ -876,6 +876,80 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
       check('format (file route): a list call says what it did', /made them a numbered list for 1 paragraph/.test(said3), said3);
       const ps1 = read('src/word/host.ps1');
       check('helper: styles by the document\'s own name, character formatting (Word\'s BGR colors, highlight on the range), lists with Word\'s own templates, levels on insert, and still no Delete', /function Get-Style/.test(ps1) && /HighlightColorIndex/.test(ps1) && /ApplyListTemplateWithLevel/.test(ps1) && /RemoveNumbers\(\)/.test(ps1) && /ListLevelNumber = \[int\]\$levels/.test(ps1) && /Styles\.Add\(\$name, 1\)/.test(ps1) && !/Delete\(/.test(ps1));
+    }
+    // ---- tables: a new table's look (header row, widths, borders, the header's fill, alignment), and a table that is there (by number or by a
+    // cell's text): its cells, new rows, a new column and its look
+    {
+      const rowsText = (s) => [...s.matchAll(/<w:tr>[\s\S]*?<\/w:tr>/g)].map((r) => [...r[0].matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)].map((c) => [...c[0].matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')).join('')).join('|')).join(',');
+      const nt = v({ action: 'table', rows: [['Trial', 'Mass (g)'], ['1', '12']], header: true, widths: [1, '2.5'], borders: 'grid', shading: 'light gray', align: 'centre' });
+      check('table: a new table\'s look comes out as clean fields (grid is all borders, color names are hex)', J(nt.widths) === J([1, 2.5]) && nt.borders === 'all' && nt.shading === 'D9D9D9' && nt.align === 'center' && nt.header === true && nt.rows.length === 2, J(nt));
+      const et = v({ action: 'table', index: 2, cells: [[2, 3, 12.5], [1, 1, null]], add_rows: 'end', rows: [['4', '15']], add_column: 2 });
+      check('table: a table that is there is picked by index or find, with cells [[row, col, text]], add_rows with rows, add_column', et.index === 2 && J(et.cells) === J([[2, 3, '12.5'], [1, 1, '']]) && et.addRows === -1 && J(et.rows) === J([['4', '15']]) && et.addColumn === 2 && v({ action: 'table', find: 'Mass', borders: 'none' }).find === 'Mass' && J(v({ action: 'table', index: 1, add_rows: 0 }).rows) === J([['']]), J(et));
+      const tErrs = [
+        [{ action: 'table', rows: [['a', 'b']], widths: [1] }, /widths has 1 columns but the table has 2/],
+        [{ action: 'table', rows: [['a']], borders: 'thick' }, /borders must be all, outside or none/],
+        [{ action: 'table', rows: [['a']], align: 'justify' }, /align \(for a table\) must be left, center or right/],
+        [{ action: 'table', cells: [[1, 1, 'x']] }, /cells changes a table that is there: give index/],
+        [{ action: 'table', index: 1 }, /Give what changes in the table/],
+        [{ action: 'table', index: 0, header: true }, /index .* must be a number from 1/],
+        [{ action: 'table', index: 1, cells: [[1, 'x']] }, /Each of cells is \[row, column, "text"\]/],
+        [{ action: 'table', index: 1, rows: [['a']] }, /rows on a table that is there go with add_rows/],
+        [{ action: 'table', index: 1, at: 'end', header: true }, /a table that is there is picked by index or find/],
+        [{ action: 'table', index: 1, delete_rows: [2] }, /table does not take delete_rows/],
+      ];
+      const tBad = tErrs.filter(([i, re]) => !re.test(throws(() => v(i)) || ''));
+      check('table: every bad argument is refused with a sentence that says what to send', !tBad.length, J(tBad.map(([i]) => [i, throws(() => v(i))])));
+      check('table: the step says which table and what changes', spec.stepLabel({ action: 'table', index: 2, cells: [[1, 1, 'a'], [1, 2, 'b']], add_rows: 'end', rows: [['x']] }, 'Lab.docx') === 'Editing Lab.docx: table 2, 2 cells, adding 1 row' && /help/.test(spec.help('table')) === false && /add_column/.test(spec.help('table')));
+
+      // the file route: a new table with its look
+      let tb2 = docx.newDocx();
+      tb2 = (await docx.editDocx(tb2, { insert: { at: 'end', text: 'Results', style: 'Heading 1' } })).buf;
+      tb2 = (await docx.editDocx(tb2, { table: { at: 'end', rows: [['Trial', 'Mass (g)'], ['1', '12'], ['2', '13']], widths: [1, 2], borders: 'outside', shading: 'D9D9D9', align: 'center' } })).buf;
+      tb2 = (await docx.editDocx(tb2, { table: { at: 'end', rows: [['A', 'B'], ['x & y', '<z>']] } })).buf;
+      const tx = (await partsOf(tb2))['word/document.xml'];
+      const first = /<w:tbl>[\s\S]*?<\/w:tbl>/.exec(tx)[0];
+      check('table (file): a new table\'s look: tblPr in schema order (tblW, jc, tblBorders with only the outside, a fixed layout), the grid in twips, a header row that repeats, bold and filled', first.startsWith('<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/><w:tblBorders><w:top w:val="single" w:sz="4" w:space="0" w:color="808080"/><w:left w:val="single"') && /<w:insideH w:val="nil"\/><w:insideV w:val="nil"\/><\/w:tblBorders><w:tblLayout w:type="fixed"\/><\/w:tblPr><w:tblGrid><w:gridCol w:w="1440"\/><w:gridCol w:w="2880"\/><\/w:tblGrid><w:tr><w:trPr><w:tblHeader\/><\/w:trPr><w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"\/><w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"\/><\/w:tcPr><w:p><w:r><w:rPr><w:b\/><\/w:rPr><w:t xml:space="preserve">Trial</.test(first) && (await valid(tb2)) === null, first.slice(0, 900));
+      // a table that is there, untracked and tracked
+      const e1 = await docx.tableDocx(tb2, { find: 'mass', cells: [[2, 2, '12.5'], [3, 1, 'two\nlines']], addRows: -1, rows: [['3', '14']] }, { track: false });
+      const e1x = (await partsOf(e1.buf))['word/document.xml'];
+      const t1 = /<w:tbl>[\s\S]*?<\/w:tbl>/.exec(e1x)[0];
+      check('table (file): cells are filled in (a line break is a second paragraph in the cell) and a row goes at the end with the data row\'s cell widths; the other table is untouched', /<w:tcW w:w="2880" w:type="dxa"\/><\/w:tcPr><w:p><w:r><w:t xml:space="preserve">12\.5<\/w:t><\/w:r><\/w:p><\/w:tc>/.test(t1) && /<w:p><w:r><w:t xml:space="preserve">two<\/w:t><\/w:r><\/w:p><w:p><w:r><w:t xml:space="preserve">lines<\/w:t><\/w:r><\/w:p>/.test(t1) && /<w:tr><w:tc><w:tcPr><w:tcW w:w="1440" w:type="dxa"\/><\/w:tcPr><w:p><w:r><w:t xml:space="preserve">3<\/w:t><\/w:r><\/w:p><\/w:tc><w:tc><w:tcPr><w:tcW w:w="2880" w:type="dxa"\/><\/w:tcPr><w:p><w:r><w:t xml:space="preserve">14<\/w:t><\/w:r><\/w:p><\/w:tc><\/w:tr><\/w:tbl>$/.test(t1) && !/>12</.test(t1) && e1x.includes('x &amp; y') && e1.done.index === 1 && e1.done.tables === 2 && (await valid(e1.buf)) === null, t1);
+      const e2 = await docx.tableDocx(tb2, { index: 1, cells: [[2, 2, '12.5']], addRows: 2, rows: [['1b', '12.2']] }, { track: true, now: () => new Date('2026-11-02T12:00:00Z') });
+      const t2 = /<w:tbl>[\s\S]*?<\/w:tbl>/.exec((await partsOf(e2.buf))['word/document.xml'])[0];
+      check('table (file, tracked): the old cell text is marked deleted and the new one inserted in the same paragraph; the new row is a tracked row (trPr ins) after row 2', /<w:p><w:del w:id="\d+" w:author="AI \(Lumen\)" w:date="2026-11-02T12:00:00Z"><w:r><w:delText xml:space="preserve">12<\/w:delText><\/w:r><\/w:del><w:ins w:id="\d+" w:author="AI \(Lumen\)" w:date="2026-11-02T12:00:00Z"><w:r><w:t xml:space="preserve">12\.5<\/w:t><\/w:r><\/w:ins><\/w:p>/.test(t2) && /<\/w:tr><w:tr><w:trPr><w:ins [^>]*\/><\/w:trPr><w:tc>[\s\S]*?1b</.test(t2) && t2.indexOf('1b') < t2.indexOf('>1<') === false && (await valid(e2.buf)) === null, t2);
+      const ids2 = [...(await partsOf(e2.buf))['word/document.xml'].matchAll(/w:id="(\d+)"/g)].map((m) => m[1]);
+      check('table (file, tracked): every revision id is unique', new Set(ids2).size === ids2.length);
+      const e3 = await docx.tableDocx(tb2, { index: 2, addColumn: 1, cells: [[1, 2, 'Mid']], widths: [1, 1, 2], borders: 'all', header: false, align: 'right' }, { track: false });
+      const t3 = /<w:tbl>[\s\S]*?<\/w:tbl>/g; const all3 = (await partsOf(e3.buf))['word/document.xml'].match(t3); const s3 = all3[1];
+      check('table (file): a column goes after column 1 in every row and the grid, widths set the grid, each cell and a fixed layout, borders all, align right, header off (not repeated, not bold)', (s3.match(/<w:gridCol /g) || []).length === 3 && /<w:gridCol w:w="1440"\/><w:gridCol w:w="1440"\/><w:gridCol w:w="2880"\/>/.test(s3) && rowsText(s3) === 'A|Mid|B,x & y||<z>' && /<w:tblPr><w:tblW w:w="0" w:type="auto"\/><w:jc w:val="right"\/><w:tblBorders><w:top w:val="single"[\s\S]*?<w:insideV w:val="single"[^>]*\/><\/w:tblBorders><w:tblLayout w:type="fixed"\/><\/w:tblPr>/.test(s3) && /<w:trPr><w:tblHeader w:val="0"\/><\/w:trPr>/.test(s3) && /<w:b w:val="0"\/>/.test(s3) && all3[0] === /<w:tbl>[\s\S]*?<\/w:tbl>/.exec(tx)[0] && e3.done.column === 2 && (await valid(e3.buf)) === null, s3);
+      const merged = setPart(tb2, 'word/document.xml', tx.replace('<w:tcW w:w="1440" w:type="dxa"/><w:shd', '<w:tcW w:w="1440" w:type="dxa"/><w:gridSpan w:val="2"/><w:shd'));
+      const tErr2 = [
+        [() => docx.tableDocx(tb2, { index: 3, header: true }), /The document has 2 tables, so there is no table 3/],
+        [() => docx.tableDocx(tb2, { find: 'nowhere', header: true }), /No table has a cell with “nowhere”/],
+        [() => docx.tableDocx(tb2, { index: 1, cells: [[9, 1, 'x']] }), /The table has 3 rows, so there is no row 9\. Nothing was changed/],
+        [() => docx.tableDocx(tb2, { index: 1, cells: [[1, 5, 'x']] }), /Row 1 of the table has 2 cells, so there is no column 5/],
+        [() => docx.tableDocx(tb2, { index: 1, addRows: -1, rows: [['a', 'b', 'c']] }), /The table has 2 columns, so a row of 3 cells does not fit/],
+        [() => docx.tableDocx(tb2, { index: 1, widths: [1, 2, 3] }), /widths has 3 columns but the table has 2/],
+        [() => docx.tableDocx(merged, { index: 1, addColumn: -1 }), /merged cells/],
+        [() => docx.tableDocx(docx.newDocx(), { index: 1, header: true }), /no table/],
+      ];
+      const tBad2 = [];
+      for (const [fn, re] of tErr2) { const m = await rejects(fn); if (!re.test(m || '')) tBad2.push(m); }
+      check('table (file): a table, row, column or width that is not there, or merged cells under a column change, changes nothing and says why', !tBad2.length, J(tBad2));
+
+      // the controller: Word gets the clean fields; without Word the file is changed after a card with its path
+      const wr2 = makeRig();
+      await wr2.word.run({ action: 'table', rows: [['a', 'b']], widths: [1, 2], shading: 'gray' }, wr2.ctx);
+      const said4 = await wr2.word.run({ action: 'table', find: 'Mass', cells: [[2, 2, '12.5']], add_column: 'end' }, wr2.ctx).catch((e) => e.message);
+      const tcalls = wr2.store.calls.filter((c) => c[0] === 'table').map((c) => c[1]);
+      check('table (Word): a new table and a change to one that is there reach the helper with the clean fields', J(tcalls[0].widths) === J([1, 2]) && tcalls[0].shading === '808080' && tcalls[1].find === 'Mass' && J(tcalls[1].cells) === J([[2, 2, '12.5']]) && tcalls[1].addColumn === -1 && !('rows' in tcalls[1]) && /Changed table/.test(said4), J(tcalls) + said4);
+      const tf = path.join(tmp, 'Tables (lab).docx');
+      fs.writeFileSync(tf, tb2);
+      const fr3 = makeRig({ platform: 'linux' });
+      const said5 = await fr3.word.run({ action: 'table', path: tf, index: 1, cells: [[3, 2, '13.1']], add_rows: 'end', rows: [['3', '14']] }, fr3.ctx);
+      check('table (file route): without Word the .docx itself is changed after a card that shows the path, and says what was done', /Changed table 1 of 2 in Tables \(lab\)\.docx: 1 cell filled in; 1 row added\. Saved in the file/.test(said5) && fr3.store.cards.length === 1 && fr3.store.cards[0].args.includes(tf) && (await docx.readDocx(fs.readFileSync(tf))).text.includes('| 2 | 13.1 |') && (await valid(fs.readFileSync(tf))) === null, said5);
+      const ps2 = read('src/word/host.ps1');
+      check('helper: tables by number or cell text, cells, rows and columns added with Word\'s own Rows.Add and Columns.Add, the look (HeadingFormat, Borders, Shading, Columns width), and still no Delete', /function Cmd-TableEdit/.test(ps2) && /\$t\.Rows\.Add\(\$t\.Rows\.Item\(\$at \+ 1\)\)/.test(ps2) && /\$t\.Columns\.Add\(\$t\.Columns\.Item\(\$after \+ 1\)\)/.test(ps2) && /HeadingFormat/.test(ps2) && /BackgroundPatternColor/.test(ps2) && !/Delete\(/.test(ps2));
     }
   }
 

@@ -188,19 +188,154 @@ function paragraphXml(text, id, ctx, { list = null, bold = false, italic = false
   return `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${ctx.track ? `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${body}</w:ins>` : body}</w:p>`;
 }
 
-function tableXml(rows, ctx) {
+const BORDER_SIDES = ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'];
+const bordersXml = (kind) => `<w:tblBorders>${BORDER_SIDES.map((n) => (kind === 'all' || (kind === 'outside' && !n.startsWith('inside')) ? `<w:${n} w:val="single" w:sz="4" w:space="0" w:color="808080"/>` : `<w:${n} w:val="nil"/>`)).join('')}</w:tblBorders>`;
+const shdXml = (fill) => `<w:shd w:val="clear" w:color="auto" w:fill="${esc(fill)}"/>`;
+const insMark = (ctx) => `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}"/>`;
+// One cell's paragraph: text (tracked as an insertion when ctx.track), with run properties rpr (XML) and paragraph properties ppr (XML, no rPr).
+function cellPara(text, ctx, { rpr = '', ppr = '' } = {}) {
+  const body = `<w:r>${rpr}${textRuns(String(text))}</w:r>`;
+  if (!ctx.track) return `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${text === '' ? '' : body}</w:p>`;
+  return `<w:p><w:pPr>${ppr}<w:rPr>${insMark(ctx)}</w:rPr></w:pPr>${text === '' ? '' : `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${body}</w:ins>`}</w:p>`;
+}
+// A new table: rows of cell texts, with its look { header (default: more than one row), widths (inches), borders, shading (the header's fill), align }.
+function tableXml(rows, ctx, look = {}) {
   const cols = rows[0].length;
-  const w = Math.max(900, Math.floor(9000 / cols));
-  const border = (n) => `<w:${n} w:val="single" w:sz="4" w:space="0" w:color="808080"/>`;
-  const ins = () => `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}"/>`;
+  const ws = look.widths ? look.widths.map((x) => Math.round(x * 1440)) : Array(cols).fill(Math.max(900, Math.floor(9000 / cols)));
+  const header = look.header ?? rows.length > 1;
   const trs = rows.map((row, ri) => {
-    const tcs = row.map((cell) => {
-      const body = runs(cell, { bold: ri === 0 && rows.length > 1 });
-      return `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/></w:tcPr><w:p>${ctx.track ? `<w:pPr><w:rPr>${ins()}</w:rPr></w:pPr><w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${body}</w:ins>` : body}</w:p></w:tc>`;
-    }).join('');
-    return `<w:tr>${ctx.track ? `<w:trPr>${ins()}</w:trPr>` : ''}${tcs}</w:tr>`;
+    const head = header && ri === 0;
+    const tcs = row.map((cell, ci) => `<w:tc><w:tcPr><w:tcW w:w="${ws[ci]}" w:type="dxa"/>${head && look.shading ? shdXml(look.shading) : ''}</w:tcPr>${cellPara(cell, ctx, { rpr: head ? '<w:rPr><w:b/></w:rPr>' : '' })}</w:tc>`).join('');
+    const trPr = `${head ? '<w:tblHeader/>' : ''}${ctx.track ? insMark(ctx) : ''}`;
+    return `<w:tr>${trPr ? `<w:trPr>${trPr}</w:trPr>` : ''}${tcs}</w:tr>`;
   }).join('');
-  return `<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('')}</w:tblBorders></w:tblPr><w:tblGrid>${'<w:gridCol w:w="' + w + '"/>'.repeat(cols)}</w:tblGrid>${trs}</w:tbl><w:p/>`;
+  const tblPr = `<w:tblW w:w="0" w:type="auto"/>${look.align ? `<w:jc w:val="${look.align}"/>` : ''}${bordersXml(look.borders || 'all')}${look.widths ? '<w:tblLayout w:type="fixed"/>' : ''}`;
+  return `<w:tbl><w:tblPr>${tblPr}</w:tblPr><w:tblGrid>${ws.map((w) => `<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>${trs}</w:tbl><w:p/>`;
+}
+
+// ---- a table that is there: cells, rows, a column and its look, on the table's own XML (t: the clean fields). -> { xml, done }
+const TBL_ORDER = ['w:tblStyle', 'w:tblpPr', 'w:tblOverlap', 'w:bidiVisual', 'w:tblStyleRowBandSize', 'w:tblStyleColBandSize', 'w:tblW', 'w:jc', 'w:tblCellSpacing', 'w:tblInd', 'w:tblBorders', 'w:shd', 'w:tblLayout', 'w:tblCellMar', 'w:tblLook', 'w:tblCaption', 'w:tblDescription', 'w:tblPrChange'];
+const TR_ORDER = ['w:cnfStyle', 'w:divId', 'w:gridBefore', 'w:gridAfter', 'w:wBefore', 'w:wAfter', 'w:cantSplit', 'w:trHeight', 'w:tblHeader', 'w:tblCellSpacing', 'w:jc', 'w:hidden', 'w:ins', 'w:del', 'w:trPrChange'];
+const TC_ORDER = ['w:cnfStyle', 'w:tcW', 'w:gridSpan', 'w:hMerge', 'w:vMerge', 'w:tcBorders', 'w:shd', 'w:noWrap', 'w:tcMar', 'w:textDirection', 'w:tcFitText', 'w:vAlign', 'w:hideMark', 'w:headers', 'w:cellIns', 'w:cellDel', 'w:cellMerge', 'w:tcPrChange'];
+const ROW_KIDS = ['w:tblPrEx', 'w:trPr', 'w:tc'];
+const rowsOf = (s) => kidsOf(s, elementAt(s, 0)).filter((k) => k.name === 'w:tr');
+const cellsOf = (s, tr) => kidsOf(s, tr).filter((k) => k.name === 'w:tc');
+const delRuns = (s, ctx) => s.replace(/<w:r>|<w:r\s[^>]*>/g, (m) => `<w:del w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}">${m}`).replace(/<\/w:r>/g, '</w:r></w:del>')
+  .replace(/<w:t(\s[^>]*)?>/g, '<w:delText$1>').replace(/<\/w:t>/g, '</w:delText>');
+// The text of a cell, replaced: the old text goes (a tracked deletion when tracking), the new one comes in its first paragraph's look; a line
+// break in it is a new paragraph in the cell.
+function setCell(s, tc, text, ctx) {
+  const ps = kidsOf(s, tc).filter((k) => k.name === 'w:p');
+  if (!ps.length) throw new WordError('A cell of this table has an unusual structure Lumen will not edit. Open it in Word instead.');
+  const first = s.slice(ps[0].start, ps[0].end);
+  const pprEl = kidOf(first, elementAt(first, 0), 'w:pPr');
+  const ppr = pprEl ? first.slice(pprEl.start, pprEl.end).replace(/^<w:pPr>|<\/w:pPr>$/g, '').replace(/<w:rPr>[\s\S]*?<\/w:rPr>/, '') : '';
+  const run = runsIn(first, elementAt(first, 0))[0];
+  const rprEl = run ? kidOf(first, run, 'w:rPr') : null;
+  const rpr = rprEl ? first.slice(rprEl.start, rprEl.end).replace(/<w:(ins|del)\b[^>]*\/>/g, '') : '';
+  const lines = String(text).split(/\r\n|\r|\n/);
+  const fresh = lines.map((l) => cellPara(l, ctx, { rpr, ppr })).join('');
+  if (!ctx.track) return splice(s, ps[0].start, ps[ps.length - 1].end, fresh);
+  let old = s.slice(ps[0].start, ps[ps.length - 1].end);
+  const local = kidsIn(old, 0, old.length).filter((k) => k.name === 'w:p');
+  for (const p of local.slice(0, -1).reverse()) old = removePara(old, p, ctx);
+  // the last paragraph keeps its mark: its old runs marked deleted, the first new line inserted in it, the other lines as paragraphs after it
+  const last = kidsIn(old, 0, old.length).filter((k) => k.name === 'w:p').pop();
+  const kept = delRuns(old.slice(last.start, last.end), ctx);
+  const line = lines[0] === '' ? '' : `<w:ins w:id="${ctx.nextId()}" w:author="${AUTHOR}" w:date="${ctx.date}"><w:r>${rpr}${textRuns(lines[0])}</w:r></w:ins>`;
+  const withLine = kept.endsWith('/>') ? kept.replace(/\s*\/>$/, `>${line}</w:p>`) : kept.replace(/<\/w:p>$/, `${line}</w:p>`);
+  old = splice(old, last.start, last.end, withLine);
+  return splice(s, ps[0].start, ps[ps.length - 1].end, old + lines.slice(1).map((l) => cellPara(l, ctx, { rpr, ppr })).join(''));
+}
+function editTable(s, t, ctx) {
+  const done = {};
+  const merged = /<w:gridSpan\b|<w:vMerge\b|<w:hMerge\b/.test(s);
+  if (merged && (t.addColumn !== undefined || t.widths)) throw new WordError('This table has merged cells, so its columns are not changed here. Open it in Word, or change cells and rows instead.');
+  if (t.addRows !== undefined) {
+    const rows = rowsOf(s);
+    const header = /<w:tblHeader(?:\s+w:val="(?:1|true|on)")?\s*\/>/.test(s.slice(rows[0].start, rows[0].end));
+    const tpl = rows[Math.min(rows.length - 1, Math.max(header ? 1 : 0, t.addRows < 0 ? rows.length - 1 : t.addRows - 1))];
+    const tcs = cellsOf(s, tpl).map((tc) => { const pr = kidOf(s, tc, 'w:tcPr'); return pr ? s.slice(pr.start, pr.end).replace(/<w:(shd|vMerge|cellIns|cellDel)\b[^>]*\/>/g, '') : ''; });
+    if (t.rows.some((r) => r.length > tcs.length)) throw new WordError(`The table has ${tcs.length} columns, so a row of ${Math.max(...t.rows.map((r) => r.length))} cells does not fit. Nothing was changed.`);
+    const piece = t.rows.map((row) => `<w:tr>${ctx.track ? `<w:trPr>${insMark(ctx)}</w:trPr>` : ''}${tcs.map((pr, i) => `<w:tc>${pr}${cellPara(row[i] ?? '', ctx)}</w:tc>`).join('')}</w:tr>`).join('');
+    const at = t.addRows < 0 || t.addRows >= rows.length ? rows[rows.length - 1].end : t.addRows === 0 ? rows[0].start : rows[t.addRows].start;
+    s = splice(s, at, at, piece);
+    done.rows = t.rows.length;
+  }
+  if (t.addColumn !== undefined) {
+    const rows = rowsOf(s);
+    const n = cellsOf(s, rows[0]).length;
+    const idx = t.addColumn < 0 || t.addColumn > n ? n : t.addColumn;
+    for (const tr of [...rows].reverse()) {
+      const tcs = cellsOf(s, tr);
+      const near = tcs[Math.max(0, idx - 1)];
+      const pr = kidOf(s, near, 'w:tcPr');
+      const piece = `<w:tc>${pr ? s.slice(pr.start, pr.end).replace(/<w:(cellIns|cellDel)\b[^>]*\/>/g, '') : ''}${cellPara('', ctx)}</w:tc>`;
+      const at = idx >= tcs.length ? tcs[tcs.length - 1].end : tcs[idx].start;
+      s = splice(s, at, at, piece);
+    }
+    const grid = kidOf(s, elementAt(s, 0), 'w:tblGrid');
+    if (grid) {
+      const cols = kidsOf(s, grid).filter((k) => k.name === 'w:gridCol');
+      const near = cols[Math.max(0, idx - 1)];
+      if (near) { const at = idx >= cols.length ? cols[cols.length - 1].end : cols[idx].start; s = splice(s, at, at, s.slice(near.start, near.end)); }
+    }
+    done.column = idx + 1;
+  }
+  if (t.cells) {
+    for (const [r, c, text] of [...t.cells].sort((a, b) => b[0] - a[0] || b[1] - a[1])) {
+      const rows = rowsOf(s);
+      if (r > rows.length) throw new WordError(`The table has ${rows.length} row${rows.length === 1 ? '' : 's'}, so there is no row ${r}. Nothing was changed.`);
+      const cells = cellsOf(s, rows[r - 1]);
+      if (c > cells.length) throw new WordError(`Row ${r} of the table has ${cells.length} cell${cells.length === 1 ? '' : 's'}, so there is no column ${c}. Nothing was changed.`);
+      s = setCell(s, cells[c - 1], text, ctx);
+    }
+    done.cells = t.cells.length;
+  }
+  const tbl = () => elementAt(s, 0);
+  const tblPr = () => upsert(s, tbl(), 'w:tblPr', (had) => had || '<w:tblPr></w:tblPr>', ['w:tblPr']);
+  if (t.borders) { let pr; [s, pr] = tblPr(); [s] = upsert(s, pr, 'w:tblBorders', () => bordersXml(t.borders), TBL_ORDER); }
+  if (t.align) { let pr; [s, pr] = tblPr(); [s] = upsert(s, pr, 'w:jc', () => `<w:jc w:val="${t.align}"/>`, TBL_ORDER); }
+  if (t.widths) {
+    const grid = kidOf(s, tbl(), 'w:tblGrid');
+    const cols = grid ? kidsOf(s, grid).filter((k) => k.name === 'w:gridCol') : [];
+    if (cols.length !== t.widths.length) throw new WordError(`widths has ${t.widths.length} columns but the table has ${cols.length}. Nothing was changed.`);
+    const tw = t.widths.map((x) => Math.round(x * 1440));
+    for (const [i, c] of [...cols.entries()].reverse()) s = splice(s, c.start, c.end, `<w:gridCol w:w="${tw[i]}"/>`);
+    for (const tr of [...rowsOf(s)].reverse()) {
+      for (const [i, tc] of [...cellsOf(s, tr).entries()].reverse()) {
+        if (i >= tw.length) continue;
+        let pr; [s, pr] = upsert(s, tc, 'w:tcPr', (had) => had || '<w:tcPr></w:tcPr>', ['w:tcPr']);
+        [s] = upsert(s, pr, 'w:tcW', () => `<w:tcW w:w="${tw[i]}" w:type="dxa"/>`, TC_ORDER);
+      }
+    }
+    let pr; [s, pr] = tblPr(); [s] = upsert(s, pr, 'w:tblLayout', () => '<w:tblLayout w:type="fixed"/>', TBL_ORDER);
+  }
+  if (t.header !== undefined || t.shading) {
+    const tr = rowsOf(s)[0];
+    if (t.shading) for (const tc of [...cellsOf(s, tr)].reverse()) { let pr; [s, pr] = upsert(s, tc, 'w:tcPr', (had) => had || '<w:tcPr></w:tcPr>', ['w:tcPr']); [s] = upsert(s, pr, 'w:shd', () => shdXml(t.shading), TC_ORDER); }
+    if (t.header !== undefined) {
+      const row = rowsOf(s)[0];
+      let pr; [s, pr] = upsert(s, row, 'w:trPr', (had) => had || '<w:trPr></w:trPr>', ROW_KIDS);
+      [s] = upsert(s, pr, 'w:tblHeader', () => onOff('w:tblHeader', t.header), TR_ORDER);
+      for (const tc of [...cellsOf(s, rowsOf(s)[0])].reverse()) for (const p of kidsOf(s, tc).filter((k) => k.name === 'w:p').reverse()) for (const r of runsIn(s, p).reverse()) s = putRun(s, elementAt(s, r.start), { bold: t.header }, ['w:rPr']);
+    }
+  }
+  done.look = ['header', 'widths', 'borders', 'shading', 'align'].filter((k) => t[k] !== undefined);
+  return { xml: s, done };
+}
+const tableText = (xml, b) => [...xml.slice(b.start, b.end).matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/g)].map((m) => unesc(m[1])).join(' ');
+// A table that is there (t.index, or t.find: text in one of its cells), changed -> { buf, done } (done.index: which table).
+async function tableDocx(buf, t, { track = false, now = () => new Date() } = {}) {
+  const { xml, entries } = await openForEdit(buf);
+  const tables = bodyOf(xml).blocks.filter((b) => b.name === 'tbl');
+  if (!tables.length) throw new WordError('This document has no table. Add one with table and rows.');
+  let i;
+  if (t.index) { i = t.index - 1; if (!tables[i]) throw new WordError(`The document has ${tables.length} table${tables.length === 1 ? '' : 's'}, so there is no table ${t.index}.`); }
+  else { const want = String(t.find).toLowerCase(); i = tables.findIndex((b) => tableText(xml, b).toLowerCase().includes(want)); if (i < 0) throw new WordError(`No table has a cell with “${String(t.find).slice(0, 60)}”. Use read to see the tables.`); }
+  const ctx = { track, nextId: makeIds(xml), date: now().toISOString().replace(/\.\d+Z$/, 'Z') };
+  const r = editTable(xml.slice(tables[i].start, tables[i].end), t, ctx);
+  return { buf: pack(entries, new Map([['word/document.xml', splice(xml, tables[i].start, tables[i].end, r.xml)]])), done: { ...r.done, index: i + 1, tables: tables.length }, tracked: track };
 }
 
 // The body's top-level blocks: [{ start, end, name }] as offsets in the XML, and where new content may go at the end.
@@ -307,7 +442,7 @@ async function editDocx(buf, op, { track = false, now = () => new Date() } = {})
     piece = lines.map((l, i) => paragraphXml(l, id, ctx, { list: numId ? { numId, level: levels[i] || 1 } : null, bold: op.insert.bold === true, italic: op.insert.italic === true })).join('');
     summary = { paragraphs: lines.length };
   } else if (op.table) {
-    piece = tableXml(op.table.rows, ctx);
+    piece = tableXml(op.table.rows, ctx, op.table);
     summary = { rows: op.table.rows.length, columns: op.table.rows[0].length };
   } else throw new WordError('That change needs Microsoft Word.');
   const at = position(xml, body, op.insert || op.table);
@@ -923,4 +1058,4 @@ function newDocx() {
   return buildZip(Object.entries(files).map(([name, text]) => ({ name, data: Buffer.from(text, 'utf8') })));
 }
 
-module.exports = { readDocx, editDocx, formatDocx, styleDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };
+module.exports = { readDocx, editDocx, formatDocx, styleDocx, tableDocx, newDocx, STYLE_IDS, buildZip, centralEntries, crc32, AUTHOR };

@@ -552,8 +552,60 @@ function Cmd-Format($req) {
   return @{ doc = [string]$d.Name; done = $done }
 }
 
+function BGR([string]$c) { return [Convert]::ToInt32($c.Substring(0, 2), 16) + 256 * [Convert]::ToInt32($c.Substring(2, 2), 16) + 65536 * [Convert]::ToInt32($c.Substring(4, 2), 16) }
+# A table's look: the header row (repeats on each page, bold), column widths (inches), borders, the header's fill, alignment.
+function Table-Look($t, $req) {
+  if ($req.ContainsKey('header')) { $h = [bool]$req['header']; $t.Rows.Item(1).HeadingFormat = [int](-1 * [int]$h); $t.Rows.Item(1).Range.Font.Bold = [int]$h }
+  if ($req.ContainsKey('borders')) {
+    $b = [string]$req['borders']
+    if ($b -eq 'none') { $t.Borders.Enable = 0 } elseif ($b -eq 'all') { $t.Borders.Enable = 1 } else { $t.Borders.Enable = 1; $t.Borders.InsideLineStyle = 0 }
+  }
+  if ($req.ContainsKey('shading')) { $t.Rows.Item(1).Shading.BackgroundPatternColor = (BGR ([string]$req['shading'])) }
+  if ($req.ContainsKey('align')) { $t.Rows.Alignment = [int](@{ 'left' = 0; 'center' = 1; 'right' = 2 })[[string]$req['align']] }
+  if ($req.ContainsKey('widths')) {
+    $w = @($req['widths'])
+    if ($w.Count -ne [int]$t.Columns.Count) { throw ('widths has ' + $w.Count + ' columns but the table has ' + [int]$t.Columns.Count + '. Nothing was changed.') }
+    try { for ($i = 0; $i -lt $w.Count; $i++) { $t.Columns.Item($i + 1).Width = 72 * [double]$w[$i] } } catch { throw 'This table has merged cells, so its columns are not changed here. Change them in Word.' }
+  }
+}
+# A table that is there: index (1-based) or find (text in one of its cells); its cells, new rows, a new column and its look.
+function Cmd-TableEdit($d, $req) {
+  $n = [int]$d.Tables.Count
+  if ($n -eq 0) { throw 'This document has no table. Add one with table and rows.' }
+  $t = $null; $no = 0
+  if ($req.ContainsKey('index')) { $no = [int]$req['index']; if ($no -gt $n) { throw ('The document has ' + $n + ' table(s), so there is no table ' + $no + '.') }; $t = $d.Tables.Item($no) }
+  else { $want = ([string]$req['find']).ToLowerInvariant(); for ($i = 1; $i -le $n; $i++) { if (([string]$d.Tables.Item($i).Range.Text).ToLowerInvariant().Contains($want)) { $t = $d.Tables.Item($i); $no = $i; break } } }
+  if ($null -eq $t) { throw ('No table has a cell with "' + [string]$req['find'] + '". Use read to see the tables.') }
+  $done = @{ index = $no; tables = $n }
+  $cells = @(Arg $req 'cells' @())
+  foreach ($c in $cells) { $r = [int]$c[0]; $k = [int]$c[1]; try { $cell = $t.Cell($r, $k) } catch { throw ('The table has no cell at row ' + $r + ', column ' + $k + '. Nothing more was changed.') }; $cell.Range.Text = (Rep-Text ([string]$c[2])) }
+  if ($cells.Count) { $done.cells = $cells.Count }
+  if ($req.ContainsKey('addRows')) {
+    $after = [int]$req['addRows']; $rows = @($req['rows']); $count = [int]$t.Rows.Count
+    if ($after -lt 0 -or $after -gt $count) { $after = $count }
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+      $at = $after + $i
+      if ($at -ge [int]$t.Rows.Count) { $row = $t.Rows.Add() } else { $row = $t.Rows.Add($t.Rows.Item($at + 1)) }
+      $vals = @($rows[$i]); $nc = [int]$row.Cells.Count
+      if ($vals.Count -gt $nc) { throw ('The table has ' + $nc + ' columns, so a row of ' + $vals.Count + ' cells does not fit.') }
+      for ($j = 0; $j -lt $vals.Count; $j++) { $row.Cells.Item($j + 1).Range.Text = [string]$vals[$j] }
+    }
+    $done.rows = $rows.Count
+  }
+  if ($req.ContainsKey('addColumn')) {
+    $after = [int]$req['addColumn']; $nc = [int]$t.Columns.Count
+    try { if ($after -lt 0 -or $after -ge $nc) { [void]$t.Columns.Add() } else { [void]$t.Columns.Add($t.Columns.Item($after + 1)) } } catch { throw 'This table has merged cells, so its columns are not changed here. Change them in Word.' }
+    if ($after -lt 0 -or $after -gt $nc) { $after = $nc }
+    $done.column = $after + 1
+  }
+  Table-Look $t $req
+  $script:last[(Doc-Key $d)] = @([int]$t.Range.Start, [int]$t.Range.End)
+  return @{ doc = [string]$d.Name; done = $done }
+}
+
 function Cmd-Table($req) {
   $d = Find-Doc $req
+  if ($req.ContainsKey('index') -or $req.ContainsKey('find')) { return (Cmd-TableEdit $d $req) }
   $rows = @($req['rows'])
   $nr = $rows.Count
   $nc = 0
@@ -569,7 +621,8 @@ function Cmd-Table($req) {
     $cells = @($rows[$i])
     for ($j = 0; $j -lt $cells.Count; $j++) { $t.Cell($i + 1, $j + 1).Range.Text = [string]$cells[$j] }
   }
-  if ($nr -gt 1) { $t.Rows.Item(1).Range.Font.Bold = 1 }
+  if (-not $req.ContainsKey('header') -and $nr -gt 1) { $req['header'] = $true }
+  Table-Look $t $req
   $script:last[(Doc-Key $d)] = @([int]$t.Range.Start, [int]$t.Range.End)
   return @{ doc = [string]$d.Name; rows = $nr; columns = $nc }
 }
