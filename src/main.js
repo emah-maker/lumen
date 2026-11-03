@@ -332,7 +332,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -4363,6 +4363,16 @@ function joinAiGroup(tab) {
 function leaveAiGroup(tab) {
   const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
   if (group?.aiTabs) tabGroups.remove(tab.id, { byUser: true });
+}
+// Research tabs and signed-in reads (below) are the AI's tabs too: with the setting on they join this one group instead of a purple
+// "AI: <site>" group each (a run that read one site fifteen times filled the strip with them: test/e2e/ai-tabs-hidden.js). Returns the
+// group's id, or null (setting off, an outside agent's unmarked tab, an agent window): the caller makes its own group then.
+function aiGroupIdOf(ids) {
+  const list = ids.map((id) => tabs.find((x) => x.id === id)).filter(Boolean);
+  if (!list.length) return null;
+  for (const x of list) joinAiGroup(x);
+  const group = aiGroup();
+  return group && list.every((x) => x.groupId === group.id) ? group.id : null;
 }
 
 function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
@@ -9485,7 +9495,7 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
   openTab: inRun((url, opts) => openTab(url, { background: true, ...(mcpCall() ? {} : { openedBy: runOf() }), ...opts }).id), // [ai manners] research tabs are the AI's too
   navigateTab: inRun((id, url) => { const t = tabs.find((x) => x.id === id); if (alive(t)) t.view.webContents.loadURL(url).catch(() => {}); }),
   tabExists: inRun((id) => { const t = tabs.find((x) => x.id === id); return Boolean(t && !t.closing && (alive(t) || t.sleeping)); }),
-  createGroup: inRun((name, ids) => { const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
+  createGroup: inRun((name, ids) => { const ai = aiGroupIdOf(ids); if (ai != null) { sendTabs(); return ai; } const g = tabGroups.create(name, ids.filter((id) => tabs.some((t) => t.id === id)), { color: require('./features/research-tabs').GROUP_COLOR }); sendTabs(); return g.id; }),
   groupExists: inRun((groupId) => tabGroups.groups.has(groupId)),
   setReading: inRun((id, on) => { const t = tabs.find((x) => x.id === id); if (t && Boolean(t.aiReading) !== on) { t.aiReading = on; sendTabs(); } }),
 });
@@ -9496,15 +9506,23 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
 // [desktop apps] src/desktop/ is loaded on first use: the AI's desktop tool, or a click on the Computer card. The Settings list needs only its small settings module.
 let desktopWired = null;
 const desktopLazy = () => (desktopWired ||= require('./desktop/wire').wire({ electron: require('electron'), readSettings, writeSettings, stopRun: () => agent.stop(), hidden: TEST && Boolean(process.env.LUMEN_TEST_BACKGROUND),
+  foreground: { allow: () => wordWinapi()?.allowForeground?.(), raise: (hwnd) => wordWinapi()?.raise?.(hwnd) }, openPath: (p) => require('electron').shell.openPath(p), // "Show in Word" (word/card.js): Lumen has the foreground at the click; a document Word no longer has opens in the app set for it
   live: { visible: () => thumbsVisible(), light: () => (TEST && typeof global.__desktopLight === 'boolean' ? global.__desktopLight : graphicsMode.light() || app.isHardwareAccelerationEnabled?.() === false) } })); // (tests choose the mode) the Computer card's live picture: only while a card is on screen (the shared 'agent:thumbs-visible'), slower in Light graphics
 const desktopSettings = () => require('./desktop/settings').createDesktopSettings({ readSettings, writeSettings });
 ipcMain.handle('settings:desktop-apps', () => desktopSettings().allowed());
 ipcMain.handle('settings:remove-desktop-app', (_e, appKey) => desktopSettings().remove(String(appKey ?? '')));
 ipcMain.handle('settings:clear-desktop-apps', () => desktopSettings().clear());
-ipcMain.handle('desktop:open', (_e, id) => (typeof id === 'string' && id.startsWith('word-') ? (wordCtl ? wordCtl.openCard(id) : false) : typeof id === 'string' && desktopWired ? desktopWired.controller.openCard(id) : false)); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
+ipcMain.handle('desktop:open', async (_e, id, hint) => { // -> { ok } or { ok: false, message } (the card says why)
+  if (typeof id !== 'string') return { ok: false, message: 'Nothing to open.' };
+  const path = hint && typeof hint.path === 'string' ? hint.path.slice(0, 1000) : '';
+  if (id.startsWith('word-')) return wordCtl || path ? wordLazy().openCard(id, { path }) : { ok: false, message: 'This card is from before Lumen restarted, so its document is not known. Open it from Files or File Explorer.' };
+  return desktopWired ? desktopWired.controller.openCard(id) : { ok: false, message: 'This card is from an earlier session of Lumen, so its window is not known any more. Open the program from the taskbar.' };
+}); // (the Word card's "Show in Word" rides the same channel: its ids start with word-)
 ipcMain.on('desktop:control', (_e, what) => { if (!desktopWired) return; if (what === 'resume') desktopWired.controller.resume(); else if (what === 'stop') desktopWired.controller.stop('card'); });
 // [word] src/word/ is loaded on first use of the word tool (agent.js wordTool), and its Word helper process starts only with the first call; Settings → AI → "Let the AI use Microsoft Word" (aiWordControl, on by default).
 let wordCtl = null;
+let wordWin = null;
+const wordWinapi = () => { if (!wordWin) { const l = require('./desktop/winapi').load(); wordWin = l.ok ? l : { ok: false }; } return wordWin.ok ? wordWin : null; }; // (loaded on the first "Show in Word")
 const wordAlways = () => require('./word/always').createWordAlways({ readSettings, writeSettings }); // (loaded on first use: not at startup)
 ipcMain.handle('settings:word-always', () => wordAlways().list());
 ipcMain.handle('settings:remove-word-always', (_e, key) => wordAlways().remove(String(key ?? '')));
@@ -9549,11 +9567,22 @@ const signedInReader = {
       t.aiSignedIn = { openedAt: Date.now() };
       t.aiLock = true;
       t.aiReading = true;
-      try { tabGroups.create(`AI: ${require('./features/signed-in-sites').hostOfUrl(url)} (signed in)`, [t.id], { color: require('./features/research-tabs').GROUP_COLOR }); } catch {}
+      if (aiGroupIdOf([t.id]) == null) { try { tabGroups.create(`AI: ${require('./features/signed-in-sites').hostOfUrl(url)} (signed in)`, [t.id], { color: require('./features/research-tabs').GROUP_COLOR }); } catch {} } // [ai tabs] the one folded "AI tabs" group, when that setting is on
       sendTabs();
     }
     return tab;
   }),
+  // The run's signed-in tab for a site, read again (agent.js readSignedIn): locked again, or null when it is gone, asleep, or the user
+  // looked at it or took it over (then it is theirs, and the next read opens a tab of its own).
+  reuse: (id) => {
+    const found = tabAnywhere(id);
+    const t = found?.t;
+    if (!t?.aiSignedIn || t.closing || !alive(t) || !manners.isAiTab(t) || (t.viewedAt || 0) >= t.aiSignedIn.openedAt) return null;
+    t.aiLock = true;
+    t.aiReading = true;
+    withWindow(found.rec, () => sendTabs());
+    return { id: t.id, webContents: t.view.webContents };
+  },
   unlock: (id) => {
     const found = tabAnywhere(id);
     if (!found) return;
@@ -9656,6 +9685,14 @@ const agent = new Agent({
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI → helpers: the delegate tool is offered; which model they use (agent.js delegate)
   actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings → AI → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
+  idleAiTab: inRun((url, { chatId = null, exclude = new Set() } = {}) => { // [ai tabs] a helper's site already open in a tab this chat opened and no longer works in: the helper uses that one (agent.js parallelTasks)
+    const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
+    const want = hostOf(url);
+    if (!want || chatId == null) return null;
+    const busy = new Set(agent.runTabIds());
+    const t = tabs.find((x) => manners.isAiTab(x) && x.openedBy?.chatId === chatId && alive(x) && !x.closing && !x.aiSignedIn && !x.isolated && !x.pinned && x.id !== activeId && !busy.has(x.id) && !exclude.has(x.id) && hostOf(realUrl(x.view.webContents)) === want);
+    return t ? { id: t.id, webContents: t.view.webContents } : null;
+  }),
   openChatId: () => chatId, // [warm per chat] the open chat's engines are kept under its id (agent.js chatKey)
   takeNotice: (key) => { const s = readSettings(); if (s[key] !== true) return false; writeSettings({ ...s, [key]: false }); return true; }, // one-time notices
   autoModel: () => readSettings().autoModel !== false, // [model route] features/model-route.js
@@ -11709,6 +11746,13 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       const tool = run.details.tools.find((x) => x.id && x.id === msg.id);
       if (tool && tool.name === 'connector' && tool.input?.app === 'canvas') msg = { ...msg, tabId: run.tabId };
     }
+    if (msg.type === 'tool' && msg.name === 'read_urls' && Array.isArray(msg.input?.urls)) (run.readHosts ||= new Map()).set(msg.id, require('./features/signed-in-sites').hostOfUrl(msg.input.urls[0])); // (the saved step keeps no urls)
+    if (msg.type === 'tool_done' && msg.tabId == null && run.readHosts?.has(msg.id)) { // [ai tabs] a read's own tab (signed in, or a research tab) sits folded in "AI tabs": the step names it, so the card's Tabs list and Go to tab reach it
+      const host = run.readHosts.get(msg.id);
+      run.readHosts.delete(msg.id);
+      const own = host ? allTabsEverywhere().filter((x) => x.openedBy?.runId === runId && (x.aiSignedIn || x.isolated) && !x.closing && require('./features/signed-in-sites').hostOfUrl(x.pendingCloseUrl ?? (alive(x) ? realUrl(x.view.webContents) : x.sleepUrl || '')) === host) : [];
+      if (own.length) msg = { ...msg, tabId: own[own.length - 1].id };
+    }
     trackRunDetails(run, msg);
     // [background helpers] A helper Claude Code ran in the background reports on the card of the run that started it, after that run's 'done': its steps
     // are kept with the reply once it ends, and its live picture (the run's own stopped with 'done') is made again for its first browser step.
@@ -11832,6 +11876,12 @@ ipcMain.on('agent:stop', (event, id) => {
   else if (run?.messages) agent.stopFor(run.messages); // [stop always works] the chat's own run, even when the agent's open conversation is another
   else agent.stopOpen(); // (no run of its own: only the open conversation's, never another chat's that happens to be the only one going)
 });
+// [mid-run messages] A message typed while a chat's reply runs, handed to that run for its next step (ai/steer.js; agent.js steer): { ok, state }
+// or { ok: false, why } (the view then keeps it for the next message). `id`: the chat it was typed in; none: the sender's chat. Unsteer: Edit or ×
+// on it before it went (true: it never will).
+const steerRun = (event, id) => { if (typeof id === 'string' && id) return chatRuns.get(id); syncToSender(event); return chatRuns.get(chatId); };
+ipcMain.handle('agent:steer', (event, id, uid, text) => { const run = steerRun(event, id); return run?.messages && !run.queued && !run.deleted ? agent.steer(run.messages, { uid, text }) : { ok: false }; });
+ipcMain.handle('agent:unsteer', (event, id, uid) => { const run = steerRun(event, id); return run?.messages ? agent.unsteer(run.messages, uid) : true; });
 // "Working in: …" in the sidebar: jump to the tab the task works in.
 ipcMain.on('agent:show-target', (event) => { syncToSender(event); const id = agent.runTabId(); const rec = runRecNow(); if (id != null && agent.running) (rec ? withWindow(rec, () => switchTab(id)) : switchTab(id)); });
 // New chat: the open chat stays in the history list.

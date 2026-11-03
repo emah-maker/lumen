@@ -28,7 +28,7 @@ function createWord(deps = {}) {
   const docx = () => deps.docx || require('./docx');
   // The chat's live card (card.js): created with the first action; it never gets in the way of the work (every call to it is guarded).
   let card = null;
-  const getCard = () => deps.card || (card ||= require('./card').createWordCard({ host: getHost(), live: deps.live || null, now: deps.now, hooks: deps.hooks }));
+  const getCard = () => deps.card || (card ||= require('./card').createWordCard({ host: getHost(), live: deps.live || null, now: deps.now, hooks: deps.hooks, foreground: deps.foreground || null, openPath: deps.openPath || null }));
   const cardUse = (ctx, doc, label, opts) => { try { getCard().use(ctx, doc, label, opts); } catch { /* the card is a courtesy */ } };
   const cardChanged = async (ctx, doc, opts) => { try { await getCard().changed(ctx, doc, opts); } catch { /* the card is a courtesy */ } };
   const cardRead = async (ctx, doc, got) => { try { await getCard().read(ctx, doc, { text: got?.text, offset: got?.offset }); } catch { /* the card is a courtesy */ } }; // (what it reads shows as the page when Word's picture is not there)
@@ -333,7 +333,7 @@ function createWord(deps = {}) {
   return {
     run, installed, host: () => host,
     finishRun(signal) { try { return card?.finishRun(signal); } catch { return null; } }, // the run is over: the card's last picture and "completed"
-    openCard: (id) => (card ? card.open(id) : Promise.resolve(false)), // "Show in Word" on the card
+    openCard: (id, hint) => getCard().open(id, hint || {}), // "Show in Word" on the card: { ok } or { ok: false, message } (a card from before a restart opens its file by hint.path)
     destroy() { try { card?.destroy(); } catch { /* none */ } try { host?.destroy?.(); } catch { /* not running */ } },
   };
 }

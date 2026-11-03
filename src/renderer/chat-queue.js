@@ -115,6 +115,9 @@
     };
   }
 
+  // [mid-run messages] A message that can go to the running reply at its next step (ai/steer.js): words only. Pictures, files, "@" tabs, a
+  // screen, a plan to run, a new chat, or one sent with Send now (`now`) wait for the reply to end, as before.
+  const steerable = (q) => Boolean(q) && !q.fresh && !q.opts && !q.now && !q.screen && !q.images?.length && !q.tabs?.ids?.length && !q.tabs?.gone?.length && Boolean(String(q.text || '').trim());
   // A message that can join others in one turn: nothing special about it (a plan to run, a new chat to open).
   const mergeable = (q) => Boolean(q) && !q.fresh && !q.opts && (q.text || q.images?.length);
   // Several waiting messages as one: the texts in order (a blank line between), every picture and file, the "@" tabs and the first screen.
@@ -144,7 +147,7 @@
     return null;
   }
 
-  const api = { advance, countsAsRead, ownerNow, otherChat, ordinal, create, createStore, merge, mergeable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
+  const api = { advance, countsAsRead, ownerNow, otherChat, ordinal, create, createStore, merge, mergeable, steerable, pillSide, plain, BEAT_MS, STALE_MS, STORE_KEY, STATUSES: Object.keys(ORDER) };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.chatQueue = api;
 })(typeof window !== 'undefined' ? window : globalThis);

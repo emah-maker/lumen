@@ -342,7 +342,48 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const card2 = createWordCard({ host, live: null });
     const e2 = [];
     card2.use({ signal: {}, emit: (e) => e2.push(e) }, doc, 'Reading Report.docx');
-    check('card: Show in Word brings the card\'s document forward by its path (an unknown card id does nothing)', (await card2.open(e2[0].id)) === true && frames.some((a) => Array.isArray(a) && a[0] === 'show' && a[1].doc === doc.path) && (await card2.open('word-999')) === false);
+    check('card: Show in Word brings the card\'s document forward by its path (an unknown card id says why it cannot)', (await card2.open(e2[0].id)).ok === true && frames.some((a) => Array.isArray(a) && a[0] === 'show' && a[1].doc === doc.path) && (await card2.open('word-999')).ok === false && /before Lumen restarted/.test((await card2.open('word-999')).message));
+    // "Show in Word" did nothing: Word was asked by a background helper (Windows keeps the foreground from it), a OneDrive document was asked for by
+    // its local path (Word lists it by its web address), a document Word no longer had was not opened, and a failure was never said.
+    {
+      const calls = [];
+      const url = 'https://contoso-my.sharepoint.com/personal/me/Documents/Lab/Lab2.docx';
+      const local = `C:${B}Users${B}me${B}OneDrive - School${B}Lab${B}Lab2.docx`;
+      let openDocs = [{ name: 'Lab2.docx', path: url, active: true }];
+      let showFails = '';
+      const fhost = {
+        list: async () => ({ running: true, docs: openDocs }),
+        show: async (a) => { calls.push(['show', a.doc]); if (showFails) throw new Error(showFails); if (!openDocs.some((d) => d.path === a.doc || d.name === a.doc)) throw new Error(`No open document matches ${a.doc}.`); return { shown: true, hwnd: 777 }; },
+        frame: async () => ({ skip: 'hidden' }), peek: async () => ({ lines: [] }),
+      };
+      let openPathSays = '';
+      const stubs = { foreground: { allow: () => { calls.push(['allow']); return true; }, raise: (h) => { calls.push(['raise', h]); return true; } }, openPath: async (p) => { calls.push(['openPath', p]); return openPathSays; } };
+      const sc = createWordCard({ host: fhost, live: null, ...stubs });
+      const ev = [];
+      sc.use({ signal: {}, emit: (e) => ev.push(e) }, { name: 'Lab2.docx', key: local.toLowerCase(), path: local }, 'Reading Lab2.docx');
+      const r1 = await sc.open(ev[0].id);
+      check('Show in Word: a OneDrive document is found by its web address, and Lumen (which has the foreground at the click) lets Word take it and raises its window', r1.ok === true && J(calls) === J([['allow'], ['show', url], ['raise', 777]]), J([r1, calls]));
+      check('Show in Word: the card carries the document\'s path, so a card from before a restart can still open it', ev[0].path === local);
+      calls.length = 0; openDocs = [];
+      const r2 = await sc.open(ev[0].id);
+      check('Show in Word: a document Word no longer has open opens in the app set for it (shell.openPath)', r2.ok === true && calls.some((c) => c[0] === 'openPath' && c[1] === local) && !calls.some((c) => c[0] === 'show'), J([r2, calls]));
+      calls.length = 0; openPathSays = 'The file was not found.';
+      const r3 = await sc.open(ev[0].id);
+      check('Show in Word: when it cannot open, it says why (no silent nothing)', r3.ok === false && /Lab2\.docx could not be opened: The file was not found\./.test(r3.message), J(r3));
+      calls.length = 0; openPathSays = '';
+      const r4 = await sc.open('word-12345', { path: local });
+      check('Show in Word: an unknown card (Lumen restarted) opens its document by the path the card kept', r4.ok === true && calls.some((c) => c[0] === 'openPath' && c[1] === local), J([r4, calls]));
+      calls.length = 0; openDocs = [{ name: 'Lab2.docx', path: url, active: true }]; showFails = 'Word is busy.';
+      const cloud = createWordCard({ host: fhost, live: null, ...stubs });
+      const ev2 = [];
+      cloud.use({ signal: {}, emit: (e) => ev2.push(e) }, { name: 'Lab2.docx', key: url, path: url }, 'Reading Lab2.docx');
+      const r5 = await cloud.open(ev2[0].id);
+      check('Show in Word: Word refusing is said in words, and a web address is never handed to openPath', r5.ok === false && /Word did not show Lab2\.docx: Word is busy\./.test(r5.message) && !calls.some((c) => c[0] === 'openPath'), J([r5, calls]));
+      showFails = '';
+      const mainSrc = read('src/main.js');
+      check('Show in Word: main passes the card\'s path and answers with { ok, message }; the renderer shows the message under the buttons', /ipcMain\.handle\('desktop:open', async \(_e, id, hint\)/.test(mainSrc) && /openPath: \(p\) => require\('electron'\)\.shell\.openPath\(p\)/.test(mainSrc) && /api\?\.desktopOpen\?\.\(card\.app\.id, \{ path: card\.app\.path \|\| '' \}\)\)\.then\(\(r\) => openNote\(card, r\)/.test(read('src/renderer/step-ui.js')) && /"desktopcard\.openFailed"/.test(read('src/locales/en.json')));
+    }
+
     // the card never shows just the document's name: before any picture, change or read, the document's own paragraphs where the AI is
     const cardFirst = createWordCard({ host, live: null });
     const eFirst = [];

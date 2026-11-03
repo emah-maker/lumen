@@ -9,6 +9,8 @@
 // Plain functions with injected deps (test/units/word-units.js drives it with a fake helper and a fake clock). Loaded with the word tool, never at startup.
 'use strict';
 
+const spec = require('./spec');
+
 const { createLive, widthFor } = require('../desktop/live');
 
 const IDLE_END_MS = 60e3;
@@ -48,7 +50,7 @@ function createWordCard(deps = {}) {
 
   const keyOf = (ctx) => ctx.signal || ctx;
   const emitFor = (s, status, extra = {}) => {
-    try { s.emit({ type: 'desktop_card', surface: 'app', word: true, id: s.id, app: 'Word', doc: s.doc?.name || '', title: s.doc?.name || '', status, task: s.label, thumbnail: s.thumb || null, page: s.page || null, ...extra }); } catch { /* a closed view */ }
+    try { s.emit({ type: 'desktop_card', surface: 'app', word: true, id: s.id, app: 'Word', doc: s.doc?.name || '', path: s.doc?.path || '', title: s.doc?.name || '', status, task: s.label, thumbnail: s.thumb || null, page: s.page || null, ...extra }); } catch { /* a closed view */ }
     deps.hooks?.onEvent?.({ id: s.id, status, doc: s.doc?.name, task: s.label, thumb: Boolean(s.thumb), page: Boolean(s.page), ...extra });
   };
 
@@ -162,11 +164,35 @@ function createWordCard(deps = {}) {
     finishRun: (signal) => finish(signal, 'completed'),
     finishAll: () => Promise.all([...sessions.keys()].map((k) => finish(k, 'completed'))),
     busy: (on) => { inflight = Math.max(0, inflight + (on ? 1 : -1)); },
-    // "Show in Word": the document the card is about, brought forward at the place it was changed (before any change: where it last read; `at` travels as data).
-    async open(id) {
+    // "Show in Word": the document the card is about, brought forward at the place it was changed (before any change: where it last read; `at` travels as
+    // data). -> { ok } or { ok: false, message }. It is found among Word's open documents by its path (a OneDrive one is listed by its web address), and
+    // Word's window is raised by Lumen, which has the foreground at the click (the helper, a background process, may not take it). A document Word no
+    // longer has open (closed since, or changed in the file itself), or a card from before Lumen restarted (hint.path), opens in the app set for it.
+    async open(id, hint = {}) {
       const s = cards.get(id);
-      if (!s?.doc || !deps.host?.show) return false;
-      try { await deps.host.show(Number.isInteger(s.readAt) ? { doc: s.doc.path || s.doc.name, at: s.readAt } : { doc: s.doc.path || s.doc.name }); return true; } catch { return false; }
+      const doc = s?.doc || (typeof hint.path === 'string' && hint.path ? { path: hint.path, name: spec.baseName(hint.path) } : null);
+      if (!doc) return { ok: false, message: 'This card is from before Lumen restarted, so its document is not known. Open it from Files or File Explorer.' };
+      const name = doc.name || spec.baseName(doc.path) || 'The document';
+      try { deps.foreground?.allow?.(); } catch { /* raised below */ }
+      let open;
+      try { const r = deps.host?.list ? await deps.host.list() : null; open = r ? (r.docs || []).find((d) => (doc.path ? spec.sameDoc(d.path, doc.path) : !d.path && d.name === doc.name)) || null : doc; } catch { open = null; } // (no list to look in: Word is asked for the document as the card knows it; Word not running: the file below)
+      let failed = '';
+      if (open && deps.host?.show) {
+        try {
+          const target = open.path || open.name;
+          const r = await deps.host.show(Number.isInteger(s?.readAt) ? { doc: target, at: s.readAt } : { doc: target });
+          if (r?.hwnd) { try { deps.foreground?.raise?.(r.hwnd); } catch { /* Word asked itself */ } }
+          return { ok: true };
+        } catch (err) { failed = String(err?.message || err).slice(0, 160); }
+      }
+      const local = doc.path && !/^[a-z]+:\/\//i.test(doc.path);
+      if (failed && !(local && deps.openPath)) return { ok: false, message: `Word did not show ${name}: ${failed}` };
+      if (local && deps.openPath) {
+        let why;
+        try { why = String((await deps.openPath(doc.path)) || ''); } catch (err) { why = String(err?.message || err); }
+        return why ? { ok: false, message: `${name} could not be opened: ${why.slice(0, 160)}` } : { ok: true };
+      }
+      return { ok: false, message: doc.path ? `${name} is not open in Word any more. Open it from OneDrive or Word.` : `${name} is not open in Word any more, and it was never saved.` };
     },
     stats: () => ({ sessions: sessions.size, cards: cards.size }),
     destroy() { for (const s of sessions.values()) { s.ended = true; s.live?.stop(); unlater(s.idle); } sessions.clear(); },
