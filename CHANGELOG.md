@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.94 (2026-11-04)
+
 - **The window has less to load at start.** Lumen's own window and Settings page ship their scripts without indentation (about 80 KB less to read and parse; the code and its line numbers are unchanged), and the secure DNS code loads only when a provider is chosen. Tests: `test/units/units.js`, `test/e2e/perf-budget.js`.
 
 - **Muse loads again: new Use secure DNS setting.** On some networks (the user's campus Wi-Fi, 2026-11-03) the network's own DNS sends muse.ai to a Meta server that never answers, so Muse timed out in Lumen and in Chrome alike; Lumen's rules and the 0.5.87 video-overlay change were not the cause. Settings → Advanced → Network and proxy → **Use secure DNS** now works as in Chrome: Automatic (the default, unchanged), Off, Cloudflare, Google, Quad9 or a custom server. With a provider chosen, Muse loads at once. It applies to every window straight away, and the timed-out page now points to it. Tests: `test/units/secure-dns-units.js`.
