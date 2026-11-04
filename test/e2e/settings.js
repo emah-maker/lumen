@@ -107,7 +107,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('address bar shows lumen://settings/appearance', shown === 'lumen://settings/appearance', shown);
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'proxy'; s.dispatchEvent(new Event('input')); }");
   const hits = await inTab(sid, "[...document.querySelectorAll('#sections > .pane')].filter((s) => !s.hidden).map((s) => s.id + ':' + [...s.querySelectorAll('.row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).length)");
-  check('search “proxy” shows only the matching row (Advanced → Network and proxy)', JSON.stringify(hits) === '["sub-adv-network:1"]', JSON.stringify(hits));
+  // (the page's title, Network and proxy, matches too, so its other row, Use secure DNS, shows with it: a title match shows the page's rows)
+  const labels = await inTab(sid, "[...document.querySelectorAll('#sub-adv-network .row')].filter((r) => !r.hidden && !r.classList.contains('filtered') && !r.closest('[hidden]')).map((r) => r.querySelector('.label')?.textContent).sort()");
+  check('search “proxy” shows only the Network and proxy page’s rows (Advanced → Network and proxy)', JSON.stringify(hits) === '["sub-adv-network:2"]' && JSON.stringify(labels) === '["Proxy","Use secure DNS"]', JSON.stringify({ hits, labels }));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'zzqxv'; s.dispatchEvent(new Event('input')); }");
   check('search with no match says so', (await inTab(sid, "!document.getElementById('no-results').hidden")) === true, await inTab(sid, "[...document.querySelectorAll('.row')].filter((r) => !r.hidden).map((r) => r.dataset.search).slice(0, 3).join(' | ')"));
   await inTab(sid, "{ const s = document.getElementById('search'); s.value = 'night'; s.dispatchEvent(new Event('input')); }");

@@ -847,6 +847,14 @@ check('model names that could read as a flag are refused', !validModel('--tools'
   check('strip js: /*! and @license comments stay', strip('/*! keep */ var a; /** @license MIT */ var b; /* drop */\n').includes('/*! keep */') && strip('/** @license MIT */ var b;').includes('@license') && !strip('/* drop */ var c;').includes('drop'), '');
   check('strip js: no trailing blanks where a comment ended a line', !/[ \t]\n/.test(strip('var a = 1;   // c\n  // whole line\nvar b;\t/* d */\n')), JSON.stringify(strip('var a = 1;   // c\n  // whole line\nvar b;\t/* d */\n')));
   check('strip js: a tricky file parses to the same program', same(`var a = '//'; /* c */ var b = /\\/\\*/.test('x'); var c = a // d\n + b; var d = ${BT}\${'/*'}\${/* e */ 1}${BT};\nfunction g() { return // x\n}\n`), '');
+  // Indentation goes from the bundles too, never from inside a template literal or a continued string, and the lines stay where they were.
+  const { stripJsIndent } = require('../../scripts/build/bundle-renderer');
+  const ind = (label, input, want) => { const got = stripJsIndent(input, 'case'); check(`strip js indent: ${label}`, got === want, JSON.stringify(got)); };
+  ind('leading blanks go, line breaks stay', 'function f() {\n  if (a) {\n\t\treturn 1;\n  }\n}\n', 'function f() {\nif (a) {\nreturn 1;\n}\n}\n');
+  ind('a template literal keeps its indented lines', `var t = ${BT}a\n  b\n    ${BT};\n  var u;\n`, `var t = ${BT}a\n  b\n    ${BT};\nvar u;\n`);
+  ind('code inside a template\'s ${} is outdented, the text around it is not', `var t = ${BT}x\${\n  y\n}\n  z${BT};\n`, `var t = ${BT}x\${\ny\n}\n  z${BT};\n`);
+  ind('a string continued with a backslash keeps its blanks', "var s = 'a\\\n   b';\n  var t;\n", "var s = 'a\\\n   b';\nvar t;\n");
+  for (const [name, js] of [['ui', out.js], ['settings', set.js]]) check(`strip js indent: the ${name} bundle has no indented line outside templates and strings`, stripJsIndent(js, name) === js, '');
   const srcLen = out.scripts.reduce((n, f) => n + fs.readFileSync(path.join(dir, f), 'utf8').length, 0);
   check('strip js: the ui bundle is well under its sources (no comments)', out.js.length < srcLen * 0.85, `${out.js.length} of ${srcLen}`);
 }

@@ -675,6 +675,7 @@ function create(deps) {
   // ---- secure DNS ---- (app-wide: every session, private windows too; browser/secure-dns.js)
   let secureDnsSet = false; // a provider or Off was applied this run, so going back to Automatic must undo it
   function applySecureDns() {
+    if (prefs().secureDns === 'auto' && !secureDnsSet) return; // Chromium's default, untouched (and secure-dns.js not loaded at startup: test/e2e/perf-budget.js)
     const SD = require('../browser/secure-dns');
     const config = SD.resolverConfig(prefs().secureDns, prefs().secureDnsCustom);
     if (!config && !secureDnsSet) return; // Chromium's default, untouched

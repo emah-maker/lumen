@@ -94,9 +94,12 @@ const sorted = (a) => JSON.stringify([...(a || [])].sort());
       check('the switch changes the setting at once', settingsOf(updated).autoNewChat === false, JSON.stringify(settingsOf(updated)));
       check('and the line stays, showing off', JSON.stringify((await card())?.rows.find((r) => r.id === 'autoNewChat')?.control) === '{"type":"switch","on":false}', JSON.stringify(await card()));
       check('the chat follows it without a restart', await waitFor(() => ui.evaluate(() => window.lumenAutoNewChat === false), 4000), await ui.evaluate(() => window.lumenAutoNewChat));
-      await choose('chatAutoDelete', '90');
-      await waitFor(() => settingsOf(updated).chatAutoDeleteDays === 90, 4000);
-      check('a choice changes its setting too', settingsOf(updated).chatAutoDeleteDays === 90, JSON.stringify(settingsOf(updated)));
+      // (Secure DNS is the newest choice on the card; it goes back to Automatic at once, so the rest of the run keeps the system's DNS)
+      await choose('secureDns', 'cloudflare');
+      await waitFor(() => settingsOf(updated).secureDns === 'cloudflare', 4000);
+      check('a choice changes its setting too', settingsOf(updated).secureDns === 'cloudflare', JSON.stringify(settingsOf(updated)));
+      await choose('secureDns', 'auto');
+      await waitFor(() => settingsOf(updated).secureDns === 'auto', 4000);
       await choose('adBlocker', 'ublock');
       const ask = await waitFor(() => ui.evaluate(() => document.querySelector('.offer-row[data-offer="adBlocker"] .offer-confirm')?.textContent));
       check('uBlock Origin Lite asks on the card first (it is installed from the Chrome Web Store)', /Chrome Web Store/.test(ask || ''), ask);
