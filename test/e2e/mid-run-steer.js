@@ -4,6 +4,8 @@
 //   A. typed during the first round: the bubble says it goes at the next step; the NEXT request carries it; the bubble is then a sent message
 //      ("Sent to the AI while it worked"); it is not sent again when the reply ends; after a reload of the view the chat still shows it
 //   B. typed while the final answer streams (no step left): it waits, and goes as the next message, as before
+//   C. one the run already took (Claude Code writes it to the CLI at once; it is read at the CLI's next model call): Edit and × can no longer
+//      take it back, so they go and the bubble says it was sent, instead of doing nothing when clicked
 // Run under the lock:  node scripts/test/e2e-lock.js run --owner mid-run-steer -- node test/e2e/mid-run-steer.js
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -107,6 +109,25 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     await waitFor(async () => (await requests()).length === 7, 10000);
     const next = (await requests())[6];
     check('B: typed during the final answer, it goes as the next message, as before', next && !next.doc && /one more thing/.test(next.last) && !next.steer, JSON.stringify(await requests()));
+    await idle();
+
+    // ---- C. taken by the run before Edit is clicked (as Claude Code does on writing it to the CLI): Edit and × go, the bubble says so
+    await ui.click('#new-chat');
+    await sleep(400);
+    const before = (await requests()).length;
+    await type('create a doc a third time');
+    await waitFor(async () => (await requests()).length === before + 1 && await running());
+    await type('take me back');
+    await waitFor(async () => { const b = await bubbleOf('take me back'); return b && /goes in at the AI’s next step/.test(b.text); }, 5000);
+    await app.evaluate(() => { for (const rec of global.__agent.runs.values()) rec.steers?.take(); }); // (gone to the run: unsteer says false)
+    const buttons = () => ui.evaluate(() => { const b = [...document.querySelectorAll('#messages .queued-bubble')].find((e) => e.textContent.includes('take me back')); return b ? [...b.querySelectorAll('.queue-btn')].filter((x) => !x.hidden).map((x) => x.textContent) : null; });
+    check('C: before, Edit and × are on it', JSON.stringify(await buttons()) === '["Send now","Edit","×"]', JSON.stringify(await buttons()));
+    await ui.evaluate(() => [...document.querySelectorAll('#messages .queued-bubble')].find((e) => e.textContent.includes('take me back')).querySelector('.queue-btn:nth-child(2)').click());
+    const gone = await waitFor(async () => { const b = await buttons(); return b && !b.includes('Edit') ? b : null; }, 5000);
+    check('C: Edit on a message that already went: Edit and × go (a click never does nothing)', JSON.stringify(gone) === '["Send now"]', JSON.stringify(await buttons()));
+    check('C: the bubble says it was sent and is read at the next step', /sent, the AI reads it at its next step/.test((await bubbleOf('take me back'))?.text || ''), JSON.stringify(await bubbleOf('take me back')));
+    check('C: the words were not put back in the box (they are with the AI)', (await ui.inputValue('#prompt')) === '');
+    for (let i = 0; i < 3; i++) { await release(); await sleep(200); }
     await idle();
     check('no page errors', errors.length === 0, errors.join(' | '));
   } catch (err) {

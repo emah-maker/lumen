@@ -26,6 +26,9 @@
 // on the card first), setup ("Set up…": opens `section`; nothing is changed here), tip (a new thing to know about, with
 // no setting: just the line). `section`: where the setting lives in Settings ("More in Settings" opens it).
 const OFFERS = [
+  // ---- 0.5.94
+  // [secure DNS] browser/secure-dns.js: a DNS-over-HTTPS provider for site addresses (Settings has Off, Google, Quad9 and a custom server too)
+  { id: 'secureDns', key: 'secureDns', since: '0.5.94', kind: 'choice', choices: ['auto', 'cloudflare'], section: 'adv-network' },
   // ---- 0.5.90
   // [key switches] Settings → AI → API keys: a saved key can be switched off (kept, never used) and back on
   { id: 'keysOff', key: 'keysOff', since: '0.5.90', kind: 'setup', section: 'ai-keys-page' },
@@ -79,6 +82,7 @@ const OFFERS = [
 
 // Settings keys added since the card learned to list settings (0.5.65) that it leaves out on purpose, and why.
 const QUIET = {
+  secureDnsCustom: 'only matters with a custom secure DNS server, typed in its row',
   newTabHiddenTiles: 'the new-tab page records the tiles removed from it',
   extensionPins: 'pinned from the puzzle menu; Lumen records the order',
   connectorAlways: 'added from an approval card only',

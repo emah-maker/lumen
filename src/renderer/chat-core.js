@@ -1212,12 +1212,20 @@ function steerOut(entry) {
     if (r?.state === 'sent') steered([entry.uid]); else renderQueue();
   }, () => { entry.steer = null; });
 }
-// Edit and ×: a message handed to the run is taken back first. false: it already went (its 'steered' is drawn instead).
+// Edit and ×: a message handed to the run is taken back first. false: it already went (its 'steered' is drawn instead, or, written to the
+// CLI and not yet read, it says so and loses its Edit and ×: a click must never do nothing).
 async function takeBack(entry) {
+  if (entry.steer === 'written') return false;
   if (entry.steer !== 'asking' && entry.steer !== 'waiting') return line.has(entry);
   const back = await window.assistant.unsteer(steerChat(entry), entry.uid).catch(() => true);
   if (back) entry.steer = null;
+  else if (line.has(entry)) { entry.steer = 'written'; renderQueue(); }
   return back && line.has(entry);
+}
+// The run wrote these to the CLI (Claude Code): they go in at its next step and can no longer be taken back.
+function steerWritten(uids) {
+  for (const uid of uids || []) { const q = line.list.find((e) => e.uid === uid); if (q) q.steer = 'written'; }
+  renderQueue();
 }
 function steered(uids) {
   let moved = false;
@@ -1238,7 +1246,8 @@ function renderQueue() {
   const mine = line.mine(queueOther);
   mine.forEach((q, i) => {
     const place = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label');
-    q.label.textContent = q.steer === 'waiting' ? `${place} · ${t('chat.queued.nextStep')}` : q.steer === 'engine' ? `${place} · ${t('chat.queued.atEnd')}` : place; // [mid-run messages]
+    q.label.textContent = q.steer === 'waiting' ? `${place} · ${t('chat.queued.nextStep')}` : q.steer === 'written' ? `${place} · ${t('chat.queued.written')}` : q.steer === 'engine' ? `${place} · ${t('chat.queued.atEnd')}` : place; // [mid-run messages]
+    for (const b of q.takeBackBtns || []) b.hidden = q.steer === 'written';
   });
   const several = mine.filter(window.chatQueue.mergeable);
   if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
@@ -1270,6 +1279,7 @@ function queueControls(entry) {
   const actions = Object.assign(document.createElement('span'), { className: 'queue-actions' });
   actions.append(now, edit, cancel);
   entry.meta.append(actions);
+  entry.takeBackBtns = [edit, cancel]; // (hidden once the message can no longer be taken back: renderQueue)
 }
 // Send now: `entry` goes first in the line and the running reply is stopped through the Stop button's own path
 // (agent:stop: a CLI engine is interrupted or its process tree ended, an API request aborted), so the reply's 'done'
@@ -2138,6 +2148,9 @@ window.assistant.onEvent((event) => {
     }
     case 'steered': // [mid-run messages] the run took these at its step
       steered(event.uids);
+      break;
+    case 'steer_written': // [mid-run messages] written to the CLI: no taking it back now
+      steerWritten(event.uids);
       break;
     case 'reply_complete': // the engine's reply is whole; its 'done' (cost, undo, label) follows a moment later
       finishTurn(event, { early: true });
