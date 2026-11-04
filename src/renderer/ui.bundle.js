@@ -4995,11 +4995,19 @@ function steerOut(entry) {
   }, () => { entry.steer = null; });
 }
 
+
 async function takeBack(entry) {
+  if (entry.steer === 'written') return false;
   if (entry.steer !== 'asking' && entry.steer !== 'waiting') return line.has(entry);
   const back = await window.assistant.unsteer(steerChat(entry), entry.uid).catch(() => true);
   if (back) entry.steer = null;
+  else if (line.has(entry)) { entry.steer = 'written'; renderQueue(); }
   return back && line.has(entry);
+}
+
+function steerWritten(uids) {
+  for (const uid of uids || []) { const q = line.list.find((e) => e.uid === uid); if (q) q.steer = 'written'; }
+  renderQueue();
 }
 function steered(uids) {
   let moved = false;
@@ -5020,7 +5028,8 @@ function renderQueue() {
   const mine = line.mine(queueOther);
   mine.forEach((q, i) => {
     const place = i ? t('chat.queued.nth', { n: window.chatQueue.ordinal(i + 1) }) : t('chat.queued.label');
-    q.label.textContent = q.steer === 'waiting' ? `${place} · ${t('chat.queued.nextStep')}` : q.steer === 'engine' ? `${place} · ${t('chat.queued.atEnd')}` : place;
+    q.label.textContent = q.steer === 'waiting' ? `${place} · ${t('chat.queued.nextStep')}` : q.steer === 'written' ? `${place} · ${t('chat.queued.written')}` : q.steer === 'engine' ? `${place} · ${t('chat.queued.atEnd')}` : place;
+    for (const b of q.takeBackBtns || []) b.hidden = q.steer === 'written';
   });
   const several = mine.filter(window.chatQueue.mergeable);
   if (several.length < 2) { queueBar?.remove(); queueBar = null; return; }
@@ -5052,6 +5061,7 @@ function queueControls(entry) {
   const actions = Object.assign(document.createElement('span'), { className: 'queue-actions' });
   actions.append(now, edit, cancel);
   entry.meta.append(actions);
+  entry.takeBackBtns = [edit, cancel];
 }
 
 
@@ -5920,6 +5930,9 @@ window.assistant.onEvent((event) => {
     }
     case 'steered':
       steered(event.uids);
+      break;
+    case 'steer_written':
+      steerWritten(event.uids);
       break;
     case 'reply_complete':
       finishTurn(event, { early: true });

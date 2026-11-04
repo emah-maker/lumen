@@ -180,14 +180,17 @@ const toolModel = (rounds, during = () => {}) => {
   };
   const make = (cli) => { const eng = new cc.ClaudeCodeEngine({ userData: tmp, mcpCommand: () => ({ command: 'b', args: [], env: {} }), ensureServer: () => {}, gate: async () => gate, spawn: cli.spawn, kill: cli.kill, retryDelayMs: 10, startWait: async () => {}, finalIdleMs: 0 }); eng.bin = process.execPath; return eng; };
   const textIn = (msg) => (msg.message?.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
-  const io = (box, delivered) => ({ pump: null, take: () => box.take(), delivered: (entries) => delivered.push(entries.map((e) => e.uid)) });
+  const io = (box, delivered, written = []) => ({ pump: null, take: () => box.take(), written: (entries) => written.push(entries.map((e) => e.uid)), delivered: (entries) => delivered.push(entries.map((e) => e.uid)) });
   {
     // The model calls a tool; while it runs, the message is handed over: one stdin line, read at the CLI's next model call, in the same turn.
     let toolOut = null;
     const box = steer.createBox();
     const delivered = [];
-    const steers = io(box, delivered);
+    const written = [];
+    const steers = io(box, delivered, written);
+    let writtenBeforeRead = null;
     const cli = fakeClaude((rec, msg, n) => {
+      if (n === 2) writtenBeforeRead = J(written) === '[["m1"]]' && delivered.length === 0;
       if (n === 1) {
         rec.out({ type: 'system', subtype: 'init', session_id: rec.session, mcp_servers: [{ name: 'lumen', status: 'connected' }] });
         rec.out({ type: 'stream_event', event: { type: 'message_start', message: {} } });
@@ -211,6 +214,7 @@ const toolModel = (rounds, during = () => {}) => {
     const lines = cli.spawned[0]?.lines || [];
     check('claude code: the message is a stream-json user line on stdin while the tool call runs', lines.length === 2 && lines[1].type === 'user' && steer.unwrap(textIn(lines[1])) === 'is probably in me2340', J(lines.map(textIn)));
     check('claude code: it reached the model (its next call began): marked sent, once', J(delivered) === '[["m1"]]', J(delivered));
+    check('claude code: the view is told as soon as it is written, before the model reads it (Edit and × can no longer take it back)', writtenBeforeRead === true && J(written) === '[["m1"]]', J({ written, writtenBeforeRead }));
     check('claude code: the same turn goes on (one result, its reply)', out.text === 'In ME2340.' && !out.failed, J(out));
     eng.dispose();
   }
@@ -218,7 +222,8 @@ const toolModel = (rounds, during = () => {}) => {
     // No tool call out (the reply is only text): nothing is written; the message waits for the next one.
     const box = steer.createBox();
     const delivered = [];
-    const steers = io(box, delivered);
+    const written = [];
+    const steers = io(box, delivered, written);
     let release = null;
     const cli = fakeClaude((rec, msg, n) => {
       if (n !== 1) return;
@@ -235,6 +240,7 @@ const toolModel = (rounds, during = () => {}) => {
     release();
     await turn;
     check('claude code: with no tool call out, nothing is written (it waits for the next message)', cli.spawned[0].lines.length === 1 && box.size === 1 && delivered.length === 0, J({ lines: cli.spawned[0].lines.length, size: box.size }));
+    check('claude code: nothing written, so the view is not told (Edit and × can still take it back)', written.length === 0 && box.remove('m2'), J(written));
     eng.dispose();
   }
   {

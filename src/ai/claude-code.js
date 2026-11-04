@@ -1000,15 +1000,18 @@ class ClaudeCodeEngine {
     };
     // [mid-run messages] (ai/steer.js) What the user typed while this turn runs: a stream-json line on stdin while one of its tool calls is out,
     // which the CLI reads at its next model call (the same turn, one `result`). Never while the final reply streams, or on a one-shot process
-    // (its stdin is closed): those wait for the next message. `steers`: { take(), delivered(entries) } from agent.js claudeCodeTurn.
+    // (its stdin is closed): those wait for the next message. `steers`: { take(), written(entries), delivered(entries) } from agent.js claudeCodeTurn.
     let steered = []; // written, and not yet seen to reach the model
+    // `written`: these are on stdin now and can no longer be taken back (the view drops their Edit and ×).
     const pump = () => {
       if (!steers || over || result || !sent || adopt || proc.single || proc.exited || signal.aborted || finalSeen || compacting || pending.size === 0) return;
       const got = steers.take();
+      const before = steered.length;
       for (const e of got) {
         try { proc.child.stdin.write(`${JSON.stringify(stdinMessage(require('./steer').wrap(e.text)))}
 `); steered.push(e); } catch { /* the process is going: the message waits for the next one */ }
       }
+      if (steered.length > before) { try { steers.written?.(steered.slice(before)); } catch { /* said on screen only */ } }
     };
     const steerArrived = () => { if (!steered.length) return; const went = steered; steered = []; try { steers.delivered(went); } catch { /* said on screen only */ } };
     if (steers) steers.pump = pump;
