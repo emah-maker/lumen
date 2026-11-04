@@ -23,14 +23,14 @@ const MAX_TEXT = 80;
 const MAX_WRITE = 400; // a write mark's text (lines split on \n)
 const MAX_LINES = 16;
 const MAX_SECONDS = 600;
-const TYPES = ['box', 'circle', 'arrow', 'highlight', 'label', 'step', 'spotlight', 'underline', 'strike', 'bracket', 'check', 'cross', 'redact', 'callout', 'path', 'write'];
+const TYPES = ['box', 'circle', 'ellipse', 'roundbox', 'arrow', 'line', 'highlight', 'label', 'step', 'spotlight', 'underline', 'strike', 'bracket', 'check', 'cross', 'redact', 'callout', 'path', 'write'];
 const MAX_POINTS = 400;
 const COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'black', 'white'];
 const COORD_LIMIT = 20000;
 
 const TOOL = {
   name: 'annotate',
-  description: 'Draw on the page to explain it. marks:[{type, target:id|text:…, x,y,w,h, to, points, text, color, fill, font, width/opacity/curve}]. A label points at x,y; given to, it sits at x,y and points at to. Screenshot/find first; number steps like your answer.',
+  description: 'Draw on the page to explain it. marks:[{type, target:id|text:…, x,y,w,h, to, points, text, color, fill, font, width/opacity/curve}]. w,h hug the target. line/arrow: x,y to to. A label points at x,y; given to, sits there, points at to. Screenshot/find first; number steps like your answer.',
   input_schema: {
     type: 'object',
     properties: {
@@ -168,6 +168,7 @@ function normalize(input, scale = null) {
     const to = m.to === undefined || along ? null : anchorOf(m.to, scale, `${where}.to`);
     if (m.to !== undefined && !to && !along) throw new Error(`${where}.to needs a target, or x and y.`);
     if (!at && !(m.type === 'arrow' && to)) throw new Error(`${where}: say where: target (element id or "text:…"), or x and y of the screenshot.`);
+    if (m.type === 'line' && !(at && to)) throw new Error(`${where}: a line needs x,y (or target) for one end and to for the other.`);
     if (m.type === 'arrow' && !to && !at) throw new Error(`${where}: an arrow needs a target or x,y, and usually to.`);
     const write = m.type === 'write';
     const text = m.text === undefined || m.text === null ? '' : write
@@ -213,7 +214,7 @@ function overlayMain(spec, env) {
     red: ['#d92d20', '#ff6a5f'], orange: ['#e8590c', '#ff9f43'], yellow: ['#f5c400', '#ffd60a'], green: ['#1a9d4a', '#3ddc84'],
     blue: ['#1a6ef0', '#5aa9ff'], purple: ['#7a3ff2', '#b388ff'], pink: ['#e0399a', '#ff7ac6'], black: ['#111111', '#f2f2f2'], white: ['#ffffff', '#ffffff'],
   };
-  const DEFAULT = { box: 'red', circle: 'red', arrow: 'red', underline: 'red', strike: 'red', highlight: 'yellow', label: 'blue', step: 'blue', spotlight: 'white', bracket: 'blue', check: 'green', cross: 'red', redact: 'black', callout: 'blue', path: 'red', write: 'blue' };
+  const DEFAULT = { box: 'red', circle: 'red', ellipse: 'red', roundbox: 'red', arrow: 'red', line: 'red', underline: 'red', strike: 'red', highlight: 'yellow', label: 'blue', step: 'blue', spotlight: 'white', bracket: 'blue', check: 'green', cross: 'red', redact: 'black', callout: 'blue', path: 'red', write: 'blue' };
   let dark = false;
   try { dark = Boolean(win.matchMedia && win.matchMedia('(prefers-color-scheme: dark)').matches); } catch { dark = false; }
   let still = false;
@@ -291,6 +292,28 @@ function overlayMain(spec, env) {
       pts.push({ x: cx + Math.cos(a) * rx * k, y: cy + Math.sin(a) * ry * k });
     }
     return smooth(pts);
+  };
+  // An ellipse round a box, not in it: through its corners (radii x sqrt 2, the tightest one of the box's shape) plus pad.
+  const ovalPath = (r, pad) => {
+    const rx = (r.w / 2) * Math.SQRT2 + pad, ry = (r.h / 2) * Math.SQRT2 + pad, cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    return `M${f(cx - rx)} ${f(cy)}A${f(rx)} ${f(ry)} 0 1 0 ${f(cx + rx)} ${f(cy)}A${f(rx)} ${f(ry)} 0 1 0 ${f(cx - rx)} ${f(cy)}Z`;
+  };
+  // The same, hand-drawn: a pen stroke that goes round once and a little past where it began.
+  const ellipseRound = (r, rnd) => {
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const rx = (r.w / 2) * Math.SQRT2 + 4, ry = (r.h / 2) * Math.SQRT2 + 4;
+    const a0 = -2.2 + rnd() * 0.4;
+    const pts = [];
+    for (let i = 0; i <= 32; i++) {
+      const t = i / 32, a = a0 + t * Math.PI * 2.12, k = 1 + (rnd() - 0.5) * 0.02 + t * 0.03;
+      pts.push({ x: cx + Math.cos(a) * rx * k, y: cy + Math.sin(a) * ry * k });
+    }
+    return smooth(pts);
+  };
+  // A rounded rectangle round a box (grown by pad), its corner radius up to half its height.
+  const roundPath = (r, pad) => {
+    const x = r.x - pad, y = r.y - pad, w = r.w + pad * 2, h = r.h + pad * 2, k = Math.min(12, h / 2, w / 2);
+    return `M${f(x + k)} ${f(y)}H${f(x + w - k)}Q${f(x + w)} ${f(y)} ${f(x + w)} ${f(y + k)}V${f(y + h - k)}Q${f(x + w)} ${f(y + h)} ${f(x + w - k)} ${f(y + h)}H${f(x + k)}Q${f(x)} ${f(y + h)} ${f(x)} ${f(y + h - k)}V${f(y + k)}Q${f(x)} ${f(y)} ${f(x + k)} ${f(y)}Z`;
   };
   // Where the line from `from` toward the box's centre meets the box (grown by pad).
   const edgeToward = (from, r, pad) => {
@@ -572,7 +595,7 @@ function overlayMain(spec, env) {
       popIn(e);
       return e;
     };
-    if (m.type === 'box' || m.type === 'circle') {
+    if (m.type === 'box' || m.type === 'circle' || m.type === 'ellipse' || m.type === 'roundbox') {
       const exact = Boolean(m.fill) || m.curve === false; // no hand-drawn wobble or padding: the exact box, or the ellipse in it
       const fillEl = fillOf();
       const set = stroke(exact ? 3 : 4);
@@ -583,7 +606,9 @@ function overlayMain(spec, env) {
         const b = sized(bounds(rs), exact ? 12 : 40);
         const r = makeRng(index * 977 + 13);
         const rx = b.w / 2, ry = b.h / 2, cx = b.x + rx, cy = b.y + ry;
-        const d = !exact ? (m.type === 'box' ? rectPath(b, 5, r) : ellipsePath(b, r))
+        const d = m.type === 'ellipse' ? (exact ? ovalPath(b, 0) : ellipseRound(b, r))
+          : m.type === 'roundbox' ? roundPath(b, exact ? 0 : 4)
+          : !exact ? (m.type === 'box' ? rectPath(b, 5, r) : ellipsePath(b, r))
           : m.type === 'box' ? `M${f(b.x)} ${f(b.y)}H${f(b.x + b.w)}V${f(b.y + b.h)}H${f(b.x)}Z`
             : `M${f(cx - rx)} ${f(cy)}A${f(rx)} ${f(ry)} 0 1 0 ${f(cx + rx)} ${f(cy)}A${f(rx)} ${f(ry)} 0 1 0 ${f(cx - rx)} ${f(cy)}Z`;
         set(d);
@@ -646,9 +671,10 @@ function overlayMain(spec, env) {
         setA(ring, { x: f(x), y: f(y), width: f(w), height: f(h), rx: r });
       };
       if (m.text) addCallout(view, m, at, c, delay, add, popIn, rectsOf);
-    } else if (m.type === 'arrow' && !m.pts) {
-      const body = stroke(4);
-      const head = stroke(4);
+    } else if ((m.type === 'arrow' && !m.pts) || m.type === 'line') {
+      const line = m.type === 'line'; // a line: point to point, no head, straight unless curve:true
+      const body = stroke(line ? 3 : 4);
+      const head = line ? null : stroke(4);
       view.update = (s) => {
         const a = at && rectsOf(at);
         const t = to && rectsOf(to);
@@ -673,14 +699,14 @@ function overlayMain(spec, env) {
         }
         const dx = tip.x - tail.x, dy = tip.y - tail.y;
         const len = Math.max(1, Math.hypot(dx, dy));
-        const bow = (m.curve === false ? 0 : len * (m.curve === true ? 0.3 : 0.12)) * (index % 2 ? -1 : 1);
+        const bow = (m.curve === false || (line && m.curve !== true) ? 0 : len * (m.curve === true ? 0.3 : 0.12)) * (index % 2 ? -1 : 1);
         const ctl = { x: (tail.x + tip.x) / 2 - (dy / len) * bow, y: (tail.y + tip.y) / 2 + (dx / len) * bow };
         body(`M${f(tail.x)} ${f(tail.y)}Q${f(ctl.x)} ${f(ctl.y)} ${f(tip.x)} ${f(tip.y)}`);
         const ang = Math.atan2(tip.y - ctl.y, tip.x - ctl.x);
         const hl = Math.min(18, Math.max(9, len * 0.35));
         const p1 = { x: tip.x - Math.cos(ang - 0.45) * hl, y: tip.y - Math.sin(ang - 0.45) * hl };
         const p2 = { x: tip.x - Math.cos(ang + 0.45) * hl, y: tip.y - Math.sin(ang + 0.45) * hl };
-        head(`M${f(p1.x)} ${f(p1.y)}L${f(tip.x)} ${f(tip.y)}L${f(p2.x)} ${f(p2.y)}`);
+        if (head) head(`M${f(p1.x)} ${f(p1.y)}L${f(tip.x)} ${f(tip.y)}L${f(p2.x)} ${f(p2.y)}`);
       };
       if (m.text) addCallout(view, m, at || to, c, delay, add, popIn, rectsOf, true);
     } else if (m.type === 'path' || m.type === 'arrow') { // (an arrow here is one along points)

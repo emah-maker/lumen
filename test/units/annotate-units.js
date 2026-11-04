@@ -498,6 +498,29 @@ withTimers(() => {
     const t2 = nums(pathOf(far)).slice(-2);
     check('callout: with `to` the leader line ends at that target', t2[0] >= 495 && t2[0] <= 545 && t2[1] >= 95 && t2[1] <= 145, J(t2));
   }
+  { // more shapes, each fitted to its box (100,200 200x60): the level of a point is ((x-cx)/(w/2))^2 + ((y-cy)/(h/2))^2, 2 at the corners
+    const level = (x, y) => ((x - 200) / 100) ** 2 + ((y - 230) / 30) ** 2;
+    const pairs = (d) => { const n = nums(d); const out = []; for (let i = 0; i + 1 < n.length; i += 2) out.push([n[i], n[i + 1]]); return out; };
+    const ell = pathOf(draw([{ type: 'ellipse', ...box }]));
+    const ends = pairs(ell).filter((_, i) => i === 0 || i % 3 === 0); // the curve's own points (not its control points)
+    check('ellipse: goes round the whole box (outside its corners) and hugs it (no point more than 1.5x the corner distance)', ends.length > 20 && ends.every(([x, y]) => level(x, y) >= 1.95 && level(x, y) <= 3), J(ends.map(([x, y]) => level(x, y).toFixed(2))));
+    const exact = pathOf(draw([{ type: 'ellipse', ...box, curve: false }]));
+    const [rx, ry] = /A([\d.]+) ([\d.]+)/.exec(exact).slice(1).map(Number);
+    check('ellipse, curve:false: the exact tightest ellipse of the box\'s shape through its corners', near(rx, 100 * Math.SQRT2, 0.2) && near(ry, 30 * Math.SQRT2, 0.2) && /^M58\.6 230A/.test(exact), exact);
+    const rb = pathOf(draw([{ type: 'roundbox', ...box }]));
+    check('roundbox: a rounded rectangle 4 px round the box (straight sides, quadratic corners)', rb === 'M108 196H292Q304 196 304 208V252Q304 264 292 264H108Q96 264 96 252V208Q96 196 108 196Z', rb);
+    const rb0 = pathOf(draw([{ type: 'roundbox', ...box, curve: false }]));
+    check('roundbox, curve:false: exactly on the box', rb0 === 'M112 200H288Q300 200 300 212V248Q300 260 288 260H112Q100 260 100 248V212Q100 200 112 200Z', rb0);
+    const small = pathOf(draw([{ type: 'roundbox', x: 10, y: 10, w: 60, h: 10, curve: false }]));
+    check('roundbox: a short box gets corners of half its height (a pill), not more', /^M15 10H65Q70 10 70 15/.test(small), small);
+    const ln = draw([{ type: 'line', x: 50, y: 400, to: { x: 300, y: 250 } }]);
+    const [lx0, ly0, cx1, cy1, lx1, ly1] = nums(pathOf(ln));
+    check('line: point to point, straight (no bow), no head (one stroke and its halo)', tags(ln.svg, 'path').length === 2 && lx0 === 50 && ly0 === 400 && lx1 === 300 && ly1 === 250 && near(cx1, 175) && near(cy1, 325), pathOf(ln));
+    const bent = nums(pathOf(draw([{ type: 'line', x: 50, y: 400, to: { x: 300, y: 250 }, curve: true }])));
+    check('line, curve:true: bows like a hand-drawn arc', !near(bent[2], 175, 5) || !near(bent[3], 325, 5), J(bent));
+    check('line: needs both ends (x,y and to)', /a line needs/.test(throws(() => annotate.normalize({ marks: [{ type: 'line', x: 1, y: 2 }] }, { ratio: 1, zoom: 1 }))));
+    check('new shapes take the palette and fill', ['ellipse', 'roundbox'].every((t) => annotate.COLORS.every((c) => draw([{ type: t, ...box, color: c, fill: c }]).drawn === 1)) && annotate.COLORS.every((c) => draw([{ type: 'line', x: 1, y: 2, to: { x: 30, y: 40 }, color: c }]).drawn === 1));
+  }
   {
     const pts = [[100, 100], [150, 140], [200, 100], [250, 140]];
     const m = annotate.normalize({ marks: [{ type: 'path', points: pts }] }, { ratio: 1, zoom: 1 }).marks[0];
