@@ -85,7 +85,10 @@ const { buildCrx } = require('../fixtures/extensions/build-crx');
     // ---- a release whose package another key signed: refused, nothing switched
     served = buildCrx(fixture).crx;
     check('it asks first, naming uBlock Origin', (await choose(sid, 'ublock-origin')) === 'Use uBlock Origin?');
-    const refused = await waitFor(() => inTab(sid, "document.getElementById('pref-adBlocker').disabled ? null : document.querySelector('#pref-adBlocker').closest('.row').textContent"), 15000);
+    // (the select is still enabled for a moment before the install starts: wait for the refusal itself, not just an enabled select)
+    let row = '';
+    await waitFor(() => inTab(sid, "document.getElementById('pref-adBlocker').disabled ? null : document.querySelector('#pref-adBlocker').closest('.row').textContent").then((t) => { row = t || row; return /not signed by uBlock Origin/.test(row) && t; }), 15000);
+    const refused = row;
     check('a package not signed by uBlock Origin\'s key is refused: still Lumen\'s blocker, nothing installed', readPrefs().adBlocker !== 'ublock-origin' && !(await extensionLoaded()) && !fs.existsSync(path.join(profile, 'Extensions', extId)) && /not signed by uBlock Origin/.test(refused), refused);
     check('...and the choice shows Lumen\'s again', (await inTab(sid, "document.getElementById('pref-adBlocker').value")) === 'lumen');
     served = crx;
