@@ -360,7 +360,7 @@ const CATEGORIES = [
     ['about-lumen', 'About Lumen', { page: 'about-links', more: 'version build report problem copy details' }]] },
   { id: 'advanced', title: 'Advanced', slots: [['advanced-links', ''], ['experimental', 'Experimental'], ['reset', ''],
     ['system', 'Performance and graphics', { page: 'advanced-links', more: 'performance graphics acceleration visual effects memory energy lag slow gpu' }],
-    ['adv-network', 'Network and proxy', { page: 'advanced-links', more: 'proxy vpn network pac' }],
+    ['adv-network', 'Network and proxy', { page: 'advanced-links', more: 'proxy vpn network pac dns secure dns doh dns over https cloudflare' }],
     ['automation', 'Remote control for developers', { page: 'advanced-links', more: 'automation cdp devtools playwright puppeteer remote debugging port developer' }],
     ['adv-diagnostics', 'Diagnostics', { page: 'advanced-links', more: 'diagnostics timing record switch export tab' }],
     ['task-manager', 'Task manager', { page: 'adv-diagnostics', more: 'processes memory cpu restart tab developer energy power' }],
@@ -3511,6 +3511,24 @@ function buildSystem(card) {
         if (await save('proxy', current(), apply)) { flash(note, 'Applied.'); apply.disabled = true; }
       },
     }))));
+
+  // [secure DNS] Chrome's "Use secure DNS": the DNS-over-HTTPS server for site addresses (browser/secure-dns.js). A site the
+  // network's own DNS sends to an address that doesn't answer (Muse on a campus network) loads with a provider chosen.
+  const dnsNote = status('secure-dns-status');
+  const dnsCustom = h('input', { type: 'url', class: 'grow', id: 'pref-secureDnsCustom', 'aria-label': tr('settings.secureDns.custom', 'Server address'), placeholder: 'https://dns.example/dns-query', value: st.prefs.secureDnsCustom || '' });
+  const showCustom = () => { dnsCustom.hidden = st.prefs.secureDns !== 'custom'; };
+  dnsCustom.addEventListener('change', async () => {
+    const v = dnsCustom.value.trim();
+    // (the backend checks the address too: one it can't use is not saved)
+    if ((v && !/^https:\/\//i.test(v)) || !(await save('secureDnsCustom', v, dnsCustom))) { flash(dnsNote, tr('settings.secureDns.bad', 'Enter the server address, starting with https://.'), 'err'); dnsCustom.focus(); return; }
+    flash(dnsNote, tr('settings.secureDns.applied', 'Applied.'));
+  });
+  const dnsRow = select('secureDns', tr('settings.secureDns', 'Use secure DNS'), tr('settings.secureDns.desc', 'Which server finds the address of each site. Automatic uses your network’s DNS, encrypted when it supports that (as in Chrome). Choose a provider if a site loads in other places but times out on this network. With a provider, names only your local network knows (an intranet site) don’t open. Applies at once.'),
+    [['auto', tr('settings.secureDns.auto', 'Automatic')], ['off', tr('settings.secureDns.off', 'Off (always your network’s DNS)')], ['cloudflare', 'Cloudflare (1.1.1.1)'], ['google', 'Google (8.8.8.8)'], ['quad9', 'Quad9 (9.9.9.9)'], ['custom', tr('settings.secureDns.customChoice', 'Custom…')]],
+    { after: () => { showCustom(); if (st.prefs.secureDns === 'custom') dnsCustom.focus(); } });
+  showCustom();
+  dnsRow.querySelector('.text')?.append(dnsCustom, dnsNote);
+  slots.get('adv-network').append(dnsRow);
 }
 
 async function buildExtensions(card) {

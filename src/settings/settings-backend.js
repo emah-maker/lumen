@@ -150,6 +150,8 @@ const DEFAULTS = {
   performanceMode: 'auto', // auto | on | off: lighter running on a slow PC (features/performance.js)
   graphicsMode: 'auto', // [look] auto (Light on an integrated GPU) | full | light: no backdrop blur, cheaper effects (settings-backend.js [igpu])
   proxy: { mode: 'system', rules: '', pacUrl: '', bypass: '' },
+  secureDns: 'auto', // [secure DNS] auto | off | cloudflare | google | quad9 | custom: the DNS-over-HTTPS server for site addresses (browser/secure-dns.js)
+  secureDnsCustom: '', // [secure DNS] the server address when secureDns is custom (a DoH URI template, https)
   keepRunningInBackground: true, // macOS: keep running with no windows
   organizeOnlyMixed: true, // [tabs] automatic organize only when the loose tabs are a mix of topics
   organizeDelaySeconds: 5, // [tabs] seconds after the tabs change before loose tabs are organized (features/organize-learn.js ORGANIZE_DELAYS)
@@ -375,6 +377,8 @@ function validate(key, value) {
     case 'lastSeenVersion': return value === '' ? '' : require('../features/whats-new').cleanVersion(value);
     case 'connectorAlways': return require('../features/connectors/always').cleanList(value);
     case 'featureOffersSeen': return Array.isArray(value) ? value.filter((k) => typeof k === 'string').slice(0, 200) : null;
+    case 'secureDns': return require('../browser/secure-dns').cleanChoice(value);
+    case 'secureDnsCustom': return value === '' ? '' : require('../browser/secure-dns').cleanTemplate(value) || null;
     case 'proxy': {
       if (!value || typeof value !== 'object') return null;
       const mode = pick(value.mode, ['system', 'direct', 'fixed_servers', 'pac_script', 'auto_detect'], null);
@@ -668,6 +672,14 @@ function create(deps) {
     if (mode === 'pac_script') config.pacScript = pacUrl;
     return Promise.all([ses(), ...mirrored].map((target) => target.setProxy(config).catch((err) => console.error('Proxy:', err.message))));
   }
+  // ---- secure DNS ---- (app-wide: every session, private windows too; browser/secure-dns.js)
+  let secureDnsSet = false; // a provider or Off was applied this run, so going back to Automatic must undo it
+  function applySecureDns() {
+    const SD = require('../browser/secure-dns');
+    const config = SD.resolverConfig(prefs().secureDns, prefs().secureDnsCustom);
+    if (!config && !secureDnsSet) return; // Chromium's default, untouched
+    try { app.configureHostResolver(config || SD.DEFAULT_CONFIG); secureDnsSet = Boolean(config); } catch (err) { console.error('Secure DNS:', err.message); }
+  }
   // Other sessions that follow the profile's network settings (proxy, request headers): the research tabs'
   // isolated session must not go around a proxy the user set, or ignore Do Not Track / language.
   const mirrored = new Set();
@@ -929,6 +941,7 @@ function create(deps) {
       case 'spellcheck': case 'spellcheckLanguages': applySpellcheck(); break;
       case 'languages': for (const target of [ses(), ...mirrored]) applyAcceptLanguage(target); break;
       case 'proxy': return applyProxy();
+      case 'secureDns': case 'secureDnsCustom': applySecureDns(); break;
       case 'routineWebhooks': case 'routineWebhookPort': return deps.onRoutineWebhooksChange?.(); // [routines] the web links' listener starts, stops or moves
       // The blocker reads these on every request, so the change applies to whatever loads next.
       // Open tabs are left alone: reloading every one of them lost whatever was typed in their forms.
@@ -1421,6 +1434,7 @@ function create(deps) {
     applyTheme();
     applySpellcheck();
     applyProxy();
+    applySecureDns();
     setupHeaders();
     registerIpc(ipcMain);
   }
