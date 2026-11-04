@@ -29,7 +29,7 @@ const AREAS = [
     'hardwareAcceleration', 'tabSleep', 'tabSleepMode', 'tabSleepMinutes', 'tabSleepHow', 'tabSleepFreePercent', 'tabSleepLumenGb', 'tabSleepMaxAwake',
     'tabSleepKeepPinned', 'tabSleepKeepRecent', 'tabSleepFreezeFirstMinutes', 'tabSleepPressure', 'tabSleepKeepAudio', 'tabSleepKeepForms',
     'tabSleepKeepTransfers', 'tabSleepKeepGroups', 'tabSleepSoonMinutes', 'tabSleepDim', 'tabSleepShowFreed', 'tabSleepOnReturn', 'tabReadyRecent',
-    'tabPreload', 'performanceMode', 'proxy', 'keepRunningInBackground', 'downloadDir', 'askWhereToSave', 'pdfViewer', 'autoDownloadUpdates',
+    'tabPreload', 'performanceMode', 'proxy', 'secureDns', 'secureDnsCustom', 'keepRunningInBackground', 'downloadDir', 'askWhereToSave', 'pdfViewer', 'autoDownloadUpdates',
     'showWhatsNew', 'organizeOnlyMixed', 'organizeDelaySeconds', 'recordSwitchTimings',
   ] },
 ];

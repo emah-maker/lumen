@@ -89,7 +89,7 @@ const BEFORE_0_5_65 = new Set([
     p = FO.plan({ settings: user, defaults: DEFAULTS });
     check('an update shows only the lines not seen yet', p.show.length === FO.OFFERS.length - SIX.length && !p.show.some((o) => SIX.includes(FO.seenKey(o))) && J(p.seen) === J(SIX), J(p.show.map((o) => o.id)));
     const rel = (v) => v.split('.').map(Number).reduce((n, x) => n * 1000 + x, 0);
-    check('newest release first', p.show[0].since === '0.5.90' && p.show.every((o, i) => i === 0 || rel(p.show[i - 1].since) >= rel(o.since)), J(p.show.map((o) => o.since)));
+    check('newest release first', p.show[0].since === '0.5.94' && p.show.every((o, i) => i === 0 || rel(p.show[i - 1].since) >= rel(o.since)), J(p.show.map((o) => o.since)));
     p = FO.plan({ settings: { ...user, autoNewChat: false, chatAutoDeleteDays: 30, adBlocker: 'lumen' }, defaults: DEFAULTS });
     check('a key changed by hand counts as seen (and one saved at its default does not)', !p.show.some((o) => ['autoNewChat', 'chatAutoDelete'].includes(o.id)) && p.seen.includes('autoNewChat') && p.seen.includes('chatAutoDeleteDays') && p.show.some((o) => o.id === 'adBlocker'), J({ show: p.show.map((o) => o.id), seen: p.seen }));
     p = FO.plan({ settings: { lastSeenVersion: '0.5.88', featureOffersSeen: ALL_SEEN }, defaults: DEFAULTS });
@@ -118,7 +118,7 @@ const BEFORE_0_5_65 = new Set([
     c.fo.prepare();
     const first = await early;
     check('and answers as soon as it has: the same call, no retry', first?.items?.length > 0);
-    check(`a long batch shows the first ${FO.CARD_MAX}, newest first, and counts the rest for "More in Settings"`, first.items.length === FO.CARD_MAX && first.items[0].id === 'keysOff' && first.more === waiting - FO.CARD_MAX && Boolean(first.moreSection), J(first));
+    check(`a long batch shows the first ${FO.CARD_MAX}, newest first, and counts the rest for "More in Settings"`, first.items.length === FO.CARD_MAX && first.items[0].id === 'secureDns' && first.more === waiting - FO.CARD_MAX && Boolean(first.moreSection), J(first));
     const ad = first.items.find((i) => i.id === 'adBlocker');
     check('a choice comes with its values, the one in use and the one that asks first', J(ad) === J({ id: 'adBlocker', kind: 'choice', since: '0.5.88', value: 'lumen', choices: ['lumen', 'ublock'], confirm: 'ublock', section: 'privacy-adblock' }), J(ad));
     const sw = first.items.find((i) => i.id === 'autoNewChat');
@@ -134,9 +134,9 @@ const BEFORE_0_5_65 = new Set([
     let r = await c.fo.set('autoNewChat', false);
     check('a switch changed on the card is saved through the settings setter at once', r.ok && J(c.sets) === '[["autoNewChat",false]]' && c.file().autoNewChat === false, J(c.sets));
     check('and the line stays, showing its new state', c.fo.list().items.find((i) => i.id === 'autoNewChat')?.value === false, J(c.fo.list()));
-    r = await c.fo.set('chatAutoDelete', 90);
-    check('a choice is saved too', r.ok && c.file().chatAutoDeleteDays === 90 && c.fo.list().items.find((i) => i.id === 'chatAutoDelete')?.value === 90, J(c.sets));
-    r = await c.fo.set('chatAutoDelete', 12);
+    r = await c.fo.set('secureDns', 'cloudflare');
+    check('a choice is saved too', r.ok && c.file().secureDns === 'cloudflare' && c.fo.list().items.find((i) => i.id === 'secureDns')?.value === 'cloudflare', J(c.sets));
+    r = await c.fo.set('secureDns', 'google'); // (a value Settings has, but not one of the card's choices)
     check('a value that is not one of its choices is refused', r.ok === false && c.sets.length === 2);
     r = await c.fo.set('adBlocker', 'ublock');
     check('the ad blocker goes through the setter (which installs uBlock Origin Lite)', r.ok && J(c.sets[2]) === '["adBlocker","ublock"]', J(c.sets));
