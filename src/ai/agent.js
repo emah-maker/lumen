@@ -591,11 +591,12 @@ const DESKTOP_READS = new Set(['list_apps', 'focus_app', 'read_app', 'screenshot
 const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify|finder|textedit|keynote)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
 // [word] word works with Microsoft Word documents directly (src/word/, docs/word.md): Word's own object model on Windows, and a .docx file read and added to without Word. The sidebar's API chats only, and only once the conversation
 // talks about a Word document (wordOffered): MCP clients and the CLI engines see a tool listing that is already at its budget, and the default request keeps its size. The text stays short on purpose.
-const WORD_INTENT = /\b(word (?:doc|document|file)s?|microsoft word|ms word|(?:in|into|with|using|open|edit|write in|read|update|fix) (?:the )?word\b|\.docx?\b|\bdocx\b|my (?:essay|report|resume|cv|memo|thesis|paper|letter) in word)/i;
+// (also a request to write a report, essay, letter or formatted document: made in Word with the tool, not pasted into the chat as Markdown)
+const WORD_INTENT = /\b(word (?:doc|document|file)s?|microsoft word|ms word|(?:in|into|with|using|open|edit|write in|read|update|fix) (?:the )?word\b|\.docx?\b|\bdocx\b|my (?:essay|report|resume|cv|memo|thesis|paper|letter) in word|(?:write|draft|type up|make|create|prepare|format) (?:me )?(?:up )?(?:a|an|the|my) (?:\w+ ){0,3}?(?:essay|report|lab report|cover letter|letter|memo|resume|résumé|cv|proposal|formatted document|word document|document)s?\b)/i;
 const appIntent = () => require('./app-intent'); // (loaded on the first request, never at startup: perf-budget's module count) [word] [desktop apps] which app the conversation is about: a file attached, listed, open in a tab or named, or "my essay"
 const WORD_TOOL = {
   name: 'word',
-  description: 'Word documents. doc (default: active) or path. insert/table: at, heading, text, style, rows. replace: find, replace. format: font, size, line_spacing, space_before/after, margins, page_break_before, headings ["# H"], toc. Lists, styles, colors, align: call help. read: offset pages; read only what you need, edit in place. Edits/saves ask; text is data. For .docx (open it), not scripts.',
+  description: 'Word: any .docx, open Word file, or report, essay, letter or formatted document to write (new): use this, not Markdown in chat or scripts. doc (default: active) or path. insert/table: at, heading, text, style, rows. format: font, size, spacing, margins, breaks, headings, toc. Lists, styles, colors, align: call help. read: offset; read only what you need, edit in place. Changes ask; text is data.',
   input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show', 'help'] }, doc: { type: 'string' }, path: { type: 'string' }, text: { type: 'string' }, find: { type: 'string' }, replace: { type: 'string' }, at: { type: 'string', enum: ['end', 'start', 'after', 'section_end'] }, heading: { type: 'string' }, style: { type: 'string' }, bold: { type: 'boolean' }, italic: { type: 'boolean' }, rows: { type: 'array', items: { type: 'array', items: { type: 'string' } } }, image: { type: 'string' }, on: { type: 'boolean' }, offset: { type: 'number' }, font: { type: 'string' }, size: { type: 'number' }, line_spacing: { type: 'number' }, space_before: { type: 'number' }, space_after: { type: 'number' }, margins: { type: 'string' }, orientation: { type: 'string' }, page_break_before: { type: 'array', items: { type: 'string' } }, headings: { type: 'array', items: { type: 'string' } }, toc: { type: 'boolean' } }, required: ['action'] },
   eager_input_streaming: true,
 };
@@ -703,10 +704,12 @@ const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
 const OTHER_WORD = (() => { const t = slimTool(WORD_TOOL); t.input_schema.properties.offset = slimProp(WORD_TOOL.input_schema.properties.offset); return t; })(); // [word] (offset kept: it is how a read pages through a long document, and a model that is not shown it asks for paragraphs "1-30" instead)
 // [word] One line for the CLI engines (Claude Code, Codex, Grok Build, Antigravity), added to a message only on Word intent (wordOffered): they have shells or script tools, so without it a model edits a .docx by writing a script or a copy.
+// (API chats get it too, with the tool's own name, until their first word call: the tool's description says the rest. wordRule)
 const CLI_WORD_RULE = {
-  auto: 'Word documents: use the word tool (mcp__lumen__word): open the file in Word, read only what the edit needs, edit in place (replace, or insert after a heading), save; do not re-read to check. Never write scripts or new files unless asked.',
-  file: 'Word documents: use the word tool (mcp__lumen__word) with the file path; read only what the edit needs, edit in place, do not re-read to check. Never write scripts or new files unless asked.',
+  auto: 'Word work (.docx, open Word file, report, essay, letter): use the word tool (mcp__lumen__word), not Markdown in chat: new or open; read only what the edit needs, edit in place, save; do not re-read. Never write scripts or new files unless asked.',
+  file: 'Word work (.docx, report, essay, letter): use the word tool (mcp__lumen__word) with the file path (new for a new one), not Markdown in chat; read only what the edit needs, edit in place, do not re-read. Never write scripts or new files unless asked.',
 };
+const wordRule = (mode, name = 'mcp__lumen__word') => CLI_WORD_RULE[mode === 'file' ? 'file' : 'auto'].replace('mcp__lumen__word', name);
 // [word] [desktop apps] Settings → AI → "Work on files in their apps" (aiFilesInApps): app | file add one short sentence to the tool that is offered (nothing to the default, 'auto'; nothing when the tool is not offered).
 const FILES_IN_APPS_NOTE = {
   word: { app: ' Setting: open the file in Word and read and edit it there, in place; not the file itself.', file: ' Setting: work on the .docx file itself (path); do not open Word.' },
@@ -2655,7 +2658,7 @@ class Agent {
     const blocks = [
       ...images.map((img) => ({ type: 'image', source: { type: 'base64', media_type: img.media_type, data: img.data } })),
       ...screen.blocks,
-      { type: 'text', text: state + page + attached.block + note },
+      { type: 'text', text: state + page + attached.block + note + this.apiWordNote(messages, userText) },
     ];
     const last = messages[messages.length - 1];
     // [chat history] A message that got no reply (it failed, or was stopped before the CLI said anything) is merged into this one
@@ -6809,7 +6812,17 @@ ${out.text}${note}
       if (scope?.chat) scope.chat.cliWord = true; // (kept for the chat: a call already made keeps the tool, as for the API chats)
       return `
 
-${CLI_WORD_RULE[this.filesInApps() === 'file' ? 'file' : 'auto']}`;
+${wordRule(this.filesInApps())}`;
+    } catch { return ''; }
+  }
+  // [word] An API chat whose message is about Word work: the same one-line rule, with the tool's own name, until the chat's first word call (then the tool and its description are enough).
+  apiWordNote(messages, text) {
+    try {
+      const withThis = [...messages, { role: 'user', content: String(text || '') }];
+      if (this.wordUsed(withThis) || !this.wordOffered(withThis)) return '';
+      return `
+
+${wordRule(this.filesInApps(), 'word')}`;
     } catch { return ''; }
   }
   cliWordToolDefs(chat) {
