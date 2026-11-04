@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI's labels point at what they explain.** When the AI put a label in free space and named the spot it explains (`to`), the label was pushed above where it was put and its pointer aimed straight down at empty space; the spot was ignored (on a slide's phase diagram, two labels stacked over the title instead of pointing at the circled points). A label given `to` now sits where it was put and a leader line with a head runs to that spot, and it stays on it when the picture is scaled (window resize, sidebar, zoom). A label on a point now has its pointer tip on that point, not 11 px above it. The annotate tool's description says how `to` works on a label (the list of mark types, already in its schema, was taken out of the text to keep it short). Tests: `test/units/annotate-units.js` (a label on a known point of a scaled picture, through a downscaled screenshot).
+
 ## 0.5.94 (2026-11-04)
 
 - **The window has less to load at start.** Lumen's own window and Settings page ship their scripts without indentation (about 80 KB less to read and parse; the code and its line numbers are unchanged), and the secure DNS code loads only when a provider is chosen. Tests: `test/units/units.js`, `test/e2e/perf-budget.js`.
