@@ -83,7 +83,7 @@ module.exports = [
   { files: ['test/e2e/command-bar.js'], languageOptions: { globals: { lastTabState: 'readonly' } } }, // (read inside ui.evaluate: the browser UI's global)
   // Main-process code that builds page scripts, and tests that pass functions to page.evaluate.
   {
-    files: ['src/ai/page-scripts.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/measure/capture-media.js', 'scripts/measure/measure-newtab.js'],
+    files: ['src/ai/page-scripts.js', 'src/ai/automation-page.js', 'src/ai/snapshot.js', 'src/ai/agent.js', 'test/**/*.js', 'scripts/measure/capture-media.js', 'scripts/measure/measure-newtab.js'],
     languageOptions: { globals: { ...globals.browser } },
     rules: { 'require-yield': 'off' },
   },

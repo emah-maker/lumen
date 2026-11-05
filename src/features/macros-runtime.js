@@ -255,7 +255,8 @@ function create(deps) {
     deps.send?.('macros:recording', { on: true, steps: 0 });
     return { ok: true };
   }
-  async function stopRecording({ cancel = false } = {}) {
+  // keep: the steps go back to the caller (an automation being made: features/automations-runtime.js), not to a draft in Settings.
+  async function stopRecording({ cancel = false, keep = false } = {}) {
     const rec = recording;
     if (!rec) return { ok: false, error: 'Not recording.' };
     clearInterval(rec.timer);
@@ -270,6 +271,7 @@ function create(deps) {
     deps.send?.('macros:recording', { on: false });
     if (cancel) return { ok: true, cancelled: true };
     const { steps, masked, dropped } = macros.stepsFromRecording(rec.events, { startUrl: rec.startUrl });
+    if (keep) return { ok: true, steps, masked };
     const draft = { name: '', description: '', steps, shortcut: '', site: '', masked, dropped: dropped.length };
     pendingDraft = draft;
     deps.openSettings?.('macros');
