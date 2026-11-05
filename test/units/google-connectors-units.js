@@ -311,7 +311,7 @@ async function main() {
   await svc4.connect('drive');
   const events = [];
   const access = { on: true };
-  const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc4.isWrite(i), describeWrite: (i, o) => svc4.describeWrite(i, o), defs: (o) => svc4.defs(o), call: (i, o) => svc4.call(i, o) }, bypassPermissions: () => true, autoApprove: () => true, deviceAccess: () => access.on, homeDir: () => home, profileDir: () => path.join(home, 'LumenProfile'), noteFile: () => {} };
+  const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc4.isWrite(i), describeWrite: (i, o) => svc4.describeWrite(i, o), defs: (o) => svc4.defs(o), call: (i, o) => svc4.call(i, o) }, bypassPermissions: () => false, autoApprove: () => true, deviceAccess: () => access.on, homeDir: () => home, profileDir: () => path.join(home, 'LumenProfile'), noteFile: () => {} };
   const agent = new agentLib.Agent(browser, () => null, () => ({}));
   agent.uploads = store;
   const gate = (extra = {}) => ({ emit: (e) => events.push(e), signal: new AbortController().signal, who: 'Claude', external: false, noAsk: false, run: {}, ...extra });
@@ -319,7 +319,7 @@ async function main() {
   const ask = async (args) => { events.length = 0; const input = { app: 'drive', action: 'upload', args }; const pending = agent.allowConnector(input, gate()); pending.catch(() => {}); await settle(); return { input, pending, card: events.find((e) => e.type === 'approval') }; };
 
   let t = await ask({ file: REF, folder_id: 'f3' });
-  check('an upload shows a card with the file’s name and size, where it goes (the folder’s name) and that its contents go to Google; Bypass and Auto-allow do not answer it', t.card?.note === 'connector' && t.card.noAlways === true && /Uploads this ONE file from this computer to the folder “Reports” of your Google Drive/.test(t.card.args) && /File: resume\.pdf \(15 B\)/.test(t.card.args) && /contents go to Google/.test(t.card.args) && !events.some((e) => e.name === 'auto_allowed'), JSON.stringify(events));
+  check('an upload shows a card with the file’s name and size, where it goes (the folder’s name) and that its contents go to Google; Auto-allow does not answer it', t.card?.note === 'connector' && t.card.noAlways === true && /Uploads this ONE file from this computer to the folder “Reports” of your Google Drive/.test(t.card.args) && /File: resume\.pdf \(15 B\)/.test(t.card.args) && /contents go to Google/.test(t.card.args) && !events.some((e) => e.name === 'auto_allowed'), JSON.stringify(events));
   check('the card lets the user change the name in Drive, pre-filled with the file’s name', t.card.fields.list.length === 1 && t.card.fields.list[0].key === 'name' && t.card.fields.list[0].value === 'resume.pdf', JSON.stringify(t.card.fields));
   check('nothing was uploaded before Allow', !g4.seen.some((r) => r.host === 'www.googleapis.com' && r.path.startsWith('/upload')), '');
   agent.resolveApproval(t.card.approvalId, { edits: { name: 'Resume (final).pdf' } });
@@ -416,7 +416,7 @@ async function main() {
   let b1 = await askC('update', { folder_id: 'fr', paths: pathsOf(allNames) });
   check('replace 18 resumes by name: ONE card, naming the folder and every file, with its size, and that the contents go to Google', events.filter((e) => e.type === 'approval').length === 1 && b1.card?.note === 'connector' && b1.card.noAlways === true && /Replaces the contents of 18 existing files in the folder “Tailored Resumes 2026-10-22” of your Google Drive/.test(b1.card.args) && allNames.every((n) => b1.card.args.includes(`• ${n} (40 KB`) && b1.card.args.includes(`← ${n} (`)) && /contents go to Google|new contents go to Google/.test(b1.card.args) && !/Not updated/.test(b1.card.args), b1.card?.args);
   check('the card says the name, link and sharing stay, and that Drive keeps the earlier version', /keeps its name, link and sharing|keeps the earlier content as a version/.test(b1.card.args) && /name, link and sharing/.test(b1.card.args), b1.card.args);
-  check('Bypass and Auto-allow do not answer the update card, and nothing is sent before Allow', !events.some((e) => e.name === 'auto_allowed') && patchUploads().length === before, '');
+  check('Auto-allow does not answer the update card, and nothing is sent before Allow', !events.some((e) => e.name === 'auto_allowed') && patchUploads().length === before, '');
   agent.resolveApproval(b1.card.approvalId, true);
   await b1.pending;
   const out1 = await agent.runConnector(b1.input);

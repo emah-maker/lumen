@@ -185,7 +185,7 @@ const make = (file, extra = {}) => M.createMemoryStore({ file, ...keychain, now:
     const read = { chat: Object.assign([], { settings: {} }) };
     agent.markTainted(read, {}); // a page read with a tool
     try { await agent.allowMemory({ action: 'add', text: 'Likes jazz' }, { ...gate, run: read }); } catch (err) { denied = err.message; }
-    check('approval: after a page was read, a save asks on a card (no Always, not answered by Bypass) and No refuses it', asked && /wants to remember: “Likes jazz”/.test(asked.title) && asked.noAlways && asked.noBypass && /did not allow/.test(denied));
+    check('approval: after a page was read, a save asks on a card (no Always, answered only on its own card in lumen://tasks) and No refuses it', asked && /wants to remember: “Likes jazz”/.test(asked.title) && asked.noAlways && asked.guarded && !('noBypass' in asked) && /did not allow/.test(denied));
     // The page text attached to the message (agent.js runTaskOnce: markTainted() with no tool call) counts too, and so do
     // attached files and emails, helpers' answers, web_search, connectors and apps: they all go through markTainted.
     for (const [what, opts] of [['the page text attached to a message', {}], ['text from another app', { app: true }]]) {

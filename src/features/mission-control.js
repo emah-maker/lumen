@@ -36,7 +36,7 @@ function cardText(card = {}) {
   return {
     host: str(card.host, 200), action: str(card.action || 'interact', 30), title: str(card.title, 300),
     detail: detail.slice(0, ARGS_MAX), cut: detail.length > ARGS_MAX || card.argsCut === true, tainted: card.tainted === true,
-    guarded: Boolean(card.note) || card.noBypass === true, // a connector's write or a memory note: answered only on its own card
+    guarded: Boolean(card.note) || card.guarded === true, // a connector's write or a memory note: answered only on its own card
   };
 }
 
@@ -59,7 +59,7 @@ const eventTrigger = (trigger) => (EVENTS.has(trigger) ? trigger : null);
 const hideCard = (card) => ({ ...card, host: '', title: '', detail: '', tainted: false });
 
 // inputs:
-//   chats      [{ chatId, title, temporary, running, queued, startedAt, step, approvals: [{ approvalId, host, action, title, args, tainted, note, noBypass, since }] }]
+//   chats      [{ chatId, title, temporary, running, queued, startedAt, step, approvals: [{ approvalId, host, action, title, args, tainted, note, guarded, since }] }]
 //   tasks      background-runner summaries (bg.summarize) with `runs` (their history), a routine's `history` (what started each run)
 //              and `trigger` (what started the run going now) added, and `via: 'telegram'` for a task sent from the phone
 //   agents     [{ id, clientName, since, step }]

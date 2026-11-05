@@ -66,7 +66,7 @@ const EXPECTED = [
   const cardOf = () => events.find((e) => e.type === 'approval');
 
   let p = agent.allowConnector(task('One'), gate()); await wait();
-  check('an add shows the card with Always offered and says what it is for', cardOf() && cardOf().noAlways !== true && cardOf().alwaysFor?.action === 'Add a task' && cardOf().alwaysFor.app === 'Todoist' && cardOf().noBypass === true, JSON.stringify(cardOf()));
+  check('an add shows the card with Always offered and says what it is for', cardOf() && cardOf().noAlways !== true && cardOf().alwaysFor?.action === 'Add a task' && cardOf().alwaysFor.app === 'Todoist' && cardOf().guarded === true, JSON.stringify(cardOf()));
   agent.resolveApproval(cardOf().approvalId, { edits: { content: 'Milk and eggs' }, always: true });
   await p;
   check('Always with edits stores the key', saved.length === 1 && saved[0] === 'todoist:add_task', JSON.stringify(saved));

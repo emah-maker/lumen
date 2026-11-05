@@ -1480,7 +1480,7 @@ const quote = (s, max = 40) => `“${s.length > max ? `${s.slice(0, max - 1)}…
 // [bypass permissions] The step shown for a card that was answered allow by itself: what the card asked, in a few words.
 // Cards that carry a "<who> wants to <what>" title say it in their own words; the rest are named by their action.
 function bypassLabel(host, { action = 'interact', who = null, title = null, query = null, args = null } = {}) {
-  const wants = (text) => (/^.{1,40}? wants to (.+)$/s.exec(String(text || '')) || [])[1];
+  const wants = (text) => (/^.{1,40}? wants to:? (.+)$/s.exec(String(text || '')) || [])[1]; // (a connector's card: "Claude wants to: Comment on …")
   const clip = (text, max) => (String(text).length > max ? `${String(text).slice(0, max - 1)}…` : String(text));
   let what;
   if (action === 'pdf') what = `reading ${host}`;
@@ -4720,14 +4720,15 @@ ${prompt}` : prompt), historyImages: [] };
 
   // A save is the user's own information: once the chat holds content from elsewhere (the page text attached to a message, a page,
   // file, email, connector, app or past chat the AI read, a helper's answer), the text could come from that content, so the user
-  // sees it on a card first (no Always; Bypass and Auto-allow don't answer it). The same taint the destination cards use.
+  // sees it on a card first (no Always; Auto-allow doesn't answer it, Bypass permissions does, with a step naming the save). The same
+  // taint the destination cards use.
   async allowMemory(input, { emit, signal, who, external, noAsk, run }) {
     if (external) throw new Error('Unknown tool: memory');
     if (!memoryLib.WRITES.has(String(input?.action || '')) || !taintHolder(run)?.tainted) return;
     if (noAsk) throw new Error('Saving to memory after reading content needs the user to say yes, and nobody is here to ask.');
     const text = input.action === 'forget' ? `forget [${String(input.id || '').slice(0, 12)}]` : memoryLib.clean(input.text);
     const title = input.action === 'forget' ? `${who} wants to forget a saved memory` : `${who} wants to remember: ${quote(text, 160)}`;
-    const answer = await this.askApproval('memory', emit, signal, { action: 'tool', who, title, args: text, tainted: true, noAlways: true, noBypass: true });
+    const answer = await this.askApproval('memory', emit, signal, { action: 'tool', who, title, args: text, tainted: true, noAlways: true, guarded: true });
     if (!answer) throw new Error('The user did not allow that change to memory. Only save what the user tells you about themselves.');
   }
 
@@ -5987,8 +5988,9 @@ ${prompt}` : prompt), historyImages: [] };
   // ---- [connectors] the `connector` tool: services the user connected in Settings → Apps and connections (features/connectors/).
   // A read goes straight through (the user connected the service for this), and its answer is untrusted content like a page,
   // so the chat counts as having read page content from then on. A write (add a task, send, post) always asks, with what it
-  // would do on the card, and needs a real click: "Always allow", Auto-allow, Bypass permissions, "agents don't ask", hands-off mode and
-  // background tasks and routines never answer it (those are offered the reads only, and a write they send anyway is refused). The
+  // would do on the card, and needs a real click, unless the user chose Bypass permissions (then the card is answered allow and a
+  // step names the write) or "Always allow" for an add: Auto-allow, "agents don't ask", hands-off mode and background tasks and
+  // routines never answer it (those are offered the reads only, and a write they send anyway is refused). The
   // card's text fields (a comment, a title) can be edited there; what the user allowed is what is sent. Outside agents (MCP clients)
   // don't get the tool at all: the user's accounts are theirs to open up.
   async allowConnector(input, { emit, signal, who, run, noAsk, external }) {
@@ -6004,7 +6006,7 @@ ${prompt}` : prompt), historyImages: [] };
       const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal, file: upload || updating });
       const sendFile = updating ? this.connectorUpdatePairs(updating, names?.plan) : upload; // an update sends only the files the card paired with a Drive file
       // A Gmail send (opt-in): the card, unless the user typed in THIS chat that it may go (and every recipient is one they typed), then
-      // a 10 second Undo first. Auto-allow, Bypass permissions and "always" never answer the card (noBypass, noAlways).
+      // a 10 second Undo first. Auto-allow and "always" never answer the card (noAlways); Bypass permissions does (the log says so: via 'bypass').
       const sending = Boolean(svc.isSend?.(input));
       const conAct = connectors.get(input.app)?.actions?.[input.action];
       const always = connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good; after this chat reads a page, only a private one (a task, an event)
@@ -6018,7 +6020,9 @@ ${prompt}` : prompt), historyImages: [] };
         try { emit({ type: 'tool', id, name: 'auto_allowed', label: `Allowed automatically: ${title} (always allowed in Settings → Apps and connections)` }); emit({ type: 'tool_done', id, ok: true }); } catch { /* a closed view: the allow still stands */ }
       } else if (via === 'card') {
         const warn = sending ? sendLib.warnings({ typed: (run?.chat || taskScope.getStore()?.chat)?.typed || [], args: input.args, replyAddress: names?.replyAddress || '', tainted: Boolean(holder?.tainted) }) : '';
-        const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: !always.offer, ...(always.offer ? { alwaysFor: { app: connectors.get(input.app)?.name || input.app, action: conAct.label } } : {}), noBypass: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null, ...(sending ? { allowLabel: 'Send', denyLabel: 'Cancel', warn } : {}) });
+        const bypassed = this.bypassOn(); // (askApproval answers allow itself: no card)
+        const answer = await this.askApproval(title, emit, signal, { action: 'tool', who, title: `${who} wants to: ${title}`, args: detail, tainted: Boolean(holder?.tainted), noAlways: !always.offer, ...(always.offer ? { alwaysFor: { app: connectors.get(input.app)?.name || input.app, action: conAct.label } } : {}), guarded: true, note: 'connector', fields: fields?.length ? { fixed, list: fields } : null, ...(sending ? { allowLabel: 'Send', denyLabel: 'Cancel', warn } : {}) });
+        if (sending && bypassed) via = 'bypass';
         if (!answer) throw new Error(sending ? 'The user cancelled, so the email was NOT sent. Ask them what to do instead.' : `The user did not allow that (${title}). Ask them what to do instead.`);
         if (always.offer && (answer === 'always' || answer?.always === true)) svc.addAlways?.(connectorAlways.keyOf(input.app, input.action)); // "Always allow this action": never a send; after this chat read a page, only a private add
         if (answer?.edits) { // the user changed the text on the card: that is what goes
@@ -6395,11 +6399,13 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, noBypass = false, fields = null, allowLabel = null, denyLabel = null, warn = null, detail = null, alwaysFor = null } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, guarded = false, fields = null, allowLabel = null, denyLabel = null, warn = null, detail = null, alwaysFor = null } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
-    // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks. ('app' cards, the Word and other-app
-    // cards, read, change and save too: Bypass is the user's choice to skip them, and the step names each one.)
-    if (action !== 'upload-pick' && !noBypass && this.bypassOn()) {
+    // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks. Every other card is
+    // answered: 'app' cards (Word and other apps: read, change, save), a connector's write or a Gmail send, a memory save after
+    // reading a page, the content-loss card. Bypass is the user's choice to skip them all, and the step names each one.
+    // (guarded: a card lumen://tasks answers only on its own card, with Go to: a connector's write, a memory save.)
+    if (action !== 'upload-pick' && this.bypassOn()) {
       const id = `auto-allow-${++this.approvalSeq}`;
       try {
         emit({ type: 'tool', id, name: 'auto_allowed', label: bypassLabel(host, { action, who, title, query, args }) });
@@ -6413,7 +6419,7 @@ ${out.text}${note}
       : action === 'app' // [desktop apps] Allow the AI to use <app>? (Once = this chat / Always / No): src/desktop/
       ? { type: 'approval', approvalId, host, action, title, args, detail: upload?.detail, noAlways: Boolean(noAlways), allowLabel: upload?.allowLabel, ...(upload?.alwaysLabel ? { alwaysLabel: upload.alwaysLabel, alwaysTitle: upload.alwaysTitle || '' } : {}) }
       : action === 'tool' || action === 'terminal' // [mcp client] a tool from an MCP server the user added; Grok Build's run_terminal_command (renderer showToolApproval)
-      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(noBypass ? { noBypass: true } : {}), ...(alwaysFor ? { alwaysFor } : {}), ...(fields ? { fields } : {}), ...(allowLabel ? { allowLabel } : {}), ...(denyLabel ? { denyLabel } : {}), ...(warn ? { warn } : {}), ...(detail ? { detail } : {}) } // ([connectors] fields: a write's text the user can edit on the card; noBypass: lumen://tasks answers such a card only on its own)
+      ? { type: 'approval', approvalId, host, action, title, args, tainted, ...(noAlways ? { noAlways: true } : {}), ...(note ? { note } : {}), ...(guarded ? { guarded: true } : {}), ...(alwaysFor ? { alwaysFor } : {}), ...(fields ? { fields } : {}), ...(allowLabel ? { allowLabel } : {}), ...(denyLabel ? { denyLabel } : {}), ...(warn ? { warn } : {}), ...(detail ? { detail } : {}) } // ([connectors] fields: a write's text the user can edit on the card; guarded: lumen://tasks answers such a card only on its own)
       : action === 'signin' // [signed-in sites] read `host` with the user's own session; no "Always" for a sensitive host
       ? { type: 'approval', approvalId, host, action, title: title || `Let ${who || 'Claude'} use your signed-in ${host} account?`, noAlways: Boolean(noAlways) }
       : action === 'content-loss' // [content guard] a change that removes content: before (go ahead?) or after (keep / undo)

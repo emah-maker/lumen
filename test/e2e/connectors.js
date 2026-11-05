@@ -5,7 +5,7 @@
 //  - the token on disk is encrypted, and the page never gets it back;
 //  - connected, the AI has ONE `connector` tool listing just those apps; a read returns the data with a readable step label and no card;
 //  - a write (add a task) always asks, with the details and no "Always allow", even with auto-allow on; deny sends nothing;
-//  - an outside MCP agent is offered no connector tool and is refused if it asks; Bypass permissions, agents that don't ask and hands-off mode never answer a write; disconnecting removes the token, the tool and the AI's way in.
+//  - an outside MCP agent is offered no connector tool and is refused if it asks; agents that don't ask and hands-off mode never answer a write (Bypass permissions does, with a step); disconnecting removes the token, the tool and the AI's way in.
 // Run it through the machine-wide lock: node scripts/test/e2e-lock.js run -- node test/e2e/connectors.js
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
@@ -247,10 +247,11 @@ async function main() {
     });
     const posts = () => fakes.seen.filter((r) => r.service === 'todoist' && r.method === 'POST').length;
     check('an MCP agent is not offered the connector tool, and a call to it is refused for reads and writes alike (nothing sent)', !viaMcp.listed && viaMcp.read.isError && !/Add dark mode/.test(viaMcp.read.text) && viaMcp.write.isError && /Unknown tool/.test(`${viaMcp.read.text} ${viaMcp.write.text}`) && /Unknown tool/.test(viaMcp.gate.read) && /Unknown tool/.test(viaMcp.gate.write) && !fakes.seen.some((r) => r.service === 'todoist' && /From outside/.test(r.body)), JSON.stringify(viaMcp));
-    const postsBeforeBypass = posts();
+    let postsBeforeBypass = posts();
     await app.evaluate(() => { global.__agent.browser.bypassPermissions = () => true; });
     const bypassed = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Bypass try' } } }], answer: false });
-    check('Bypass permissions does not answer a connector write: the card still comes, and denying it sends nothing', bypassed.events.some((e) => e.type === 'approval' && e.action === 'tool' && /Bypass try/.test(e.args)) && posts() === postsBeforeBypass && bypassed.results[0]?.error, JSON.stringify(bypassed));
+    check('Bypass permissions answers a connector write: no card, an "Allowed automatically" step names it, and the task is added', !bypassed.events.some((e) => e.type === 'approval') && bypassed.events.some((e) => e.name === 'auto_allowed' && /Bypass try|Todoist|task/i.test(e.label)) && posts() === postsBeforeBypass + 1 && !bypassed.results[0]?.error, JSON.stringify(bypassed));
+    postsBeforeBypass = posts(); // (the checks below send nothing)
     await app.evaluate(() => { global.__agent.browser.bypassPermissions = () => false; });
     const noAsk = await app.evaluate(async () => {
       const input = { app: 'todoist', action: 'add_task', args: { content: 'Quiet agent' } };
@@ -293,11 +294,11 @@ async function main() {
       return out;
     }, { answer, bypass });
     const before = posts();
-    const cliDenied = await cli(false, { bypass: true });
+    const cliDenied = await cli(false);
     check('a Lumen-owned CLI run is offered the connector tool; an outside client and a forged tag are not', cliDenied.listed?.own === true && cliDenied.listed.outside === false && cliDenied.listed.forged === false, JSON.stringify(cliDenied.listed));
     check('…it can read (untrusted data), and the same call from an outside client or a forged tag is refused', !cliDenied.read?.isError && /Add dark mode/.test(cliDenied.read.text) && /untrusted_page_content/.test(cliDenied.read.text) && cliDenied.outside?.every((r) => r.isError && /Unknown tool/.test(r.text)), JSON.stringify(cliDenied));
     const cliCard = cliDenied.events.find((e) => e.type === 'approval');
-    check('…its write shows the card (even with Bypass permissions on; a task offers Always allow, it stays in your own account) and denying it sends nothing', cliCard?.action === 'tool' && /From the CLI/.test(cliCard.args) && cliCard.tainted === true && cliCard.noAlways !== true && cliCard.alwaysFor?.action === 'Add a task' && cliCard.noBypass === true && cliDenied.write?.isError && posts() === before && !fakes.seen.some((r) => /From outside/.test(r.body)), JSON.stringify({ cliCard, write: cliDenied.write }));
+    check('…its write shows the card (a task offers Always allow, it stays in your own account) and denying it sends nothing', cliCard?.action === 'tool' && /From the CLI/.test(cliCard.args) && cliCard.tainted === true && cliCard.noAlways !== true && cliCard.alwaysFor?.action === 'Add a task' && cliCard.guarded === true && cliDenied.write?.isError && posts() === before && !fakes.seen.some((r) => /From outside/.test(r.body)), JSON.stringify({ cliCard, write: cliDenied.write }));
     const cliAllowed = await cli(true);
     check('…and allowing the card adds the task', !cliAllowed.write?.isError && /Added: \d+\s+From the CLI/.test(cliAllowed.write.text) && posts() === before + 1, JSON.stringify(cliAllowed.write));
 

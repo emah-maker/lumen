@@ -107,7 +107,7 @@ async function connector() {
   console.log('--- the agent: the card');
   registry.setConnected(['gmail']);
   const events = [];
-  const bypass = { on: true };
+  const bypass = { on: false }; // (Bypass on answers the card: bypass-everything-units.js)
   const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc.isWrite(i), isSend: (i) => svc.isSend(i), sendingOn: () => svc.sendingOn(), describeWrite: (i, o) => svc.describeWrite(i, o), defs: (o) => svc.defs(o), call: (i, o) => svc.call(i, o) }, bypassPermissions: () => bypass.on, autoApprove: () => true };
   const agent = new agentLib.Agent(browser, () => null, () => ({}));
   const timers = [];
@@ -122,7 +122,7 @@ async function connector() {
   let pending = agent.allowConnector(input, gate(m1));
   await tick();
   let card1 = approvals().pop();
-  check('with Bypass permissions and Auto-allow on, a send still shows a card (no auto-allowed step, no Always)', card1 && card1.note === 'connector' && card1.noAlways === true && card1.noBypass === true && !events.some((e) => e.name === 'auto_allowed'), JSON.stringify(events));
+  check('with Auto-allow on, a send still shows a card (no auto-allowed step, no Always)', card1 && card1.note === 'connector' && card1.noAlways === true && card1.guarded === true && !events.some((e) => e.name === 'auto_allowed'), JSON.stringify(events));
   check('the card has Send and Cancel, and nothing has been sent yet', card1.allowLabel === 'Send' && card1.denyLabel === 'Cancel' && g.sendCalls === 0, JSON.stringify(card1));
   check('it shows From, To, Cc, Bcc, Subject, the whole text and the attachments', /From: ada@example\.com/.test(card1.fields.fixed) && /Attachments: none/.test(card1.fields.fixed) && card1.fields.list.map((f) => f.key).join() === 'to,cc,bcc,subject,body' && card1.fields.list[4].value === input.args.body && /This sends the email now/.test(card1.fields.fixed) && /Bcc: /.test(card1.args) && /I’ll be late/.test(card1.args), JSON.stringify(card1.fields));
   check('an address the user never typed carries a warning on the card', /jane@x\.org/.test(card1.warn || ''), JSON.stringify(card1.warn));
@@ -151,7 +151,6 @@ async function connector() {
   check('with every permission mode off, it asks the same way', approvals().length === 1, JSON.stringify(events));
   agent.resolveApproval(approvals().pop().approvalId, false);
   await fails(() => pending);
-  bypass.on = true;
 
   console.log('--- the agent: the user said so in this chat');
   const sayMsg = 'Email jane@x.org that I’ll be late and send it';

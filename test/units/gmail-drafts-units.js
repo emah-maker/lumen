@@ -2,7 +2,7 @@
 // headers, a header with a line break refused, base64url), the "Allow drafts" sign-in (gmail.compose and include_granted_scopes only
 // when asked for, the scopes Google says the token has kept and checked before any draft), the one request a draft makes (POST
 // /users/me/drafts, never a send: the code is searched for it too), what a missing permission or an ended sign-in says, the card
-// (To, Cc, Subject and Text editable, "Nothing is sent" fixed), and the agent's gate (a card even with Bypass on, background refused).
+// (To, Cc, Subject and Text editable, "Nothing is sent" fixed), and the agent's gate (a card even with Auto-allow on, background refused; Bypass permissions answers it: bypass-everything-units.js).
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
@@ -271,14 +271,14 @@ async function connector() {
   console.log('--- the agent: a click every time, never in the background');
   registry.setConnected(['gmail']);
   const events = [];
-  const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc.isWrite(i), describeWrite: (i, o) => svc.describeWrite(i, o), defs: (o) => svc.defs(o), call: (i, o) => svc.call(i, o) }, bypassPermissions: () => true, autoApprove: () => true };
+  const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc.isWrite(i), describeWrite: (i, o) => svc.describeWrite(i, o), defs: (o) => svc.defs(o), call: (i, o) => svc.call(i, o) }, bypassPermissions: () => false, autoApprove: () => true }; // (Bypass on answers the card: bypass-everything-units.js)
   const agent = new agentLib.Agent(browser, () => null, () => ({}));
   const gate = (extra = {}) => ({ emit: (e) => events.push(e), signal: new AbortController().signal, who: 'Claude', external: false, noAsk: false, run: {}, ...extra });
   const input = { app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 'From the AI', body: 'x' } };
   const pending = agent.allowConnector(input, gate());
   await new Promise((r) => setTimeout(r, 20));
   const approval = events.find((e) => e.type === 'approval');
-  check('with Bypass permissions and Auto-allow on, a draft still shows a card (Always offered: a draft only adds), its fields and the fixed note', approval && approval.note === 'connector' && !approval.noAlways && approval.alwaysFor?.action === 'Make a draft' && !events.some((e) => e.name === 'auto_allowed') && approval.fields?.list.map((f) => f.key).join() === 'to,cc,subject,body' && /Nothing is sent/.test(approval.fields.fixed), JSON.stringify(approval));
+  check('with Auto-allow on, a draft still shows a card (Always offered: a draft only adds), its fields and the fixed note', approval && approval.note === 'connector' && !approval.noAlways && approval.alwaysFor?.action === 'Make a draft' && !events.some((e) => e.name === 'auto_allowed') && approval.fields?.list.map((f) => f.key).join() === 'to,cc,subject,body' && /Nothing is sent/.test(approval.fields.fixed), JSON.stringify(approval));
   const n = g.made.length;
   agent.resolveApproval(approval.approvalId, { edits: { subject: 'What I wrote' } });
   await pending;

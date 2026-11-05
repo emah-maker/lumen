@@ -772,7 +772,7 @@ function create(deps) {
         break;
       }
       case 'approval': {
-        rt.pending.set(e.approvalId, { approvalId: e.approvalId, host: String(e.host || ''), action: e.action || 'interact', title: e.title || '', query: e.query, args: e.args ? String(e.args).slice(0, 1500) : '', ...(e.args && String(e.args).length > 1500 ? { argsCut: true } : {}), ...(e.tainted ? { tainted: true } : {}), ...(e.note ? { note: String(e.note) } : {}), ...(e.noBypass ? { noBypass: true } : {}) }); // (argsCut, tainted, note, noBypass: lumen://tasks shows the card whole or offers Go to only)
+        rt.pending.set(e.approvalId, { approvalId: e.approvalId, host: String(e.host || ''), action: e.action || 'interact', title: e.title || '', query: e.query, args: e.args ? String(e.args).slice(0, 1500) : '', ...(e.args && String(e.args).length > 1500 ? { argsCut: true } : {}), ...(e.tainted ? { tainted: true } : {}), ...(e.note ? { note: String(e.note) } : {}), ...(e.guarded ? { guarded: true } : {}) }); // (argsCut, tainted, note, guarded: lumen://tasks shows the card whole or offers Go to only)
         if (!rt.waitingSince) rt.waitingSince = now();
         tell({ type: 'approval', taskId: task.id, approvalId: e.approvalId, card: rt.pending.get(e.approvalId) });
         const was = task.status;

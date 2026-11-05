@@ -2745,7 +2745,7 @@ d.addEventListener('toggle', async () => {
 if (!d.open) return;
 try {
 const rows = await C.sendLog();
-body.replaceChildren(...(rows.length ? rows.map((r) => h('p', { class: 'note', text: `${new Date(r.at).toLocaleString()} · to ${r.to} · “${r.subject}”${r.via === 'typed' ? ' · sent on your word in the chat' : ' · you pressed Send'}` })) : [h('p', { class: 'note', text: 'Nothing sent yet.' })]));
+body.replaceChildren(...(rows.length ? rows.map((r) => h('p', { class: 'note', text: `${new Date(r.at).toLocaleString()} · to ${r.to} · “${r.subject}”${r.via === 'typed' ? ' · sent on your word in the chat' : r.via === 'bypass' ? ' · allowed by Bypass permissions (no card)' : ' · you pressed Send'}` })) : [h('p', { class: 'note', text: 'Nothing sent yet.' })]));
 } catch (err) { body.replaceChildren(h('p', { class: 'note', text: connClean(err) })); }
 });
 return d;
@@ -5002,7 +5002,7 @@ toggle('autoFallback', tr('settings.ai.autoFallback', 'Switch models automatical
 );
 
 const permWarn = h('span', { class: 'note error', id: 'perm-warn' });
-const showPermWarn = (v) => { permWarn.textContent = v === 'bypass' ? tr('sidebar.perm.bypass.desc', 'The AI won’t ask before acting, reading PDFs, using your signed-in accounts, or sending what it read anywhere.') : ''; };
+const showPermWarn = (v) => { permWarn.textContent = v === 'bypass' ? tr('sidebar.perm.bypass.desc', 'Skips every card. The AI won’t ask before acting, sending an email, posting or changing things in your connected apps, saving to memory after reading a page, deleting a lot of a document, reading PDFs, using your signed-in accounts, or sending what it read anywhere.') : ''; };
 const permissionRow = select('aiPermissionMode', tr('settings.ai.permissionMode', 'Asking before it acts'), tr('settings.ai.permissionModeDesc', 'Ask, Auto-allow actions, or Bypass permissions (the AI never asks).'),
 ['ask', 'auto', 'bypass'].map((v) => [v, tr(`settings.ai.permissionMode.${v}`, { ask: 'Ask', auto: 'Auto-allow actions', bypass: 'Bypass permissions' }[v])]), { after: (v) => { showPermWarn(v); window.dispatchEvent(new CustomEvent('lumen-pref', { detail: { key: 'bypassBackground' } })); } });
 permissionRow.querySelector('.text').append(permWarn);
