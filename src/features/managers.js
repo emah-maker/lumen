@@ -15,7 +15,8 @@ const BOOKMARKS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'book
 const DOWNLOADS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'downloads.html')).href;
 const READINGLIST_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'readinglist.html')).href;
 const MISSION_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'mission.html')).href; // lumen://tasks: everything the AI is doing (features/mission-control.js)
-const PAGES = { bookmarks: BOOKMARKS_URL, readinglist: READINGLIST_URL, downloads: DOWNLOADS_URL, tasks: MISSION_URL, chat: chatPage.CHAT_URL };
+const AUTOMATIONS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'automations.html')).href; // lumen://automations (features/automations-runtime.js; main.js answers it)
+const PAGES = { bookmarks: BOOKMARKS_URL, readinglist: READINGLIST_URL, downloads: DOWNLOADS_URL, tasks: MISSION_URL, automations: AUTOMATIONS_URL, chat: chatPage.CHAT_URL };
 const PRELOAD = path.join(__dirname, 'managers-preload.js');
 const preloadFor = (page) => (page === 'chat' ? chatPage.PRELOAD : PRELOAD);
 

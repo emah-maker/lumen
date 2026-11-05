@@ -89,7 +89,7 @@ const BEFORE_0_5_65 = new Set([
     p = FO.plan({ settings: user, defaults: DEFAULTS });
     check('an update shows only the lines not seen yet', p.show.length === FO.OFFERS.length - SIX.length && !p.show.some((o) => SIX.includes(FO.seenKey(o))) && J(p.seen) === J(SIX), J(p.show.map((o) => o.id)));
     const rel = (v) => v.split('.').map(Number).reduce((n, x) => n * 1000 + x, 0);
-    check('newest release first', p.show[0].since === '0.5.94' && p.show.every((o, i) => i === 0 || rel(p.show[i - 1].since) >= rel(o.since)), J(p.show.map((o) => o.since)));
+    check('newest release first', p.show[0].since === '0.5.96' && p.show[0].id === 'automationsKeepTabs' && p.show.every((o, i) => i === 0 || rel(p.show[i - 1].since) >= rel(o.since)), J(p.show.map((o) => o.since)));
     p = FO.plan({ settings: { ...user, autoNewChat: false, chatAutoDeleteDays: 30, adBlocker: 'lumen' }, defaults: DEFAULTS });
     check('a key changed by hand counts as seen (and one saved at its default does not)', !p.show.some((o) => ['autoNewChat', 'chatAutoDelete'].includes(o.id)) && p.seen.includes('autoNewChat') && p.seen.includes('chatAutoDeleteDays') && p.show.some((o) => o.id === 'adBlocker'), J({ show: p.show.map((o) => o.id), seen: p.seen }));
     p = FO.plan({ settings: { lastSeenVersion: '0.5.88', featureOffersSeen: ALL_SEEN }, defaults: DEFAULTS });
@@ -109,8 +109,10 @@ const BEFORE_0_5_65 = new Set([
       return { fo, writes, sets, file: () => file };
     };
     const ids = (g) => (g ? g.items.map((i) => i.id) : null);
-    const upd = { lastSeenVersion: '0.5.87', featureOffersSeen: SIX };
-    const waiting = FO.OFFERS.length - SIX.length;
+    // A profile that saw the first batch and the newest line (Keep automation tabs open, off by default), so the card's first six
+    // still hold a switch that ships on (autoNewChat) for the checks below.
+    const upd = { lastSeenVersion: '0.5.87', featureOffersSeen: [...SIX, 'automationsKeepTabs'] };
+    const waiting = FO.OFFERS.length - upd.featureOffersSeen.length;
 
     let c = make(upd);
     const early = c.fo.get(); // asked before startup has decided: it waits, it doesn't guess
@@ -126,7 +128,7 @@ const BEFORE_0_5_65 = new Set([
     check('a setup line and a tip come with no value', first.items.find((i) => i.id === 'extensionSites').kind === 'setup' && first.items.find((i) => i.id === 'accountTabs').kind === 'tip' && !('value' in first.items.find((i) => i.id === 'accountTabs')));
     check('listing it records nothing: it counts as shown only once on screen', c.writes.length === 0, J(c.writes));
     c.fo.onShown(ids(first));
-    check('once shown, the lines on screen are recorded as seen (and only those)', J(c.file().featureOffersSeen) === J([...SIX, ...first.items.map((i) => FO.seenKey(FO.OFFERS.find((o) => o.id === i.id)))]), J(c.file().featureOffersSeen));
+    check('once shown, the lines on screen are recorded as seen (and only those)', J(c.file().featureOffersSeen) === J([...upd.featureOffersSeen, ...first.items.map((i) => FO.seenKey(FO.OFFERS.find((o) => o.id === i.id)))]), J(c.file().featureOffersSeen));
     check('and stay on the card for the rest of this session (the other surface shows them too)', J(ids(c.fo.list())) === J(ids(first)), J(c.fo.list()));
     c.fo.onShown(['adBlocker']);
     check('showing it twice does not write twice', c.writes.length === 1, J(c.writes));
@@ -193,7 +195,7 @@ const BEFORE_0_5_65 = new Set([
     c = make({ lastSeenVersion: '0.5.19', featureOffersSeen: ALL_SEEN.filter((k) => k !== 'dictation') }, { voiceReady: true }); c.fo.prepare();
     check('voice input is not offered when it already works (a key is set)', c.fo.list() === null, J(c.fo.list()));
     {
-      const fo = FO.createFeatureOffers({ readSettings: () => ({ lastSeenVersion: '0.5.19' }), writeSettings: () => {}, setSetting: async () => { throw new Error('nope'); }, defaults: DEFAULTS, test: false });
+      const fo = FO.createFeatureOffers({ readSettings: () => ({ lastSeenVersion: '0.5.19', featureOffersSeen: ['automationsKeepTabs'] }), writeSettings: () => {}, setSetting: async () => { throw new Error('nope'); }, defaults: DEFAULTS, test: false });
       fo.prepare();
       const log = console.error; console.error = () => {};
       const res = await fo.set('autoNewChat', false);

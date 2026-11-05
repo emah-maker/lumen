@@ -27,6 +27,7 @@ const PAGES = {
   focus: { title: 'Focus mode', file: 'docs/focus.md' },
   routines: { title: 'Routines', file: 'docs/routines.md' },
   'mission-control': { title: 'AI activity', file: 'docs/mission-control.md' },
+  automations: { title: 'Automations', file: 'docs/automations.md' },
   telegram: { title: 'Phone (Telegram)', file: 'docs/telegram.md' },
   'phone-wifi': { title: 'Receive from phone (Wi-Fi)', file: 'docs/phone-wifi.md' },
   sync: { title: 'Sync through a folder', file: 'docs/sync.md' },

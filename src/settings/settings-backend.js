@@ -182,6 +182,7 @@ const DEFAULTS = {
   telegramChannel: false, // [telegram] Settings → AI → Let agents use Lumen → Phone (Telegram): messages from the paired chat of the user's own bot run as background tasks, results go back to it (features/telegram.js); only while Lumen runs
   telegramFiles: true, // [phone files] photos and files sent to the bot are saved to Downloads/From phone, and links open as tabs (features/phone-inbox.js)
   telegramSignedIn: false, // [telegram] ...and those tasks use the user's sign-ins (a background task's "Use my sign-ins")
+  automationsKeepTabs: false, // [automations] an item's tab stays open after it is done (features/automations-runtime.js)
   bypassBackground: false, // [ai] with Bypass permissions on, background tasks and routines bypass too: their approval cards (new sites, buy / send / submit steps) are answered Allow (features/background-runner.js)
   aiDesktopControl: false, // [ai] the AI may operate other programs on this computer, each one only after the user allows it (src/desktop/; Windows only for now); security prompts, password managers, banking apps and password fields stay out of reach
   aiFilesInApps: 'auto', // [ai] app: the AI opens a file in the app that owns it (Word, Excel, PowerPoint...) and reads and edits it there; auto: it chooses; file: it reads and edits the file's own data and does not open apps (agent.js filesInApps, src/word/)
