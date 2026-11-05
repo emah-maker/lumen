@@ -25,6 +25,7 @@ const { isSignedOutText } = require('./auth-sync');
 const effortLib = require('./effort'); // Settings → AI → AI providers: reasoning effort per AI
 const { toolImagePaths } = require('../features/gen-images');
 const aiFiles = require('../features/ai-files'); // [ai files] files the CLI's own tools wrote (noteWritten)
+const reviewTrack = () => require('../renderer/review-track'); // [review loop] a reviewer agent's round, read off its state (lazy: not at startup)
 const ccHelpers = () => require('./cc-helpers'); // [background helpers] subagents and tasks the CLI runs on after its reply (lazy: not at startup)
 
 const INSTALL_HINT = process.platform === 'win32'
@@ -682,6 +683,10 @@ class ClaudeCodeEngine {
     if (!emit) { emit = proc.turn ? proc.sink?.emit : proc.watch?.active?.emit || proc.sink?.emit; if (emit) to.set(snap.id, emit); }
     if (snap.state !== 'working') to.delete(snap.id);
     try { emit?.({ type: 'agent', ...snap }); } catch { /* the chat is gone */ }
+    // [review loop] A reviewer agent of the review skill ("Review … round 3"): its round on the card's score track at once, pending while it reviews
+    // and its score as soon as it answers, before the AI gets to call review_round (whose numbers win).
+    const round = reviewTrack().fromAgent(snap);
+    if (round) try { emit?.(round); } catch { /* the chat is gone */ }
   }
 
   helperLine(proc, msg) {
