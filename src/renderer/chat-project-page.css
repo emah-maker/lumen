@@ -227,3 +227,11 @@ button.pjp-hit { cursor: pointer; }
 :root.pref-reduce-motion .pjp-composer, :root.pref-reduce-motion .pjp-chat-acts, :root.pref-reduce-motion .pjp-chat-card, :root.pref-reduce-motion .pjp .btn.small.pjp-row-btn { transition: none; }
 :root.pref-reduce-motion .pjp-chat-card:hover { transform: none; }
 :root.pref-reduce-motion .pjp-badge-live.running::before { animation: none; }
+
+/* [project places] Key documents and Where things are */
+.pjp-place-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--sp-3); }
+.pjp-place-kind { flex: none; padding: 0 var(--sp-3); font-size: 11px; line-height: 18px; }
+.pjp-place-name { cursor: text; }
+.pjp-place-loc { flex-basis: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px; }
+.pjp-place.pinned .pjp-place-name { font-weight: 600; }
+.pjp-places .pjp-h3 { margin: var(--sp-5) 0 var(--sp-3); font-size: 12px; font-weight: 600; color: var(--muted); }

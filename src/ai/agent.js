@@ -4783,6 +4783,7 @@ ${prompt}` : prompt), historyImages: [] };
       searchChats: m.chatSearch?.() ? (q) => m.searchChats(q, chatId) : null,
       changed: (ev) => { try { emit({ type: 'memory', ...ev }); } catch { /* a closed view: the change stands */ } },
       read: () => this.markTainted(scope), // past chats hold what pages said, too
+      place: m.place ? (location, label) => m.place(chat.settings?.projectId, location, label) : null, // [project places] where a document, folder or site of the project is
     });
   }
   // ---- [/memory]
@@ -7624,15 +7625,26 @@ ${wordRule(this.filesInApps(), 'word')}`;
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
-    const noted = (err) => { if (scope && !scope.wrapped) scope.lastToolError = { tool: name, error: String(err?.message || err) }; throw err; }; // [no handoff] for the capability-gap note
-    if (!guard) return this.runTool(name, input).catch(noted);
+    const noted = (err) => { if (scope && !scope.wrapped) scope.lastToolError = { tool: name, error: String(err?.message || err) }; this.notePlaces(scope, name, input, null, err); throw err; }; // [no handoff] for the capability-gap note
+    if (!guard) return this.runTool(name, input).then((r) => { this.notePlaces(scope, name, input, r); return r; }, noted);
     try {
       const result = await this.runTool(name, input).catch(noted);
+      this.notePlaces(scope, name, input, result);
       const moved = await guard.settle();
       return moved && typeof result === 'string' ? `${result}\nThe page then redirected; it is now ${agentUrl(wc.getURL()) || wc.getURL()}.` : result;
     } finally {
       guard.release();
     }
+  }
+
+  // [project places] A tool call in a project's chat that touched a document, page, folder or Drive / OneDrive file: main records where it is
+  // (ai/project-places.js), or forgets a link the call found dead. Never for temporary chats, background tasks or outside agents (noMemory, no chat).
+  notePlaces(scope, name, input, result, err = null) {
+    try {
+      const settings = scope?.chat?.settings;
+      if (!settings || settings.noMemory || typeof settings.projectId !== 'string' || !this.browser.projectPlaces) return;
+      this.browser.projectPlaces(settings.projectId, { name, input, result: typeof result === 'string' ? result.slice(0, 400) : '', error: err ? String(err?.message || err).slice(0, 300) : '' });
+    } catch { /* best effort: never in the tool's way */ }
   }
 
   // Repeat-read shortcuts (snapshot.js) are for the sidebar's own chat only: MCP clients and direct

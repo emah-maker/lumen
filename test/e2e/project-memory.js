@@ -38,6 +38,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
         let content; let stop = 'end_turn';
         if (result) content = [{ type: 'text', text: 'Done.' }];
         else if (/SAVEAGAIN/.test(typed)) { content = [{ type: 'tool_use', id: 'toolu_m2', name: 'memory', input: { action: 'add', text: 'The robot arm budget is 4000 dollars, approved', kind: 'note' } }]; stop = 'tool_use'; }
+        else if (/SAVEPLACE/.test(typed)) { content = [{ type: 'tool_use', id: 'toolu_p1', name: 'memory', input: { action: 'place', location: 'https://docs.google.com/spreadsheets/d/1PartsListSheet9/edit', text: 'Parts list' } }]; stop = 'tool_use'; }
         else if (/SAVEBUDGET/.test(typed)) { content = [{ type: 'tool_use', id: 'toolu_m1', name: 'memory', input: { action: 'add', text: 'The robot arm budget is 4000 dollars', kind: 'note' } }]; stop = 'tool_use'; }
         else content = [{ type: 'text', text: 'Plain reply.' }];
         const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: stop, content, usage: { input_tokens: 10, output_tokens: 5 } };
@@ -134,6 +135,40 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     await card("c.querySelector('.pjp-memory-tidy-btn').click(); c.querySelector('.pjp-memory-tidy-btn').click();");
     check('Forget them forgets just those', await waitFor(async () => { const mine = (await entries()).filter((e) => e.project === project.id); return mine.length === 11 && !mine.some((e) => /Sensor [01] /.test(e.text)); }), JSON.stringify((await entries()).map((e) => e.text)));
     check('...and the line goes away', await waitFor(() => card("return c.querySelector('.pjp-memory-tidy').hidden")));
+
+    // ======== Key documents ========
+    await startIn(project.id);
+    await send('SAVEPLACE the parts list is in that sheet');
+    await settled();
+    const placesNow = () => app.evaluate((_e, pid) => global.__projectPlaces.store().list(pid), project.id);
+    check("the memory tool's place keeps where the parts list is, named", (await placesNow()).some((p) => p.label === 'Parts list' && p.kind === 'drive'), JSON.stringify(await placesNow()));
+    await app.evaluate((_e, pid) => { for (let i = 0; i < 3; i++) global.__projectPlaces.record(pid, { name: 'read_urls', input: { urls: ['https://wiki.example.edu/robotics/arm-specs', 'https://wiki.example.edu/robotics/wiring'] }, result: '' }); global.__projectPlaces.record(pid, { name: 'navigate', input: { url: 'https://www.google.com/search?q=arm' }, result: '' }); }, project.id);
+    const kept = await placesNow();
+    check('pages a project chat read are recorded, with their site under Where things are; a search is not', kept.some((p) => /arm-specs/.test(p.loc)) && kept.some((p) => p.kind === 'site' && p.label === 'wiki.example.edu') && !kept.some((p) => /google\.com\/search/.test(p.loc)), JSON.stringify(kept.map((p) => p.loc)));
+    await app.evaluate((_e, pid) => global.__projectPlaces.record(pid, { name: 'read_urls', input: { urls: ['https://wiki.example.edu/robotics/wiring'] }, error: 'HTTP 404 Not Found' }), project.id);
+    check('a link a call found dead is dropped', !(await placesNow()).some((p) => /wiring/.test(p.loc)));
+    await startIn(project.id);
+    await send('Where are the parts?');
+    await settled();
+    const withPlaces = (await lastRequest()).system;
+    check('the next project chat gets the list, the matching document first', /<project_places>/.test(withPlaces) && withPlaces.indexOf('Parts list') < withPlaces.indexOf('arm-specs') && withPlaces.indexOf('Parts list') > withPlaces.indexOf('<project_places>'), withPlaces.slice(withPlaces.indexOf('<project_places>'), withPlaces.indexOf('<project_places>') + 600));
+    await inPage("document.getElementById('new-chat').click()");
+    await sleep(400);
+    await send('unrelated');
+    await settled();
+    check('a chat outside the project does not', !/<project_places>/.test((await lastRequest()).system));
+    await inPage(`document.querySelector('.cp-pj-item[data-project="${project.id}"] .cp-pj').click()`);
+    await waitFor(() => inPage("Boolean(document.querySelector('#cp-project-page .pjp-places .pjp-place'))"), 15000);
+    const docs = (code) => inPage(`(() => { const c = document.querySelector('#cp-project-page .pjp-places'); ${code} })()`);
+    check('the Key documents card lists them, Where things are below', (await docs("return [...c.querySelectorAll('.pjp-places-docs .pjp-place-name')].map((n) => n.textContent).includes('Parts list') && /Where things are/.test(c.textContent) && /wiki\\.example\\.edu/.test(c.querySelector('.pjp-places-spots').textContent)")) === true, await docs('return c.innerText'));
+    await docs("[...c.querySelectorAll('.pjp-place-name')].find((n) => n.textContent === 'Parts list').click()");
+    await docs("const i = c.querySelector('.pjp-place .pjp-input'); i.value = 'Robot arm parts list'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));");
+    check('clicking a name renames it', await waitFor(async () => (await placesNow()).some((p) => p.label === 'Robot arm parts list' && p.named)));
+    await docs("[...c.querySelectorAll('.pjp-place')].find((r) => /arm-specs/.test(r.textContent)).querySelector('.pjp-place-pin').click()");
+    check('Pin pins it and puts it first', await waitFor(async () => { const l = await placesNow(); return l[0]?.pinned && /arm-specs/.test(l[0].loc); }));
+    await waitFor(() => docs("return /arm-specs/.test(c.querySelector('.pjp-place').textContent)"));
+    await docs("[...c.querySelectorAll('.pjp-place')].find((r) => /Robot arm parts list/.test(r.textContent)).querySelector('.pjp-place-remove').click()");
+    check('Remove takes it off the list', await waitFor(async () => !(await placesNow()).some((p) => /Parts list/i.test(p.label))));
 
     check('no page errors', errors.length === 0, errors.join(' | '));
   } finally {

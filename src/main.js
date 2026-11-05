@@ -336,7 +336,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -9721,7 +9721,9 @@ const agent = new Agent({
     on: memoryOn, store: memory, chatSearch: () => readSettings().aiMemoryChatSearch !== false,
     chatIdOf: chatIdOfMessages, isTemporary: (messages) => temporaryChats.has(chatIdOfMessages(messages)),
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
+    place: (project, location, label) => { if (!memoryOn() || !projectById(String(project))) throw new Error('Memory is off.'); const p = places().note(String(project), { loc: location, label }); return p; }, // [project places] the memory tool's place
   },
+  projectPlaces: (project, call) => recordPlaces(project, call), // [project places] a tool call in a project's chat touched these
   notes: { store: () => notesStore(), changed: () => pushNotes() }, // [notes] the notes tool (ai/notes.js)
   projects: { // [project workspace] the project_files tool's data for a chat, and which tools its project allows
     files: async (messages) => {
@@ -12407,8 +12409,10 @@ ipcMain.handle('chats:project-delete', (_e, id) => {
   for (const [chat, pid] of pendingProject) if (pid === id) pendingProject.delete(chat);
   let gone = [];
   try { gone = memory().dropProject(id); memoryEdited(); } catch { /* memory off or unreadable: nothing to drop */ }
+  let goneP = [];
+  try { goneP = places().dropProject(id); } catch { /* unreadable: nothing to drop */ }
   finishProjectDelete(id); // (a second delete of a restored one: the first timer is over)
-  pendingProjectDeletes.set(id, { snapshot, memory: gone, timer: setTimeout(() => finishProjectDelete(id), PROJECT_UNDO_MS) });
+  pendingProjectDeletes.set(id, { snapshot, memory: gone, places: goneP, timer: setTimeout(() => finishProjectDelete(id), PROJECT_UNDO_MS) });
   syncProjectInstructions();
   pushAttention();
   return ok;
@@ -12421,6 +12425,7 @@ ipcMain.handle('chats:project-undo', (_e, id) => {
   clearTimeout(held.timer);
   pendingProjectDeletes.delete(id);
   try { memory().restoreEntries(held.memory); memoryEdited(); } catch { /* the memory could not be put back */ }
+  try { places().restore(held.places); } catch { /* the list could not be put back */ }
   syncProjectInstructions();
   pushAttention();
   return projectById(id);
@@ -12602,6 +12607,48 @@ function projectFiles() {
 }
 const projectLimits = () => { const f = require('./features/project-files'); return { files: f.MAX_FILES, images: f.MAX_IMAGES, fileChars: f.MAX_TEXT_CHARS, totalChars: f.MAX_TOTAL_CHARS, instructions: 4000, index: require('./ai/project-context').INDEX_CHARS, kinds: f.SUPPORTED_TEXT }; };
 const projectChanged = () => { syncProjectInstructions(); pushAttention(); syncTouch('chats'); portableSoon(); };
+// ---- [project places] A project's Key documents and Where things are (ai/project-places.js; docs/projects.md). One encrypted file in the profile,
+// project-places.json; it follows the Memory setting. Locations and short labels only, never what a file or page says.
+let placesStore = null;
+function places() {
+  return (placesStore ||= require('./ai/project-places').createPlacesStore({
+    file: path.join(app.getPath('userData'), 'project-places.json'),
+    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+    decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+    available: () => safeStorage.isEncryptionAvailable(),
+  }));
+}
+function recordPlaces(project, { name, input, result, error } = {}) {
+  if (!memoryOn() || !projectById(String(project))) return;
+  try {
+    const lib = require('./ai/project-places');
+    const found = lib.extract(name, input, result);
+    if (!found.length) return;
+    if (error) { if (lib.deadError(error)) { for (const f of found) places().failed(String(project), f.loc); } return; }
+    places().record(String(project), found); // (the project page reads the list when it opens and when it reloads)
+  } catch { /* best effort */ }
+}
+const placesBlock = (project, query) => { try { places().prune(project); return places().block(project, { query }); } catch { return ''; } };
+const projectPlacesOf = (pid) => { try { if (!memoryOn()) return { places: [] }; places().prune(pid); return { places: places().list(pid) }; } catch { return { places: [] }; } };
+// The project page's Key documents card: { open: id } | { pin: { id, on } } | { rename: { id, label } } | { remove: id } | { add: { location, label } }.
+ipcMain.handle('chats:project-places', (_e, id, change) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const c = change && typeof change === 'object' ? change : {};
+  let error = '';
+  try {
+    if (c.open !== undefined) {
+      const place = places().list(p.id).find((x) => x.id === String(c.open));
+      if (place) openLinksFromOtherApps(place.local ? fileUrlsFor([place.loc]) : [place.loc]);
+    } else if (c.pin) places().setPinned(p.id, String(c.pin.id), c.pin.on === true);
+    else if (c.rename) places().rename(p.id, String(c.rename.id), String(c.rename.label ?? ''));
+    else if (c.remove !== undefined) places().remove(p.id, String(c.remove));
+    else if (c.add) places().note(p.id, { loc: String(c.add.location ?? ''), label: String(c.add.label ?? '') });
+    memoryEdited();
+  } catch (err) { error = String(err?.message || 'Could not change the list.').slice(0, 200); }
+  return { ok: !error, error, ...projectPlacesOf(p.id) };
+});
+if (TEST) global.__projectPlaces = { store: () => places(), record: (project, call) => recordPlaces(project, call), block: (project, query) => placesBlock(project, query) };
 // [project memory] A project's own entries, pinned first then newest, and the ids of those untouched for months (ai/memory.js STALE_MS).
 const projectMemoryOf = (pid) => { try { const list = memory().list().filter((e) => e.project === pid).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updated - a.updated); return { memory: list, stale: memory().stale(pid).map((e) => e.id) }; } catch { return { memory: [], stale: [] }; } };
 // Everything the project page shows about one project.
@@ -12614,7 +12661,7 @@ ipcMain.handle('chats:project-get', async (_e, id) => {
   const snippets = {};
   const recent = chats().list().filter((c) => !c.missing && !c.archived && c.project === p.id).sort((a, b) => (b.updated || 0) - (a.updated || 0)).slice(0, 6);
   await Promise.all(recent.map(async (c) => { snippets[c.id] = await chats().lastWords(c.id); }));
-  return { project: projectPage(p), snippets, files: store.list(p.id), totals: store.totals(p.id), ...projectMemoryOf(p.id), memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
+  return { project: projectPage(p), snippets, files: store.list(p.id), totals: store.totals(p.id), ...projectMemoryOf(p.id), ...projectPlacesOf(p.id), memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
 });
 // Files chosen in the page (its file picker or a drop): [{ name, bytes }]. Each is read with Lumen's own readers (PDF, Word, PowerPoint, email,
 // text, pictures) and kept as text in the profile. Answers { results: [{ ok, name, file | error }], files }.
@@ -13101,7 +13148,7 @@ function memorySearchChats(query, exclude) {
     return { id: h.id, title: c?.title || '', date: c?.updated ? new Date(c.updated).toISOString().slice(0, 10) : '', snippet: h.snippet };
   });
 }
-require('./ai/agent').setMemorySource({ on: memoryOn, text: (project, query) => memory().block({ project: project || null, query }) }); // ([project workspace] a project's chats also see what was saved for it)
+require('./ai/agent').setMemorySource({ on: memoryOn, text: (project, query) => [memory().block({ project: project || null, query }), project ? placesBlock(project, query) : ''].filter(Boolean).join('\n\n') }); // ([project places] and where its documents are) // ([project workspace] a project's chats also see what was saved for it)
 const memoryView = () => ({ on: memoryOn(), chatSearch: readSettings().aiMemoryChatSearch !== false, readOnly: memory().readOnly, entries: memory().list().sort((a, b) => b.updated - a.updated).map((e) => (e.project ? { ...e, projectName: projectById(e.project)?.name || '' } : e)) });
 const memoryEdited = () => require('./ai/agent').memoryEdited(); // the user changed it: open chats' prompts follow at their next request
 // The chat's row and /memory (the sidebar and the chat page).

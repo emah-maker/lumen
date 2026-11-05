@@ -20,6 +20,19 @@ With **Memory** on (Settings → AI → Instructions and memory), a project keep
 - **The Memory card** on the project's page lists them, pinned first. **Add** writes a note yourself; click a note to edit it (Enter saves, Escape cancels); **Pin** keeps a note first and never pushed out; **Forget** asks for a second click. With more than 8 notes there is a filter and **Show all**. Notes that haven't changed in 6 months (and aren't pinned) get a line ("3 notes haven’t changed in 6 months") whose **Forget them** clears them. Nothing is dropped on its own for being old.
 - Settings → AI → Instructions and memory → **Saved memory** still lists every note, with the project's name on a project's. Deleting a project deletes its notes (Undo brings them back).
 
+## Key documents and where things are
+
+With **Memory** on, a project also keeps where its documents are, so neither you nor the AI has to look for them again.
+
+- **Kept on its own.** When the AI in a project's chat opens, reads, edits or cites a document (a file on this computer, a PDF, a Word document, a web page, a Google Drive or OneDrive file), Lumen records where it is, with a short name: the file's name, the page's title, or "Google Doc". Searches, Lumen's own pages and local test servers are left out.
+- **You can name one.** Say "the budget sheet is <link>" or "the photos are in D:\Lab\Photos" and the AI notes it with your name for it.
+- **Where things are.** A folder two of the project's files came from, or a site two of its pages are on, is listed below the documents.
+- **Most used first.** Each use counts, and older use counts less (half after two weeks). A project keeps up to 60; past that the least used one goes. Pinned ones always come first and are never pushed out.
+- **The AI gets them.** Each new chat in the project gets the top ones, about 1,500 characters, the ones that share words with your first message first, and is told to open the one it needs directly instead of searching.
+- **No duplicates, no dead ends.** A Google document is one entry in any view (edit, view, a shared link), a page is one entry with or without its tracking parameters, and a file moved to another folder under the same name keeps its entry (and its name and pin). A file that is gone from this computer, or a link the AI found dead (not found, 404), drops off, unless pinned.
+- **The Key documents card** on the project's page lists them: **Open** opens one in a tab, click a name to rename it, **Pin** keeps it first, **Remove** takes it off.
+- **What is kept.** Only the locations and names, never what the documents say, in `project-places.json` in Lumen's profile, encrypted with your system's keychain like memory. Turning Memory off stops recording and recalling them. Deleting the project deletes its list (Undo brings it back).
+
 ## Projects in the sidebar
 
 The browser's AI sidebar uses the same projects. A strip under its header shows the project the open chat is in; click it to pick another (or none). A chat with no messages yet starts again in the project, so it gets the project's default model and plan setting; a chat with messages is moved, and Undo is offered. The sidebar's chat list shows the projects first, with the chevron, + and ⋯ of the chat page's list, and each chat row has Move to project. A project row opens that project's page in lumen://chat. The sidebar and the chat page share one chat, so a move made in one shows in the other.
