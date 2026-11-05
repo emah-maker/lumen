@@ -63,7 +63,7 @@ For something quick (a trip, an assignment due Friday) that may not deserve a pr
 The tabs under the header switch what the page shows (arrow keys move between them):
 
 - **Overview**: everything described above, the chats on the left and the cards on the right.
-- **Memory**: the project's notes on their own, all of them, with the same Add, edit, Pin and Forget.
+- **Memory**: the project's notes on their own, all of them, with the same Add, edit, Pin and Forget, then its Key documents.
 - **Settings**: first the project as a whole (Keep as project for a temporary one, Pin to top, Archive, Export project…, Delete project), then the instructions, the defaults and the folder.
 
 An archived project's page says so above the tabs, with **Move out of archive**.
