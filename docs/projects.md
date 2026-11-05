@@ -49,6 +49,24 @@ The grid button next to + in the Projects block (in lumen://chat, and in the sid
 - **⋯ on a card**: **Open project**, **Pin to top** / **Unpin**, **Rename…**, **Archive** / **Move out of archive**, and **Keep as project** for a temporary one.
 - **Find a project, a note or a document** looks in names, goal lines, memory lines and key document names. **Recent** / **A–Z** sorts inside each group, and **Cards** / **List** switches to one compact row per project. Lumen keeps both choices.
 - **Many projects.** The cards are drawn 24 at a time as you scroll.
+## Temporary projects
+
+For something quick (a trip, an assignment due Friday) that may not deserve a project of its own:
+
+- **The clock button** next to + in the Projects block makes one at once: no dialog, no folder, named for the day ("Quick project, Nov 5"; a second one that day gets a number). Its page opens, so you can start a chat, add files or rename it straight away.
+- It is marked **Temp** in the list (hover it for the date), and its page says "Temporary project. Deleted Nov 12 unless you keep it."
+- **It goes a week after it was last used.** Using it (a chat in it, an edit) moves the date on. Then Lumen deletes it the way **Delete project** does: its chats stay in your chat list, out of any project; its files and memory are erased. Lumen checks soon after it starts and every hour, never while one of its chats is working.
+- **Keep as project** (on its page, in its ⋯ menu, or in Settings) makes it an ordinary project that stays until you delete it.
+
+## The project page's views
+
+The tabs under the header switch what the page shows (arrow keys move between them):
+
+- **Overview**: everything described above, the chats on the left and the cards on the right.
+- **Memory**: the project's notes on their own, all of them, with the same Add, edit, Pin and Forget.
+- **Settings**: first the project as a whole (Keep as project for a temporary one, Pin to top, Archive, Export project…, Delete project), then the instructions, the defaults and the folder.
+
+An archived project's page says so above the tabs, with **Move out of archive**.
 
 ## Projects in the sidebar
 
@@ -101,4 +119,4 @@ Deleting a project shows **Undo** for a short while. After that its files and me
 
 ## Not included
 
-There is no lumen://projects address (the page opens inside the chat page), and files can't yet be dragged in from outside by path.
+There is no lumen://projects address (the page opens inside the chat page), and files can't yet be dragged in from outside by path. A temporary project always lasts a week; that can't be changed yet.
