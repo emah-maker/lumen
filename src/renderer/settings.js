@@ -655,6 +655,7 @@ async function buildAi(card) {
     select('closeAiTabs', tr('settings.ai.closeAiTabs', 'When the AI finishes'), tr('settings.ai.closeAiTabsDesc', 'Leave open keeps them: a Close button under the reply, the tab menu and the chat list still close them. Ask puts the question under the reply. Close (the default) closes them as soon as the AI is done, with Undo, but keeps the tab you are looking at, one playing sound, one holding text you typed, and one the AI said you still need. A tab you clicked in, typed in, navigated, pinned or moved by hand is yours and stays, and so does the tab a chat lives in.'),
       ['off', 'ask', 'always'].map((v) => [v, tr(`settings.ai.closeAiTabs.${v}`, { off: 'Leave open', ask: 'Ask', always: 'Close' }[v])])),
     toggle('keepViewedAiTabs', tr('settings.ai.keepViewedAiTabs', 'Keep AI tabs I click on'), tr('settings.ai.keepViewedAiTabsDesc', 'A tab the AI opened stays open after it finishes if you clicked it to look at it.')),
+    toggle('automationsKeepTabs', tr('settings.ai.automationsKeepTabs', 'Keep automation tabs open'), tr('settings.ai.automationsKeepTabsDesc', 'Each page an automation works on stays open in its tab group after it is done, so you can look back at what was sent. Off: a page’s tab closes when it is done or skipped (one that failed stays).')), // [automations] lumen://automations
   );
   // [approvals] every question about asking first, in one list: how the AI asks, the background option, hands-off, and agents' own windows
   slots.get('ai-approvals').append(

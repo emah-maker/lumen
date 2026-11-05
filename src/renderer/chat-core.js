@@ -468,7 +468,7 @@ function loadStepUI() {
   const head = document.head;
   head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
   const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-  stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)); // ([agents card] with them)
+  stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)); // ([agents card] with them)
   return stepUILoad;
 }
 if (window.stepUI) window.stepUI.init(messages);
@@ -1865,7 +1865,7 @@ window.assistant.onEvent((event) => {
     const prev = finishedRun?.turn || null;
     beginTurn();
     runId = event.runId;
-    window.stepUI?.carryOn(prev, turn); // (its steps go on in the card of the reply before, not a second card under it)
+    window.stepUI?.carryOn(prev, turn, messages); // (its steps go on in the card of the reply before, not a second card under it; [review loop] that card as drawn now, if the chat was drawn again)
     return;
   }
   // [activity cards] The card's last frame can arrive a moment after 'done' (a capture under way when the run ended): the card takes it.

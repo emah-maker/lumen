@@ -26,6 +26,9 @@
 // on the card first), setup ("Set up…": opens `section`; nothing is changed here), tip (a new thing to know about, with
 // no setting: just the line). `section`: where the setting lives in Settings ("More in Settings" opens it).
 const OFFERS = [
+  // ---- 0.5.96
+  // [automations] lumen://automations: an item's tab stays open after it is done (features/automations-runtime.js)
+  { id: 'automationsKeepTabs', key: 'automationsKeepTabs', since: '0.5.96', kind: 'toggle', section: 'ai-tabs' },
   // ---- 0.5.94
   // [secure DNS] browser/secure-dns.js: a DNS-over-HTTPS provider for site addresses (Settings has Off, Google, Quad9 and a custom server too)
   { id: 'secureDns', key: 'secureDns', since: '0.5.94', kind: 'choice', choices: ['auto', 'cloudflare'], section: 'adv-network' },

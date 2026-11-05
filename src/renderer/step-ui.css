@@ -234,6 +234,14 @@
 .rv-score { font-weight: 600; }
 .rv-round.met { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-text); }
 .rv-round.met .rv-score::after { content: " ✓"; }
+.rv-latest { font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-trend { margin-left: var(--sp-2); font-size: var(--fs-xs); font-weight: 500; }
+.rv-trend.up { color: var(--accent-text); }
+.rv-trend.down { color: var(--muted); }
+.rv-round.pending { border-style: dashed; color: var(--muted); }
+.rv-round.pending .rv-score { font-weight: 500; animation: rv-wait 1.4s ease-in-out infinite; }
+@keyframes rv-wait { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .rv-round.pending .rv-score { animation: none; } }
 .rv-fixes-head { color: var(--muted); }
 .rv-fixes { margin: 0; padding-left: var(--sp-8); color: var(--text); }
 .rv-fixes li { margin: var(--sp-1) 0; }

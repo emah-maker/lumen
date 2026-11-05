@@ -1,0 +1,42 @@
+/* lumen://automations (renderer/automations.js): the Bookmarks and AI activity pages' look (managers.css, mission.css). */
+nav.segmented { flex: none; }
+textarea, select { width: 100%; box-sizing: border-box; padding: var(--sp-3) var(--sp-5); border: none; border-radius: var(--r-md); background: var(--field); color: var(--text); font: inherit; outline: none; }
+select { height: 34px; }
+textarea { resize: vertical; min-height: 34px; line-height: 1.45; }
+textarea:focus, select:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), var(--focus-ring); }
+form.edit textarea, form.edit select { background: var(--surface); }
+form.edit fieldset { margin: 0; padding: 0; border: none; display: grid; gap: var(--sp-3); }
+form.edit legend, .label { color: var(--muted); font-size: 12px; margin-bottom: var(--sp-2); }
+form.edit .grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+label.choice, label.check { display: flex !important; align-items: center; gap: var(--sp-3); color: var(--text) !important; font-size: 13px !important; }
+label.choice input, label.check input { width: auto; height: auto; margin: 0; }
+.hidden { display: none !important; }
+.hint { margin: var(--sp-2) 0 0; color: var(--muted); font-size: 12px; }
+.card.create .field { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); color: var(--muted); font-size: 12px; }
+.card.create h2 { margin-top: 0; }
+.steps ol { margin: 0; padding-left: var(--sp-8); }
+.steps li { margin: var(--sp-1) 0; }
+.steps li button, .answer button { height: 22px; padding: 0 var(--sp-3); font-size: 11px; }
+.file { display: flex; align-items: center; gap: var(--sp-4); flex-wrap: wrap; }
+.file .label { margin: 0; min-width: 150px; }
+.file .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.answers { display: grid; gap: var(--sp-3); }
+.answer { display: grid; grid-template-columns: 1fr 1fr auto; gap: var(--sp-3); align-items: center; }
+.profiles { margin: 0 0 var(--sp-5); width: fit-content; }
+.run-actions { display: flex; gap: var(--sp-4); margin: 0 0 var(--sp-6); }
+.chip { display: inline-block; padding: 0 var(--sp-3); border-radius: 4px; box-shadow: inset 0 0 0 1px var(--hairline); font-size: 11px; }
+.status-review .chip, .status-needs-you .chip { color: var(--accent-text, var(--accent)); box-shadow: inset 0 0 0 1px currentColor; }
+.status-done .chip { color: var(--muted); }
+.status-failed .chip { color: var(--danger); }
+.card.item .url { display: block; color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-decoration: none; }
+.card .need { margin: var(--sp-3) 0 0; }
+.questions { margin: var(--sp-2) 0 0; padding-left: var(--sp-8); }
+details { margin-top: var(--sp-3); }
+summary { cursor: default; color: var(--muted); font-size: 12px; }
+table { width: 100%; border-collapse: collapse; }
+table.filled { margin-top: var(--sp-2); font-size: 12px; }
+table.filled th { width: 40%; text-align: left; font-weight: 500; color: var(--muted); padding: var(--sp-1) var(--sp-4) var(--sp-1) 0; vertical-align: top; }
+table.filled td { padding: var(--sp-1) 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+table.tracker th, table.tracker td { text-align: left; padding: var(--sp-3) var(--sp-4) var(--sp-3) 0; border-bottom: 1px solid var(--hairline); }
+table.tracker th { font-size: 12px; font-weight: 600; color: var(--muted); }
+@media (max-width: 560px) { form.edit, form.edit .grid, .answer { grid-template-columns: 1fr; } header { flex-wrap: wrap; } }

@@ -2009,6 +2009,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.openChatPage'), accelerator: 'CmdOrCtrl+Shift+L', click: toggleChatPage },
         ...bgTasks.menuItems(wc?.getURL()), // Run in the background, Watch this page, Background tasks
         { label: t('menu.missionControl'), accelerator: 'CmdOrCtrl+Shift+X', click: () => managers.open('tasks') }, // [mission control] lumen://tasks
+        { label: t('menu.automations'), click: () => managers.open('automations') }, // [automations] lumen://automations
         { label: t('menu.macros'), submenu: macrosFeature.menuTemplate({ t }) }, // run, record and manage macros
       ], 'ai', t('menu.aiAndTasks'), 5),
     ],
@@ -9265,7 +9266,7 @@ const agentTabInFront = (id) => {
 const noTabReason = () => {
   const t = tabs.find((x) => x.id === activeId);
   if (!agentOffLimits(t)) return null;
-  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat', tasks: 'AI activity' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
+  const name = t.settings ? 'Lumen Settings' : `Lumen's ${{ bookmarks: 'Bookmarks', readinglist: 'Reading list', chat: 'chat', tasks: 'AI activity', automations: 'Automations' }[managerPageOf(t.view.webContents.getURL())] || 'Downloads'} page`;
   return `The active tab is ${name}, which the assistant cannot read or control. Use switch_tab or open_tab to work on a web page.`;
 };
 // A task's pinned tab (agent.js taskScope), looked up by id: never the settings tab; a sleeping one
@@ -10275,6 +10276,98 @@ macrosFeature.register();
 agent.browser.macros = macrosFeature; // the run_macro tool (ai/agent.js)
 agent.browser.readingList = (input, tab, hidden) => require('./features/reading-list').toolText(input, { store: readingList(), tab, hidden }); // the reading_list tool (ai/agent.js)
 if (TEST) global.__macros = macrosFeature;
+
+// ---------- [automations] lumen://automations: a repeating job on a list of pages (features/automations-runtime.js) ----------
+// Each item runs in a background tab of its own, in a group named after the automation; the recorded steps run like a user's
+// macro (agent.inTask with userRun: the AI's primitives, no AI limits, since the user made the steps); forms are filled from the
+// saved profile and every item stops at Submit for the user to approve, unless the automation submits alone in Bypass permissions.
+// Loaded on first use: when the page opens, or (for its schedules) a while after start-up when there are automations saved.
+const AUTOMATIONS_FILE = path.join(app.getPath('userData'), 'automations.json');
+const automationGroups = new Map(); // a run's key -> its tab group's id
+let automationsRt = null;
+const automations = () => automationsRt || (automationsRt = require('./features/automations-runtime').create({
+  file: AUTOMATIONS_FILE,
+  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
+  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
+  available: () => safeStorage.isEncryptionAvailable(),
+  t,
+  openTab: (url, { group, key } = {}) => {
+    const known = key && automationGroups.get(key);
+    const groupId = known && tabGroups.groups.has(known) ? known : null;
+    const tab = openTab(url, { background: true, ...(groupId ? { groupId } : {}) });
+    if (group && !groupId) { try { automationGroups.set(key, tabGroups.create(String(group).slice(0, 40), [tab.id]).id); sendTabs(); } catch { /* a group is a nicety */ } }
+    return { id: tab.id, webContents: tab.webContents };
+  },
+  closeTab: (id) => { if (tabs.some((x) => x.id === id)) closeTab(id); },
+  switchTab: (id) => switchTab(id),
+  tabById: (id) => macroTab(tabs.find((x) => x.id === id)),
+  tabLoaded: (tab) => new Promise((resolve) => {
+    const wc = tab.webContents;
+    if (wc.isDestroyed() || !wc.isLoading()) { resolve(); return; }
+    const done = () => { clearTimeout(timer); wc.removeListener('did-stop-loading', done); resolve(); };
+    const timer = setTimeout(done, 15000);
+    wc.once('did-stop-loading', done);
+  }),
+  // The automation's own steps (a recording or a draft), on the item's tab: a user's macro run (macros-runtime.js runForUser).
+  runSteps: (tab, steps, signal) => agent.inTask(tab.id, signal, () => require('./features/macro-runner').runMacro({ name: 'automation', steps }, {
+    mode: 'user',
+    deps: {
+      tool: (name, input) => agent.execute(name, input),
+      resolve: (locator) => agent.macroResolve(locator),
+      openTab: async () => 'An automation stays in its tab.',
+      tabs: async () => [],
+      action: async () => 'Done.',
+      askAI: async () => 'Not in an automation.',
+      pause: async () => false,
+      builtins: async () => ({}),
+      aborted: () => signal.aborted,
+    },
+  }), null, null, { userRun: true }).catch((err) => ({ ok: false, text: String(err?.message || err) })),
+  permissionMode: () => require('./features/permission-mode').modeOf(readSettings()),
+  keepTabs: () => readSettings().automationsKeepTabs === true,
+  complete: (args) => (TEST && global.__automationsComplete ? global.__automationsComplete(args) : completeSkillJson(args)),
+  record: { start: () => macrosFeature.startRecording(), stop: () => macrosFeature.stopRecording({ keep: true }) },
+  pickFile: async (kind) => {
+    if (TEST && global.__automationsPick) return global.__automationsPick(kind);
+    const filters = kind === 'resume' || kind === 'cover' ? [{ name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'txt', 'rtf', 'odt'] }] : [];
+    const { canceled, filePaths } = await electronDialog.showOpenDialog(win, { title: t(kind === 'cover' ? 'automations.pick.cover' : 'automations.pick.resume'), properties: ['openFile'], filters });
+    return canceled ? '' : filePaths?.[0] || '';
+  },
+  saveCsv: async (text) => {
+    const target = TEST && global.__automationsCsv ? global.__automationsCsv : (await electronDialog.showSaveDialog(win, { title: t('automations.export.title'), defaultPath: path.join(app.getPath('documents'), 'lumen-applications.csv'), filters: [{ name: 'CSV', extensions: ['csv'] }] })).filePath;
+    if (!target) return { ok: false, canceled: true };
+    await fs.promises.writeFile(target, text, 'utf8');
+    return { ok: true, filePath: target };
+  },
+  projects: () => chats().projects(),
+  notify: ({ title, body }) => {
+    if (TEST || !Notification.isSupported() || BrowserWindow.getAllWindows().some((w) => !w.isDestroyed() && w.isFocused())) return;
+    try { const n = new Notification({ title: chatRunsLib.firstLine(title, 120), body: chatRunsLib.firstLine(body, 240), silent: false }); n.on('click', () => { win?.show(); managers.open('automations'); }); n.show(); } catch { /* no notification */ }
+  },
+  changed: () => { for (const x of allTabsEverywhere()) if (x.managerPage === 'automations' && alive(x)) x.view.webContents.send('automations:changed'); },
+}));
+{
+  const fromPage = (event) => managers.fromPage(event, 'automations');
+  const handle = (channel, fn) => ipcMain.handle(channel, (event, ...args) => (fromPage(event) ? fn(...args) : null));
+  handle('automations:state', () => automations().state());
+  handle('automations:save', (a) => automations().saveAutomation(a));
+  handle('automations:delete', (id) => automations().removeAutomation(id));
+  handle('automations:run', (id) => automations().start(String(id)));
+  handle('automations:run-act', (req) => automations().runAct(req || {}));
+  handle('automations:item', (req) => automations().itemAct(req || {}));
+  handle('automations:describe', (text) => automations().describe(text));
+  handle('automations:record-start', () => automations().recordStart());
+  handle('automations:record-stop', () => automations().recordStop());
+  handle('automations:profile-save', (p) => automations().saveProfile(p));
+  handle('automations:profile-delete', (id) => automations().removeProfile(id));
+  handle('automations:pick-file', (kind) => automations().pickFile(String(kind)));
+  handle('automations:export', () => automations().exportCsv());
+  handle('automations:clear-log', () => automations().clearLog());
+}
+// Scheduled automations: the runtime (and its one timer) starts a while after start-up, only when something is saved.
+setTimeout(() => { if (fs.existsSync(AUTOMATIONS_FILE)) { try { automations().init(); } catch (err) { console.error('[lumen] automations did not start:', err.message); } } }, TEST ? 0 : 20000).unref?.();
+app.on('will-quit', () => { try { automationsRt?.shutdown(); } catch { /* nothing running */ } });
+if (TEST) global.__automations = { rt: () => automations(), file: AUTOMATIONS_FILE, open: () => managers.open('automations') };
 
 // ---------- [settings] lumen://settings ----------
 
@@ -11360,21 +11453,14 @@ const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
 // [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
 const tabMarker = new Proxy({}, { get: (_t, k) => require('./renderer/tab-marker')[k] }); // [tab chips] [[tab:ID]] (tiny; loaded on first use, not at start-up: the module budget)
-const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] }); // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
+const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] });
+const reviewTrackLib = new Proxy({}, { get: (_t, k) => require('./renderer/review-track')[k] }); // [review loop] (loaded with the first round, not at start-up) // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
 function trackRunDetails(run, msg) {
   const d = run.details;
   const touch = (id) => { if (Number.isInteger(id) && id >= 0 && !d.touched.includes(id) && d.touched.length < 24) d.touched.push(id); }; // [activity cards] the card's Tabs list: every tab the turn used, first touched first
   if (msg.type === 'tool') { try { for (const id of tabMarker.stepTabs(msg.name, msg.input)) touch(id); } catch { /* none */ } } else if (msg.type === 'thumb' || msg.type === 'tool_done') touch(msg.tabId);
   if (msg.type === 'skill' && typeof msg.name === 'string') { const list = (d.skills ||= []); if (!list.some((x) => x.name === msg.name) && list.length < 4) list.push({ name: msg.name, title: String(msg.title || msg.name) }); return; } // [skills] which skill the reply used, kept with it
-  if (msg.type === 'review' && Number.isFinite(msg.score)) { // [review loop] the score track, kept with the reply
-    const r = (d.review ||= { bar: msg.bar, title: '', rounds: [] });
-    r.bar = msg.bar;
-    if (msg.title) r.title = msg.title;
-    const round = { round: msg.round, score: msg.score, met: msg.met === true };
-    const at = r.rounds.findIndex((x) => x.round === msg.round);
-    if (at >= 0) r.rounds[at] = round; else if (r.rounds.length < 20) r.rounds.push(round);
-    return;
-  }
+  if (msg.type === 'review') { d.review = reviewTrackLib.merge(d.review, msg); return; } // [review loop] the score track, kept with the reply (renderer/review-track.js: what the card shows)
   if (msg.type === 'agent' && typeof msg.id === 'string') { // [agents card] each subagent's latest state, kept with the reply (a reopened chat shows the card as it ended)
     const list = (d.agents ||= []);
     const { type, ...snap } = msg;
@@ -11650,7 +11736,7 @@ function stampRun(run, done = null) {
       if (done && d.touched?.length) noteRunTabs(run, d.touched.filter(Number.isInteger)); // (the card's Tabs list: each tab as it last looked, so a closed one still reads after a restart)
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, agents: d.agents?.length ? d.agents : undefined, skills: d.skills?.length ? d.skills : undefined, review: d.review?.rounds?.length ? d.review : undefined, auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, agents: d.agents?.length ? d.agents : undefined, skills: d.skills?.length ? d.skills : undefined, review: (d.review && reviewTrackLib.saved(d.review)) || undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }

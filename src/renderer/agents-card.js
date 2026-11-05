@@ -8,6 +8,7 @@
   const ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.6-3.2 2.8-5 5.5-5s4.9 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c2.4-.3 4.4 1.2 5 4.3"/></svg>';
   const ENDED = new Set(['done', 'failed', 'stopped']);
   const live = new Set(); // the agents heard working in this window: a chat drawn again from what was saved shows them working, not stopped
+  const endedHere = new Map(); // [review loop] id -> how an agent heard here ended: a chat drawn again from a save made while it worked shows it so, not stopped
 
   const clock = (ms) => (window.stepTime ? window.stepTime.format(Math.max(0, ms)) : `${Math.round(Math.max(0, ms) / 1000)} s`) || tr('agents.justNow');
 
@@ -32,9 +33,10 @@
     const now = el('div', { className: 'ag-now' });
     const time = el('span', { className: 'ag-time' });
     const tools = el('span', { className: 'ag-tools' });
+    const score = el('span', { className: 'ag-score', hidden: true }); // [review loop] a reviewer's score, once it answered
     const main = el('div', { className: 'ag-main' }, el('div', { className: 'ag-line' }, name, bg), now);
-    row.append(el('span', { className: 'ag-dot', ariaHidden: 'true' }), main, el('div', { className: 'ag-meta' }, time, tools));
-    row._p = { name, bg, now, time, tools };
+    row.append(el('span', { className: 'ag-dot', ariaHidden: 'true' }), main, el('div', { className: 'ag-meta' }, score, time, tools));
+    row._p = { name, bg, now, time, tools, score };
     // A finished agent's summary is cut to two lines; the row opens to show all of it.
     row.addEventListener('click', () => { if (row.dataset.state !== 'working' && row._a?.summary) row.classList.toggle('open'); });
     return row;
@@ -51,8 +53,12 @@
     if (p.now.textContent !== text) p.now.textContent = text;
     row.tabIndex = ended && a.summary ? 0 : -1;
     p.tools.textContent = a.tools ? tr(a.tools === 1 ? 'agents.tools.one' : 'agents.tools.other', { count: a.tools }) : '';
+    const RT = window.reviewTrack;
+    const score = a.state === 'done' && RT?.roundOfAgent(a.desc) ? RT.scoreIn(a.summary) : null;
+    p.score.hidden = score === null;
+    p.score.textContent = score === null ? '' : tr('agents.score', { score });
     paintTime(row);
-    row.setAttribute('aria-label', `${p.name.textContent}: ${ended ? tr(`agents.state.${a.state}`) : tr('agents.state.working')}. ${text}`);
+    row.setAttribute('aria-label', `${p.name.textContent}: ${ended ? tr(`agents.state.${a.state}`) : tr('agents.state.working')}${score === null ? '' : `, ${tr('agents.score', { score })}`}. ${text}`);
   }
   function paintTime(row) {
     const a = row._a;
@@ -85,7 +91,7 @@
   // new card in the chat. A follow-up turn that goes on in the same card (step-ui.js carryOn) shares `turn.agents` with the reply before it.
   function update(turn, event, place) {
     if (!turn || typeof event?.id !== 'string') return false;
-    if (event.state === 'working') live.add(event.id); else live.delete(event.id);
+    if (event.state === 'working') live.add(event.id); else { live.delete(event.id); endedHere.set(event.id, event); if (endedHere.size > 200) endedHere.delete(endedHere.keys().next().value); }
     const box = (turn.agents ||= { card: null });
     if (!box.card || !box.card.el.isConnected) box.card = turn.cards?.[turn.cards.length - 1]?.el?.querySelector?.('.agents-card')?._ag || null; // (the reply drawn again: its agents, as drawn from what was saved)
     if (!box.card || !box.card.el.isConnected) { box.card = makeCard(); place(box.card.el); }
@@ -114,7 +120,7 @@
     const card = makeCard();
     for (const a of list) {
       const row = makeRow(a);
-      paintRow(row, a.state === 'working' && !live.has(a.id) ? { ...a, state: 'stopped' } : a);
+      paintRow(row, a.state === 'working' && !live.has(a.id) ? (endedHere.has(a.id) ? { ...a, ...endedHere.get(a.id) } : { ...a, state: 'stopped' }) : a);
       card.rows.set(a.id, row);
       card.list.append(row);
     }
