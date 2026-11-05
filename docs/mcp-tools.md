@@ -434,6 +434,8 @@ Draw on the page the user is looking at to explain it, like a teacher marking a 
 
 **Precise shapes.** `points` (`[[x, y], …]`, up to 400) draw a smooth line through them; `curve: false` goes straight from point to point instead (a polyline, a polygon), and makes `box` the exact rectangle and `circle` the exact ellipse of their box (no hand-drawn wobble or padding). `fill` (a colour) fills a `box`, `circle` or `path` (a filled path is closed), translucent, or solid with `opacity`; the outline takes the fill colour unless `color` is given. An `arrow` with `points` follows them, with its head at the last point. `width` is the stroke width (1 to 12).
 
+**Labels.** A `label` points at its `x`, `y` (or `target`): the bubble goes above it with its tip on it. Given `to`, the label sits at `x`, `y` instead (put it in free space) and a leader line with a head runs to `to`, the thing it explains.
+
 **Coordinates.** `x`, `y`, `w`, `h` and `points` are pixels of the latest `screenshot`. With a `target`, they are offsets from the top-left corner of that element instead (element space; screenshot pixels, or CSS pixels when there is no screenshot), kept as fractions of the element's box, so the mark moves and scales with the element. Marks given in screenshot pixels are anchored to the page content under them (or, in Lumen's PDF viewer, to their PDF page: page number and position on the page), so they stay in place on scroll, resize and zoom.
 
 | Parameter | Type | Required | Description |

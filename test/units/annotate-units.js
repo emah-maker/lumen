@@ -219,6 +219,36 @@ withTimers(() => {
   r.board.destroy();
 });
 
+// A label on a point of a scaled picture (a slide's phase diagram): the screenshot is half the size of the view (2 CSS px per
+// screenshot px) and the picture is shown smaller than its own pixels. The AI puts the label in free space (x,y) and names the
+// point with `to`; the leader must end on that point, the bubble must sit where it was put, and both follow the picture.
+withTimers(() => {
+  const img = { ...element({ x: 100, y: 60, w: 600, h: 450 }), nodeType: 1, tagName: 'IMG', nodeName: 'IMG', parentNode: null };
+  const env = liveEnv();
+  env.document.elementFromPoint = (x, y) => (x >= img.rect.x && x <= img.rect.x + img.rect.w && y >= img.rect.y && y <= img.rect.y + img.rect.h ? img : null);
+  const scale = { ...annotate.shotScaleOf({ innerWidth: 1000, innerHeight: 700, scrollX: 0, scrollY: 0 }, { width: 500, height: 350 }), now: { x: 0, y: 0 } };
+  const target = { x: 105, y: 205 }; // screenshot px -> CSS (210, 410): inside the picture
+  const spec = annotate.normalize({ marks: [
+    { type: 'label', x: 250, y: 60, to: target, text: 'CONGRUENT: melts straight to liquid', color: 'green' },
+    { type: 'label', x: 105, y: 205, text: 'Right here', color: 'red' },
+  ] }, scale);
+  const r = annotate.overlayMain({ marks: spec.marks, clear: false, maxTotal: 30 }, { document: env.document, window: env.win });
+  const ofMark = (i, tag) => tags(r.svg, tag).filter((p) => p.attrs['data-mark'] === String(i));
+  const leadEnd = () => { const p = ofMark(0, 'path')[1]; return p && p.attrs.d ? firstNums(p.attrs.d).slice(-2) : [NaN, NaN]; };
+  const bubbleMid = (i) => { const b = ofMark(i, 'rect')[0].attrs; return [Number(b.x) + Number(b.width) / 2, Number(b.y) + Number(b.height) / 2]; };
+  const near = (p, q, d = 1.5) => Math.abs(p[0] - q[0]) <= d && Math.abs(p[1] - q[1]) <= d;
+  check('label + to: the leader ends on the point it names (screenshot px mapped through a downscaled screenshot)', r.drawn === 2 && near(leadEnd(), [210, 410]), J(leadEnd()));
+  check('label + to: the bubble sits where it was put, not above the point', near(bubbleMid(0), [500, 120]), J(bubbleMid(0)));
+  check('label + to: a leader and its head (each with a halo), no speech-bubble tail', ofMark(0, 'path').length === 5 && ofMark(0, 'path')[4].attrs.d === '', J(ofMark(0, 'path').map((p) => p.attrs.d)));
+  const tailTip = () => { const n = firstNums(ofMark(1, 'path')[0].attrs.d); return [n[2], n[3]]; };
+  check('label on a point: its tail tip lands just above the point (within 6 px), centred on it', Math.abs(tailTip()[0] - 210) < 1 && tailTip()[1] < 410 && tailTip()[1] > 403, J(tailTip()));
+  img.rect = { x: 50, y: 30, w: 300, h: 225 }; // the slide is shown at half the size (a narrower window, the sidebar opened)
+  r.board.layout();
+  check('label + to: when the picture is scaled the leader still ends on the same spot of it', near(leadEnd(), [50 + 110 / 2, 30 + 350 / 2]), J(leadEnd()));
+  check('label on a point: the tail follows the picture too', Math.abs(tailTip()[0] - 105) < 1 && tailTip()[1] < 205 && tailTip()[1] > 198, J(tailTip()));
+  r.board.destroy();
+});
+
 withTimers(() => {
   const el = element({ x: 10, y: 10, w: 50, h: 20 });
   const env = liveEnv({ elements: [el] });

@@ -30,7 +30,7 @@ const COORD_LIMIT = 20000;
 
 const TOOL = {
   name: 'annotate',
-  description: 'Draw on the page to explain it. marks:[{type:box|circle|arrow|highlight|label|step|spotlight|underline|strike|bracket|check|cross|redact|callout|path|write, target:id|text:…, x,y,w,h, to, points, text, color, fill, font, width/opacity/curve}]. Screenshot/find first; number steps like your answer.',
+  description: 'Draw on the page to explain it. marks:[{type, target:id|text:…, x,y,w,h, to, points, text, color, fill, font, width/opacity/curve}]. A label points at x,y; given to, it sits at x,y and points at to. Screenshot/find first; number steps like your answer.',
   input_schema: {
     type: 'object',
     properties: {
@@ -247,6 +247,7 @@ function overlayMain(spec, env) {
   };
   // A point (or a speck) becomes a box big enough to draw around.
   const sized = (r, min) => (r.w < 8 && r.h < 8 ? { x: r.x + r.w / 2 - min / 2, y: r.y + r.h / 2 - min / 2, w: min, h: min } : r);
+  const isPoint = (rs) => { const b = bounds(rs); return !b.w && !b.h; };
   const wrap = (text, max) => {
     const lines = [];
     let line = '';
@@ -843,7 +844,8 @@ function overlayMain(spec, env) {
         const b = sized(bounds(rs), 12);
         const gap = 46;
         let bx, by = clampN(b.y + b.h / 2 - height / 2, 8, Math.max(8, s.h - height - 8));
-        if (b.x + b.w + gap + width <= s.w - 8) bx = b.x + b.w + gap; // room on the right
+        if (to && isPoint(rs)) bx = clampN(b.x + b.w / 2 - width / 2, 8, Math.max(8, s.w - width - 8)); // a spot for the bubble, `to` what it names
+        else if (b.x + b.w + gap + width <= s.w - 8) bx = b.x + b.w + gap; // room on the right
         else if (b.x - gap - width >= 8) bx = b.x - gap - width; // else on the left
         else { bx = clampN(b.x + b.w / 2 - width / 2, 8, Math.max(8, s.w - width - 8)); by = b.y - height - gap >= 8 ? b.y - height - gap : b.y + b.h + gap; }
         setA(box, { x: f(bx), y: f(by), width: f(width), height });
@@ -856,8 +858,9 @@ function overlayMain(spec, env) {
         lead(`M${f(from.x)} ${f(from.y)}L${f(tip.x)} ${f(tip.y)}`);
       };
     } else if (m.type === 'label') {
-      addCallout(view, m, at, c, delay, add, popIn, rectsOf);
       if (!m.text) return null;
+      // With `to`: the label sits at its own spot (a point x,y: centred there) and a leader with a head runs to what it names.
+      addCallout(view, m, at, c, delay, add, popIn, rectsOf, false, to ? { to, lead: stroke(2.5), head: stroke(2.5) } : null);
     } else if (m.type === 'step') {
       state.steps += 1;
       const asNum = /^\d{1,2}$/.test(m.text) ? m.text : String(state.steps);
@@ -894,8 +897,9 @@ function overlayMain(spec, env) {
     return view;
   }
 
-  // A speech-bubble label next to the target (above it, or below when there is no room), pointing at it.
-  function addCallout(view, m, at, c, delay, add, popIn, rectsOf, anchoredToPoint) {
+  // A speech-bubble label next to the target (above it, or below when there is no room), pointing at it. With a pointer
+  // ({ to, lead, head }: a label given `to`), the bubble is at the target (centred on a point) and a leader runs to `to`.
+  function addCallout(view, m, at, c, delay, add, popIn, rectsOf, anchoredToPoint, pointer) {
     if (!m.text) return;
     const lines = wrap(m.text, 26);
     const width = Math.max(...lines.map((l) => l.length)) * 7.4 + 20;
@@ -905,6 +909,22 @@ function overlayMain(spec, env) {
     const text = add('text', { 'font-size': 14, 'font-weight': 600, fill: c.ink, 'font-family': 'system-ui,-apple-system,Segoe UI,sans-serif' });
     const spans = lines.map((line) => { const t = el('tspan', {}, text); t.textContent = line; return t; });
     for (const p of [tail, box, text]) popIn(p);
+    const toward = (b, s, t) => { // the bubble on its spot, the leader from its edge to the target `to` names
+      const bx = clampN(b.x + b.w / 2 - width / 2, 8, Math.max(8, s.w - width - 8));
+      const by = clampN(b.y + b.h / 2 - height / 2, 8, Math.max(8, s.h - height - 8));
+      setA(box, { x: f(bx), y: f(by), width: f(width), height });
+      setA(text, { x: f(bx + 10), y: f(by + 18) });
+      spans.forEach((sp, i) => setA(sp, { x: f(bx + 10), y: f(by + 18 + i * 18) }));
+      tail.setAttribute('d', '');
+      const card = { x: bx, y: by, w: width, h: height };
+      const tip = !t.w && !t.h ? { x: t.x, y: t.y } : edgeToward({ x: bx + width / 2, y: by + height / 2 }, t, 4);
+      const from = edgeToward(tip, card, 0);
+      const len = Math.hypot(tip.x - from.x, tip.y - from.y);
+      pointer.lead(len < 2 ? '' : `M${f(from.x)} ${f(from.y)}L${f(tip.x)} ${f(tip.y)}`);
+      if (len < 2) { pointer.head(''); return; }
+      const ang = Math.atan2(tip.y - from.y, tip.x - from.x), hl = Math.min(12, len * 0.4);
+      pointer.head(`M${f(tip.x - Math.cos(ang - 0.45) * hl)} ${f(tip.y - Math.sin(ang - 0.45) * hl)}L${f(tip.x)} ${f(tip.y)}L${f(tip.x - Math.cos(ang + 0.45) * hl)} ${f(tip.y - Math.sin(ang + 0.45) * hl)}`);
+    };
     const place = (b, s) => {
       const gap = 16;
       let by = b.y - height - gap;
@@ -925,7 +945,13 @@ function overlayMain(spec, env) {
       const rs = rectsOf(at);
       if (!rs || !rs.length) { for (const p of [tail, box, text]) p.setAttribute('visibility', 'hidden'); return; }
       for (const p of [tail, box, text]) p.setAttribute('visibility', 'visible');
-      if (!anchoredToPoint) place(sized(bounds(rs), 12), s);
+      if (pointer) {
+        const tr = rectsOf(pointer.to);
+        if (!tr || !tr.length) { for (const p of [tail, box, text]) p.setAttribute('visibility', 'hidden'); pointer.lead(''); pointer.head(''); return; }
+        const t = sized(bounds(tr), 0);
+        if (isPoint(rs)) toward(bounds(rs), s, t);
+        else { place(sized(bounds(rs), 12), s); toward({ x: Number(box.getAttribute('x')) + width / 2, y: Number(box.getAttribute('y')) + height / 2, w: 0, h: 0 }, s, t); }
+      } else if (!anchoredToPoint) place(isPoint(rs) ? bounds(rs) : sized(bounds(rs), 12), s); // a point: the tail tip at it
       else place({ ...sized(bounds(rs), 0), x: bounds(rs).x, y: bounds(rs).y, w: 0, h: 0 }, s);
     };
   }
