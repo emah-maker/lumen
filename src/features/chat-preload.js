@@ -92,6 +92,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectFileRename: (id, fileId, name) => ipcRenderer.invoke('chats:project-file-rename', id, fileId, name),
       projectMemoryForget: (id, entryId) => ipcRenderer.invoke('chats:project-memory-forget', id, entryId),
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
+      projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] { permissionMode, allowedHosts }
       setProject: (id, projectId) => ipcRenderer.invoke('chats:project-set', id, projectId),
       moveToProject: (ids, projectId) => ipcRenderer.invoke('chats:project-move', ids, projectId),
       restoreProjects: (moves) => ipcRenderer.invoke('chats:project-restore', moves),
@@ -122,6 +123,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners]
     undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),
+    projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] the bolt menu's "This project only"
+    onPermProject: on('agent:perm-project'), // [project permissions] a project's level changed: { id, name, permissionMode | null }
     permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions]
     helpers: (mode) => ipcRenderer.invoke('agent:helpers', mode), // [subagents]
     preferFractions: (on) => ipcRenderer.invoke('agent:prefer-fractions', on), // [prefer fractions] /fractions

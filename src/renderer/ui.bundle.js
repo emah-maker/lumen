@@ -5420,7 +5420,7 @@ if (live.queued?.status && turn.working) setStatus(turn.working, live.queued.sta
 runId = live.runId;
 if (live.followUp) { const cards = [...messages.querySelectorAll(':scope > .act-card')]; const last = cards[cards.length - 1]?._card; if (last) window.stepUI?.carryOn({ cards: [last] }, turn); }
 if (live.target) { agentTarget = live.target; renderWorkingIn(); }
-for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
+for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { project: a.project, action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
 
 if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
 moveWorkingToEnd();
@@ -5826,7 +5826,7 @@ break;
 case 'approval':
 chatHost.needSidebar?.();
 announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
-showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, alwaysLabel: event.alwaysLabel, alwaysTitle: event.alwaysTitle, denyLabel: event.denyLabel, helper: event.helper });
+showApproval(event.approvalId, event.host, { project: event.project, action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, alwaysLabel: event.alwaysLabel, alwaysTitle: event.alwaysTitle, denyLabel: event.denyLabel, helper: event.helper });
 moveWorkingToEnd();
 syncWorking();
 break;
@@ -6288,6 +6288,9 @@ auto: '<path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/>',
 bypass: '<path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/>',
 };
 let permMode = 'ask';
+let permGlobal = 'ask';
+let permProject = null;
+let permScope = null;
 let permArmed = null;
 const permMenu = Object.assign(document.createElement('div'), { className: 'perm-menu', id: 'perm-menu', hidden: true });
 permMenu.setAttribute('role', 'menu');
@@ -6308,6 +6311,18 @@ permSettings.innerHTML = '<span class="perm-name"></span>';
 permSettings.firstChild.textContent = t('sidebar.perm.settings');
 permSettings.onclick = () => { closePermMenu(false); window.lumenPrefs?.openSettingsPage('ask-before-acting'); };
 permMenu.append(permSettings);
+
+
+const permFrom = Object.assign(document.createElement('p'), { className: 'perm-note perm-from', id: 'perm-from', hidden: true });
+const permScopeRow = Object.assign(document.createElement('div'), { className: 'perm-scope', id: 'perm-scope', hidden: true });
+const permScopeText = Object.assign(document.createElement('p'), { className: 'perm-note' });
+const permScopeProject = Object.assign(document.createElement('button'), { type: 'button', className: 'btn perm-scope-project', id: 'perm-scope-project' });
+const permScopeAll = Object.assign(document.createElement('button'), { type: 'button', className: 'btn perm-scope-all', id: 'perm-scope-all', textContent: t('sidebar.perm.scope.all') });
+permScopeRow.append(permScopeText, permScopeProject, permScopeAll);
+permScopeProject.onclick = () => applyPermScope('project');
+permScopeAll.onclick = () => applyPermScope('all');
+permMenu.prepend(permFrom);
+permMenu.append(permScopeRow);
 permMenu.append(Object.assign(document.createElement('p'), { className: 'perm-note', id: 'perm-note', textContent: t('sidebar.perm.note') }));
 const permButton = $('auto-allow');
 (permButton.closest('.sidebar-head') || permButton.parentElement).append(permMenu);
@@ -6376,6 +6391,17 @@ permButton.querySelector('svg').innerHTML = PERM_ICONS[permMode];
 let stateLabel = permButton.querySelector('.perm-state');
 if (!stateLabel) { stateLabel = Object.assign(document.createElement('span'), { className: 'perm-state' }); permButton.append(stateLabel); }
 stateLabel.textContent = permArmed ? t('sidebar.perm.armed', { mode: t(`sidebar.perm.short.${next}`) }) : t(`sidebar.perm.short.${permMode}`);
+const fromProject = Boolean(permProject?.permissionMode);
+if (fromProject) { tip += `
+${t('sidebar.perm.fromProject', { mode: t(`sidebar.perm.${permMode}`), project: permProject.name })}`; permButton.title = tip; }
+permButton.dataset.from = fromProject ? 'project' : '';
+permFrom.hidden = !fromProject;
+permFrom.textContent = fromProject ? t('sidebar.perm.fromProject', { mode: t(`sidebar.perm.${permMode}`), project: permProject.name }) : '';
+permScopeRow.hidden = !permScope;
+if (permScope) {
+permScopeText.textContent = t('sidebar.perm.scope', { mode: t(`sidebar.perm.${permScope.mode}`) });
+permScopeProject.textContent = t('sidebar.perm.scope.project', { project: permProject?.name || '' });
+}
 permBadge.hidden = permMode !== 'bypass';
 permBadge.title = tip;
 permBadge.dataset.mode = permMode;
@@ -6388,9 +6414,38 @@ item.querySelector('.perm-name').textContent = t(`sidebar.perm.${mode}`);
 item.querySelector('.perm-desc').textContent = armed ? t('sidebar.perm.confirm') : t(`sidebar.perm.${mode}.desc`);
 }
 }
+const effectivePerm = () => (PERM_MODES.includes(permProject?.permissionMode) ? permProject.permissionMode : permGlobal);
+
 async function setPermMode(mode) {
 const got = await window.assistant.permissionMode?.(mode);
-permMode = PERM_MODES.includes(got) ? got : permMode;
+if (PERM_MODES.includes(got)) permGlobal = got;
+permMode = effectivePerm();
+renderPerm();
+}
+
+async function applyPermScope(where) {
+const mode = permScope?.mode;
+const project = permProject;
+permScope = null;
+if (!mode || !project) { renderPerm(); return; }
+if (where === 'project') {
+const out = await window.assistant.projectPermissions?.(project.id, { permissionMode: mode }).catch(() => null);
+if (out && permProject?.id === project.id) permProject = { ...permProject, permissionMode: out.permissionMode };
+} else {
+if (project.permissionMode) {
+const out = await window.assistant.projectPermissions?.(project.id, { permissionMode: null }).catch(() => null);
+if (out && permProject?.id === project.id) permProject = { ...permProject, permissionMode: undefined };
+}
+await setPermMode(mode);
+}
+permMode = effectivePerm();
+closePermMenu();
+}
+
+function permProjectShown(project) {
+permProject = project?.id ? { id: project.id, name: String(project.name || ''), permissionMode: PERM_MODES.includes(project.permissionMode) ? project.permissionMode : undefined } : null;
+permScope = null;
+permMode = effectivePerm();
 renderPerm();
 }
 const nextMode = () => PERM_MODES[(PERM_MODES.indexOf(permMode) + 1) % PERM_MODES.length];
@@ -6407,6 +6462,12 @@ renderPerm();
 return;
 }
 disarmPerm();
+if (permProject) {
+permScope = { mode };
+if (permMenu.hidden) openPermMenu(); else renderPerm();
+permScopeProject.focus();
+return;
+}
 setPermMode(mode);
 closePermMenu();
 }
@@ -6419,6 +6480,7 @@ permItems.get(permMode)?.focus();
 function closePermMenu(refocus = true) {
 if (permMenu.hidden) return;
 permMenu.hidden = true;
+permScope = null;
 disarmPerm();
 permButton.setAttribute('aria-expanded', 'false');
 renderPerm();
@@ -6438,8 +6500,9 @@ items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focu
 });
 
 const setAutoAllow = (on) => setPermMode(on ? 'auto' : 'ask');
-window.addEventListener('lumen:permission-mode', (e) => { if (PERM_MODES.includes(e.detail)) { permMode = e.detail; renderPerm(); } });
-window.assistant.permissionMode?.().then((mode) => { if (PERM_MODES.includes(mode)) permMode = mode; renderPerm(); });
+window.addEventListener('lumen:permission-mode', (e) => { if (PERM_MODES.includes(e.detail)) { permGlobal = e.detail; permMode = effectivePerm(); renderPerm(); } });
+window.assistant.onPermProject?.((p) => { if (p && permProject?.id === p.id) { permProject = { ...permProject, name: p.name || permProject.name, permissionMode: PERM_MODES.includes(p.permissionMode) ? p.permissionMode : undefined }; permMode = effectivePerm(); renderPerm(); } });
+window.assistant.permissionMode?.().then((mode) => { if (PERM_MODES.includes(mode)) permGlobal = mode; permMode = effectivePerm(); renderPerm(); });
 renderPerm();
 
 
@@ -6502,7 +6565,7 @@ if (Number.isInteger(e.tabId)) { card.dataset.tab = String(e.tabId); card.queryS
 if (ended) card.querySelector('.helper-card-stop').hidden = true;
 }
 
-function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, alwaysLabel, alwaysTitle, denyLabel, warn, note, fields, alwaysFor } = {}) {
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, alwaysLabel, alwaysTitle, denyLabel, warn, note, fields, alwaysFor, project } = {}) {
 if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone });
 if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload });
 if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, alwaysFor, allowLabel, denyLabel, warn, detail: note === 'close' ? cardDetail : undefined });
@@ -6550,13 +6613,16 @@ allow.disabled = true;
 window.assistant.approve?.(approvalId, ok);
 };
 
-const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: t('approval.allSites') });
-always.title = t('approval.always.title');
+
+const inProject = Boolean(project) && !opening && !scripting && !pdf && query === undefined;
+const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: inProject ? t('approval.project.always', { host, project }) : t('approval.allSites') });
+always.title = inProject ? t('approval.project.always.title', { host, project }) : t('approval.always.title');
 deny.onclick = () => answer(false);
 allow.onclick = () => answer(true);
 
 let alwaysArmed = false;
 always.onclick = () => {
+if (inProject) { always.disabled = true; answer('always'); return; }
 if (!alwaysArmed) { alwaysArmed = true; always.textContent = t('approval.allSites.confirm'); always.classList.add('armed'); return; }
 always.disabled = true; setAutoAllow(true); answer(true);
 };
@@ -7077,6 +7143,7 @@ shownChatId = view?.id || null;
 if (sameChat || ownRun) line.claim(shownChatId);
 runOwner = null;
 window.planModeUI?.chatShown(view, sameChat);
+permProjectShown(view?.project);
 if (sameChat) saveDraft();
 
 

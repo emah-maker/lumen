@@ -333,6 +333,8 @@ contextBridge.exposeInMainWorld('assistant', {
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it
   permissionMode: (mode) => ipcRenderer.invoke('agent:permission-mode', mode), // [bypass permissions] 'ask' | 'auto' | 'bypass'; no argument: just read it
+  projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] a project's own level (the bolt menu's "This project only")
+  onPermProject: on('agent:perm-project'), // [project permissions] a project's level changed: { id, name, permissionMode | null }
   helpers: (mode) => ipcRenderer.invoke('agent:helpers', mode), // [subagents] 'off' | 'auto' | 'on'; no argument: just read it
   preferFractions: (on) => ipcRenderer.invoke('agent:prefer-fractions', on), // [prefer fractions] /fractions: true | false; no argument: just read it
   stopHelper: (key) => ipcRenderer.invoke('agent:helper-stop', key), // [acting helpers] a helper card's Stop

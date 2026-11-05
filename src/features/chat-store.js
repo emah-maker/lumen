@@ -686,6 +686,20 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     writeIndex();
     return true;
   }
+  // [project permissions] The project's own permission level and the sites allowed with "Always" in it
+  // (features/permission-mode.js projectPatchOf cleans the patch; null / false / [] clear a field). Kept on this computer only: adoptProject
+  // (sync) and the portable folder never set these, and sync never sends them. Returns the project, or null for an unknown id.
+  function setProjectPermissions(id, patch = {}) {
+    const idx = readIndex();
+    const project = idx.degraded ? null : projectById(id);
+    if (!project) return null;
+    const p = require('./permission-mode').projectPatchOf(patch);
+    if (p.permissionMode !== undefined) { if (p.permissionMode) project.permissionMode = p.permissionMode; else delete project.permissionMode; }
+    if (p.allowedHosts !== undefined) { if (p.allowedHosts.length) project.allowedHosts = p.allowedHosts; else delete project.allowedHosts; }
+    project.updated = now();
+    writeIndex();
+    return { ...project };
+  }
   // [sync] A project from another computer: its id kept, its text fields set (name, instructions, links, defaults). Where this computer keeps the
   // project's folder, Markdown copies and working folder is not synced and stays as it is. False for a bad id, a full list or a degraded index.
   function adoptProject(fields) {
@@ -942,7 +956,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const isForeign = (id) => foreign.has(id);
   // True when the chat list and projects can be trusted to decide what to delete: the index was read, and not rebuilt this run.
   function trusted() { return !readIndex().degraded && !rebuilt; }
-  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProjectPermissions, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

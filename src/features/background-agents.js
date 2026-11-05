@@ -373,6 +373,7 @@ function sanitizeTask(raw) {
     } : null,
     currentUrl: hostOfUrl(raw.currentUrl) ? clip(raw.currentUrl, 500) : '',
     routine: schedule.type === 'routine' ? routines.sanitizeRoutine(raw.routine) : null,
+    ...(typeof raw.projectId === 'string' && /^[\w-]{1,64}$/.test(raw.projectId) ? { projectId: raw.projectId } : {}), // [project permissions] the project whose level the task runs at
   };
 }
 

@@ -1638,7 +1638,7 @@ function resumeLive(live) {
   runId = live.runId;
   if (live.followUp) { const cards = [...messages.querySelectorAll(':scope > .act-card')]; const last = cards[cards.length - 1]?._card; if (last) window.stepUI?.carryOn({ cards: [last] }, turn); } // [background helpers] a follow-up drawn again: it goes on in the card of the reply before it (step-ui.js carryOn)
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
-  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
+  for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { project: a.project, action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -2044,7 +2044,7 @@ window.assistant.onEvent((event) => {
     case 'approval':
       chatHost.needSidebar?.(); // a hidden sidebar left the task waiting with only a badge as a hint (app.js opens it)
       announce(event.helper ? `${t('approval.helper', { n: event.helper })} ${event.title || t('chat.approvalWaiting')}` : event.title || t('chat.approvalWaiting'));
-      showApproval(event.approvalId, event.host, { action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, alwaysLabel: event.alwaysLabel, alwaysTitle: event.alwaysTitle, denyLabel: event.denyLabel, helper: event.helper });
+      showApproval(event.approvalId, event.host, { project: event.project, action: event.action, title: event.title, query: event.query, args: event.args, tainted: event.tainted, noAlways: event.noAlways, upload: event.upload, note: event.note, fields: event.fields, detail: event.detail, allowLabel: event.allowLabel, alwaysLabel: event.alwaysLabel, alwaysTitle: event.alwaysTitle, denyLabel: event.denyLabel, helper: event.helper });
       moveWorkingToEnd();
       syncWorking();
       break;
@@ -2505,7 +2505,10 @@ const PERM_ICONS = { // a shield (asks first), a bolt (acts on its own), a warni
   auto: '<path d="M9 1.8 3.6 9h4l-.6 5.2L12.4 7h-4z"/>',
   bypass: '<path d="M8 2 14.2 13H1.8z"/><path d="M8 6.3v3.2M8 11.3v.2"/>',
 };
-let permMode = 'ask';
+let permMode = 'ask'; // the level the open chat runs at: its project's own, else the global one
+let permGlobal = 'ask'; // Settings → AI's level
+let permProject = null; // [project permissions] the open chat's project: { id, name, permissionMode | undefined }
+let permScope = null; // [project permissions] { mode }: a level chosen in a project's chat, waiting for "Only in <project>" / "Everywhere"
 let permArmed = null; // { mode, timer }: the level waiting for its confirming click
 const permMenu = Object.assign(document.createElement('div'), { className: 'perm-menu', id: 'perm-menu', hidden: true });
 permMenu.setAttribute('role', 'menu');
@@ -2526,6 +2529,18 @@ permSettings.innerHTML = '<span class="perm-name"></span>';
 permSettings.firstChild.textContent = t('sidebar.perm.settings');
 permSettings.onclick = () => { closePermMenu(false); window.lumenPrefs?.openSettingsPage('ask-before-acting'); };
 permMenu.append(permSettings);
+// [project permissions] In a project's chat a new level asks where it applies: this project only, or everywhere (which also ends the
+// project's own level, so the chat follows it). The line under the levels says where the current one comes from.
+const permFrom = Object.assign(document.createElement('p'), { className: 'perm-note perm-from', id: 'perm-from', hidden: true });
+const permScopeRow = Object.assign(document.createElement('div'), { className: 'perm-scope', id: 'perm-scope', hidden: true });
+const permScopeText = Object.assign(document.createElement('p'), { className: 'perm-note' });
+const permScopeProject = Object.assign(document.createElement('button'), { type: 'button', className: 'btn perm-scope-project', id: 'perm-scope-project' });
+const permScopeAll = Object.assign(document.createElement('button'), { type: 'button', className: 'btn perm-scope-all', id: 'perm-scope-all', textContent: t('sidebar.perm.scope.all') });
+permScopeRow.append(permScopeText, permScopeProject, permScopeAll);
+permScopeProject.onclick = () => applyPermScope('project');
+permScopeAll.onclick = () => applyPermScope('all');
+permMenu.prepend(permFrom);
+permMenu.append(permScopeRow);
 permMenu.append(Object.assign(document.createElement('p'), { className: 'perm-note', id: 'perm-note', textContent: t('sidebar.perm.note') }));
 const permButton = $('auto-allow');
 (permButton.closest('.sidebar-head') || permButton.parentElement).append(permMenu);
@@ -2594,6 +2609,17 @@ ${t('sidebar.perm.bypass.desc')}`; // what Bypass means, on hover
   let stateLabel = permButton.querySelector('.perm-state');
   if (!stateLabel) { stateLabel = Object.assign(document.createElement('span'), { className: 'perm-state' }); permButton.append(stateLabel); }
   stateLabel.textContent = permArmed ? t('sidebar.perm.armed', { mode: t(`sidebar.perm.short.${next}`) }) : t(`sidebar.perm.short.${permMode}`);
+  const fromProject = Boolean(permProject?.permissionMode);
+  if (fromProject) { tip += `
+${t('sidebar.perm.fromProject', { mode: t(`sidebar.perm.${permMode}`), project: permProject.name })}`; permButton.title = tip; } // "Bypass permissions, from project Thesis"
+  permButton.dataset.from = fromProject ? 'project' : '';
+  permFrom.hidden = !fromProject;
+  permFrom.textContent = fromProject ? t('sidebar.perm.fromProject', { mode: t(`sidebar.perm.${permMode}`), project: permProject.name }) : '';
+  permScopeRow.hidden = !permScope;
+  if (permScope) {
+    permScopeText.textContent = t('sidebar.perm.scope', { mode: t(`sidebar.perm.${permScope.mode}`) });
+    permScopeProject.textContent = t('sidebar.perm.scope.project', { project: permProject?.name || '' });
+  }
   permBadge.hidden = permMode !== 'bypass';
   permBadge.title = tip;
   permBadge.dataset.mode = permMode;
@@ -2606,9 +2632,38 @@ ${t('sidebar.perm.bypass.desc')}`; // what Bypass means, on hover
     item.querySelector('.perm-desc').textContent = armed ? t('sidebar.perm.confirm') : t(`sidebar.perm.${mode}.desc`);
   }
 }
+const effectivePerm = () => (PERM_MODES.includes(permProject?.permissionMode) ? permProject.permissionMode : permGlobal);
+// The global level (Settings → AI). In a project's chat, chooseMode asks first (permScope) and comes back through applyPermScope.
 async function setPermMode(mode) {
   const got = await window.assistant.permissionMode?.(mode);
-  permMode = PERM_MODES.includes(got) ? got : permMode;
+  if (PERM_MODES.includes(got)) permGlobal = got;
+  permMode = effectivePerm();
+  renderPerm();
+}
+// [project permissions] "Only in <project>" sets the project's own level; "Everywhere" sets the global one and ends the project's own.
+async function applyPermScope(where) {
+  const mode = permScope?.mode;
+  const project = permProject;
+  permScope = null;
+  if (!mode || !project) { renderPerm(); return; }
+  if (where === 'project') {
+    const out = await window.assistant.projectPermissions?.(project.id, { permissionMode: mode }).catch(() => null);
+    if (out && permProject?.id === project.id) permProject = { ...permProject, permissionMode: out.permissionMode };
+  } else {
+    if (project.permissionMode) {
+      const out = await window.assistant.projectPermissions?.(project.id, { permissionMode: null }).catch(() => null);
+      if (out && permProject?.id === project.id) permProject = { ...permProject, permissionMode: undefined };
+    }
+    await setPermMode(mode);
+  }
+  permMode = effectivePerm();
+  closePermMenu();
+}
+// The chat shown changed (applySync): its project, with its own level if it chose one.
+function permProjectShown(project) {
+  permProject = project?.id ? { id: project.id, name: String(project.name || ''), permissionMode: PERM_MODES.includes(project.permissionMode) ? project.permissionMode : undefined } : null;
+  permScope = null;
+  permMode = effectivePerm();
   renderPerm();
 }
 const nextMode = () => PERM_MODES[(PERM_MODES.indexOf(permMode) + 1) % PERM_MODES.length];
@@ -2625,6 +2680,12 @@ function chooseMode(mode) {
     return;
   }
   disarmPerm();
+  if (permProject) { // [project permissions] where does it apply? (the menu opens to ask)
+    permScope = { mode };
+    if (permMenu.hidden) openPermMenu(); else renderPerm();
+    permScopeProject.focus();
+    return;
+  }
   setPermMode(mode);
   closePermMenu();
 }
@@ -2637,6 +2698,7 @@ function openPermMenu() {
 function closePermMenu(refocus = true) {
   if (permMenu.hidden) return;
   permMenu.hidden = true;
+  permScope = null; // (closing without a choice changes nothing)
   disarmPerm();
   permButton.setAttribute('aria-expanded', 'false');
   renderPerm();
@@ -2656,8 +2718,9 @@ permMenu.addEventListener('keydown', (e) => {
 });
 // A card's "Allow on all sites" turns Auto-allow on (it never lowers Bypass).
 const setAutoAllow = (on) => setPermMode(on ? 'auto' : 'ask');
-window.addEventListener('lumen:permission-mode', (e) => { if (PERM_MODES.includes(e.detail)) { permMode = e.detail; renderPerm(); } }); // Settings → AI changed it
-window.assistant.permissionMode?.().then((mode) => { if (PERM_MODES.includes(mode)) permMode = mode; renderPerm(); });
+window.addEventListener('lumen:permission-mode', (e) => { if (PERM_MODES.includes(e.detail)) { permGlobal = e.detail; permMode = effectivePerm(); renderPerm(); } }); // Settings → AI changed it
+window.assistant.onPermProject?.((p) => { if (p && permProject?.id === p.id) { permProject = { ...permProject, name: p.name || permProject.name, permissionMode: PERM_MODES.includes(p.permissionMode) ? p.permissionMode : undefined }; permMode = effectivePerm(); renderPerm(); } }); // the project page changed it
+window.assistant.permissionMode?.().then((mode) => { if (PERM_MODES.includes(mode)) permGlobal = mode; permMode = effectivePerm(); renderPerm(); });
 renderPerm();
 
 // ---------- inline approval before Claude acts on a new site ----------
@@ -2720,7 +2783,7 @@ function showHelperCard(e) {
   if (ended) card.querySelector('.helper-card-stop').hidden = true;
 }
 
-function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, alwaysLabel, alwaysTitle, denyLabel, warn, note, fields, alwaysFor } = {}) {
+function showApprovalCard(approvalId, host, { action, title: openTitle, query, args, tainted, noAlways, upload, phase, undone, detail: cardDetail, allowLabel, alwaysLabel, alwaysTitle, denyLabel, warn, note, fields, alwaysFor, project } = {}) {
   if (action === 'content-loss') return showContentLossApproval(approvalId, host, { title: openTitle, detail: args, phase, undone }); // [content guard]
   if (action === 'upload' || action === 'upload-pick') return showUploadApproval(approvalId, host, { action, upload }); // [uploads]
   if (action === 'tool') return showToolApproval(approvalId, host, { title: openTitle, args, tainted, noAlways, note, fields, alwaysFor, allowLabel, denyLabel, warn, detail: note === 'close' ? cardDetail : undefined }); // ([close guard] the AI closing a tab of the user's: its own sentence under the title)
@@ -2767,14 +2830,17 @@ function showApprovalCard(approvalId, host, { action, title: openTitle, query, a
     allow.disabled = true;
     window.assistant.approve?.(approvalId, ok);
   };
-  // Always allow: this one, and turns on auto-allow for every site (the bolt in the sidebar head).
-  const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: t('approval.allSites') });
-  always.title = t('approval.always.title');
+  // Always allow: this one, and turns on auto-allow for every site (the bolt in the sidebar head). [project permissions] In a project's
+  // chat (a plain site card: `project` is set) it is "Always allow <host> in <project>" instead: that site, for the project's chats only.
+  const inProject = Boolean(project) && !opening && !scripting && !pdf && query === undefined;
+  const always = Object.assign(document.createElement('button'), { type: 'button', className: 'btn approval-always', textContent: inProject ? t('approval.project.always', { host, project }) : t('approval.allSites') });
+  always.title = inProject ? t('approval.project.always.title', { host, project }) : t('approval.always.title');
   deny.onclick = () => answer(false);
   allow.onclick = () => answer(true);
   // Every site, from now on: a second click confirms (the first says what it means, in the button itself).
   let alwaysArmed = false;
   always.onclick = () => {
+    if (inProject) { always.disabled = true; answer('always'); return; }
     if (!alwaysArmed) { alwaysArmed = true; always.textContent = t('approval.allSites.confirm'); always.classList.add('armed'); return; }
     always.disabled = true; setAutoAllow(true); answer(true);
   };
@@ -3295,6 +3361,7 @@ function applySync(view) {
   if (sameChat || ownRun) line.claim(shownChatId); // (what was typed before the chat had a name is the chat of the run being drawn, not of any chat shown next)
   runOwner = null;
   window.planModeUI?.chatShown(view, sameChat); // [plan mode] the chip follows the chat
+  permProjectShown(view?.project); // [project permissions] the bolt menu follows the chat's project
   if (sameChat) saveDraft();
   // An empty chat that was never saved is gone when its tab is left (its file never existed), and the tab comes back to a new empty chat with an id of
   // its own: the text typed in the box of the empty chat left last moves to it. (Otherwise it sat under a dead id and the box came back empty.)

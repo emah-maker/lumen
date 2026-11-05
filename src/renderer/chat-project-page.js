@@ -539,6 +539,50 @@
     return root;
   }
 
+  // ---- [project permissions] how much the AI asks in this project's chats, and the sites allowed with Always in them
+  // (features/permission-mode.js; kept on this computer only). "Use default" follows Settings → AI. Background tasks bypass only with
+  // Settings → AI's own background switch (a project can't turn that on), and the list removes a site with two clicks.
+  function permissionsCard(data) {
+    const root = card(tr('projectws.perm', 'Permissions'), { tip: tr('projectws.perm.note', 'How much the AI asks in this project’s chats. Use default follows Settings → AI. Kept on this computer only: it is not synced or written to the project’s folder.'), className: 'pjp-perm' });
+    const say = status();
+    const save = async (patch) => {
+      const out = await page.api.projectPermissions?.(page.id, patch).catch(() => null);
+      say.textContent = out ? tr('projectws.saved', 'Saved.') : tr('chatpage.project.failed', 'Could not save the project.');
+      if (out) { data.project = out; draw(); }
+    };
+    function draw() {
+      const p = data.project || {};
+      const mode = el('select', { className: 'pjp-select', id: 'pjp-perm-mode' });
+      mode.setAttribute('aria-label', tr('projectws.perm.mode', 'Asking before it acts'));
+      for (const [v, label] of [['', tr('projectws.perm.default', 'Use default (Settings → AI)')], ['ask', tr('settings.ai.permissionMode.ask', 'Ask')], ['auto', tr('settings.ai.permissionMode.auto', 'Auto-allow actions')], ['bypass', tr('settings.ai.permissionMode.bypass', 'Bypass permissions')]]) mode.append(el('option', { value: v, textContent: label }));
+      mode.value = ['ask', 'auto', 'bypass'].includes(p.permissionMode) ? p.permissionMode : '';
+      mode.onchange = () => save({ permissionMode: mode.value || null });
+      const parts = [el('label', { className: 'pjp-field' }, el('span', { textContent: tr('projectws.perm.mode', 'Asking before it acts') }), mode)];
+      if (p.permissionMode === 'bypass') {
+        parts.push(el('p', { className: 'pjp-note pjp-warn', textContent: tr('sidebar.perm.bypass.desc', 'Skips every card.') }));
+        parts.push(note(tr('projectws.perm.background', 'Background tasks and routines of this project bypass only if Settings → AI → “Bypass in background tasks and routines too” is also on.')));
+      }
+      const hosts = Array.isArray(p.allowedHosts) ? p.allowedHosts : [];
+      parts.push(el('h3', { className: 'pjp-sub', textContent: tr('projectws.perm.sites', 'Sites always allowed here') }));
+      if (!hosts.length) parts.push(note(tr('projectws.perm.sites.none', 'None yet. “Always allow … in this project” on a site’s card adds it here; other chats still ask.')));
+      else {
+        const list = el('ul', { className: 'pjp-list', id: 'pjp-perm-sites' });
+        list.setAttribute('aria-label', tr('projectws.perm.sites', 'Sites always allowed here'));
+        for (const h of hosts) {
+          const li = el('li', { className: 'pjp-row' });
+          li.dataset.host = h;
+          li.append(el('div', { className: 'pjp-row-main' }, el('span', { className: 'pjp-row-text', textContent: h })),
+            twoStep(tr('projectws.remove', 'Remove'), tr('projectws.removeAgain', 'Click again to remove'), () => save({ allowedHosts: hosts.filter((x) => x !== h) }), 'pjp-row-btn'));
+          list.append(li);
+        }
+        parts.push(list);
+      }
+      root.body.replaceChildren(...parts, say);
+    }
+    draw();
+    return root;
+  }
+
   // ---- memory: what the AI saved in this project's chats
   function memoryCard(data) {
     const list = el('ul', { className: 'pjp-list' });
@@ -907,7 +951,7 @@
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
-    const side = el('aside', { className: 'pjp-side' }, instructions, sourcesCard(data), folderCard(data), defaultsCard(data), memoryCard(data));
+    const side = el('aside', { className: 'pjp-side' }, instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
     page.side = side;
     page.sub();

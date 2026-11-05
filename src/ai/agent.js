@@ -5272,8 +5272,11 @@ ${prompt}` : prompt), historyImages: [] };
     for (let asked = 0; asked < 3; asked++) {
       const host = siteOf();
       if (!host || hosts.has(keyOf(host)) || planned(host)) return;
+      if (!scripted && this.projectHostOk(host)) { hosts.add(host); continue; } // [project permissions] "Always" allowed in this chat's project
       // (callers acting on the same new site at once, such as acting helpers, share one card: sharedAsk; a host approved meanwhile asks nothing)
-      const ok = this.autoAllows(gate) ? true : await this.sharedAsk(this.interactAsks, hosts, keyOf(host), signal, () => (hosts.has(keyOf(host)) ? Promise.resolve(true) : this.askApproval(host, emit, signal, { action: scripted ? 'script' : 'interact', who })));
+      const project = scripted || gate.external ? '' : this.projectName(); // [project permissions] the card's Always is for the project then
+      const ok = this.autoAllows(gate) ? true : await this.sharedAsk(this.interactAsks, hosts, keyOf(host), signal, () => (hosts.has(keyOf(host)) ? Promise.resolve(true) : this.askApproval(host, emit, signal, { action: scripted ? 'script' : 'interact', who, project })));
+      if (ok === 'always' && project) { try { this.browser.projects.allowHost(this.permChat(), host); } catch { /* this chat still has it */ } }
       if (!ok) throw new Error(scripted
         ? `The user did not allow ${who} to run scripts on ${host} (a script can send page content to any site). Use read_page, find or click instead, or ask them.`
         : `The user did not allow ${who} to interact with ${host}. Ask them what to do instead; reading the page is still fine.`);
@@ -5822,14 +5825,20 @@ ${prompt}` : prompt), historyImages: [] };
   // Settings → AI → "Agents in their own window don't ask" on (noAsk, set by features/ai-agents.js mcpCallTool). The user's own
   // blocks (AI off on a site, a tab kept off, hands-off mode) are checked before any card and still apply.
   autoAllows({ external = false, noAsk = false } = {}) {
-    return Boolean(noAsk) || (!external && Boolean(this.browser.autoApprove?.()));
+    return Boolean(noAsk) || (!external && Boolean(this.browser.autoApprove?.(this.permChat())));
   }
+
+  // [project permissions] The chat a permission question is about (its project may choose its own level and allow sites "Always"):
+  // the running task's chat, else the sidebar's. main.js resolves its project (features/permission-mode.js effectiveMode).
+  permChat() { return taskScope.getStore()?.chat || this.messages || null; }
+  projectName() { try { return String(this.browser.projects?.name?.(this.permChat()) || ''); } catch { return ''; } }
+  projectHostOk(host) { try { return Boolean(this.browser.projects?.hostAllowed?.(this.permChat(), host)); } catch { return false; } }
 
   // [bypass permissions] Settings → AI → "Bypass permissions" (the bolt menu in the sidebar head): askApproval answers every card
   // "allow" itself, for every engine and for outside agents too, and shows a step saying what it allowed. Only the card that needs
   // the user's hands (the "Choose file…" picker) still asks. A background task never bypasses (nobody is there to watch).
   bypassOn() {
-    return Boolean(this.browser.bypassPermissions?.());
+    return Boolean(this.browser.bypassPermissions?.(this.permChat())); // (the chat's project may choose its own level)
   }
 
   // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
@@ -5837,6 +5846,7 @@ ${prompt}` : prompt), historyImages: [] };
   // `card` ({ title, query }) says more on the card, for a search; such a card is never shared.
   async askOpen(host, { emit, signal, hosts, who, external, noAsk }, card = null) {
     if (hosts.has(host)) return true;
+    if (!external && !card && this.projectHostOk(host)) { hosts.add(host); return true; } // [project permissions] "Always" allowed in the chat's project
     if (this.autoAllows({ external, noAsk })) {
       hosts.add(host);
       return true;
@@ -6399,7 +6409,7 @@ ${out.text}${note}
   // (or `title`, with the search `query` for web_search); 'script' (run_script in a tainted run) is
   // "<who> wants to run a script on <host>"; otherwise the card is the usual "Allow … to interact
   // with <host>?".
-  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, guarded = false, fields = null, allowLabel = null, denyLabel = null, warn = null, detail = null, alwaysFor = null } = {}) {
+  askApproval(host, emit, signal, { action = 'interact', who = null, title = null, query = null, args = null, tainted = false, noAlways = false, upload = null, note = null, guarded = false, fields = null, allowLabel = null, denyLabel = null, warn = null, detail = null, alwaysFor = null, project = '' } = {}) {
     // [bypass permissions] Every card is the user's to answer, unless they chose to bypass them: then the answer is allow and a
     // step shows what was allowed. 'upload-pick' needs a file only the user can choose, so it still asks. Every other card is
     // answered: 'app' cards (Word and other apps: read, change, save), a connector's write or a Gmail send, a memory save after
@@ -6432,7 +6442,7 @@ ${out.text}${note}
         ? { type: 'approval', approvalId, host, action, title: title || `Share ${host} with the AI?` }
       : action === 'script'
         ? { type: 'approval', approvalId, host, action, title: `${who || 'Claude'} wants to run a script on ${host}` }
-        : { type: 'approval', approvalId, host });
+        : { type: 'approval', approvalId, host, ...(project ? { project } : {}) }); // ([project permissions] project: its Always is "on <host> in <project>")
     return new Promise((resolve, reject) => {
       const onAbort = () => {
         this.pendingApprovals.delete(approvalId);

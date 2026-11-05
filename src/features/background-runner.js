@@ -31,6 +31,7 @@ const quiet = require('./agents-quiet');
 const { LIMIT_NOTICE } = require('../ai/loop-guard');
 const bg = require('./background-agents');
 const routines = require('./routines');
+const permissionModes = require('./permission-mode'); // [project permissions] a project's own level for its tasks
 const webhooks = () => require('./routine-webhooks'); // (loaded, and the listener started, only when the user turns routine web links on)
 
 const WORK_TAB = 1; // the id the agent sees for its one tab
@@ -57,6 +58,11 @@ class TaskAgent extends Agent {
     const who = opts.who || 'The AI';
     const ok = await this.askApproval(risk.host, emit, signal, { action: 'tool', who, title: `${who} wants to ${risk.what}`, args: risk.detail });
     if (!ok) throw new Error(`The user did not allow ${who} to ${risk.what}. Do not try again: finish with what you have and say that this step needs the user.`);
+  }
+
+  // [project permissions] Both background switches, and for a task of a project that chose its own level, that level being Bypass.
+  bypassOn() {
+    return super.bypassOn() && this.browser.projectLetsBypass?.() !== false;
   }
 
   // The run scope a CLI engine's MCP calls use (set by agent.inTask for a run with a chat: runCli).
@@ -205,7 +211,7 @@ function create(deps) {
   }
 
   // ---- creating, editing, deleting
-  function createTask({ title, prompt, schedule, sites, model, signedIn, allowMcp, confirmed, pageUrl, startUrl }) {
+  function createTask({ title, prompt, schedule, sites, model, signedIn, allowMcp, confirmed, pageUrl, startUrl, projectId }) {
     if (!settings().enabled) throw new Error(deps.t('tasks.error.disabled'));
     if (confirmed !== true) throw new Error(deps.t('tasks.error.confirm'));
     if (!bg.fitsAnother(tasks)) throw new Error(deps.t('tasks.error.full'));
@@ -214,6 +220,7 @@ function create(deps) {
     if (!chosen) throw new Error(deps.t('tasks.error.noModel'));
     // The user's MCP tools reach API models only (a CLI run has Lumen's browser tools and nothing else).
     const task = bg.makeTask({ title, prompt, model: chosen, schedule, allowedSites: Array.isArray(sites) ? sites : bg.allowedSitesFor(prompt, pageUrl), signedIn, allowMcp: Boolean(allowMcp) && Boolean(deps.externalTools) && !isLocalEngine(chosen), pageUrl, startUrl, now: now() });
+    if (typeof projectId === 'string' && deps.projectOf?.(projectId)) task.projectId = projectId; // [project permissions] runs at that project's level
     tasks.push(task);
     deliberate = true;
     tasks = bg.capTasks(tasks);
@@ -562,8 +569,11 @@ function create(deps) {
       aiOff: (url) => deps.aiOff?.(url),
       autoApprove: () => false, // never, whatever the sidebar's switch says
       // [bypass permissions] Off unless the user also chose "Bypass in background tasks and routines" (bypassBackground): nobody is
-      // there to watch an unattended task, so Bypass alone never reaches it.
+      // there to watch an unattended task, so Bypass alone never reaches it. [project permissions] A task of a project that chose its own
+      // level also needs that level to be Bypass (features/permission-mode.js projectLetsBypass): a project on Ask or Auto-allow keeps its
+      // tasks asking. The background switch itself stays the Settings page's alone.
       bypassPermissions: () => { const s = deps.readSettings(); return s.bypassPermissions === true && s.bypassBackground === true; },
+      projectLetsBypass: () => permissionModes.projectLetsBypass(task.projectId ? deps.projectOf?.(task.projectId) : null),
       maxSteps: () => (rt.kind === 'judge' ? 8 : bg.backgroundStepLimit(deps.maxSteps?.())),
     };
   }
