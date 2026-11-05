@@ -336,7 +336,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -6300,6 +6300,8 @@ const projectForChat = (id) => { try { const pid = pendingProject.get(id); retur
 // [project workspace] What goes to the AI for a project's chat, in the context block (never the fixed system prompt, which has no room): the
 // instructions (4,000 characters at most) and the index of the project's files and pinned pages (2,500 at most: ai/project-context.js);
 // the AI reads the rest with the project_files tool.
+// [project permissions] The level a chat runs at: its project's own (Ask / Auto-allow / Bypass), else Settings → AI's (features/permission-mode.js).
+const permissionModeFor = (messages) => permissionModes.effectiveMode(readSettings(), messages ? projectForChat(chatIdOfMessages(messages)) : null);
 const projectAllows = (messages, what) => { const d = projectForChat(chatIdOfMessages(messages))?.defaults; return what === 'connectors' ? d?.connectors !== false : what === 'mcp' ? d?.mcp !== false : true; };
 const projectBlockFor = (id) => {
   try {
@@ -6527,7 +6529,7 @@ function switchChat(id, { ensure = false, quiet = false, loaded = null } = {}) {
 // [project workspace] The chat header's chip (the project's name), and the project's plan default for an empty chat.
 function projectChipFor(id) {
   const p = projectForChat(id);
-  return p ? { project: { id: p.id, name: p.name, ...(p.defaults?.plan ? { plan: true } : {}) } } : {};
+  return p ? { project: { id: p.id, name: p.name, ...(p.defaults?.plan ? { plan: true } : {}), ...(permissionModes.projectModeOf(p) ? { permissionMode: p.permissionMode } : {}) } } : {}; // (permissionMode: the bolt menu says "from <project>")
 }
 function chatView() {
   const run = chatRuns.get(chatId);
@@ -9680,8 +9682,8 @@ const agent = new Agent({
   downloadList: () => downloads.list, // [ai downloads] Lumen's own download list: the AI is told each file's path and size (features/ai-downloads.js)
   fileShared: (url) => sharedFiles.has(url), shareFile: (url) => { sharedFiles.add(url); }, // [screen context] a local file the user allowed "always"
   aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), tabHeld: (id) => { const found = tabAnywhere(id); const w = found?.rec?.win; return handsOff.stillHeld(found?.t?.userHeld, { focused: Boolean(w && !w.isDestroyed() && w.isFocused()), holdMs: AGENT_HOLD_MS }); }, tabGroupOf: inRun(tabGroupOf), setTabGroup: inRun(setTabGroup), // [ai controls; agent window] tabHeld: the user took the tab over
-  autoApprove: () => TEST || readSettings().askBeforeActing === false,
-  bypassPermissions: () => readSettings().bypassPermissions === true, // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
+  autoApprove: (messages) => TEST || permissionModeFor(messages) !== 'ask', // [project permissions] the chat's project's own level, else the global one
+  bypassPermissions: (messages) => permissionModeFor(messages) === 'bypass', // [bypass permissions] agent.js askApproval (never under TEST by itself: tests set it)
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI → helpers: the delegate tool is offered; which model they use (agent.js delegate)
@@ -9729,6 +9731,16 @@ const agent = new Agent({
       return { files: store.list(project.id), links: project.links || [], readText: (f) => store.readText(project.id, f.id), readImage: (f) => store.readImage(project.id, f.id) };
     },
     allows: projectAllows,
+    // [project permissions] Sites allowed with "Always" in the chat's project: its chats only (features/permission-mode.js)
+    name: (messages) => projectForChat(chatIdOfMessages(messages))?.name || '',
+    hostAllowed: (messages, host) => permissionModes.hostAllowed(projectForChat(chatIdOfMessages(messages)), host),
+    allowHost: (messages, host) => {
+      const p = projectForChat(chatIdOfMessages(messages));
+      const h = permissionModes.cleanHost(host);
+      if (!p || !h) return false;
+      const saved = chats().setProjectPermissions(p.id, { allowedHosts: [...(p.allowedHosts || []), h] });
+      return Boolean(saved);
+    },
   },
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
@@ -9810,6 +9822,7 @@ ipcMain.handle('usage:get', (_e, options) => usage.summary({ refresh: Boolean(op
 let routinesSoon = () => {}; // [widgets] the home page's Routines card looks again when a routine changes; set once the widgets exist
 const bgTasks = require('./features/background-runner').create({
   file: path.join(app.getPath('userData'), 'background-tasks.json'),
+  projectOf: (id) => { try { return chats().projects().find((p) => p.id === id) || null; } catch { return null; } }, // [project permissions] a task of a project runs at its level
   now: TEST ? () => Date.now() + (global.__clockOffset || 0) : undefined, // (tests move the clock forward: global.__clockOffset, ms)
   connectors: connectorsFacade, connectedIds: () => (anyConnected() ? connectorsSvc().connectedIds() : []), // routines read the connected services (Gmail, Canvas…)
   routinesChanged: () => { routinesSoon(); missionSoon(); }, // (and an open lumen://tasks page)
@@ -12877,6 +12890,19 @@ ipcMain.handle('chats:project-defaults', (_e, id, defaults) => {
   const out = chats().saveProject({ id: p.id, name: p.name, defaults: { model: String(d.model || '').slice(0, 120), plan: d.plan === true, connectors: d.connectors !== false, mcp: d.mcp !== false } });
   if (out) projectChanged();
   return out && projectPage(out);
+});
+// [project permissions] A project's own level (Ask / Auto-allow / Bypass, or null: "Use default") and the sites allowed with Always in it (features/permission-mode.js projectPatchOf; kept on this computer only). Every view's bolt menu hears
+// of it (agent:perm-project): the open chat's project may be this one.
+ipcMain.handle('chats:project-permissions', (_e, id, patch) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const out = chats().setProjectPermissions(p.id, patch && typeof patch === 'object' ? patch : {});
+  if (!out) return null;
+  projectChanged();
+  const payload = { id: out.id, name: out.name, permissionMode: permissionModes.projectModeOf(out) };
+  const to = new Set([ui(), ...[...winRecs].filter(rcAlive).map((r) => r.win.webContents), ...(chatPageRt?.surfaces() || [])]);
+  for (const wc of to) if (wc && !wc.isDestroyed()) wc.send('agent:perm-project', payload);
+  return projectPage(out);
 });
 // Tab menu → Add to project: one entry per project (the 20 most recent).
 const projectMenuItems = (tab) => {

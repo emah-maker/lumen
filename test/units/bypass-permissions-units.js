@@ -216,7 +216,9 @@ const CASES = [
   // The main process wires it: one switch (the IPC), read through the agent's browser
   {
     const main = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
-    check('main: the agent reads bypassPermissions from the saved setting (never from the test flag)', /bypassPermissions: \(\) => readSettings\(\)\.bypassPermissions === true/.test(main));
+    // ([project permissions] the chat's project may choose its own level: permissionModeFor reads the saved setting and the project record)
+    const modeFor = (/const permissionModeFor = [^\n]*/.exec(main) || [''])[0];
+    check('main: the agent reads bypassPermissions from the saved setting or the chat’s project (never from the test flag)', /bypassPermissions: \(messages\) => permissionModeFor\(messages\) === 'bypass'/.test(main) && /permissionModes\.effectiveMode\(readSettings\(\), /.test(modeFor) && !/TEST/.test(modeFor), modeFor);
     check('main: the bolt menu and Settings have one IPC, allowed for the UI and the chat page', /ipcMain\.handle\('agent:permission-mode'/.test(main) && /'agent:permission-mode'/.test(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'chat-page.js'), 'utf8')));
   }
 

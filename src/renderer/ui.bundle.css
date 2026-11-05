@@ -1429,6 +1429,9 @@ box-shadow:0 0 0 2px var(--toolbar-bg, var(--surface));
 .perm-item.armed{background:var(--danger-soft);}
 .perm-item.armed .perm-desc{color:var(--text);font-weight:600;}
 .perm-note{margin:var(--sp-2) var(--sp-5) var(--sp-3);font-size:11px;line-height:1.35;color:var(--muted);}
+.perm-from{margin-top:var(--sp-3);color:var(--text);font-weight:600;}
+.perm-scope{display:flex;flex-wrap:wrap;gap:var(--sp-2);padding:0 var(--sp-5) var(--sp-3);}
+.perm-scope .perm-note{flex-basis:100%;margin:var(--sp-2) 0 0;color:var(--text);}
 .bypass-badge{flex:none;display:flex;justify-content:flex-end;min-width:0;margin:0 0 0 auto;padding:0;border:none;background:none;font:inherit;cursor:pointer;}
 .bypass-badge[hidden]{display:none;}
 .bypass-badge .bb-pill{display:inline-flex;align-items:center;gap:var(--sp-2);height:20px;max-width:100%;box-sizing:border-box;padding:0 var(--sp-4) 0 var(--sp-3);border-radius:var(--r-xl);background:color-mix(in srgb, var(--danger) 14%, var(--surface));box-shadow:inset 0 0 0 1px var(--danger);color:var(--text);font-size:11px;font-weight:600;line-height:1;}

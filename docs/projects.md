@@ -24,6 +24,7 @@ The browser's AI sidebar uses the same projects. A strip under its header shows 
   - Pages pinned in earlier versions show up here unchanged; one with no title shows its site and path, and Re-read gives it a title.
 - **Memory**: when Memory is on, notes the AI saves in a project chat belong to that project only. They show on the project's page, where you can forget them.
 - **Defaults**: a model for new chats, plan-first, and switches for connectors and MCP tools.
+- **Permissions**: how much the AI asks in the project's chats (**Use default** follows Settings → AI; or Ask, Auto-allow actions, Bypass permissions), and the sites allowed with **Always allow <site> in <project>** on a site card in its chats, each with Remove. The sidebar's bolt menu says "…, from project <name>" while the project's level applies, and choosing a level there in a project's chat asks **Only in <project>** or **Everywhere**. These stay on this computer: they are not synced and not written to `project.json`, so a folder can't switch Bypass on. Background tasks and routines still bypass only with Settings → AI → **Bypass in background tasks and routines too**.
 
 ## How the AI uses them
 
