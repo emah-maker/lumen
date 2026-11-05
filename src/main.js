@@ -11453,21 +11453,14 @@ const chatImages = require('./features/chat-images');
 const screenContext = require('./ai/screen-context'); // [screen context] the chip's x (agent:screen-drop)
 // [versions] What a run did, kept with its reply (agent.stampMessages): the thinking, the steps, the model Auto chose, and when.
 const tabMarker = new Proxy({}, { get: (_t, k) => require('./renderer/tab-marker')[k] }); // [tab chips] [[tab:ID]] (tiny; loaded on first use, not at start-up: the module budget)
-const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] }); // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
+const stepLabelsLib = new Proxy({}, { get: (_t, k) => require('./renderer/step-labels')[k] });
+const reviewTrackLib = new Proxy({}, { get: (_t, k) => require('./renderer/review-track')[k] }); // [review loop] (loaded with the first round, not at start-up) // [step labels] bounds what a step keeps of its input in the saved chat (loaded on the first run, not at start-up)
 function trackRunDetails(run, msg) {
   const d = run.details;
   const touch = (id) => { if (Number.isInteger(id) && id >= 0 && !d.touched.includes(id) && d.touched.length < 24) d.touched.push(id); }; // [activity cards] the card's Tabs list: every tab the turn used, first touched first
   if (msg.type === 'tool') { try { for (const id of tabMarker.stepTabs(msg.name, msg.input)) touch(id); } catch { /* none */ } } else if (msg.type === 'thumb' || msg.type === 'tool_done') touch(msg.tabId);
   if (msg.type === 'skill' && typeof msg.name === 'string') { const list = (d.skills ||= []); if (!list.some((x) => x.name === msg.name) && list.length < 4) list.push({ name: msg.name, title: String(msg.title || msg.name) }); return; } // [skills] which skill the reply used, kept with it
-  if (msg.type === 'review' && Number.isFinite(msg.score)) { // [review loop] the score track, kept with the reply
-    const r = (d.review ||= { bar: msg.bar, title: '', rounds: [] });
-    r.bar = msg.bar;
-    if (msg.title) r.title = msg.title;
-    const round = { round: msg.round, score: msg.score, met: msg.met === true };
-    const at = r.rounds.findIndex((x) => x.round === msg.round);
-    if (at >= 0) r.rounds[at] = round; else if (r.rounds.length < 20) r.rounds.push(round);
-    return;
-  }
+  if (msg.type === 'review') { d.review = reviewTrackLib.merge(d.review, msg); return; } // [review loop] the score track, kept with the reply (renderer/review-track.js: what the card shows)
   if (msg.type === 'agent' && typeof msg.id === 'string') { // [agents card] each subagent's latest state, kept with the reply (a reopened chat shows the card as it ended)
     const list = (d.agents ||= []);
     const { type, ...snap } = msg;
@@ -11743,7 +11736,7 @@ function stampRun(run, done = null) {
       if (done && d.touched?.length) noteRunTabs(run, d.touched.filter(Number.isInteger)); // (the card's Tabs list: each tab as it last looked, so a closed one still reads after a restart)
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, agents: d.agents?.length ? d.agents : undefined, skills: d.skills?.length ? d.skills : undefined, review: d.review?.rounds?.length ? d.review : undefined, auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, agents: d.agents?.length ? d.agents : undefined, skills: d.skills?.length ? d.skills : undefined, review: (d.review && reviewTrackLib.saved(d.review)) || undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }

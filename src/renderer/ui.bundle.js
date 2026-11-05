@@ -4250,7 +4250,7 @@ if (stepUILoad) return stepUILoad;
 const head = document.head;
 head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
 const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-stepUILoad = script('step-labels.js').then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages));
+stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages));
 return stepUILoad;
 }
 if (window.stepUI) window.stepUI.init(messages);
@@ -5647,7 +5647,7 @@ if (event.chatId && !shownChatId) nameChat(event.chatId);
 const prev = finishedRun?.turn || null;
 beginTurn();
 runId = event.runId;
-window.stepUI?.carryOn(prev, turn);
+window.stepUI?.carryOn(prev, turn, messages);
 return;
 }
 
@@ -7540,7 +7540,7 @@ const tools = Array.isArray(item.tools) ? item.tools : [];
 if (tools.length && item.cards && window.stepUI) out.push(...window.stepUI.restoreNodes(item));
 const agentsNode = item.agents && window.agentsCard ? window.agentsCard.restore(item.agents) : null;
 const actCard = agentsNode ? [...out].reverse().find((n) => n.classList?.contains('act-card')) : null;
-if (agentsNode && actCard) window.agentsCard.into(actCard, agentsNode); else if (agentsNode) out.push(agentsNode);
+if (agentsNode && actCard) { window.agentsCard.into(actCard, agentsNode); window.stepUI?.agentsRestored?.(actCard); } else if (agentsNode) out.push(agentsNode);
 else if (item.steps || tools.length) {
 const count = item.steps || tools.length;
 const label = t(count === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count });

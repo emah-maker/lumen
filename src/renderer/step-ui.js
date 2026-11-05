@@ -205,7 +205,9 @@
     // A card is working until the assistant's narration ends it (or the turn ends), however briefly no step runs between two steps.
     // [background helpers] The reply is over but a helper it started still works (main: a 'helper' event, steps the helper does): the card says so,
     // and is Done when the helper is.
-    if (card.ended && !card.stopped && turn?.helpers?.size && card === turn.cards?.[turn.cards.length - 1]) return turn.approvalsWaiting?.() ? 'approval' : 'helper';
+    // [review loop] So does a reviewer still rating a round of the loop (a pending round on its score track): the loop is not over yet.
+    // An agent of its own still at work does too (a card drawn again from what was saved while one works: no helper event reaches its new turn).
+    if (card.ended && !card.stopped && (turn?.helpers?.size || card.review?.rounds?.some((x) => x.pending) || card.el.querySelector('.agents-card .ag-row[data-state="working"]')) && card === turn?.cards?.[turn.cards.length - 1]) return turn.approvalsWaiting?.() ? 'approval' : 'helper';
     if (card.running > 0 || !card.ended) return (turn?.approvalsWaiting?.() && card === turn.card) ? 'approval' : 'working';
     if (card.stopped) return 'stopped';
     return 'completed';
@@ -864,6 +866,7 @@
       card.ended = true;
       card.sayText = '';
       refreshCard(turn, card);
+      if (card.review) paintReview(card); // ([review loop] a chip still waiting goes with the reply, unless a reviewer works on)
     }
   }
   // The assistant said something before a step: it is that step's live line in the card (not a bubble of its own). True when a card took it.
@@ -903,27 +906,43 @@
   // two turns share the helpers, so the card says Working until the last of them is done. A card that something newer was drawn after is left.
   // The card a turn's steps go in now. A carried turn's card can be drawn again under it (main re-sends the chat when the follow-up starts, and the
   // reply before is drawn from what was saved): the newest card in the chat is that card, and the turn goes on in it.
+  // The same goes for a turn that ended and whose card the chat drew again since (main re-sends a chat that was saved): a helper's or a reviewer's
+  // late events go on in the card as it is on screen now, never into the old one, which is gone.
   function liveCard(turn) {
     if (turn.card?.el.isConnected) return turn.card;
-    if (!turn.carried) return null;
-    const root = turn.working?.parentElement || document.getElementById('messages');
+    const redrawn = turn.cards?.length && !turn.cards[turn.cards.length - 1].el.isConnected;
+    if (!turn.carried && !redrawn) return null;
+    const card = newestCard(turn.working?.parentElement);
+    if (!card) return null;
+    turn.card = card;
+    turn.cards = [card];
+    return card;
+  }
+  // The newest activity card in the chat, while it belongs to the latest exchange (no message of the user's below it).
+  function newestCard(root) {
+    root ||= document.getElementById('messages');
     const all = root ? root.querySelectorAll(':scope > .act-card') : [];
     const last = all[all.length - 1];
     if (!last?._card) return null;
-    turn.card = last._card;
-    turn.cards = [last._card];
+    const users = root.querySelectorAll('.msg.user');
+    const user = users[users.length - 1];
+    if (user && (last.compareDocumentPosition(user) & Node.DOCUMENT_POSITION_FOLLOWING)) return null; // (the user wrote since: that card is an earlier exchange's)
     return last._card;
   }
-  function carryOn(prev, turn) {
-    const card = prev?.cards?.[prev.cards.length - 1];
+  // [review loop] One skill run is one card: a follow-up turn whose reply before was drawn again from what was saved (its card element replaced)
+  // still goes on in that reply's card, the newest one in the chat. root: the chat's message list.
+  function carryOn(prev, turn, root) {
+    let card = prev?.cards?.[prev.cards.length - 1];
+    if (!card?.el.isConnected) card = newestCard(root || turn?.working?.parentElement);
     if (!card || !turn || turn.card || !card.el.isConnected) return false;
     const cards = card.el.parentElement ? [...card.el.parentElement.querySelectorAll(':scope > .act-card, :scope > .helper-card, :scope > .approval')] : [];
     if (cards[cards.length - 1] !== card.el) return false;
     turn.card = card;
     turn.cards = [card];
     turn.carried = true;
-    turn.helpers = (prev.helpers ||= new Map());
-    turn.agents = (prev.agents ||= { card: null }); // ([agents card] one card for both turns' agents too)
+    turn.helpers = prev ? (prev.helpers ||= new Map()) : new Map();
+    turn.agents = prev ? (prev.agents ||= { card: null }) : { card: null }; // ([agents card] one card for both turns' agents too)
+    if (prev && prev.cards?.[prev.cards.length - 1] !== card) { prev.card = card; prev.cards = [card]; } // (the reply before: its late events reach the card on screen too)
     return true;
   }
 
@@ -948,52 +967,73 @@
     paintSkills(card);
     return true;
   }
+  // The score track, live: the bar, the newest score and how it moved since the round before, then a chip per round (a pending one while its reviewer
+  // works), and the reviewer's top fixes while the newest score is below the bar (window.reviewTrack keeps the rounds).
   function paintReview(card) {
+    const RT = window.reviewTrack;
     const r = card.review;
-    if (!r || !r.rounds.length) return;
+    const rounds = (r?.rounds || []).filter((x) => !x.pending || !card.ended || stateOf(card.turnRef, card) === 'helper'); // (a reply that is over shows no chip still waiting)
     let box = card.el.querySelector(':scope > .act-review');
+    if (!r || !rounds.length || !RT) { if (box) box.hidden = true; return; }
     if (!box) {
       box = el('div', { className: 'act-review' });
       box.setAttribute('role', 'group');
       const after = card.el.querySelector(':scope > .act-many') || card.status; // (under the pills, shown or not: they belong to the status line above)
       after.after(box);
     }
-    const last = r.rounds[r.rounds.length - 1];
-    box.dataset.met = last.met ? '1' : '';
-    const head = el('div', { className: 'rv-head' }, el('span', { className: 'rv-title', textContent: tr('card.review.title') }), el('span', { className: 'rv-bar', textContent: tr('card.review.bar', { bar: r.bar }) }));
+    box.hidden = false;
+    const bar = RT.barOf(r);
+    const last = RT.latest(r);
+    const pending = rounds.find((x) => x.pending);
+    const delta = RT.trend(r);
+    box.dataset.met = last?.met ? '1' : '';
+    box.dataset.live = pending ? '1' : '';
+    const head = el('div', { className: 'rv-head' }, el('span', { className: 'rv-title', textContent: tr('card.review.title') }), el('span', { className: 'rv-bar', textContent: tr('card.review.bar', { bar }) }));
+    if (last) {
+      const now = el('span', { className: 'rv-latest', textContent: tr('card.review.latest', { score: last.score }) });
+      if (delta !== null && delta !== 0) now.append(el('span', { className: 'rv-trend ' + (delta > 0 ? 'up' : 'down'), textContent: (delta > 0 ? '▲' : '▼') + Math.abs(delta) }));
+      head.append(now);
+    }
     if (r.title) head.append(el('span', { className: 'rv-what', textContent: r.title }));
     const track = el('ol', { className: 'rv-track' });
-    for (const x of r.rounds) {
-      const li = el('li', { className: 'rv-round' + (x.met ? ' met' : '') });
-      li.title = tr('card.review.roundTitle', { round: x.round, score: x.score, bar: r.bar });
-      li.append(el('span', { className: 'rv-n', textContent: tr('card.review.round', { round: x.round }) }), el('span', { className: 'rv-score', textContent: String(x.score) }));
+    for (const x of rounds) {
+      const li = el('li', { className: 'rv-round' + (x.met ? ' met' : '') + (x.pending ? ' pending' : '') });
+      li.title = x.pending ? tr('card.review.roundPending', { round: x.round }) : tr('card.review.roundTitle', { round: x.round, score: x.score, bar });
+      li.append(el('span', { className: 'rv-n', textContent: tr('card.review.round', { round: x.round }) }), el('span', { className: 'rv-score', textContent: x.pending ? tr('card.review.pending') : String(x.score) }));
       track.append(li);
     }
     const kids = [head, track];
-    if (!last.met && last.fixes?.length) {
+    if (last && !last.met && last.fixes?.length && !pending) {
       const fixes = el('ul', { className: 'rv-fixes' });
       for (const f of last.fixes.slice(0, 3)) fixes.append(el('li', { textContent: f }));
       kids.push(el('div', { className: 'rv-fixes-head', textContent: tr('card.review.fixes') }), fixes);
     }
     box.replaceChildren(...kids);
-    box.setAttribute('aria-label', last.met ? tr('card.review.ariaMet', { score: last.score, bar: r.bar, rounds: r.rounds.length }) : tr('card.review.aria', { score: last.score, bar: r.bar, round: last.round }));
+    box.setAttribute('aria-label', pending ? tr('card.review.ariaPending', { round: pending.round, bar }) : last.met ? tr('card.review.ariaMet', { score: last.score, bar, rounds: rounds.length }) : tr('card.review.aria', { score: last.score, bar, round: last.round }));
   }
+  // A round of the loop: the AI's own review_round (a score and the bar), or one read off a reviewer agent (review-track.js fromAgent: pending while it
+  // works, its score once it answers, cleared when it ends with none).
   function review(turn, event) {
-    if (!turn || !Number.isFinite(event?.score) || !Number.isFinite(event?.bar)) return false;
+    if (!turn || !Number.isFinite(Number(event?.round)) || !(event.pending || event.clear || Number.isFinite(event.score))) return false;
     const card = cardOf(turn);
     if (!card) { ((turn.pending ||= {}).reviews ||= []).push(event); return true; }
     addRound(card, event);
     return true;
   }
   function addRound(card, event) {
-    const r = (card.review ||= { bar: event.bar, title: '', rounds: [] });
-    r.bar = event.bar;
-    if (event.title) r.title = String(event.title).slice(0, 80);
-    const round = { round: Number(event.round) || r.rounds.length + 1, score: event.score, met: event.met === true || event.score >= event.bar, fixes: Array.isArray(event.fixes) ? event.fixes.map(String).slice(0, 5) : [] };
-    const at = r.rounds.findIndex((x) => x.round === round.round);
-    if (at >= 0) r.rounds[at] = round; else r.rounds.push(round);
-    r.rounds.sort((a, b) => a.round - b.round);
+    if (!window.reviewTrack) return;
+    card.review = window.reviewTrack.merge(card.review, event);
     paintReview(card);
+    if (card.turnRef) refreshCard(card.turnRef, card); // (a pending round keeps the card at work; its score may end that)
+  }
+  // A card drawn from what was saved has had its agents put in (chat-actions.js details): a reviewer still at work in this window is its round's
+  // pending chip again (a save keeps only scored rounds), and the card says it is at work.
+  function agentsRestored(cardEl) {
+    const card = cardEl?._card;
+    if (!card || !window.reviewTrack) return;
+    for (const row of cardEl.querySelectorAll('.agents-card .ag-row')) { const e = row._a && window.reviewTrack.fromAgent(row._a); if (e && !e.clear) card.review = window.reviewTrack.merge(card.review, e); }
+    if (card.review) paintReview(card);
+    refreshCard(card.turnRef, card);
   }
   // A card just made takes the skill and the rounds its turn heard before it existed.
   function takePending(turn, card) {
@@ -1125,5 +1165,5 @@
     if (turn) (turn.noteRows ||= []).push(node);
     return false;
   }
-  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard, skill, review };
+  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard, skill, review, agentsRestored };
 })();
