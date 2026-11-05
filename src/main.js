@@ -336,7 +336,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -12947,6 +12947,8 @@ ipcMain.handle('chats:project-memory', (_e, id, change) => {
   } catch (err) { error = String(err?.message || 'Could not change memory.').slice(0, 300); }
   return { ok: !error, error, ...projectMemoryOf(p.id) };
 });
+// [project list] Pin a project (listed first) or archive it (out of the lists; its chats, files and memory stay). True when it changed.
+ipcMain.handle('chats:project-flag', (_e, id, key, on) => { const ok = chats().setProjectFlag(String(id), String(key), on === true); if (ok) projectChanged(); return ok; });
 // A project's settings (its defaults): the model a new chat starts with, plan first, and the user's connectors and MCP tools in its chats.
 ipcMain.handle('chats:project-defaults', (_e, id, defaults) => {
   const p = projectById(String(id));
@@ -12972,7 +12974,7 @@ ipcMain.handle('chats:project-permissions', (_e, id, patch) => {
 // Tab menu → Add to project: one entry per project (the 20 most recent).
 const projectMenuItems = (tab) => {
   try {
-    const list = chats().projects().slice().sort((a, b) => (b.updated || b.created || 0) - (a.updated || a.created || 0)).slice(0, 20);
+    const list = chats().projects().filter((p) => !p.archived).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || (b.updated || b.created || 0) - (a.updated || a.created || 0)).slice(0, 20); // ([project list] pinned first, archived left out)
     if (!list.length) return [];
     const url = tabUrl(tab);
     return [{ label: t('menu.addToProject'), enabled: isWebUrl(url) && !tab.isolated, submenu: list.map((p) => ({ label: menuLabel(p.name, 60), click: () => { const r = addTabToProject(tab, p.id); toast(r.ok ? t(r.already ? 'menu.projectAlready' : 'menu.projectAdded', { name: menuLabel(p.name, 40) }) : t('menu.projectAddFailed')); } })) }];

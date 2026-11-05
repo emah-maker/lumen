@@ -195,8 +195,19 @@
       onPage: (p) => { view = 'chats'; openProjectPage(p.id); },
       onInstructions: (p) => { view = 'chats'; openProjectPage(p.id, { focus: 'instructions' }); },
       onNewChat: (p) => newChatInProject(p),
+      onFlag: (p, key, on) => flagProject(p, key, on),
     });
     drag.refresh();
+  }
+  // [project list] Pin / unpin and archive / bring back a project from its row's ⋯ menu. Archiving shows Undo.
+  async function flagProject(p, key, on) {
+    const ok = await api.projectFlag(p.id, key, on).catch(() => false);
+    if (!ok) { toast(tr('chatpage.project.failed', 'Could not save the project.')); return; }
+    await renderList();
+    if (key === 'archived' && on) {
+      if (window.chatProjectPage?.id() === p.id) closeProjectPage();
+      tools.undoToast(trv('projectws.list.archivedToast', 'Archived “{name}”. Its chats, files and memory are kept.', { name: p.name }), 8000, async () => { await api.projectFlag(p.id, 'archived', false).catch(() => false); if (p.pinned) await api.projectFlag(p.id, 'pinned', true).catch(() => false); await renderList(); });
+    }
   }
   async function newChatInProject(p, text = '', { model = '', files = [] } = {}) {
     const next = await api.newInProject(p.id).catch(() => null);

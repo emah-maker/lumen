@@ -32,6 +32,13 @@ With **Memory** on, a project also keeps where its documents are, so neither you
 - **No duplicates, no dead ends.** A Google document is one entry in any view (edit, view, a shared link), a page is one entry with or without its tracking parameters, and a file moved to another folder under the same name keeps its entry (and its name and pin). A file that is gone from this computer, or a link the AI found dead (not found, 404), drops off, unless pinned.
 - **The Key documents card** on the project's page lists them: **Open** opens one in a tab, click a name to rename it, **Pin** keeps it first, **Remove** takes it off.
 - **What is kept.** Only the locations and names, never what the documents say, in `project-places.json` in Lumen's profile, encrypted with your system's keychain like memory. Turning Memory off stops recording and recalling them. Deleting the project deletes its list (Undo brings it back).
+## Many projects
+
+- **Find and sort.** With more than 6 projects the Projects block in lumen://chat has a **Find a project** box (it matches the name and the goal line; Escape clears it) and a switch between **Recent** (the project whose newest chat is most recent first) and **A–Z**. Lumen keeps the choice.
+- **A short list.** It shows 8 projects, then **Show N more** (and **Show less**). Pinned projects and the project whose page is open always show.
+- **Pin to top** (a project's ⋯ menu) keeps a project at the top, with a small mark; **Unpin** takes it off. Pinning doesn't count as using the project, so it doesn't change the Recent order of the others.
+- **Archive** (the ⋯ menu) takes a project out of the lists, with Undo. Nothing is deleted: its chats, files, folder and memory stay as they are, and its chats still work. **Archived (N)** at the foot of the block lists the archived projects; **Move out of archive** in a project's ⋯ menu brings it back.
+- **Move to project** and the tab menu's **Add to project** leave archived projects out and list pinned ones first; with more than 8 projects Move to project has a filter at the top.
 
 ## Projects in the sidebar
 

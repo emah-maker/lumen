@@ -17,13 +17,47 @@
   const NOTE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9M3.5 6.5h9M3.5 9.5h9M3.5 12.5h5"/></svg>';
   const PENCIL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>';
   const SHOWN_CHATS = 5; // chats listed under an open project; "Show all" opens its page
+  const PIN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l1.7 3.4 3.8.6-2.7 2.6.6 3.8L8 11.1l-3.4 1.8.6-3.8L2.5 6.5l3.8-.6z"/></svg>';
+  const BOX = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6h9v-6M6.5 9h3"/></svg>';
   const icon = (html) => { const s = el('span', { className: 'cp-pj-icon' }); s.innerHTML = html; return s; };
+  // [project list] With more than TOOLS_AT projects the block gets a filter and a Recent / Name switch; the list shows SHOWN_PROJECTS
+  // (pinned ones always, the open one too), then "Show N more". Archived projects are out of the list, behind an "Archived (N)" row.
+  const TOOLS_AT = 6;
+  const SHOWN_PROJECTS = 8;
+  const prefs = { sort: 'recent', all: false, archived: false, query: '' }; // (this page only: the sort is kept in localStorage)
+  try { if (localStorage.getItem('lumen.projects.sort') === 'name') prefs.sort = 'name'; } catch { /* no storage: Recent */ }
+  // When a project was last worked in: its newest chat, else its own last change.
+  function lastUsed(p, chats) {
+    let t = Number(p.updated || p.created || 0);
+    for (const c of chats) if (c.project === p.id && Number(c.updated) > t) t = Number(c.updated);
+    return t;
+  }
+  // The rows to draw: { list, hidden, archived } — pinned first, then by the sort; a query matches the name and the goal line.
+  function arrange(projects, chats, { sort = 'recent', query = '', archived = false, all = false, keep = null } = {}) {
+    const q = String(query || '').trim().toLowerCase();
+    const used = new Map(projects.map((p) => [p.id, lastUsed(p, chats)]));
+    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true });
+    const order = (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || (sort === 'name' ? byName(a, b) : used.get(b.id) - used.get(a.id) || byName(a, b));
+    const shelved = projects.filter((p) => p.archived);
+    const pool = (archived ? shelved : projects.filter((p) => !p.archived))
+      .filter((p) => !q || p.name.toLowerCase().includes(q) || String(p.description || '').toLowerCase().includes(q)).sort(order);
+    if (all || q || archived || pool.length <= SHOWN_PROJECTS) return { list: pool, hidden: 0, archived: shelved.length };
+    const list = pool.filter((p, i) => i < SHOWN_PROJECTS || p.pinned || p.id === keep);
+    return { list, hidden: pool.length - list.length, archived: shelved.length };
+  }
 
   // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
-  // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder); the chevron lists its chats under it.
-  function render({ host, projects, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null }) {
+  // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder, pin, archive); the chevron lists its chats under it.
+  function render(opts) {
+    const { host, projects: everyProject, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null, onFlag = null } = opts;
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
+    const again = () => render(opts);
+    const many = everyProject.filter((p) => !p.archived).length > TOOLS_AT;
+    if (!many && !prefs.archived) prefs.query = '';
+    if (prefs.archived && !everyProject.some((p) => p.archived)) prefs.archived = false;
+    const shown = arrange(everyProject, chats, { ...prefs, query: many || prefs.archived ? prefs.query : '', keep: active });
+    const projects = shown.list;
     const head = el('div', { className: 'cp-pj-head' });
     const add = el('button', { type: 'button', className: 'icon-btn cp-pj-headbtn cp-pj-add', title: tr('chatpage.project.new', 'New project') });
     add.setAttribute('aria-label', tr('chatpage.project.new', 'New project'));
@@ -38,18 +72,35 @@
       tools.append(imp);
     }
     tools.append(add);
-    head.append(el('span', { className: 'cp-pj-title', textContent: tr('chatpage.projects', 'Projects') }), tools);
+    head.append(el('span', { className: 'cp-pj-title', textContent: prefs.archived ? tr('projectws.list.archivedTitle', 'Archived projects') : tr('chatpage.projects', 'Projects') }), tools);
     const rows = [head];
+    // [project list] the filter and the sort switch, once there are many projects (or while looking at the archived ones)
+    if (many || prefs.archived) {
+      const bar = el('div', { className: 'cp-pj-bar-tools' });
+      const find = el('input', { type: 'search', className: 'cp-pj-find', value: prefs.query, placeholder: tr('projectws.list.find', 'Find a project') });
+      find.setAttribute('aria-label', tr('projectws.list.find', 'Find a project'));
+      find.addEventListener('input', () => { prefs.query = find.value; again(); const back = host.querySelector('.cp-pj-find'); back?.focus(); back?.setSelectionRange(back.value.length, back.value.length); });
+      find.addEventListener('keydown', (e) => { if (e.key === 'Escape' && find.value) { e.preventDefault(); e.stopPropagation(); prefs.query = ''; again(); host.querySelector('.cp-pj-find')?.focus(); } });
+      const sort = el('button', { type: 'button', className: 'cp-pj-sort', textContent: prefs.sort === 'name' ? tr('projectws.list.sortName', 'A–Z') : tr('projectws.list.sortRecent', 'Recent') });
+      sort.title = prefs.sort === 'name' ? tr('projectws.list.sortNameTip', 'Sorted by name. Click to sort by most recent.') : tr('projectws.list.sortRecentTip', 'Most recent first. Click to sort by name.');
+      sort.setAttribute('aria-label', sort.title);
+      sort.onclick = () => { prefs.sort = prefs.sort === 'name' ? 'recent' : 'name'; try { localStorage.setItem('lumen.projects.sort', prefs.sort); } catch { /* not kept */ } again(); host.querySelector('.cp-pj-sort')?.focus(); };
+      bar.append(find, sort);
+      rows.push(bar);
+    }
+    if (!projects.length && prefs.query) rows.push(el('p', { className: 'cp-pj-none', textContent: tr('projectws.list.none', 'No project matches.') }));
     for (const p of projects) {
       const on = p.id === active;
       const open = expanded.has(p.id);
-      const wrap = el('div', { className: `cp-pj-item${open ? ' open' : ''}` });
+      const wrap = el('div', { className: `cp-pj-item${open ? ' open' : ''}${p.pinned ? ' pinned' : ''}${p.archived ? ' archived' : ''}` });
       wrap.dataset.project = p.id;
       const row = el('button', { type: 'button', className: `cp-pj${on ? ' on' : ''}`, title: p.name });
       row.dataset.id = p.id;
       if (p.folderMissing) { row.title = `${p.name}: ${tr('chatpage.project.folder.missing', 'Folder missing')}`; row.classList.add('folder-missing'); } // [project folders] Locate… / Recreate are in the project's editor
       if (on) row.setAttribute('aria-current', 'page');
-      row.append(icon(FOLDER), el('span', { className: 'cp-pj-name', textContent: p.name }), el('span', { className: 'cp-pj-count', textContent: counts.get(p.id) ? String(counts.get(p.id)) : '' }));
+      const name = el('span', { className: 'cp-pj-name', textContent: p.name });
+      if (p.pinned) { const mark = icon(PIN); mark.classList.add('cp-pj-pinmark'); mark.title = tr('projectws.list.pinned', 'Pinned'); row.append(icon(FOLDER), name, mark); } else row.append(icon(FOLDER), name);
+      row.append(el('span', { className: 'cp-pj-count', textContent: counts.get(p.id) ? String(counts.get(p.id)) : '' }));
       row.onclick = () => (onPage ? onPage(p) : onSelect?.(on ? null : p.id));
       wrap.append(row);
       if (onToggle) {
@@ -79,6 +130,8 @@
         if (p.folderMissing) items.push({ label: tr('chatpage.project.folder.missingFix', 'Folder missing…'), icon: FOLDER, run: () => onEdit(p) });
         items.push({ label: tr(p.instructions ? 'chatpage.project.instructions' : 'chatpage.project.addInstructions', p.instructions ? 'Instructions' : 'Add instructions'), icon: NOTE, run: () => (onInstructions ? onInstructions(p) : onEdit(p)) });
         items.push({ label: tr('chatpage.project.renameFolder.menu', 'Rename and folder…'), icon: PENCIL, run: () => onEdit(p) });
+        if (onFlag && !p.archived) items.push({ label: p.pinned ? tr('projectws.list.unpin', 'Unpin') : tr('projectws.list.pin', 'Pin to top'), icon: PIN, run: () => onFlag(p, 'pinned', !p.pinned) });
+        if (onFlag) items.push({ label: p.archived ? tr('projectws.list.unarchive', 'Move out of archive') : tr('projectws.list.archive', 'Archive'), icon: BOX, run: () => onFlag(p, 'archived', !p.archived) });
         wrap.classList.add('menu-open');
         more.setAttribute('aria-expanded', 'true');
         menu({ anchor: more, label: p.name, items, onClose: () => { wrap.classList.remove('menu-open'); more.setAttribute('aria-expanded', 'false'); if (!document.activeElement || document.activeElement === document.body) more.focus(); } });
@@ -107,8 +160,25 @@
         rows.push(list);
       }
     }
+    // [project list] the rest of a long list, and the archived ones
+    if (shown.hidden) {
+      const more = el('button', { type: 'button', className: 'cp-pj-more-rows', textContent: tr('projectws.list.more', 'Show {n} more', { n: shown.hidden }) });
+      more.onclick = () => { prefs.all = true; again(); };
+      rows.push(more);
+    } else if (prefs.all && !prefs.query && !prefs.archived && arrange(everyProject, chats, { ...prefs, all: false }).hidden) {
+      const less = el('button', { type: 'button', className: 'cp-pj-more-rows', textContent: tr('projectws.showLess', 'Show less') });
+      less.onclick = () => { prefs.all = false; again(); };
+      rows.push(less);
+    }
+    if (shown.archived && onFlag) {
+      const shelf = el('button', { type: 'button', className: 'cp-pj-shelf', textContent: prefs.archived ? tr('projectws.list.back', 'Back to projects') : tr('projectws.list.archived', 'Archived ({n})', { n: shown.archived }) });
+      shelf.setAttribute('aria-pressed', String(prefs.archived));
+      shelf.prepend(icon(BOX));
+      shelf.onclick = () => { prefs.archived = !prefs.archived; prefs.query = ''; again(); host.querySelector('.cp-pj-shelf')?.focus(); };
+      rows.push(shelf);
+    }
     host.hidden = false;
-    host.classList.toggle('empty', !projects.length);
+    host.classList.toggle('empty', !everyProject.length);
     host.replaceChildren(...rows);
   }
 
@@ -366,7 +436,16 @@
       return b;
     };
     const set = (id) => async () => { if (onPick) await onPick(id); else { await api.setProject(chat.id, id).catch(() => false); onDone(); } };
-    for (const p of projects) menu.append(item(p.name, p.id === chat.project, set(p.id)));
+    const choices = arrange(projects.filter((p) => !p.archived || p.id === chat.project), [], { sort: 'name', all: true }).list; // [project list] pinned first, then by name; archived ones left out
+    const rows = choices.map((p) => item(p.name, p.id === chat.project, set(p.id)));
+    if (choices.length > SHOWN_PROJECTS) {
+      const find = el('input', { type: 'search', className: 'cp-pj-find cp-pj-pick-find', placeholder: tr('projectws.list.find', 'Find a project') });
+      find.setAttribute('aria-label', tr('projectws.list.find', 'Find a project'));
+      find.addEventListener('input', () => { const q = find.value.trim().toLowerCase(); choices.forEach((p, i) => { rows[i].hidden = Boolean(q) && !p.name.toLowerCase().includes(q); }); });
+      menu.append(find);
+      menu.classList.add('long');
+    }
+    menu.append(...rows);
     if (chat.project) menu.append(item(tr('chatpage.project.none', 'Remove from project'), false, set(null), 'none'));
     menu.append(item(tr('chatpage.project.newEllipsis', 'New project…'), false, async () => onNew(chat), 'new'));
     document.body.append(menu);
@@ -377,15 +456,15 @@
     const close = () => { const was = menu.isConnected; menu.remove(); document.removeEventListener('pointerdown', away, true); document.removeEventListener('keydown', key, true); if (was) onClose?.(); };
     const away = (e) => { if (!menu.contains(e.target)) close(); };
     const key = (e) => {
-      const list = [...menu.querySelectorAll('button')];
+      const list = [...menu.querySelectorAll('button:not([hidden])')];
       const at = list.indexOf(document.activeElement);
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
       else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); list[(at + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length].focus(); }
     };
     setTimeout(() => document.addEventListener('pointerdown', away, true));
     document.addEventListener('keydown', key, true);
-    menu.querySelector('button')?.focus();
+    (menu.querySelector('.cp-pj-pick-find') || menu.querySelector('button'))?.focus();
   }
 
-  window.chatProjects = { render, editor, picker, menu };
+  window.chatProjects = { render, editor, picker, menu, arrange };
 })();

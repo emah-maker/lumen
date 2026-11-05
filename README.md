@@ -400,7 +400,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [Sync through a folder](docs/sync.md): keep bookmarks, history, chats, widgets and settings the same on your computers through a cloud-drive folder, encrypted with a passphrase only you know, with no Lumen server
 - [Notes](docs/notes.md): the sidebar notepad, adding from a reply or a page, asking the AI about a note, and where notes are kept
 - [Memory](docs/memory.md): what the AI remembers about you between chats, how it decides, Search past chats, and where to see and delete it
-- [Projects](docs/projects.md): files, pages and memory the AI works from in a project's chats, and its own permission level
+- [Projects](docs/projects.md): files, pages and memory the AI works from in a project's chats, its own permission level, and finding, pinning and archiving projects when there are many
 - [Automations](docs/automations.md): repeat a job like applying to postings on a list of pages, from a sentence or a recording; the profile, Review before Submit, Needs you, schedules and the tracker
 - [AI activity](docs/mission-control.md): lumen://tasks, one page with what waits for you, what runs, what is scheduled and what finished, across chats, tasks, routines and outside agents
 - [Focus mode](docs/focus.md): block distracting sites for a homework session, the ten-minute "I need this for school" pass, ending it with a hold, schedules in words, and the focus log

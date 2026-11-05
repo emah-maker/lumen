@@ -677,6 +677,18 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     writeIndex();
     return { ...project };
   }
+  // [project list] Pin a project (listed first) or archive it (out of the lists, its chats and everything else kept). Neither counts as a change
+  // to the project: `updated`, which the list's Recent order reads, stays as it was. False for an unknown project or a degraded index.
+  const PROJECT_FLAGS = new Set(['pinned', 'archived']);
+  function setProjectFlag(id, key, on) {
+    const idx = readIndex();
+    const project = projectById(id);
+    if (idx.degraded || !project || !PROJECT_FLAGS.has(key)) return false;
+    if (on) project[key] = true; else delete project[key];
+    if (key === 'archived' && on) delete project.pinned; // (an archived project is out of the list: a pin would bring nothing)
+    writeIndex();
+    return true;
+  }
   function removeProject(id) {
     const idx = readIndex();
     if (idx.degraded || !projectById(id)) return false;
@@ -956,7 +968,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const isForeign = (id) => foreign.has(id);
   // True when the chat list and projects can be trusted to decide what to delete: the index was read, and not rebuilt this run.
   function trusted() { return !readIndex().degraded && !rebuilt; }
-  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, removeProject, projectSnapshot, restoreProject, adoptProject, setProjectPermissions, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, setProjectFlag, removeProject, projectSnapshot, restoreProject, adoptProject, setProjectPermissions, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.
