@@ -53,12 +53,42 @@
     ].map(([key, title, list]) => ({ key, title, list: list.sort(order), used }));
   }
 
+  // [project drive] Save to Drive from a card's menu; why it can't (Drive not connected) shows above the cards.
+  async function driveToggle(p) {
+    const v = await page.api.projectDrive(p.id, { on: !p.drive }).catch(() => null);
+    page.say = v?.error === 'connect' ? tr('projectws.drive.connect', 'Connect Google Drive first: Settings → Apps and connections → Google Drive.') : v?.error === 'temporary' ? tr('projectws.drive.temp', 'Keep it as a project first: a temporary project isn’t saved to Drive.') : '';
+    draw();
+  }
+  // [project drive] Import from Drive: the projects saved in Lumen/Projects, each with Import (a new project here).
+  async function importBox() {
+    const box = el('div', { className: 'pja-import' });
+    box.setAttribute('role', 'region');
+    box.setAttribute('aria-label', tr('projects.all.import', 'Import from Drive'));
+    box.append(el('p', { className: 'pja-empty', textContent: tr('projects.all.importLoading', 'Looking in Google Drive…') }));
+    page.root.querySelector('.pja-import')?.remove();
+    page.root.querySelector('.pja-bar')?.after(box);
+    const got = await page.api.driveList().catch(() => null);
+    if (!got?.connected) { box.replaceChildren(el('p', { className: 'pja-empty', textContent: tr('projectws.drive.connect', 'Connect Google Drive first: Settings → Apps and connections → Google Drive.') })); return; }
+    if (!got.saved.length) { box.replaceChildren(el('p', { className: 'pja-empty', textContent: got.error || tr('projects.all.importNone', 'No projects saved in Google Drive yet (Lumen/Projects).') })); return; }
+    const list = el('ul', { className: 'pja-import-list' });
+    for (const s of got.saved) {
+      const go = el('button', { type: 'button', className: 'btn small pja-import-go', textContent: tr('projects.all.importOne', 'Import') });
+      go.onclick = async () => {
+        go.disabled = true;
+        const out = await page.api.driveImport(s.id).catch(() => null);
+        if (out?.project) { box.remove(); page.host.open(out.project); } else { go.disabled = false; go.textContent = out?.error || tr('projects.all.importFailed', 'Could not import'); }
+      };
+      list.append(el('li', { className: 'pja-import-row' }, el('span', { className: 'pja-import-name', textContent: s.name }), el('span', { className: 'pja-when', textContent: s.modified ? new Date(s.modified).toLocaleDateString() : '' }), go));
+    }
+    box.replaceChildren(el('p', { className: 'pja-import-head', textContent: tr('projects.all.importHead', 'Saved in Google Drive (Lumen/Projects). Import brings one back as a new project: its instructions, goal, defaults, sources, notes and key documents. Its chats stay in Drive as Markdown.') }), list);
+  }
   function menuFor(p, anchor) {
     const { host } = page;
     const items = [{ label: tr('projectws.open', 'Open project'), icon: ICONS.open, run: () => host.open(p) }];
     if (!p.archived) items.push({ label: p.pinned ? tr('projectws.list.unpin', 'Unpin') : tr('projectws.list.pin', 'Pin to top'), icon: ICONS.pin, run: () => host.flag(p, 'pinned', !p.pinned) });
     items.push({ label: tr('projects.all.rename', 'Rename…'), icon: ICONS.pencil, run: () => host.edit(p) });
     items.push({ label: p.archived ? tr('projectws.list.unarchive', 'Move out of archive') : tr('projectws.list.archive', 'Archive'), icon: ICONS.box, run: () => host.flag(p, 'archived', !p.archived) });
+    if (!p.temporary) items.push({ label: p.drive ? tr('projectws.drive.stop', 'Stop saving to Drive') : tr('projectws.drive.start', 'Save to Drive'), icon: ICONS.box, run: () => driveToggle(p) }); // [project drive]
     if (p.temporary && host.keep) items.push({ label: tr('projectws.temp.keep', 'Keep as project'), icon: ICONS.open, run: () => host.keep(p) });
     anchor.setAttribute('aria-expanded', 'true');
     window.chatProjects.menu({ anchor, label: p.name, items, onClose: () => { anchor.setAttribute('aria-expanded', 'false'); } });
@@ -80,6 +110,7 @@
     const badges = el('span', { className: 'pja-badges' });
     if (p.pinned) badges.append(el('span', { className: 'pja-badge pja-pinned', textContent: tr('projectws.list.pinned', 'Pinned') }));
     if (p.temporary) badges.append(el('span', { className: 'pja-badge pja-temp', textContent: tr('projectws.temp.chip', 'Temp'), title: p.expires && window.chatProjects.expiresText ? window.chatProjects.expiresText(p.expires) : '' }));
+    if (p.drive) badges.append(el('span', { className: 'pja-badge pja-drive', textContent: tr('projects.all.drive', 'Drive'), title: p.driveError ? tr('projects.all.driveError', 'Not saved to Drive: {why}', { why: p.driveError }) : p.driveSaved ? tr('projects.all.driveSaved', 'Saved to Google Drive {when}', { when: new Date(p.driveSaved).toLocaleString() }) : tr('projects.all.driveOn', 'Saved to Google Drive') })); // [project drive]
     if (p.archived) badges.append(el('span', { className: 'pja-badge', textContent: tr('projects.all.archivedOne', 'Archived') }));
     const more = el('button', { type: 'button', className: 'icon-btn pja-more', title: tr('chats.more', 'More actions') });
     more.setAttribute('aria-label', `${tr('chats.more', 'More actions')}: ${p.name}`);
@@ -139,7 +170,9 @@
     const total = el('span', { className: 'pja-total', textContent: tr(projects.length === 1 ? 'projects.all.count1' : 'projects.all.count', projects.length === 1 ? '1 project' : '{n} projects', { n: projects.length }) });
     const fresh = el('button', { type: 'button', className: 'btn small primary pja-new', textContent: tr('chatpage.project.new', 'New project') });
     fresh.onclick = () => host.newProject();
-    head.append(back, el('div', { className: 'pja-head-row' }, title, total, el('span', { className: 'pja-grow' }), fresh));
+    const fromDrive = el('button', { type: 'button', className: 'btn small pja-import-btn', textContent: tr('projects.all.importBtn', 'Import from Drive…') }); // [project drive]
+    fromDrive.onclick = () => importBox();
+    head.append(back, el('div', { className: 'pja-head-row' }, title, total, el('span', { className: 'pja-grow' }), fromDrive, fresh));
     // the tools: find, sort, grid or list
     const find = el('input', { type: 'search', className: 'pja-find', value: prefs.query, placeholder: tr('projects.all.find', 'Find a project, a note or a document') });
     find.setAttribute('aria-label', tr('projects.all.find', 'Find a project, a note or a document'));
@@ -188,7 +221,10 @@
     }
     if (!projects.length) body.append(el('p', { className: 'pja-empty', textContent: tr('projects.all.none', 'No projects yet. A project keeps the chats, files and notes of one piece of work together.') }));
     else if (!shown) body.append(el('p', { className: 'pja-empty', textContent: tr('projectws.list.none', 'No project matches.') }));
-    root.replaceChildren(el('div', { className: 'pja-wrap' }, head, bar, body));
+    const said = el('p', { className: 'pja-say', textContent: page.say || '' }); // ([project drive] why a card's Save to Drive didn't turn on)
+    said.setAttribute('role', 'status');
+    said.hidden = !page.say;
+    root.replaceChildren(el('div', { className: 'pja-wrap' }, head, bar, said, body));
     if (keepFocus) { const f = root.querySelector('.pja-find'); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
   }
 

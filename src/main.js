@@ -336,7 +336,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -6399,7 +6399,7 @@ function lookAtProjectFolders() {
 // A project as the project page shows it: its folder state, and each pinned page's icon when Lumen already has one (from a tab or a visit; never fetched here).
 const withLinkIcons = (p) => (p.links?.length ? { ...p, links: p.links.map((l) => { const icon = faviconStore.get(hostOf(l.url)); return icon ? { ...l, icon } : l; }) } : p);
 const withFolderState = (p) => { const st = folderState.get(p.id); return p.folder && st && st.folder === p.folder && !st.ok ? { ...p, folderMissing: true } : p; };
-const projectPage = (p) => withLinkIcons(withFolderState(p.temporary && !p.expires ? withExpiry(p) : p)); // ([temp projects] `expires`, the date a temporary one goes)
+const projectPage = (p) => withDrive(withLinkIcons(withFolderState(p.temporary && !p.expires ? withExpiry(p) : p))); // ([project drive] `drive`) // ([temp projects] `expires`, the date a temporary one goes)
 // What a project's chats work in: its working folder, else its own folder.
 const projectWorkFolderFor = (id) => { try { const pid = pendingProject.get(id); const p = pid ? projectById(pid) : chats().projectOf(id); return p ? (p.workFolder || p.folder || '') : ''; } catch { return ''; } };
 // The open chat's working folder as the composer shows it: { path, shown, source: 'chat' | 'project' } or null.
@@ -6441,6 +6441,7 @@ function saveChat(generation = chatGeneration) {
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
+    driveSoon(projectIdOf(chatId)); // [project drive] a project saved to Drive is saved again a moment later
     chats().saveAsync(chatId, snapshot); // (written in the background: no stall of the main thread; features/chat-store.js. Quitting writes what is pending at once)
     keepPendingProject(chatId);
     mirrorChatSoon(chatId); // [project folders]
@@ -6557,7 +6558,7 @@ function saveChatOf(id, messages) {
   try {
     if (!safeStorage.isEncryptionAvailable()) return;
     const snapshot = chatSnapshot(messages);
-    if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); }
+    if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); driveSoon(projectIdOf(id)); } // ([project drive])
   } catch (err) {
     chatSaveFailed(err);
   }
@@ -12290,7 +12291,7 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
     currentUsage: describeUsage(agent.messages.settings?.usage),
     currentContext: contextView(agent.messages.settings?.context), // [context]
     maxRuns: runSlots.limit,
-    projects: (() => { lookAtProjectFolders(); const list = chats().list(); return chats().projects().map((p) => withExpiry(withFolderState(p), list)); })(), // ([temp projects] `expires`) // [projects] (+ [project folders] whether the folder is there)
+    projects: (() => { lookAtProjectFolders(); const list = chats().list(); return chats().projects().map((p) => withDrive(withExpiry(withFolderState(p), list))); })(), // ([temp projects] `expires`, [project drive] `drive`) // [projects] (+ [project folders] whether the folder is there)
     chats: (() => {
       const badges = chatBadges();
       const saved = chats().list().filter((c) => !c.missing); // (a chat whose file is gone is not shown: it would open empty)
@@ -12411,6 +12412,7 @@ function deleteProject(id) {
   try { gone = memory().dropProject(id); memoryEdited(); } catch { /* memory off or unreadable: nothing to drop */ }
   let goneP = [];
   try { goneP = places().dropProject(id); } catch { /* unreadable: nothing to drop */ }
+  if (driveStore.get(id)) driveStore.set(id, null); // [project drive] no more saves (what is in Drive stays there)
   finishProjectDelete(id); // (a second delete of a restored one: the first timer is over)
   pendingProjectDeletes.set(id, { snapshot, memory: gone, places: goneP, timer: setTimeout(() => finishProjectDelete(id), PROJECT_UNDO_MS) });
   syncProjectInstructions();
@@ -12643,7 +12645,7 @@ function projectFiles() {
   return projectFilesStore;
 }
 const projectLimits = () => { const f = require('./features/project-files'); return { files: f.MAX_FILES, images: f.MAX_IMAGES, fileChars: f.MAX_TEXT_CHARS, totalChars: f.MAX_TOTAL_CHARS, instructions: 4000, index: require('./ai/project-context').INDEX_CHARS, kinds: f.SUPPORTED_TEXT }; };
-const projectChanged = () => { syncProjectInstructions(); pushAttention(); syncTouch('chats'); portableSoon(); };
+const projectChanged = () => { syncProjectInstructions(); pushAttention(); syncTouch('chats'); portableSoon(); driveSoonAll(); }; // ([project drive] the projects saved to Drive are saved again a moment later)
 // ---- [project places] A project's Key documents and Where things are (ai/project-places.js; docs/projects.md). One encrypted file in the profile,
 // project-places.json; it follows the Memory setting. Locations and short labels only, never what a file or page says.
 let placesStore = null;
@@ -12683,11 +12685,119 @@ ipcMain.handle('chats:project-places', (_e, id, change) => {
     else if (c.add) places().note(p.id, { loc: String(c.add.location ?? ''), label: String(c.add.label ?? '') });
     memoryEdited();
   } catch (err) { error = String(err?.message || 'Could not change the list.').slice(0, 200); }
+  if (!error && c.open === undefined) driveSoon(p.id); // [project drive]
   return { ok: !error, error, ...projectPlacesOf(p.id) };
 });
 if (TEST) global.__projectPlaces = { store: () => places(), record: (project, call) => recordPlaces(project, call), block: (project, query) => placesBlock(project, query) };
 // [project memory] A project's own entries, pinned first then newest, and the ids of those untouched for months (ai/memory.js STALE_MS).
 const projectMemoryOf = (pid) => { try { const list = memory().list().filter((e) => e.project === pid).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updated - a.updated); return { memory: list, stale: memory().stale(pid).map((e) => e.id) }; } catch { return { memory: [], stale: [] }; } };
+// ---- [project drive] Save chosen projects to Google Drive (features/project-drive.js; docs/projects.md). Off for every project until the user turns
+// it on for that one (its Settings view, or its card's menu); temporary projects can't until they are kept. It uses the Google Drive connector's
+// sign-in (Settings → Apps and connections), and writes only into the Lumen/Projects folder it makes. Saved about 30 s after a change, only the
+// files that changed. Its state (which projects, their Drive folder and file ids, when they were last saved) is project-drive.json in the profile.
+const driveStateFile = () => path.join(app.getPath('userData'), 'project-drive.json');
+let driveState = null;
+const driveStore = {
+  all() { if (!driveState) { try { driveState = JSON.parse(fs.readFileSync(driveStateFile(), 'utf8')) || {}; } catch { driveState = {}; } } return driveState; },
+  get(id) { return this.all()[id] || null; },
+  set(id, value) { const all = this.all(); if (value) all[id] = value; else delete all[id]; try { fs.writeFileSync(driveStateFile(), JSON.stringify(all)); } catch { /* the next save writes it */ } },
+};
+let projectDriveSvc = null;
+let driveClientOverride = null; // (tests: a fake Drive, global.__projectDrive.fake)
+function projectDrive() {
+  const lib = require('./features/project-drive');
+  return (projectDriveSvc ||= lib.createProjectDrive({
+    client: () => {
+      if (driveClientOverride) return driveClientOverride;
+      const request = connectorsSvc().driveRequest();
+      if (!request) throw Object.assign(new Error('Connect Google Drive first (Settings → Apps and connections).'), { code: 'connect' });
+      return lib.driveClient(request);
+    },
+    state: driveStore,
+  }));
+}
+const driveConnected = () => { if (driveClientOverride) return true; try { return Boolean(connectorsSvc().driveRequest()); } catch { return false; } };
+// The files a save writes: the export's own texts (instructions, sources, settings, readme, chats as Markdown) and the project's notes and key
+// documents. Never Sources/ (the files added to the project).
+async function driveFilesFor(p) {
+  const lib = require('./features/project-drive');
+  const entries = await buildProjectExport(p);
+  const text = (name) => entries.find((e) => e.name === name)?.data.toString('utf8') || '';
+  let notes = [];
+  try { notes = memory().list().filter((e) => e.project === p.id).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updated - a.updated); } catch { /* unreadable */ }
+  let kept = [];
+  try { kept = places().list(p.id); } catch { /* unreadable */ }
+  const chatFiles = entries.filter((e) => e.name.startsWith('Chats/')).map((e) => ({ name: e.name.slice(6), text: e.data.toString('utf8') }));
+  return lib.filesFor({ project: p, notes, places: kept, chats: chatFiles, readme: text('README.md'), instructions: text('INSTRUCTIONS.md'), sources: text('sources.md'), settings: text('project.json') });
+}
+const driveTimers = new Map();
+const driveBusy = new Map(); // project id -> the save running
+async function driveSaveNow(id) {
+  const p = projectById(id);
+  const st = driveStore.get(id);
+  if (!p || !st?.on) return null;
+  if (driveBusy.has(id)) return driveBusy.get(id);
+  const run = (async () => {
+    try {
+      const out = await projectDrive().save(p.id, p.name, await driveFilesFor(p));
+      pushAttention();
+      return out;
+    } catch (err) {
+      driveStore.set(id, { ...(driveStore.get(id) || {}), error: String(err?.code === 'connect' ? 'connect' : err?.message || 'Could not save to Google Drive.').slice(0, 200) });
+      pushAttention();
+      return null;
+    } finally { driveBusy.delete(id); }
+  })();
+  driveBusy.set(id, run);
+  return run;
+}
+function driveSoon(id) {
+  if (!id || !driveStore.get(id)?.on) return;
+  clearTimeout(driveTimers.get(id));
+  driveTimers.set(id, setTimeout(() => { driveTimers.delete(id); driveSaveNow(id); }, TEST && global.__projectDriveFastMs ? global.__projectDriveFastMs : require('./features/project-drive').DEBOUNCE_MS));
+}
+const driveSoonAll = () => { for (const id of Object.keys(driveStore.all())) driveSoon(id); };
+const driveView = (id) => { const st = driveStore.get(id) || {}; return { on: st.on === true, saved: st.saved || 0, error: st.error || '', connected: driveConnected() }; };
+const withDrive = (p) => { const st = driveStore.get(p.id); return st?.on ? { ...p, drive: true, driveSaved: st.saved || 0, ...(st.error ? { driveError: st.error } : {}) } : p; };
+// The project's Settings view and its card: { on: true | false } | { save: true }. Answers driveView, or { error } with why it can't.
+ipcMain.handle('chats:project-drive', async (_e, id, change) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const c = change && typeof change === 'object' ? change : {};
+  if (c.on === true || c.save === true) {
+    if (p.temporary) return { ...driveView(p.id), error: 'temporary' };
+    if (!driveConnected()) return { ...driveView(p.id), error: 'connect' };
+  }
+  if (c.on === true) { driveStore.set(p.id, { ...(driveStore.get(p.id) || {}), on: true, error: '' }); await driveSaveNow(p.id); }
+  else if (c.on === false) { const st = driveStore.get(p.id); if (st) driveStore.set(p.id, { ...st, on: false }); clearTimeout(driveTimers.get(p.id)); }
+  else if (c.save === true) await driveSaveNow(p.id);
+  pushAttention();
+  return driveView(p.id);
+});
+// "Import from Drive": the projects saved there, and one brought back as a new project here (its instructions, goal, defaults, sources, notes and
+// key documents; its chats stay in Drive as Markdown).
+ipcMain.handle('chats:drive-list', async () => {
+  if (!driveConnected()) return { connected: false, saved: [] };
+  try { return { connected: true, saved: (await projectDrive().listSaved()).slice(0, 100) }; } catch (err) { return { connected: true, saved: [], error: String(err?.message || '').slice(0, 200) }; }
+});
+ipcMain.handle('chats:drive-import', async (_e, folderId) => {
+  const lib = require('./features/project-drive');
+  let got;
+  try { got = lib.parseSaved(await projectDrive().read(String(folderId))); } catch (err) { return { error: String(err?.message || 'Could not read it from Google Drive.').slice(0, 200) }; }
+  const names = new Set(chats().projects().map((x) => x.name));
+  let name = got.name;
+  for (let n = 2; names.has(name); n++) name = `${got.name} (${n})`;
+  const links = (() => { try { return portableLib().parseSources(got.sourcesText); } catch { return []; } })();
+  const out = chats().saveProject({ name, instructions: got.instructions, description: got.description, defaults: got.defaults, links });
+  if (!out) return { error: 'Could not make the project (60 projects at most).' };
+  for (const n of got.notes) { try { const r = memory().add({ text: n.text, project: out.id, source: 'drive' }); if (n.pinned) memory().setPinned(r.entry.id, true); } catch { /* a note that can't be kept */ } }
+  for (const pl of got.places) { try { const r = places().note(out.id, { loc: pl.loc, label: pl.label }); if (pl.pinned) places().setPinned(out.id, r.id, true); } catch { /* not a place */ } }
+  memoryEdited();
+  driveStore.set(out.id, { on: true, folder: String(folderId), files: {}, saved: 0, error: '' }); // (it goes on saving to the same folder)
+  projectChanged();
+  return { project: projectPage(out) };
+});
+if (TEST) global.__projectDrive = { fake: (client) => { driveClientOverride = client; projectDriveSvc = null; }, state: () => driveStore.all(), saveNow: (id) => driveSaveNow(id), files: async (id) => (await driveFilesFor(projectById(id))).map((f) => f.name) };
 // Everything the project page shows about one project.
 ipcMain.handle('chats:project-get', async (_e, id) => {
   if (projectById(String(id))?.portable) await syncPortable(String(id)); // [portable projects] what was changed in the folder is picked up first
@@ -12982,6 +13092,7 @@ ipcMain.handle('chats:project-memory', (_e, id, change) => {
     else if (Array.isArray(c.tidy)) memory().forgetMany(c.tidy.slice(0, 200).map(ids), { project: p.id });
     memoryEdited();
   } catch (err) { error = String(err?.message || 'Could not change memory.').slice(0, 300); }
+  if (!error) driveSoon(p.id); // [project drive]
   return { ok: !error, error, ...projectMemoryOf(p.id) };
 });
 // [project list] What the All projects page's cards show beyond the list: a line from each project's memory (pinned first, else the newest)

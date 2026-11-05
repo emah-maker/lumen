@@ -50,3 +50,13 @@
 .pja-empty { color: var(--muted); font-size: 13px; }
 .pja-sentinel { height: 1px; grid-column: 1 / -1; }
 @media (max-width: 640px) { .pja-row .pja-when, .pja-row .pja-counts { display: none; } }
+
+/* [project drive] the Drive badge, Import from Drive */
+.pja-drive { color: var(--accent-text, var(--accent)); }
+.pja-say { margin: 8px 0 0; font-size: 12.5px; color: var(--text); }
+.pja-say[hidden] { display: none; }
+.pja-import { margin: 8px 0 0; padding: 12px 14px; border-radius: 12px; background: var(--hover); }
+.pja-import-head { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
+.pja-import-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pja-import-row { display: flex; align-items: center; gap: 10px; }
+.pja-import-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; }

@@ -68,6 +68,19 @@ The tabs under the header switch what the page shows (arrow keys move between th
 
 An archived project's page says so above the tabs, with **Move out of archive**.
 
+## Save a project to Google Drive
+
+For a project you want on another computer, or kept outside Lumen:
+
+- **Turn it on per project.** In the project's **Settings** view, **Save to Drive** (or **Save to Drive** in its card's ⋯ menu on All projects). It is off for every project until you turn it on for that one. It needs Google Drive connected in Settings → Apps and connections; if it isn't, the line says so and nothing is sent.
+- **Where and what.** A folder **Lumen/Projects/<project name>** in your Drive, with readable files: `README.md`, `INSTRUCTIONS.md`, `project.json` (the name, goal line and defaults), `sources.md` (its web pages and websites), `Memory.md` and `memory.json` (its notes), `Key documents.md` and `key-documents.json` (where its documents are: paths, addresses and names) and `Chats/` (each chat as Markdown). The files you added to the project (Sources) are never uploaded.
+- **When.** About 30 seconds after a change (a chat, a note, an edit), and only the files that changed. The line says when it was last saved; **Save now** saves at once. Renaming the project renames its folder. A folder or file deleted in Drive is made again on the next save.
+- **Temporary projects** can't be saved until you click **Keep as project**.
+- **Stop saving to Drive** stops it; what is already in Drive stays there. Deleting the project stops it too.
+- **Import from Drive…** (at the top of All projects) lists the projects saved in Lumen/Projects and brings one back as a new project: its instructions, goal line, defaults, sources, notes and key documents. Its chats stay in Drive as Markdown files; they are not turned back into chats. The new project goes on saving to the same folder.
+- **Drive badge.** A project being saved has a **Drive** badge on its card (hover it for when it was saved).
+- OneDrive isn't offered: Lumen's OneDrive connection can only read.
+
 ## Projects in the sidebar
 
 The browser's AI sidebar uses the same projects. A strip under its header shows the project the open chat is in; click it to pick another (or none). A chat with no messages yet starts again in the project, so it gets the project's default model and plan setting; a chat with messages is moved, and Undo is offered. The sidebar's chat list shows the projects first, with the chevron, + and ⋯ of the chat page's list, and each chat row has Move to project. A project row opens that project's page in lumen://chat. The sidebar and the chat page share one chat, so a move made in one shows in the other.

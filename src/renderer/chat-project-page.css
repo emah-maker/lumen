@@ -252,3 +252,6 @@ button.pjp-hit { cursor: pointer; }
 .pjp-setting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); padding: var(--sp-3) 0; }
 .pjp-setting + .pjp-setting { border-top: 1px solid var(--hairline, var(--border)); }
 .pjp-setting-text { flex: 1; min-width: 200px; font-size: 13px; color: var(--muted); }
+
+/* [project drive] the Save to Drive line in Settings */
+.pjp-drive .pjp-drive-say { flex: 1; min-width: 200px; font-size: 13px; color: var(--muted); }
