@@ -98,7 +98,7 @@ const s6 = M.aggregate({ now: NOW, chats: [{ chatId: 'c', title: 'Mail', running
   { approvalId: 1, host: 'srv', action: 'tool', title: 'Send it', args: 'to: a@b.c\n\nbody:\n  hello', tainted: true },
   { approvalId: 2, host: 'srv', action: 'tool', title: 'Long', args: `${longArgs}MORE` },
   { approvalId: 3, host: 'gmail', action: 'tool', title: 'Claude wants to: send an email', args: 'to: x', tainted: false, noAlways: true, note: 'connector' },
-  { approvalId: 4, host: 'memory', action: 'tool', title: 'Remember this?', args: 'likes tea', tainted: true, noAlways: true, noBypass: true },
+  { approvalId: 4, host: 'memory', action: 'tool', title: 'Remember this?', args: 'likes tea', tainted: true, noAlways: true, guarded: true },
 ] }] });
 const card = (id) => s6.needsYou.find((n) => n.approvalId === id);
 check('the details are shown whole, line breaks and indentation kept', card(1).detail === 'to: a@b.c\n\nbody:\n  hello' && card(1).cut === false, JSON.stringify(card(1).detail));
@@ -106,7 +106,7 @@ check('a card whose run read page content says so', card(1).tainted === true && 
 check('a plain card shown whole can be answered here', JSON.stringify(card(1).choices) === '["allow","deny"]');
 check(`details up to ${M.ARGS_MAX} characters are kept; longer ones are cut and get Go to only`, card(2).detail.length === M.ARGS_MAX && card(2).cut === true && card(2).choices.length === 0, `${card(2).detail.length} ${card(2).choices}`);
 check('a connector write (note) gets Go to only', card(3).choices.length === 0 && card(3).guarded === true);
-check('a memory note (noBypass) gets Go to only', card(4).choices.length === 0 && card(4).guarded === true);
+check('a memory note (guarded) gets Go to only', card(4).choices.length === 0 && card(4).guarded === true);
 check('a task card already cut by the Tasks panel (argsCut) gets Go to only', M.choicesFor('task', M.cardText({ action: 'tool', args: 'x', argsCut: true })).length === 0);
 check('a query card shows its query', M.cardText({ action: 'open', query: 'cheap flights' }).detail === 'cheap flights');
 

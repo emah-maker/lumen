@@ -1,7 +1,7 @@
 // Connector writes, in plain Node with an injected fetch per provider (nothing leaves the computer): the requests GitHub
 // (comment, create_issue), Notion (create_page, append) and Todoist (add_task) get, the card's editable text and what an edit
-// changes, the messages a read-only token or integration gets, and the agent's gate: every write shows a card that Bypass
-// permissions, Auto-allow and "Always" never answer, background tasks and routines are offered the reads only and refused a
+// changes, the messages a read-only token or integration gets, and the agent's gate: every write shows a card that Auto-allow
+// and "Always" never answer (Bypass permissions does: test/units/bypass-everything-units.js), background tasks and routines are offered the reads only and refused a
 // write, and an outside MCP agent gets no connector tool. The same writes run through a real window in test/e2e/connectors.js.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
@@ -172,7 +172,7 @@ async function main() {
 
   console.log('--- the agent: every write needs a click on its card');
   const events = [];
-  const bypass = { on: true };
+  const bypass = { on: false }; // (Bypass on answers the card: bypass-everything-units.js)
   const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc.isWrite(i), describeWrite: (i) => svc.describeWrite(i), defs: (o) => svc.defs(o), call: (i, o) => svc.call(i, o) }, bypassPermissions: () => bypass.on, autoApprove: () => true };
   registry.setConnected(['github', 'notion', 'todoist']);
   const agent = new agentLib.Agent(browser, () => null, () => ({}));
@@ -181,7 +181,7 @@ async function main() {
   const pending = agent.allowConnector(input, gate());
   await new Promise((r) => setTimeout(r, 20));
   const card = events.find((e) => e.type === 'approval');
-  check('with Bypass permissions and Auto-allow on, a write still shows a card (no auto-allowed step)', card && card.action === 'tool' && card.note === 'connector' && card.noAlways === true && !events.some((e) => e.name === 'auto_allowed'), JSON.stringify(events));
+  check('with Auto-allow on, a write still shows a card (no auto-allowed step)', card && card.action === 'tool' && card.note === 'connector' && card.noAlways === true && !events.some((e) => e.name === 'auto_allowed'), JSON.stringify(events));
   check('the card carries what will be sent and the editable text', /From the AI/.test(card.args) && card.fields?.fixed === 'Comment on ada/notes#7' && card.fields.list[0].key === 'body' && card.fields.list[0].value === 'From the AI', JSON.stringify(card));
   const sentBefore = posts();
   agent.resolveApproval(card.approvalId, { edits: { body: 'What I wrote instead', repo: 'other/repo' } });

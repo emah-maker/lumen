@@ -49,7 +49,7 @@ function connSendLogView(c, C) {
     if (!d.open) return;
     try {
       const rows = await C.sendLog();
-      body.replaceChildren(...(rows.length ? rows.map((r) => h('p', { class: 'note', text: `${new Date(r.at).toLocaleString()} · to ${r.to} · “${r.subject}”${r.via === 'typed' ? ' · sent on your word in the chat' : ' · you pressed Send'}` })) : [h('p', { class: 'note', text: 'Nothing sent yet.' })]));
+      body.replaceChildren(...(rows.length ? rows.map((r) => h('p', { class: 'note', text: `${new Date(r.at).toLocaleString()} · to ${r.to} · “${r.subject}”${r.via === 'typed' ? ' · sent on your word in the chat' : r.via === 'bypass' ? ' · allowed by Bypass permissions (no card)' : ' · you pressed Send'}` })) : [h('p', { class: 'note', text: 'Nothing sent yet.' })]));
     } catch (err) { body.replaceChildren(h('p', { class: 'note', text: connClean(err) })); }
   });
   return d;

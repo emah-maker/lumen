@@ -345,7 +345,7 @@ async function main() {
   svc = make();
   await svc.connect('calendar');
   const events = [];
-  const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc.isWrite(i), describeWrite: (i) => svc.describeWrite(i), defs: (o) => svc.defs(o), call: (i, o) => svc.call(i, o) }, bypassPermissions: () => true, autoApprove: () => true };
+  const browser = { connectors: { hasAny: () => true, isWrite: (i) => svc.isWrite(i), describeWrite: (i) => svc.describeWrite(i), defs: (o) => svc.defs(o), call: (i, o) => svc.call(i, o) }, bypassPermissions: () => false, autoApprove: () => true }; // (Bypass on answers the card: bypass-everything-units.js)
   const agent = new agentLib.Agent(browser, () => null, () => ({}));
   const gate = (extra = {}) => ({ emit: (e) => events.push(e), signal: new AbortController().signal, who: 'Claude', external: false, noAsk: false, run: {}, ...extra });
   const input = { app: 'calendar', action: 'create_event', args: { title: 'Co-op interview', start: '2026-11-09T10:00' } };
@@ -353,7 +353,7 @@ async function main() {
   const pending = agent.allowConnector(input, gate());
   await new Promise((r) => setTimeout(r, 30));
   const cardEv = events.find((e) => e.type === 'approval');
-  check('with Bypass permissions on, the event still shows a card, with the editable fields and what it sends', cardEv && cardEv.note === 'connector' && !cardEv.noAlways && cardEv.alwaysFor?.action === 'Add an event' && /Co-op interview/.test(cardEv.args) && cardEv.fields.list.map((f) => f.key).join() === 'title,start,end,location,description', JSON.stringify(cardEv));
+  check('with Auto-allow on, the event still shows a card, with the editable fields and what it sends', cardEv && cardEv.note === 'connector' && !cardEv.noAlways && cardEv.alwaysFor?.action === 'Add an event' && /Co-op interview/.test(cardEv.args) && cardEv.fields.list.map((f) => f.key).join() === 'title,start,end,location,description', JSON.stringify(cardEv));
   agent.resolveApproval(cardEv.approvalId, { edits: { title: 'Co-op interview (confirmed)', start: '2026-11-09T11:00' } });
   await pending;
   const out = await agent.runConnector(input);

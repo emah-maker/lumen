@@ -4,7 +4,8 @@
 //
 // A send goes out in exactly two ways, and nothing else:
 //   1. The approval card (From, To, Cc, Bcc, Subject, the whole text, the attachments) with Send and Cancel. Nothing goes until the
-//      click. No "always allow"; Auto, Auto-allow and Bypass permissions never answer it.
+//      click, unless the user chose Bypass permissions: then the card is answered Send with no click, a step in the chat names the
+//      email, and the log says "allowed by Bypass permissions". No "always allow"; Auto and Auto-allow never answer it.
 //   2. Words the user typed in THIS chat that say it is fine: in the message itself ("email jane@x.org that I'll be late and send
 //      it") or earlier in the chat ("you can send emails without asking"). Never read from a page, an email or a tool's answer
 //      (only the text the user typed is looked at, see typedGrant), never taken from a permission mode, and only for that chat.
@@ -165,7 +166,7 @@ function createLog({ file, now = Date.now, maxPerHour = MAX_PER_HOUR, secrets = 
     // Written just before the request goes out: a send that gets no answer still counts.
     record({ to, subject, via }) {
       if (unreadable) throw new SendError('Lumen can’t read its list of sent emails, so it can’t check the limit. Nothing was sent.');
-      entries.push({ at: now(), to: String(to || '').slice(0, 300), subject: String(subject || '').slice(0, 200), via: via === 'chat' || via === 'message' ? 'typed' : 'card' });
+      entries.push({ at: now(), to: String(to || '').slice(0, 300), subject: String(subject || '').slice(0, 200), via: via === 'chat' || via === 'message' ? 'typed' : via === 'bypass' ? 'bypass' : 'card' });
       entries = entries.slice(-LOG_KEEP);
       save();
     },
