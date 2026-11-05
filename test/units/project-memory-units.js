@@ -93,7 +93,7 @@ const Q = 'bbbbbbbbbbbbbbbb';
     const agent = src('src/ai/agent.js');
     const main = src('src/main.js');
     check('agent: the first message is kept as memoryQuery and handed to the memory source', /messages\.settings\.memoryQuery = String\(userText\)/.test(agent) && /memorySource\.text\(project, query\)/.test(agent) && /seen\.query === query/.test(agent));
-    check('main: the memory source passes the query to block()', /text: \(project, query\) => memory\(\)\.block\(\{ project: project \|\| null, query \}\)/.test(main));
+    check('main: the memory source passes the query to block()', /text: \(project, query\) => \[memory\(\)\.block\(\{ project: project \|\| null, query \}\)/.test(main));
     check('main: chats:project-memory is served, on the chat page\'s list, and in the chat preload', /ipcMain\.handle\('chats:project-memory', /.test(main) && /'chats:project-memory', /.test(src('src/features/chat-page.js')) && /projectMemory: \(id, change\) => ipcRenderer\.invoke\('chats:project-memory'/.test(src('src/features/chat-preload.js')));
     check('main: the project page may only change its own project\'s entries', /That note is not in this project/.test(main));
     check('main: project-get sends the stale ids', /stale: memory\(\)\.stale\(pid\)/.test(main));
