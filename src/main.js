@@ -336,7 +336,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-defaults', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -12602,19 +12602,19 @@ function projectFiles() {
 }
 const projectLimits = () => { const f = require('./features/project-files'); return { files: f.MAX_FILES, images: f.MAX_IMAGES, fileChars: f.MAX_TEXT_CHARS, totalChars: f.MAX_TOTAL_CHARS, instructions: 4000, index: require('./ai/project-context').INDEX_CHARS, kinds: f.SUPPORTED_TEXT }; };
 const projectChanged = () => { syncProjectInstructions(); pushAttention(); syncTouch('chats'); portableSoon(); };
+// [project memory] A project's own entries, pinned first then newest, and the ids of those untouched for months (ai/memory.js STALE_MS).
+const projectMemoryOf = (pid) => { try { const list = memory().list().filter((e) => e.project === pid).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updated - a.updated); return { memory: list, stale: memory().stale(pid).map((e) => e.id) }; } catch { return { memory: [], stale: [] }; } };
 // Everything the project page shows about one project.
 ipcMain.handle('chats:project-get', async (_e, id) => {
   if (projectById(String(id))?.portable) await syncPortable(String(id)); // [portable projects] what was changed in the folder is picked up first
   const p = projectById(String(id));
   if (!p) return null;
   const store = projectFiles();
-  let memoryEntries = [];
-  try { memoryEntries = memory().list().filter((e) => e.project === p.id).sort((a, b) => b.updated - a.updated); } catch { /* memory unreadable */ }
   // "Continue where you left off": what was said last in the project's few most recent chats
   const snippets = {};
   const recent = chats().list().filter((c) => !c.missing && !c.archived && c.project === p.id).sort((a, b) => (b.updated || 0) - (a.updated || 0)).slice(0, 6);
   await Promise.all(recent.map(async (c) => { snippets[c.id] = await chats().lastWords(c.id); }));
-  return { project: projectPage(p), snippets, files: store.list(p.id), totals: store.totals(p.id), memory: memoryEntries, memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
+  return { project: projectPage(p), snippets, files: store.list(p.id), totals: store.totals(p.id), ...projectMemoryOf(p.id), memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
 });
 // Files chosen in the page (its file picker or a drop): [{ name, bytes }]. Each is read with Lumen's own readers (PDF, Word, PowerPoint, email,
 // text, pictures) and kept as text in the profile. Answers { results: [{ ok, name, file | error }], files }.
@@ -12882,6 +12882,24 @@ ipcMain.handle('chats:project-file-rename', async (_e, id, fileId, name) => {
 ipcMain.handle('chats:project-memory-forget', (_e, id, entryId) => {
   try { const e = memory().list().find((x) => x.id === String(entryId) && x.project === String(id)); if (!e) return false; memory().forget(e.id); memoryEdited(); return true; } catch { return false; }
 });
+// [project memory] The project page's Memory card: { add: text } (a note you write yourself), { update: { id, text } }, { pin: { id, on } } or
+// { tidy: [ids] } (forget the entries the page listed as untouched for months). Answers { ok, memory, stale, error? }.
+ipcMain.handle('chats:project-memory', (_e, id, change) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const c = change && typeof change === 'object' ? change : {};
+  const ids = (x) => String(x ?? '').slice(0, 20);
+  const own = (x) => { const e = memory().list().find((m) => m.id === ids(x) && m.project === p.id); if (!e) throw new Error('That note is not in this project.'); return e.id; };
+  let error = '';
+  try {
+    if (typeof c.add === 'string') memory().add({ text: c.add, kind: 'note', source: 'you', project: p.id });
+    else if (c.update) memory().update(own(c.update.id), { text: String(c.update.text ?? ''), project: p.id });
+    else if (c.pin) memory().setPinned(own(c.pin.id), c.pin.on === true, { project: p.id });
+    else if (Array.isArray(c.tidy)) memory().forgetMany(c.tidy.slice(0, 200).map(ids), { project: p.id });
+    memoryEdited();
+  } catch (err) { error = String(err?.message || 'Could not change memory.').slice(0, 300); }
+  return { ok: !error, error, ...projectMemoryOf(p.id) };
+});
 // A project's settings (its defaults): the model a new chat starts with, plan first, and the user's connectors and MCP tools in its chats.
 ipcMain.handle('chats:project-defaults', (_e, id, defaults) => {
   const p = projectById(String(id));
@@ -12913,6 +12931,8 @@ const projectMenuItems = (tab) => {
     return [{ label: t('menu.addToProject'), enabled: isWebUrl(url) && !tab.isolated, submenu: list.map((p) => ({ label: menuLabel(p.name, 60), click: () => { const r = addTabToProject(tab, p.id); toast(r.ok ? t(r.already ? 'menu.projectAlready' : 'menu.projectAdded', { name: menuLabel(p.name, 40) }) : t('menu.projectAddFailed')); } })) }];
   } catch { return []; }
 };
+// [project memory] (tests) make some entries look untouched for `days`: the file is rewritten and read again.
+if (TEST) global.__projectMemoryAge = (ids, days) => { const file = path.join(app.getPath('userData'), 'memory.json'); const data = JSON.parse(safeStorage.decryptString(Buffer.from(JSON.parse(fs.readFileSync(file, 'utf8')).enc, 'base64'))); for (const e of data.entries) if (ids.includes(e.id)) e.updated -= days * 86400000; fs.writeFileSync(file, JSON.stringify({ enc: safeStorage.encryptString(JSON.stringify(data)).toString('base64') })); memory().reset(); };
 if (TEST) global.__projectWorkspace = { info: (id) => { const t = allTabsEverywhere().find((x) => x.id === id); return t ? { url: tabUrl(t), alive: alive(t), iso: !!t.isolated } : null; }, files: () => projectFiles(), blockFor: (id) => projectBlockFor(id), settingsFor: (id) => projectSettingsFor(id), addTab: (tabId, pid) => addTabToProject(allTabsEverywhere().find((x) => x.id === tabId), pid), menuItems: (tabId) => projectMenuItems(allTabsEverywhere().find((x) => x.id === tabId)).map((i) => ({ label: i.label, enabled: i.enabled !== false, items: (i.submenu || []).map((s) => s.label) })), pendingDeletes: () => [...pendingProjectDeletes.keys()], memoryEntries: () => memory().list(), tools: (id) => (agent.messages.settings?.projectTools === true), chatSettings: () => ({ projectId: agent.messages.settings?.projectId || null, projectTools: agent.messages.settings?.projectTools === true }) };
 // [work folder] The open chat's own working folder (chats outside a project, or a project chat that works elsewhere): get / pick / set / clear / open.
 // Answers { ok, info: { path, shown, source, missing } | null }. A drive root or the home folder needs `confirmed` (reason 'root' | 'home').
@@ -13081,7 +13101,7 @@ function memorySearchChats(query, exclude) {
     return { id: h.id, title: c?.title || '', date: c?.updated ? new Date(c.updated).toISOString().slice(0, 10) : '', snippet: h.snippet };
   });
 }
-require('./ai/agent').setMemorySource({ on: memoryOn, text: (project) => memory().block({ project: project || null }) }); // ([project workspace] a project's chats also see what was saved for it)
+require('./ai/agent').setMemorySource({ on: memoryOn, text: (project, query) => memory().block({ project: project || null, query }) }); // ([project workspace] a project's chats also see what was saved for it)
 const memoryView = () => ({ on: memoryOn(), chatSearch: readSettings().aiMemoryChatSearch !== false, readOnly: memory().readOnly, entries: memory().list().sort((a, b) => b.updated - a.updated).map((e) => (e.project ? { ...e, projectName: projectById(e.project)?.name || '' } : e)) });
 const memoryEdited = () => require('./ai/agent').memoryEdited(); // the user changed it: open chats' prompts follow at their next request
 // The chat's row and /memory (the sidebar and the chat page).

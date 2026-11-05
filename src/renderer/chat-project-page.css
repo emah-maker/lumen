@@ -159,6 +159,14 @@ button.pjp-hit { cursor: pointer; }
 .pjp-input:focus, .pjp-text:focus, .pjp-select:focus-visible, .pjp-model:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* files, pages, memory: short lists of rows */
+/* [project memory] the Memory card: add / edit in place, pinned notes, the filter and the tidy-up line */
+.pjp-memory-edit { display: flex; gap: var(--sp-3); align-items: center; width: 100%; }
+.pjp-memory-add:not([hidden]) { margin-bottom: var(--sp-4); }
+.pjp-memory-filter { width: 100%; flex: none; margin-bottom: var(--sp-3); }
+.pjp-memory-filter[hidden], .pjp-memory-more[hidden], .pjp-memory-tidy[hidden] { display: none; }
+.pjp-pin-chip { margin-right: var(--sp-3); padding: 0 var(--sp-3); font-size: 11px; line-height: 18px; }
+.pjp-memory .pjp-row-text { cursor: text; }
+.pjp-memory-tidy { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-top: var(--sp-4); }
 .pjp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .pjp-list[hidden] { display: none; }
 .pjp-row { display: flex; align-items: center; gap: var(--cp-2); min-height: 40px; padding: var(--sp-2) var(--sp-3); margin-inline: calc(-1 * var(--sp-3)); border-radius: 10px; }

@@ -871,7 +871,7 @@ function historyFor(messages, model) {
 // carry settings.noMemory and get nothing.
 let memorySource = null;
 let memoryGen = 0;
-const memoryBlocks = new WeakMap(); // a chat's settings -> { key, project, text }
+const memoryBlocks = new WeakMap(); // a chat's settings -> { key, project, query, text }
 function setMemorySource(source) { memorySource = source; memoryGen++; }
 function memoryEdited() { memoryGen++; }
 function memoryBlockFor(settings) {
@@ -881,10 +881,11 @@ function memoryBlockFor(settings) {
   if (!on) return '';
   const seen = memoryBlocks.get(settings);
   const project = typeof settings.projectId === 'string' ? settings.projectId : null; // [project workspace] a project's chats also see what was saved for it
-  if (seen && seen.key === memoryGen && seen.project === project) return seen.text;
+  const query = typeof settings.memoryQuery === 'string' ? settings.memoryQuery : ''; // [project memory] the chat's first message, which ranks the project's entries
+  if (seen && seen.key === memoryGen && seen.project === project && seen.query === query) return seen.text;
   let text;
-  try { text = String(memorySource.text(project) || ''); } catch { text = ''; } // (unreadable now: the chat goes on without it)
-  memoryBlocks.set(settings, { key: memoryGen, project, text });
+  try { text = String(memorySource.text(project, query) || ''); } catch { text = ''; } // (unreadable now: the chat goes on without it)
+  memoryBlocks.set(settings, { key: memoryGen, project, query, text });
   return text;
 }
 
@@ -2308,6 +2309,7 @@ class Agent {
       // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
       // thinking-block prefix check on newer models. The model can change between messages (setModel).
       if (!messages.settings) messages.settings = { model: DEFAULT_MODEL, adhdMode: true, ...this.getOptions() };
+      if (typeof messages.settings.memoryQuery !== 'string' && userText) messages.settings.memoryQuery = String(userText).slice(0, 500); // [project memory] the first message picks which of a project's entries come first (kept, so the prompt stays the same)
       if (this.nextEffort != null && messages === this.messages) { if (this.nextEffort) messages.settings.effort = this.nextEffort; else delete messages.settings.effort; this.nextEffort = null; }
       if (this.nextModel && messages === this.messages) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.forgetAuto(messages.settings); this.nextModel = null; }
       // [model fallback] A stand-in from an earlier turn (fallbackFrom holds the user's own pick) goes back to the pick
