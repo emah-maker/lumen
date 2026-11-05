@@ -173,6 +173,7 @@
     showTitle();
     showProjectChip();
     window.chatProjectPage?.refresh();
+    window.chatProjectsAll?.refresh(); // [project list]
     empty.hidden = chats.length > 0;
     if (focused) {
       const rows = [...items.querySelectorAll('.chat-item')];
@@ -196,6 +197,7 @@
       onInstructions: (p) => { view = 'chats'; openProjectPage(p.id, { focus: 'instructions' }); },
       onNewChat: (p) => newChatInProject(p),
       onFlag: (p, key, on) => flagProject(p, key, on),
+      onAll: () => openAllProjects(),
     });
     drag.refresh();
   }
@@ -241,8 +243,36 @@
       document.body.append(js);
     }));
   }
-  const closeProjectPage = () => window.chatProjectPage?.close(false);
+  const closeProjectPage = () => { window.chatProjectPage?.close(false); window.chatProjectsAll?.close(false); };
+  // [project list] All projects (chat-projects-all.js, loaded the first time): every project as a card, grouped, with find, sort and Cards / List.
+  let allLoading = null;
+  function loadAllProjects() {
+    if (window.chatProjectsAll) return Promise.resolve();
+    return (allLoading ||= new Promise((resolve, reject) => {
+      const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-projects-all.css' });
+      const js = Object.assign(document.createElement('script'), { src: 'chat-projects-all.js' });
+      js.onload = () => resolve();
+      js.onerror = () => { allLoading = null; reject(new Error('all projects')); };
+      document.head.append(css);
+      document.body.append(js);
+    }));
+  }
+  async function openAllProjects() {
+    try { await loadAllProjects(); } catch { return; }
+    window.chatProjectPage?.close(false);
+    if (narrowQuery.matches && drawerOpen) toggleRail(false);
+    await window.chatProjectsAll.open({
+      api,
+      host: {
+        projects: () => lastProjects, chats: () => lastChats,
+        open: (p) => { view = 'chats'; openProjectPage(p.id); }, edit: (p) => editProject(p), flag: (p, key, on) => flagProject(p, key, on), newProject: () => editProject(null),
+        closed: () => { prompt.focus(); drawProjects(); },
+      },
+    });
+  }
   async function openProjectPage(id, { focus = '' } = {}) {
+    if (id === 'all') { openAllProjects(); return; } // [project list] the sidebar's All projects
+    window.chatProjectsAll?.close(false);
     try { await loadProjectPage(); } catch { toast(tr('chatpage.project.failed', 'Could not save the project.')); return; }
     if (narrowQuery.matches && drawerOpen) toggleRail(false);
     const shown = await window.chatProjectPage.open({

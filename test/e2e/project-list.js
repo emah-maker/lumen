@@ -63,8 +63,9 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     check('8 rows, Recent first: the project with the newest chat leads', first.length === 8 && first[0] === 'Kiwi', JSON.stringify(first));
     check('...then "Show 4 more"', (await inPage("document.querySelector('#cp-projects .cp-pj-more-rows')?.textContent")) === 'Show 4 more');
     await inPage("document.querySelector('#cp-projects .cp-pj-more-rows').click()");
-    check('Show 4 more lists all 12, then Show less', (await rows()).length === 12 && (await inPage("document.querySelector('#cp-projects .cp-pj-more-rows')?.textContent")) === 'Show less');
-    await inPage("document.querySelector('#cp-projects .cp-pj-more-rows').click()");
+    check('Show 4 more opens All projects, with every project as a card', await waitFor(async () => (await inPage("document.querySelectorAll('#cp-projects-all .pja-card').length")) === 12, 15000), await inPage("document.querySelectorAll('#cp-projects-all .pja-card').length"));
+    await inPage("document.querySelector('#cp-projects-all .pjp-back').click()");
+    await waitFor(async () => (await inPage("Boolean(document.getElementById('cp-projects-all'))")) === false);
     await type('#cp-projects .cp-pj-find', 'birds');
     check('the filter matches the goal line', JSON.stringify(await rows()) === '["Fig"]', JSON.stringify(await rows()));
     check('...and keeps focus while typing', (await inPage("document.activeElement?.classList.contains('cp-pj-find')")) === true);
@@ -79,12 +80,10 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     check('...and is kept after a reload', JSON.stringify((await rows()).slice(0, 2)) === '["Apple","Banana"]', JSON.stringify(await rows()));
 
     // ======== pin ========
-    await inPage("document.querySelector('#cp-projects .cp-pj-more-rows').click()"); // (Lime is past the first 8 in A–Z)
-    check('⋯ → Pin to top', (await menuOf('Lime', 'Pin to top')) === true);
-    check('the pinned project comes first with a pin mark, also in A–Z', await waitFor(async () => (await rows())[0] === 'Lime' && (await inPage(`Boolean(document.querySelector('#cp-projects .cp-pj-item[data-project="${seed.ids.Lime}"] .cp-pj-pinmark'))`)) === true), JSON.stringify(await rows()));
-    check('main keeps the pin', (await app.evaluate((_e, id) => global.__chats.store().projects().find((p) => p.id === id).pinned, seed.ids.Lime)) === true);
-    check('⋯ → Unpin', (await menuOf('Lime', 'Unpin')) === true && await waitFor(async () => (await rows())[0] === 'Apple'));
-    await inPage("document.querySelector('#cp-projects .cp-pj-more-rows').click()"); // Show less
+    check('⋯ → Pin to top', (await menuOf('Honeydew', 'Pin to top')) === true);
+    check('the pinned project comes first with a pin mark, also in A–Z', await waitFor(async () => (await rows())[0] === 'Honeydew' && (await inPage(`Boolean(document.querySelector('#cp-projects .cp-pj-item[data-project="${seed.ids.Honeydew}"] .cp-pj-pinmark'))`)) === true), JSON.stringify(await rows()));
+    check('main keeps the pin', (await app.evaluate((_e, id) => global.__chats.store().projects().find((p) => p.id === id).pinned, seed.ids.Honeydew)) === true);
+    check('⋯ → Unpin', (await menuOf('Honeydew', 'Unpin')) === true && await waitFor(async () => (await rows())[0] === 'Apple'));
 
     // ======== archive ========
     check('⋯ → Archive', (await menuOf('Apple', 'Archive')) === true);
@@ -111,6 +110,44 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
       check('the filter hides the others', JSON.stringify(await inPage("[...document.querySelectorAll('.cp-pj-pick .cp-pj-pick-item:not([hidden])')].map((b) => b.textContent).filter((t) => !/project/i.test(t))")) === '["Cherry"]');
       await inPage("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
     } else check('Move to project opens from a chat row', false, await inPage("document.querySelector('.chat-item')?.outerHTML?.slice(0, 300)"));
+
+    // ======== All projects ========
+    await inPage("document.querySelector('#cp-projects .cp-pj-allbtn').click()");
+    const all = (code) => inPage(`(() => { const r = document.getElementById('cp-projects-all'); ${code} })()`);
+    check('the grid button opens All projects', await waitFor(async () => (await all('return r.querySelectorAll(".pja-card").length')) === 11, 15000), await all('return r ? r.innerText.slice(0, 300) : "none"'));
+    await inPage(`window.assistant.chats.projectFlag('${seed.ids.Cherry}', 'pinned', true)`);
+    await waitFor(() => all('return r.querySelectorAll(".pja-group-pinned .pja-card").length === 1'));
+    const heads = await all('return [...r.querySelectorAll(".pja-group-h")].map((h) => h.textContent)');
+    check('groups with counts: Pinned, Recent, and Archived folded', JSON.stringify(heads) === JSON.stringify(['Pinned1', 'Recent10', 'Archived (1)']), JSON.stringify(heads));
+    check('...the archived one shows when its group is opened', (await all('r.querySelector(".pja-group-toggle").click(); return r.querySelectorAll(".pja-group-archived .pja-card").length')) === 1);
+    const card = await all(`const c = r.querySelector('.pja-card[data-project="${seed.ids.Kiwi}"]'); return { name: c.querySelector('.pja-name').textContent, when: c.querySelector('.pja-when').textContent, counts: c.querySelector('.pja-counts').textContent, mark: c.querySelector('.pja-mark').textContent }`);
+    check('a card: the mark, the name, when it was used and how many chats', card.name === 'Kiwi' && card.mark === 'K' && /Used today/.test(card.when) && /1 chat/.test(card.counts), JSON.stringify(card));
+    await all('const f = r.querySelector(".pja-find"); f.value = "birds"; f.dispatchEvent(new Event("input"));');
+    check('find narrows the cards (the goal line counts)', JSON.stringify(await all('return [...r.querySelectorAll(".pja-card .pja-name")].map((n) => n.textContent)')) === '["Fig"]');
+    await all('const f = r.querySelector(".pja-find"); f.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));');
+    await all('r.querySelector(".pja-view-btn[data-view=list]").click()');
+    check('List shows rows instead of cards', (await all('return r.querySelectorAll(".pja-row").length > 0 && !r.querySelector(".pja-card")')) === true);
+    await inPage('location.reload()');
+    await ready();
+    await inPage("document.querySelector('#cp-projects .cp-pj-allbtn').click()");
+    check('...and is kept after a reload', await waitFor(() => all('return Boolean(r && r.querySelector(".pja-row")) && r.querySelector(".pja-view-btn[data-view=list]").getAttribute("aria-pressed") === "true"'), 15000));
+    await all('r.querySelector(".pja-view-btn[data-view=grid]").click()');
+    await all(`r.querySelector('.pja-card[data-project="${seed.ids.Date}"] .pja-more').click()`);
+    const cardMenu = await waitFor(() => inPage("document.querySelector('.cp-pj-actions') ? [...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].map((b) => b.textContent) : null"));
+    check('a card\'s ⋯ menu: Open project, Pin to top, Rename…, Archive', JSON.stringify(cardMenu) === JSON.stringify(['Open project', 'Pin to top', 'Rename…', 'Archive']), JSON.stringify(cardMenu));
+    await inPage("[...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].find((b) => b.textContent === 'Pin to top').click()");
+    check('Pin to top from a card moves it to Pinned', await waitFor(() => all(`return Boolean(r.querySelector('.pja-group-pinned .pja-card[data-project="${seed.ids.Date}"]'))`)));
+    await all(`r.querySelector('.pja-card[data-project="${seed.ids.Kiwi}"] .pja-line, .pja-card[data-project="${seed.ids.Kiwi}"] .pja-foot').click()`);
+    check('clicking a card opens its project', await waitFor(async () => (await inPage('window.chatProjectPage?.id()')) === seed.ids.Kiwi && (await inPage("Boolean(document.getElementById('cp-projects-all'))")) === false, 15000));
+    // many projects: the cards come in chunks as the page scrolls
+    await inPage("(async () => { for (let i = 0; i < 40; i++) await window.assistant.chats.saveProject({ name: 'Bulk project ' + String(i).padStart(2, '0'), folderMode: 'none' }); })()");
+    await sleep(800);
+    await inPage("document.querySelector('#cp-projects .cp-pj-allbtn').click()");
+    await waitFor(() => all('return r && r.querySelectorAll(".pja-card").length > 0'), 15000);
+    const firstChunk = await all('return r.querySelectorAll(".pja-group-recent .pja-card").length');
+    check('with 50 recent projects the first chunk is 24 cards', firstChunk === 24, firstChunk);
+    await all('r.scrollTop = r.scrollHeight;');
+    check('...and the rest come as the page scrolls', await waitFor(async () => (await all('r.scrollTop = r.scrollHeight; return r.querySelectorAll(".pja-group-recent .pja-card").length')) >= 48, 10000), await all('return r.querySelectorAll(".pja-group-recent .pja-card").length'));
 
     check('no page errors', errors.length === 0, errors.join(' | '));
   } finally {

@@ -96,6 +96,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
       projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] { permissionMode, allowedHosts }
       projectFlag: (id, key, on) => ipcRenderer.invoke('chats:project-flag', id, key, on), // [project list] 'pinned' | 'archived'
+      projectsOverview: () => ipcRenderer.invoke('chats:projects-overview'), // [project list] the All projects cards: { [id]: { line, docs, docCount } }
       setProject: (id, projectId) => ipcRenderer.invoke('chats:project-set', id, projectId),
       moveToProject: (ids, projectId) => ipcRenderer.invoke('chats:project-move', ids, projectId),
       restoreProjects: (moves) => ipcRenderer.invoke('chats:project-restore', moves),

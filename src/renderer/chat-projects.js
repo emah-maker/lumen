@@ -18,6 +18,7 @@
   const PENCIL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>';
   const SHOWN_CHATS = 5; // chats listed under an open project; "Show all" opens its page
   const PIN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l1.7 3.4 3.8.6-2.7 2.6.6 3.8L8 11.1l-3.4 1.8.6-3.8L2.5 6.5l3.8-.6z"/></svg>';
+  const GRID = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"/></svg>';
   const BOX = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6h9v-6M6.5 9h3"/></svg>';
   const icon = (html) => { const s = el('span', { className: 'cp-pj-icon' }); s.innerHTML = html; return s; };
   // [project list] With more than TOOLS_AT projects the block gets a filter and a Recent / Name switch; the list shows SHOWN_PROJECTS
@@ -49,7 +50,7 @@
   // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
   // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder, pin, archive); the chevron lists its chats under it.
   function render(opts) {
-    const { host, projects: everyProject, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null, onFlag = null } = opts;
+    const { host, projects: everyProject, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null, onFlag = null, onAll = null } = opts;
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
     const again = () => render(opts);
@@ -70,6 +71,13 @@
       imp.innerHTML = FOLDER;
       imp.onclick = onImport;
       tools.append(imp);
+    }
+    if (onAll && everyProject.length) { // [project list] every project on one page, as cards (chat-projects-all.js)
+      const allBtn = el('button', { type: 'button', className: 'icon-btn cp-pj-headbtn cp-pj-allbtn', title: tr('projects.all.title', 'All projects') });
+      allBtn.setAttribute('aria-label', tr('projects.all.title', 'All projects'));
+      allBtn.innerHTML = GRID;
+      allBtn.onclick = onAll;
+      tools.append(allBtn);
     }
     tools.append(add);
     head.append(el('span', { className: 'cp-pj-title', textContent: prefs.archived ? tr('projectws.list.archivedTitle', 'Archived projects') : tr('chatpage.projects', 'Projects') }), tools);
@@ -163,7 +171,7 @@
     // [project list] the rest of a long list, and the archived ones
     if (shown.hidden) {
       const more = el('button', { type: 'button', className: 'cp-pj-more-rows', textContent: tr('projectws.list.more', 'Show {n} more', { n: shown.hidden }) });
-      more.onclick = () => { prefs.all = true; again(); };
+      more.onclick = () => { if (onAll) onAll(); else { prefs.all = true; again(); } }; // (with the All projects page: there, as cards)
       rows.push(more);
     } else if (prefs.all && !prefs.query && !prefs.archived && arrange(everyProject, chats, { ...prefs, all: false }).hidden) {
       const less = el('button', { type: 'button', className: 'cp-pj-more-rows', textContent: tr('projectws.showLess', 'Show less') });

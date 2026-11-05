@@ -40,6 +40,16 @@ With **Memory** on, a project also keeps where its documents are, so neither you
 - **Archive** (the ⋯ menu) takes a project out of the lists, with Undo. Nothing is deleted: its chats, files, folder and memory stay as they are, and its chats still work. **Archived (N)** at the foot of the block lists the archived projects; **Move out of archive** in a project's ⋯ menu brings it back.
 - **Move to project** and the tab menu's **Add to project** leave archived projects out and list pinned ones first; with more than 8 projects Move to project has a filter at the top.
 
+## All projects
+
+The grid button next to + in the Projects block (in lumen://chat, and in the sidebar's chat list, where it opens lumen://chat) and **Show N more** open **All projects**, every project you have on one page.
+
+- **Groups.** **Pinned**, **Recent** (the rest), **Temporary** and **Archived**, each with its count. Archived is folded; click it to open it. A search opens it too.
+- **A card** shows the project's mark (a colour and its first letter, the same every time), its name, Pinned or Temp, when it was last used, how many chats and key documents it has, its top three key documents and a line from its memory (a pinned note first) or its goal line. Click a card to open the project.
+- **⋯ on a card**: **Open project**, **Pin to top** / **Unpin**, **Rename…**, **Archive** / **Move out of archive**, and **Keep as project** for a temporary one.
+- **Find a project, a note or a document** looks in names, goal lines, memory lines and key document names. **Recent** / **A–Z** sorts inside each group, and **Cards** / **List** switches to one compact row per project. Lumen keeps both choices.
+- **Many projects.** The cards are drawn 24 at a time as you scroll.
+
 ## Projects in the sidebar
 
 The browser's AI sidebar uses the same projects. A strip under its header shows the project the open chat is in; click it to pick another (or none). A chat with no messages yet starts again in the project, so it gets the project's default model and plan setting; a chat with messages is moved, and Undo is offered. The sidebar's chat list shows the projects first, with the chevron, + and ⋯ of the chat page's list, and each chat row has Move to project. A project row opens that project's page in lumen://chat. The sidebar and the chat page share one chat, so a move made in one shows in the other.

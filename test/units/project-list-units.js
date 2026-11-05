@@ -55,6 +55,25 @@ const { arrange } = sandbox.window.chatProjects;
   check('compact: Show all and a query list everything', arrange(many, [], { all: true }).list.length === 14 && arrange(many, [], { query: 'project' }).list.length === 14);
 }
 
+// ---- All projects: the groups (renderer/chat-projects-all.js)
+{
+  const sb = { window: { chatProjects: { menu() {} } }, document: {}, localStorage: { getItem: () => null, setItem() {} } };
+  vm.runInNewContext(src('src/renderer/chat-projects-all.js'), sb);
+  const { groups } = sb.window.chatProjectsAll;
+  const P = (id, name, updated, extra = {}) => ({ id, name, updated, created: 1, ...extra });
+  const all = [P('a', 'Alpha', 5), P('b', 'beta', 9, { pinned: true }), P('c', 'Gamma', 7, { temporary: true }), P('d', 'Delta', 3, { archived: true }), P('e', 'Epsilon', 8)];
+  const g = Object.fromEntries(groups(all, [{ id: 'x', project: 'a', updated: 99 }], {}).map((x) => [x.key, x.list.map((p) => p.name)]));
+  check('all: every project once, grouped Pinned / Recent / Temporary / Archived', JSON.stringify(g) === JSON.stringify({ pinned: ['beta'], recent: ['Alpha', 'Epsilon'], temp: ['Gamma'], archived: ['Delta'] }), JSON.stringify(g));
+  const byName = Object.fromEntries(groups(all, [], {}, { sort: 'name' }).map((x) => [x.key, x.list.map((p) => p.name)]));
+  check('all: A–Z inside each group', JSON.stringify(byName.recent) === JSON.stringify(['Alpha', 'Epsilon']));
+  const found = groups(all, [], { e: { line: 'The client wants blue', docs: [{ label: 'Brand guide', kind: 'pdf' }] } }, { query: 'brand' }).flatMap((x) => x.list.map((p) => p.name));
+  check('all: find looks in names, goal lines, memory lines and key documents, archived ones too', JSON.stringify(found) === JSON.stringify(['Epsilon']) && groups(all, [], {}, { query: 'delta' }).find((x) => x.key === 'archived').list.length === 1);
+  const allSrc = src('src/renderer/chat-projects-all.js');
+  check('all: cards drawn in chunks as the page scrolls (IntersectionObserver), Cards / List kept', /const CHUNK = 24/.test(allSrc) && /IntersectionObserver/.test(allSrc) && /lumen\.projects\.view/.test(allSrc));
+  check('all: the card menu has Open, Pin, Rename, Archive and Keep as project', ['projectws.open', 'projectws.list.pin', 'projects.all.rename', 'projectws.list.archive', 'projectws.temp.keep'].every((k) => allSrc.includes(k)));
+  check('all: reached from the rail and the sidebar; main serves the cards\' summary', /onAll: \(\) => openAllProjects\(\)/.test(src('src/renderer/chat-page.js')) && /openFullPage\('all'\)/.test(src('src/renderer/sidebar-projects.js')) && /ipcMain\.handle\('chats:projects-overview', \(\) =>/.test(src('src/main.js')) && /projectsOverview: \(\) => ipcRenderer\.invoke\('chats:projects-overview'\)/.test(src('src/features/chat-preload.js')));
+}
+
 // ---- wiring
 {
   const main = src('src/main.js');
