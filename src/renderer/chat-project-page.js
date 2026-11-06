@@ -1123,6 +1123,37 @@
       return b;
     });
     tabs.append(...tabButtons);
+    // [project drive] Save to Google Drive: a switch (off until turned on for this project; not for a temporary one), when it was last saved,
+    // and Save now. It says plainly when Google Drive isn't connected.
+    const driveSays = (v) => {
+      if (v?.error === 'temporary') return tr('projectws.drive.temp', 'Keep it as a project first: a temporary project isn’t saved to Drive.');
+      if (v?.error === 'connect' || (v && !v.connected)) return tr('projectws.drive.connect', 'Connect Google Drive first: Settings → Apps and connections → Google Drive.');
+      if (v?.error) return tr('projectws.drive.failed', 'Could not save to Google Drive: {why}', { why: v.error });
+      if (v?.on && v.saved) return tr('projectws.drive.saved', 'Saved to Google Drive (Lumen/Projects) {when}.', { when: new Date(v.saved).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) });
+      if (v?.on) return tr('projectws.drive.on', 'Saving to Google Drive (Lumen/Projects)…');
+      return tr('projectws.drive.off', 'Save this project to Google Drive, in Lumen/Projects: its notes, key documents, instructions, settings and chats, as Markdown and JSON. Its files are not uploaded.');
+    };
+    function driveLine(p, line) {
+      const say = el('span', { className: 'pjp-setting-text pjp-drive-say' });
+      say.setAttribute('role', 'status');
+      const toggle = button('', () => run({ on: !state.on }), 'pjp-drive-toggle');
+      const now = button(tr('projectws.drive.now', 'Save now'), () => run({ save: true }), 'pjp-drive-now');
+      let state = { on: Boolean(p.drive), saved: p.driveSaved || 0, error: p.driveError || '', connected: true };
+      const show = (v) => { state = { ...state, ...v }; say.textContent = driveSays(v ? { ...state, ...v } : state); toggle.textContent = state.on ? tr('projectws.drive.stop', 'Stop saving to Drive') : tr('projectws.drive.start', 'Save to Drive'); toggle.setAttribute('aria-pressed', String(state.on)); now.hidden = !state.on; };
+      async function run(change) {
+        toggle.disabled = now.disabled = true;
+        if (change.on || change.save) say.textContent = tr('projectws.drive.saving', 'Saving to Google Drive…');
+        const v = await page.api.projectDrive(page.id, change).catch(() => null);
+        toggle.disabled = now.disabled = false;
+        show(v || { error: tr('projectws.drive.unknown', 'no answer') });
+        h.refresh();
+      }
+      show(null);
+      const row = line('', toggle, now);
+      row.classList.add('pjp-drive');
+      row.querySelector('.pjp-setting-text').replaceWith(say);
+      return row;
+    }
     // the Settings view's own card: the project as a whole
     const projectCard = () => {
       const p = page.data.project;
@@ -1132,6 +1163,7 @@
       if (p.temporary) rows.push(line(`${tr('projectws.temp.title', 'Temporary project.')} ${p.expires ? window.chatProjects.expiresText(p.expires) : ''}.`, button(tr('projectws.temp.keep', 'Keep as project'), keepIt, 'primary pjp-keep')));
       if (!p.archived) rows.push(line(p.pinned ? tr('projectws.settings.pinned', 'Pinned to the top of your projects.') : tr('projectws.settings.unpinned', 'Listed by your sort order.'), button(p.pinned ? tr('projectws.list.unpin', 'Unpin') : tr('projectws.list.pin', 'Pin to top'), async () => { await h.flag?.(page.data.project, 'pinned', !page.data.project.pinned); await reload(true); }, 'pjp-pin')));
       rows.push(line(p.archived ? tr('projectws.settings.archived', 'Archived: out of your project lists.') : tr('projectws.settings.archive', 'Archive it to take it out of your lists. Nothing is deleted.'), button(p.archived ? tr('projectws.list.unarchive', 'Move out of archive') : tr('projectws.list.archive', 'Archive'), async () => { await h.flag?.(page.data.project, 'archived', !page.data.project.archived); if (page) await reload(true); }, 'pjp-archive')));
+      rows.push(driveLine(p, line));
       rows.push(line(tr('projectws.settings.export', 'A zip with the instructions, sources, chats and memory.'), button(tr('projectws.export', 'Export project…'), exportProject)));
       rows.push(line(tr('projectws.settings.delete', 'Its chats stay, out of any project. Undo is offered for a moment.'), button(tr('chatpage.project.delete', 'Delete project'), askDelete, 'danger pjp-delete')));
       root2.body.append(...rows);

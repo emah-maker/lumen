@@ -661,9 +661,19 @@ function create({
     return id === 'canvas' && domain ? `https://${domain}/` : null;
   }
 
+  // [project drive] Google Drive's request function for Lumen's own use (Save to Drive, features/project-drive.js): the same sign-in and
+  // permissions as the Drive card, never the AI's. null while Drive isn't connected.
+  function driveRequest() {
+    const def = registry.get('drive');
+    const entry = def && connected.drive;
+    if (!entry) return null;
+    const ctx = makeCtx(def, entry);
+    return (target, opts) => ctx.http(target, opts);
+  }
+
   const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
   const googleHolds = (clientId, email) => { try { return Boolean(googleSealed) && googleAuth().holds?.(clientId, email) === true; } catch { return true; } }; // (unknown: kept, never revoked)
-  return { googleHolds, setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, forgetAll: () => { cache.clear(); } };
+  return { googleHolds, setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, driveRequest, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };
