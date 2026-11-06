@@ -50,8 +50,8 @@ const LONG = 'Reading the second half of the PDF on Gaussian elimination with pa
     const send = (...events) => app.evaluate(({ BrowserWindow }, [evs, id]) => { const wc = BrowserWindow.getAllWindows()[0].webContents; for (const ev of evs) wc.send('agent:event', { runId: id, ...ev }); }, [events, run]);
     const t0 = Date.now() - 16000;
     const agent = (id, patch) => ({ type: 'agent', id, background: true, state: 'working', startedAt: id === 'a1' ? t0 : t0 + 8000, ...patch });
-    const A1 = 'Build 4.2 Gaussian elimination deck';
-    const A2 = 'Build 4.3 RREF and rank deck';
+    const A1 = 'Build the Gaussian elimination deck'; // (no ids in the names: two items with one, and the card is tabbed, test/e2e/live-card-tabs.js)
+    const A2 = 'Build the RREF and rank deck';
 
     // ---- 1. the card as the user saw it: one step of the reply's own, two agents at work
     await ui.evaluate(() => loadStepUI()); // eslint-disable-line no-undef

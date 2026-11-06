@@ -468,7 +468,7 @@ function loadStepUI() {
   const head = document.head;
   head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
   const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-  stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)); // ([agents card] with them)
+  stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('card-items.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)); // ([agents card] with them)
   return stepUILoad;
 }
 if (window.stepUI) window.stepUI.init(messages);

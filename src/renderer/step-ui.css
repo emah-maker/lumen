@@ -267,3 +267,30 @@
 .act-card.card-steady > :is(.act-tabs, .act-shot2, .agents-card)[hidden][data-seen], .act-card.card-steady .act-titles > .act-tabref[hidden][data-seen] { display: block !important; visibility: hidden; }
 .act-card.card-steady .act-titles > .act-skill[hidden][data-seen] { display: inline-block !important; visibility: hidden; }
 .act-card.card-steady > .act-actions > button[hidden][data-seen] { display: block !important; visibility: hidden; }
+
+/* ---- [card tabs] a busy run's agents by item (agents-card.js paintTabs, card-items.js): a tab strip, a main tab with a row per item (state,
+   latest score, clock), a tab per item with its agents and rounds. Every line is one line; the panel keeps its tallest tab's height while it runs. */
+.ag-tabs { display: flex; gap: var(--sp-2); min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ag-tabs[hidden], .ag-items[hidden], .ag-rv[hidden], .ag-row[hidden], .ag-tab-badge[hidden] { display: none; }
+.ag-tab { flex: none; display: inline-flex; align-items: center; gap: var(--sp-2); max-width: 18ch; padding: var(--sp-1) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-pill); background: none; color: var(--muted); font: inherit; font-size: var(--fs-xs); line-height: 18px; font-variant-numeric: tabular-nums; cursor: pointer; }
+.ag-tab:hover { color: var(--text); }
+.ag-tab[aria-selected="true"] { border-color: transparent; background: var(--accent-soft); color: var(--accent-text); }
+.ag-tab:focus-visible, .ag-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ag-tab-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-tab-dot, .ag-item-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+:is(.ag-tab, .ag-item)[data-state="working"] > :is(.ag-tab-dot, .ag-item-dot) { background: var(--accent); animation: act-pulse 1.1s ease-in-out infinite; }
+:is(.ag-tab, .ag-item)[data-state="done"] > :is(.ag-tab-dot, .ag-item-dot) { background: var(--success); }
+:is(.ag-tab, .ag-item)[data-state="failed"] > :is(.ag-tab-dot, .ag-item-dot) { background: var(--danger); }
+.ag-tab-badge { flex: none; min-width: 14px; height: 14px; padding: 0 var(--sp-1); box-sizing: border-box; border-radius: var(--r-pill); background: var(--danger); color: var(--on-accent); font-size: 10px; font-weight: 700; line-height: 14px; text-align: center; } /* off-scale: a 14 px count badge */
+.ag-panel { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.ag-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.ag-item { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; padding: var(--sp-3) var(--sp-5); border-radius: var(--r-md); background: var(--bg); font-size: var(--fs-sm); line-height: 18px; cursor: pointer; }
+.ag-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.ag-item-score, .ag-item-time { flex: none; color: var(--muted); font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.ag-item-score:empty { display: none; }
+.ag-item-time { min-width: 5ch; text-align: end; }
+.ag-rv { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; padding: var(--sp-3) var(--sp-5); border-radius: var(--r-md); background: var(--bg); font-size: var(--fs-sm); line-height: 18px; }
+.ag-rv .rv-track { flex-wrap: nowrap; overflow: hidden; }
+/* Each item's rounds are on its tab: the card's own score track would say them twice. */
+.act-card.ag-rated > .act-review:is(*, [hidden][data-seen]) { display: none !important; }
+@media (prefers-reduced-motion: reduce) { :is(.ag-tab, .ag-item)[data-state="working"] > :is(.ag-tab-dot, .ag-item-dot) { animation: none; } }
