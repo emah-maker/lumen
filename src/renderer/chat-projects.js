@@ -19,6 +19,7 @@
   const SHOWN_CHATS = 5; // chats listed under an open project; "Show all" opens its page
   const PIN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l1.7 3.4 3.8.6-2.7 2.6.6 3.8L8 11.1l-3.4 1.8.6-3.8L2.5 6.5l3.8-.6z"/></svg>';
   const GRID = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"/></svg>';
+  const CLOCK = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
   const BOX = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6h9v-6M6.5 9h3"/></svg>';
   const icon = (html) => { const s = el('span', { className: 'cp-pj-icon' }); s.innerHTML = html; return s; };
   // [project list] With more than TOOLS_AT projects the block gets a filter and a Recent / Name switch; the list shows SHOWN_PROJECTS
@@ -27,6 +28,13 @@
   const SHOWN_PROJECTS = 8;
   const prefs = { sort: 'recent', all: false, archived: false, query: '' }; // (this page only: the sort is kept in localStorage)
   try { if (localStorage.getItem('lumen.projects.sort') === 'name') prefs.sort = 'name'; } catch { /* no storage: Recent */ }
+  // [temp projects] "Deleted Nov 12 unless you keep it" / "today" / "tomorrow".
+  function expiresText(ms, now = Date.now()) {
+    const day = (t) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const days = Math.round((day(ms) - day(now)) / 86400000);
+    const when = days <= 0 ? tr('projectws.temp.today', 'today') : days === 1 ? tr('projectws.temp.tomorrow', 'tomorrow') : new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return tr('projectws.temp.expires', 'Deleted {when} unless you keep it', { when });
+  }
   // When a project was last worked in: its newest chat, else its own last change.
   function lastUsed(p, chats) {
     let t = Number(p.updated || p.created || 0);
@@ -50,7 +58,7 @@
   // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
   // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder, pin, archive); the chevron lists its chats under it.
   function render(opts) {
-    const { host, projects: everyProject, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null, onFlag = null, onAll = null } = opts;
+    const { host, projects: everyProject, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null, onFlag = null, onAll = null, onTemp = null, onKeep = null } = opts;
     const counts = new Map();
     for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
     const again = () => render(opts);
@@ -78,6 +86,13 @@
       allBtn.innerHTML = GRID;
       allBtn.onclick = onAll;
       tools.append(allBtn);
+    }
+    if (onTemp) { // [temp projects] one click: a project with no folder that goes a week after its last use unless kept
+      const temp = el('button', { type: 'button', className: 'icon-btn cp-pj-headbtn cp-pj-temp-new', title: tr('projectws.temp.new', 'New temporary project') });
+      temp.setAttribute('aria-label', tr('projectws.temp.new', 'New temporary project'));
+      temp.innerHTML = CLOCK;
+      temp.onclick = onTemp;
+      tools.append(temp);
     }
     tools.append(add);
     head.append(el('span', { className: 'cp-pj-title', textContent: prefs.archived ? tr('projectws.list.archivedTitle', 'Archived projects') : tr('chatpage.projects', 'Projects') }), tools);
@@ -108,6 +123,12 @@
       if (on) row.setAttribute('aria-current', 'page');
       const name = el('span', { className: 'cp-pj-name', textContent: p.name });
       if (p.pinned) { const mark = icon(PIN); mark.classList.add('cp-pj-pinmark'); mark.title = tr('projectws.list.pinned', 'Pinned'); row.append(icon(FOLDER), name, mark); } else row.append(icon(FOLDER), name);
+      if (p.temporary) { // [temp projects] a mark that says when it goes
+        const chip = el('span', { className: 'cp-pj-temp', textContent: tr('projectws.temp.chip', 'Temp') });
+        if (p.expires) chip.title = expiresText(p.expires);
+        row.append(chip);
+        row.title = p.expires ? `${p.name}: ${expiresText(p.expires)}` : p.name;
+      }
       row.append(el('span', { className: 'cp-pj-count', textContent: counts.get(p.id) ? String(counts.get(p.id)) : '' }));
       row.onclick = () => (onPage ? onPage(p) : onSelect?.(on ? null : p.id));
       wrap.append(row);
@@ -135,6 +156,7 @@
         const items = [];
         if (onPage) items.push({ label: tr('projectws.open', 'Open project'), icon: FOLDER, run: () => onPage(p) });
         items.push({ label: tr('chatpage.project.newChat', 'New chat here'), icon: PLUS, run: () => onNewChat(p) });
+        if (p.temporary && onKeep) items.push({ label: tr('projectws.temp.keep', 'Keep as project'), icon: FOLDER, run: () => onKeep(p) });
         if (p.folderMissing) items.push({ label: tr('chatpage.project.folder.missingFix', 'Folder missing…'), icon: FOLDER, run: () => onEdit(p) });
         items.push({ label: tr(p.instructions ? 'chatpage.project.instructions' : 'chatpage.project.addInstructions', p.instructions ? 'Instructions' : 'Add instructions'), icon: NOTE, run: () => (onInstructions ? onInstructions(p) : onEdit(p)) });
         items.push({ label: tr('chatpage.project.renameFolder.menu', 'Rename and folder…'), icon: PENCIL, run: () => onEdit(p) });
@@ -474,5 +496,5 @@
     (menu.querySelector('.cp-pj-pick-find') || menu.querySelector('button'))?.focus();
   }
 
-  window.chatProjects = { render, editor, picker, menu, arrange };
+  window.chatProjects = { render, editor, picker, menu, arrange, expiresText };
 })();

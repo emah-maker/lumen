@@ -336,7 +336,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -6399,7 +6399,7 @@ function lookAtProjectFolders() {
 // A project as the project page shows it: its folder state, and each pinned page's icon when Lumen already has one (from a tab or a visit; never fetched here).
 const withLinkIcons = (p) => (p.links?.length ? { ...p, links: p.links.map((l) => { const icon = faviconStore.get(hostOf(l.url)); return icon ? { ...l, icon } : l; }) } : p);
 const withFolderState = (p) => { const st = folderState.get(p.id); return p.folder && st && st.folder === p.folder && !st.ok ? { ...p, folderMissing: true } : p; };
-const projectPage = (p) => withLinkIcons(withFolderState(p));
+const projectPage = (p) => withLinkIcons(withFolderState(p.temporary && !p.expires ? withExpiry(p) : p)); // ([temp projects] `expires`, the date a temporary one goes)
 // What a project's chats work in: its working folder, else its own folder.
 const projectWorkFolderFor = (id) => { try { const pid = pendingProject.get(id); const p = pid ? projectById(pid) : chats().projectOf(id); return p ? (p.workFolder || p.folder || '') : ''; } catch { return ''; } };
 // The open chat's working folder as the composer shows it: { path, shown, source: 'chat' | 'project' } or null.
@@ -12290,7 +12290,7 @@ ipcMain.handle('chats:list', (event) => readForSender(event, () => {
     currentUsage: describeUsage(agent.messages.settings?.usage),
     currentContext: contextView(agent.messages.settings?.context), // [context]
     maxRuns: runSlots.limit,
-    projects: (() => { lookAtProjectFolders(); return chats().projects().map(withFolderState); })(), // [projects] (+ [project folders] whether the folder is there)
+    projects: (() => { lookAtProjectFolders(); const list = chats().list(); return chats().projects().map((p) => withExpiry(withFolderState(p), list)); })(), // ([temp projects] `expires`) // [projects] (+ [project folders] whether the folder is there)
     chats: (() => {
       const badges = chatBadges();
       const saved = chats().list().filter((c) => !c.missing); // (a chat whose file is gone is not shown: it would open empty)
@@ -12354,7 +12354,7 @@ ipcMain.handle('chats:show-tab', (event, id) => {
 });
 // [projects] The list, and every change: a new one, an edit, delete (its chats stay, out of any project), a chat moved in or out,
 // and a new chat that starts inside a project.
-const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: String(p?.name ?? '').slice(0, 200), instructions: p?.instructions === undefined ? undefined : String(p.instructions).slice(0, 20000), description: p?.description === undefined ? undefined : String(p.description).slice(0, 1000) });
+const projectFields = (p) => ({ id: p?.id ? String(p.id) : undefined, name: String(p?.name ?? '').slice(0, 200), instructions: p?.instructions === undefined ? undefined : String(p.instructions).slice(0, 20000), description: p?.description === undefined ? undefined : String(p.description).slice(0, 1000), ...(typeof p?.temporary === 'boolean' ? { temporary: p.temporary } : {}) });
 const dialogParent = (event) => { try { return BrowserWindow.fromWebContents(event.sender) || win; } catch { return win; } };
 async function pickFolder(event, title, defaultPath) {
   const picked = await electronDialog.showOpenDialog(dialogParent(event), { title, ...(defaultPath ? { defaultPath } : {}), properties: ['openDirectory', 'createDirectory'] });
@@ -12401,8 +12401,8 @@ function finishProjectDelete(id) {
   pendingProjectDeletes.delete(id);
   projectFiles().removeProject(id).catch(() => {});
 }
-ipcMain.handle('chats:project-delete', (_e, id) => {
-  id = String(id);
+ipcMain.handle('chats:project-delete', (_e, id) => deleteProject(String(id)));
+function deleteProject(id) {
   const snapshot = chats().projectSnapshot(id);
   const ok = chats().removeProject(id);
   if (!ok) return false;
@@ -12416,6 +12416,43 @@ ipcMain.handle('chats:project-delete', (_e, id) => {
   syncProjectInstructions();
   pushAttention();
   return ok;
+}
+// [temp projects] A temporary project (the + menu's "New temporary project": no folder, a name with the date) is deleted TEMP_PROJECT_MS after it was
+// last used (its newest chat, or its last change), like Delete project: its chats stay, out of any project; its files and memory go (after the
+// usual Undo time). "Keep as project" makes it an ordinary project. The page and the list show the date it goes. Checked an hour apart, and
+// soon after start; never while one of its chats is working.
+const TEMP_PROJECT_MS = 7 * 24 * 60 * 60 * 1000;
+function tempExpiry(p, list = chats().list()) {
+  if (!p?.temporary) return 0;
+  let used = Number(p.updated || p.created || 0);
+  for (const c of list) if (c.project === p.id && Number(c.updated) > used) used = Number(c.updated);
+  return used + TEMP_PROJECT_MS;
+}
+const withExpiry = (p, list) => (p.temporary ? { ...p, expires: tempExpiry(p, list) } : p);
+function sweepTempProjects(at = Date.now()) {
+  let gone = 0;
+  try {
+    if (!chats().trusted()) return 0; // (an index that could not be read: nothing is deleted on its say-so)
+    const list = chats().list();
+    const busy = new Set([...chatRuns.values()].filter((r) => runIsLive(r)).map((r) => chats().projectOf(r.chatId)?.id).filter(Boolean));
+    for (const p of chats().projects()) if (p.temporary && tempExpiry(p, list) <= at && !busy.has(p.id) && deleteProject(p.id)) gone++;
+  } catch { /* the next sweep */ }
+  return gone;
+}
+setTimeout(() => sweepTempProjects(), 45000).unref?.();
+scheduler.every('temp-projects', 60 * 60 * 1000, () => sweepTempProjects());
+if (TEST) global.__tempProjects = { sweep: (at) => sweepTempProjects(at), expiry: (id) => tempExpiry(projectById(id)), ms: TEMP_PROJECT_MS };
+// "New temporary project": made at once, with no folder, named for the day ("Quick project, Nov 5"; a second one that day gets a number).
+ipcMain.handle('chats:project-temp-new', () => {
+  const day = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const names = new Set(chats().projects().map((p) => p.name));
+  let name = `Quick project, ${day}`;
+  for (let n = 2; names.has(name); n++) name = `Quick project, ${day} (${n})`;
+  const out = chats().saveProject({ name, temporary: true });
+  if (!out) return null;
+  syncProjectInstructions();
+  pushAttention();
+  return projectPage(withExpiry(out));
 });
 ipcMain.handle('chats:project-undo', (_e, id) => {
   id = String(id);

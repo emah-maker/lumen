@@ -652,7 +652,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     return out;
   };
-  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults } = {}) {
+  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults, temporary } = {}) { // temporary: [temp projects] true makes it one, false keeps it as a project
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -673,6 +673,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (workFolder !== undefined) { const w = cleanPath(workFolder); if (w) project.workFolder = w; else delete project.workFolder; }
     if (links !== undefined) { const l = cleanLinks(links); if (l.length) project.links = l; else delete project.links; }
     if (defaults !== undefined) { const d = cleanDefaults(defaults); if (Object.keys(d).length) project.defaults = d; else delete project.defaults; }
+    if (temporary !== undefined) { if (temporary === true) project.temporary = true; else delete project.temporary; } // [temp projects] main deletes one TEMP_PROJECT_MS after it was last used
     project.updated = now();
     writeIndex();
     return { ...project };
