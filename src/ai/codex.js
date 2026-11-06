@@ -186,6 +186,11 @@ const TOKEN_ENV = 'LUMEN_MCP_TOKEN';
 const OFF_FEATURES = ['shell_tool', 'unified_exec', 'view_image', 'image_generation', 'browser_use', 'browser_use_external', 'browser_use_full_cdp_access', 'computer_use', 'apps', 'multi_agent', 'multi_agent_v2', 'in_app_browser', 'hooks', 'plugins', 'tool_suggest', 'skill_search', 'sleep_tool', 'goals', 'memories', 'request_permissions_tool'];
 
 const FULL_ON = ['shell_tool', 'unified_exec', 'view_image']; // [full access] the OFF_FEATURES a terminal user expects back
+// Codex installs its bundled skills into every Codex home (skills/.system) and lists each one, with its description, in a developer
+// message on EVERY turn: about 2,000 characters in a real Lumen session (2026-11-05), for skills that do nothing in Lumen (imagegen even
+// competes with Lumen's generate_image). [[skills.config]] name = … enabled = false turns one off: checked against codex-cli 0.160.0's
+// app-server (skills/list, a throwaway signed-out CODEX_HOME, no model call): these five listed, and each listed enabled: false with the entry.
+const BUNDLED_SKILLS = ['imagegen', 'openai-docs', 'review-agent', 'skill-creator', 'skill-installer'];
 const FULL_WATCHDOG_MS = 15 * 60 * 1000; // a silent shell command is not a hang
 // config.toml of a run's Codex home (see ISOLATION and WHAT THE MODEL MAY DO above). run: { mcpUrl } from Lumen's HTTP MCP server;
 // bridge: { command, args, env } + tag, for the stdio form (LUMEN_CODEX_MCP=stdio). Nothing secret is in the file.
@@ -201,6 +206,7 @@ function configFor({ model = 'default', run = null, bridge = null, userData = nu
     '[features]',
     ...OFF_FEATURES.filter((k) => !(fullAccess && FULL_ON.includes(k))).map((k) => `${k} = false`),
     '',
+    ...BUNDLED_SKILLS.flatMap((n) => ['[[skills.config]]', `name = ${q(n)}`, 'enabled = false', '']), // (see BUNDLED_SKILLS)
     '[mcp_servers.lumen]',
   ];
   if (bridge) {
@@ -649,4 +655,4 @@ class CodexEngine {
 // A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
 CodexEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
 
-module.exports = { itemImagePaths, CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
+module.exports = { BUNDLED_SKILLS, itemImagePaths, CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
