@@ -49,6 +49,37 @@ The grid button next to + in the Projects block (in lumen://chat, and in the sid
 - **⋯ on a card**: **Open project**, **Pin to top** / **Unpin**, **Rename…**, **Archive** / **Move out of archive**, and **Keep as project** for a temporary one.
 - **Find a project, a note or a document** looks in names, goal lines, memory lines and key document names. **Recent** / **A–Z** sorts inside each group, and **Cards** / **List** switches to one compact row per project. Lumen keeps both choices.
 - **Many projects.** The cards are drawn 24 at a time as you scroll.
+## Temporary projects
+
+For something quick (a trip, an assignment due Friday) that may not deserve a project of its own:
+
+- **The clock button** next to + in the Projects block makes one at once: no dialog, no folder, named for the day ("Quick project, Nov 5"; a second one that day gets a number). Its page opens, so you can start a chat, add files or rename it straight away.
+- It is marked **Temp** in the list (hover it for the date), and its page says "Temporary project. Deleted Nov 12 unless you keep it."
+- **It goes a week after it was last used.** Using it (a chat in it, an edit) moves the date on. Then Lumen deletes it the way **Delete project** does: its chats stay in your chat list, out of any project; its files and memory are erased. Lumen checks soon after it starts and every hour, never while one of its chats is working.
+- **Keep as project** (on its page, in its ⋯ menu, or in Settings) makes it an ordinary project that stays until you delete it.
+
+## The project page's views
+
+The tabs under the header switch what the page shows (arrow keys move between them):
+
+- **Overview**: everything described above, the chats on the left and the cards on the right.
+- **Memory**: the project's notes on their own, all of them, with the same Add, edit, Pin and Forget, then its Key documents.
+- **Settings**: first the project as a whole (Keep as project for a temporary one, Pin to top, Archive, Export project…, Delete project), then the instructions, the defaults, the permissions and the folder.
+
+An archived project's page says so above the tabs, with **Move out of archive**.
+
+## Save a project to Google Drive
+
+For a project you want on another computer, or kept outside Lumen:
+
+- **Turn it on per project.** In the project's **Settings** view, **Save to Drive** (or **Save to Drive** in its card's ⋯ menu on All projects). It is off for every project until you turn it on for that one. It needs Google Drive connected in Settings → Apps and connections; if it isn't, the line says so and nothing is sent.
+- **Where and what.** A folder **Lumen/Projects/<project name>** in your Drive, with readable files: `README.md`, `INSTRUCTIONS.md`, `project.json` (the name, goal line and defaults), `sources.md` (its web pages and websites), `Memory.md` and `memory.json` (its notes), `Key documents.md` and `key-documents.json` (where its documents are: paths, addresses and names) and `Chats/` (each chat as Markdown). The files you added to the project (Sources) are never uploaded.
+- **When.** About 30 seconds after a change (a chat, a note, an edit), and only the files that changed. The line says when it was last saved; **Save now** saves at once. Renaming the project renames its folder. A folder or file deleted in Drive is made again on the next save.
+- **Temporary projects** can't be saved until you click **Keep as project**.
+- **Stop saving to Drive** stops it; what is already in Drive stays there. Deleting the project stops it too.
+- **Import from Drive…** (at the top of All projects) lists the projects saved in Lumen/Projects and brings one back as a new project: its instructions, goal line, defaults, sources, notes and key documents. Its chats stay in Drive as Markdown files; they are not turned back into chats. The new project goes on saving to the same folder.
+- **Drive badge.** A project being saved has a **Drive** badge on its card (hover it for when it was saved).
+- OneDrive isn't offered: Lumen's OneDrive connection can only read.
 
 ## Projects in the sidebar
 
@@ -101,4 +132,4 @@ Deleting a project shows **Undo** for a short while. After that its files and me
 
 ## Not included
 
-There is no lumen://projects address (the page opens inside the chat page), and files can't yet be dragged in from outside by path.
+There is no lumen://projects address (the page opens inside the chat page), and files can't yet be dragged in from outside by path. A temporary project always lasts a week; that can't be changed yet.

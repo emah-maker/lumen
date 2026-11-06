@@ -99,3 +99,6 @@
 .cp-pj-pick.long { max-height: 360px; }
 .cp-pj-pick-find { width: 100%; margin-bottom: var(--cp-1); }
 .cp-pj-pick-item[hidden] { display: none; }
+
+/* [temp projects] the Temp mark on a row */
+.cp-pj-temp { flex: none; margin-left: var(--cp-1); padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--warning, var(--accent)) 18%, transparent); color: var(--text); font-size: 10.5px; line-height: 16px; }

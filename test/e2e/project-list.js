@@ -134,7 +134,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     await all('r.querySelector(".pja-view-btn[data-view=grid]").click()');
     await all(`r.querySelector('.pja-card[data-project="${seed.ids.Date}"] .pja-more').click()`);
     const cardMenu = await waitFor(() => inPage("document.querySelector('.cp-pj-actions') ? [...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].map((b) => b.textContent) : null"));
-    check('a card\'s ⋯ menu: Open project, Pin to top, Rename…, Archive', JSON.stringify(cardMenu) === JSON.stringify(['Open project', 'Pin to top', 'Rename…', 'Archive']), JSON.stringify(cardMenu));
+    check('a card\'s ⋯ menu: Open project, Pin to top, Rename…, Archive, Save to Drive', JSON.stringify(cardMenu) === JSON.stringify(['Open project', 'Pin to top', 'Rename…', 'Archive', 'Save to Drive']), JSON.stringify(cardMenu));
     await inPage("[...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].find((b) => b.textContent === 'Pin to top').click()");
     check('Pin to top from a card moves it to Pinned', await waitFor(() => all(`return Boolean(r.querySelector('.pja-group-pinned .pja-card[data-project="${seed.ids.Date}"]'))`)));
     await all(`r.querySelector('.pja-card[data-project="${seed.ids.Kiwi}"] .pja-line, .pja-card[data-project="${seed.ids.Kiwi}"] .pja-foot').click()`);

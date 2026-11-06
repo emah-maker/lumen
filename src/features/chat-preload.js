@@ -96,7 +96,11 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
       projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] { permissionMode, allowedHosts }
       projectFlag: (id, key, on) => ipcRenderer.invoke('chats:project-flag', id, key, on), // [project list] 'pinned' | 'archived'
+      projectDrive: (id, change) => ipcRenderer.invoke('chats:project-drive', id, change), // [project drive] { on } | { save }
+      driveList: () => ipcRenderer.invoke('chats:drive-list'), // [project drive] the projects saved in Drive
+      driveImport: (folderId) => ipcRenderer.invoke('chats:drive-import', folderId), // [project drive] one brought back as a new project
       projectsOverview: () => ipcRenderer.invoke('chats:projects-overview'), // [project list] the All projects cards: { [id]: { line, docs, docCount } }
+      newTempProject: () => ipcRenderer.invoke('chats:project-temp-new'), // [temp projects] made at once, no folder; deleted a week after last use unless kept
       setProject: (id, projectId) => ipcRenderer.invoke('chats:project-set', id, projectId),
       moveToProject: (ids, projectId) => ipcRenderer.invoke('chats:project-move', ids, projectId),
       restoreProjects: (moves) => ipcRenderer.invoke('chats:project-restore', moves),

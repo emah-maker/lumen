@@ -198,8 +198,26 @@
       onNewChat: (p) => newChatInProject(p),
       onFlag: (p, key, on) => flagProject(p, key, on),
       onAll: () => openAllProjects(),
+      onTemp: () => newTempProject(),
+      onKeep: (p) => keepProject(p),
     });
     drag.refresh();
+  }
+  // [temp projects] "New temporary project": made at once (no folder, no dialog) and its page opened, ready for a first chat.
+  async function newTempProject() {
+    const p = await api.newTempProject().catch(() => null);
+    if (!p) { toast(tr('chatpage.project.failed', 'Could not save the project.')); return; }
+    await renderList();
+    view = 'chats';
+    openProjectPage(p.id);
+  }
+  // "Keep as project" (the row's ⋯ menu, the project page): an ordinary project from now on.
+  async function keepProject(p) {
+    const out = await api.saveProject({ id: p.id, name: p.name, temporary: false }).catch(() => null);
+    if (!out || out.error) { toast(tr('chatpage.project.failed', 'Could not save the project.')); return false; }
+    toast(trv('projectws.temp.kept', 'Kept “{name}” as a project.', { name: out.name }));
+    await renderList();
+    return true;
   }
   // [project list] Pin / unpin and archive / bring back a project from its row's ⋯ menu. Archiving shows Undo.
   async function flagProject(p, key, on) {
@@ -265,7 +283,7 @@
       api,
       host: {
         projects: () => lastProjects, chats: () => lastChats,
-        open: (p) => { view = 'chats'; openProjectPage(p.id); }, edit: (p) => editProject(p), flag: (p, key, on) => flagProject(p, key, on), newProject: () => editProject(null),
+        open: (p) => { view = 'chats'; openProjectPage(p.id); }, edit: (p) => editProject(p), flag: (p, key, on) => flagProject(p, key, on), newProject: () => editProject(null), keep: (p) => keepProject(p), // ([temp projects] a card's Keep as project)
         closed: () => { prompt.focus(); drawProjects(); },
       },
     });
@@ -284,6 +302,7 @@
         undoToast: (text, ms, undo) => tools.undoToast(text, ms, undo), toast: (text) => toast(text),
         models: () => [...document.querySelectorAll('#model option')].map((o) => ({ value: o.value, label: o.textContent })),
         cleared: () => { clearChatView(); refreshUsage(''); }, closed: () => { prompt.focus(); drawProjects(); }, refresh: () => renderList(),
+        keep: (p) => keepProject(p), flag: (p, key, on) => flagProject(p, key, on), // [temp projects] [project list] the page's Settings view
       },
     });
     if (shown) drawProjects(); // (the row of the project on show is marked)

@@ -2,13 +2,16 @@
 // Loaded the first time a project is opened (chat-page.js adds this script and chat-project-page.css then), never with the page.
 //   window.chatProjectPage.open({ api, id, host, focus? })   focus: 'instructions' opens the instructions for editing
 //     host: { chats(), projects(), openChat(id), newChat(project, text?, { model?, files? }), editFolder(project), moveChats(ids, projectId), moveToNewProject(chat),
-//             cleared?(), undoToast(text, ms, undo), toast(text), models() -> [{ value, label }], currentModel?(), closed(), refresh() }
+//             cleared?(), undoToast(text, ms, undo), toast(text), models() -> [{ value, label }], currentModel?(), closed(), refresh(),
+//             keep?(project) -> bool (a temporary project kept), flag?(project, 'pinned' | 'archived', on) }
 //   window.chatProjectPage.close() / .isOpen() / .refresh() / .id()
 // What it shows, top to bottom: the header (name, a one-line goal, and the quick actions: New chat, Add files, Open folder, ⋯), the box that
 // starts a chat in the project (model, attach), "Continue where you left off" (the latest chats as cards: what was said last, when, and a mark
 // while one is working), the chats with a search that looks in them and in the files, and beside them an overview of what the AI works from:
 // instructions (read here, edited on request), the sources (files, web pages and whole websites, in one list), the folder, the defaults a new chat starts with, and what the AI saved
 // in the project's chats (memory). Nothing here is a form that is always open.
+// Three views under the header: Overview (all of the above), Memory (the notes, all of them, full width) and Settings (instructions, defaults, permissions,
+// the folder, and the project itself: keep a temporary one, pin, archive, export, delete). A temporary or archived project says so above them.
 (() => {
   const tr = (key, english, vars) => { const out = window.chatTr ? window.chatTr(key, english) : english; return vars ? out.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : out; };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -995,6 +998,7 @@
     const root = el('section', { className: 'pjp', id: 'cp-project-page' });
     page = { api, id, host: h, root, data, list: null, redraw: null, sub: null, composerText: null, recent: null, side: null, editing: new Set(), snips: { ...(data.snippets || {}) }, snipAt: {}, snipBusy: false, cards: {} };
     for (const c of h.chats()) if (c.project === id) page.snipAt[c.id] = c.updated;
+    page.listed = h.projects().some((p) => p.id === id); // (refresh closes the page once the project has left the list)
     root.setAttribute('aria-label', data.project.name);
     const back = el('button', { type: 'button', className: 'pjp-back' });
     back.append(el('span', { className: 'pjp-back-arrow', textContent: '←' }), tr('projectws.back', 'Chats'));
@@ -1064,12 +1068,13 @@
       confirm.replaceChildren(el('span', { textContent: tr('projectws.deleteAsk', 'Delete this project? Its chats stay, out of any project.') }), el('span', { className: 'pjp-grow' }), keep, del);
       del.focus();
     };
+    async function exportProject() { const out = await api.projectFolder(id, 'export').catch(() => null); if (out?.ok) h.toast(tr('projectws.export.done', 'Exported {n} files to {path}', { n: out.count, path: out.path })); else if (out && out.reason !== 'canceled') h.toast(tr('projectws.export.failed', 'Could not export the project.')); }
     more.onclick = () => {
       window.chatProjects.menu({
         anchor: more, label: data.project.name,
         items: [
           { label: tr('projectws.folder', 'Folder and more…'), icon: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>', run: () => h.editFolder(page.data.project) },
-          { label: tr('projectws.export', 'Export project…'), icon: svg('open'), run: async () => { const out = await api.projectFolder(id, 'export').catch(() => null); if (out?.ok) h.toast(tr('projectws.export.done', 'Exported {n} files to {path}', { n: out.count, path: out.path })); else if (out && out.reason !== 'canceled') h.toast(tr('projectws.export.failed', 'Could not export the project.')); } },
+          { label: tr('projectws.export', 'Export project…'), icon: svg('open'), run: exportProject },
           { label: tr('chatpage.project.delete', 'Delete project'), icon: '<svg viewBox="0 0 16 16"><path d="M3.5 5h9M6.5 5V3.5h3V5M5 5l.5 8h5L11 5"/></svg>', run: askDelete },
         ],
         onClose: () => { if (!document.activeElement || document.activeElement === document.body) more.focus(); },
@@ -1083,6 +1088,99 @@
         el('div', { className: 'pjp-head-text' }, title, desc, sub),
         el('div', { className: 'pjp-actions' }, fresh, addFiles, folder, more)),
       confirm);
+    // [temp projects] [project list] what the project is (temporary, archived), above the views
+    const notice = el('div', { className: 'pjp-notice', hidden: true });
+    notice.setAttribute('role', 'status');
+    const keepIt = async () => { const ok = await h.keep?.(page.data.project); if (ok) await reload(true); };
+    const unarchive = async () => { await h.flag?.(page.data.project, 'archived', false); await reload(true); };
+    const drawNotice = () => {
+      const p = page.data.project;
+      if (p.temporary) notice.replaceChildren(el('span', { className: 'pjp-notice-text', textContent: `${tr('projectws.temp.title', 'Temporary project.')} ${p.expires ? window.chatProjects.expiresText(p.expires) : ''}. ${tr('projectws.temp.note', 'Its chats stay in your chat list.')}` }), button(tr('projectws.temp.keep', 'Keep as project'), keepIt, 'primary pjp-keep'));
+      else if (p.archived) notice.replaceChildren(el('span', { className: 'pjp-notice-text', textContent: tr('projectws.archived.note', 'This project is archived: it is out of your project lists. Its chats still work.') }), button(tr('projectws.list.unarchive', 'Move out of archive'), unarchive, 'pjp-unarchive'));
+      notice.hidden = !p.temporary && !p.archived;
+      notice.classList.toggle('temp', Boolean(p.temporary));
+    };
+    // Overview / Memory / Settings
+    const VIEWS = [['overview', tr('projectws.view.overview', 'Overview')], ['memory', tr('projectws.view.memory', 'Memory')], ['settings', tr('projectws.view.settings', 'Settings')]];
+    const tabs = el('div', { className: 'pjp-tabs' });
+    tabs.setAttribute('role', 'tablist');
+    tabs.setAttribute('aria-label', tr('projectws.view.label', 'Project views'));
+    const viewBox = el('div', { className: 'pjp-view', hidden: true });
+    viewBox.setAttribute('role', 'tabpanel');
+    const tabButtons = VIEWS.map(([v, label]) => {
+      const b = el('button', { type: 'button', className: 'pjp-tab', textContent: label });
+      b.dataset.view = v;
+      b.setAttribute('role', 'tab');
+      b.onclick = () => setView(v);
+      b.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        const at = VIEWS.findIndex(([x]) => x === v);
+        const next = VIEWS[(at + (e.key === 'ArrowRight' ? 1 : -1) + VIEWS.length) % VIEWS.length][0];
+        setView(next);
+        tabs.querySelector(`[data-view="${next}"]`)?.focus();
+      });
+      return b;
+    });
+    tabs.append(...tabButtons);
+    // [project drive] Save to Google Drive: a switch (off until turned on for this project; not for a temporary one), when it was last saved,
+    // and Save now. It says plainly when Google Drive isn't connected.
+    const driveSays = (v) => {
+      if (v?.error === 'temporary') return tr('projectws.drive.temp', 'Keep it as a project first: a temporary project isn’t saved to Drive.');
+      if (v?.error === 'connect' || (v && !v.connected)) return tr('projectws.drive.connect', 'Connect Google Drive first: Settings → Apps and connections → Google Drive.');
+      if (v?.error) return tr('projectws.drive.failed', 'Could not save to Google Drive: {why}', { why: v.error });
+      if (v?.on && v.saved) return tr('projectws.drive.saved', 'Saved to Google Drive (Lumen/Projects) {when}.', { when: new Date(v.saved).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) });
+      if (v?.on) return tr('projectws.drive.on', 'Saving to Google Drive (Lumen/Projects)…');
+      return tr('projectws.drive.off', 'Save this project to Google Drive, in Lumen/Projects: its notes, key documents, instructions, settings and chats, as Markdown and JSON. Its files are not uploaded.');
+    };
+    function driveLine(p, line) {
+      const say = el('span', { className: 'pjp-setting-text pjp-drive-say' });
+      say.setAttribute('role', 'status');
+      const toggle = button('', () => run({ on: !state.on }), 'pjp-drive-toggle');
+      const now = button(tr('projectws.drive.now', 'Save now'), () => run({ save: true }), 'pjp-drive-now');
+      let state = { on: Boolean(p.drive), saved: p.driveSaved || 0, error: p.driveError || '', connected: true };
+      const show = (v) => { state = { ...state, ...v }; say.textContent = driveSays(v ? { ...state, ...v } : state); toggle.textContent = state.on ? tr('projectws.drive.stop', 'Stop saving to Drive') : tr('projectws.drive.start', 'Save to Drive'); toggle.setAttribute('aria-pressed', String(state.on)); now.hidden = !state.on; };
+      async function run(change) {
+        toggle.disabled = now.disabled = true;
+        if (change.on || change.save) say.textContent = tr('projectws.drive.saving', 'Saving to Google Drive…');
+        const v = await page.api.projectDrive(page.id, change).catch(() => null);
+        toggle.disabled = now.disabled = false;
+        show(v || { error: tr('projectws.drive.unknown', 'no answer') });
+        h.refresh();
+      }
+      show(null);
+      const row = line('', toggle, now);
+      row.classList.add('pjp-drive');
+      row.querySelector('.pjp-setting-text').replaceWith(say);
+      return row;
+    }
+    // the Settings view's own card: the project as a whole
+    const projectCard = () => {
+      const p = page.data.project;
+      const root2 = card(tr('projectws.settings.project', 'Project'), { className: 'pjp-project-card' });
+      const line = (text, ...buttons) => el('div', { className: 'pjp-setting' }, el('span', { className: 'pjp-setting-text', textContent: text }), ...buttons);
+      const rows = [];
+      if (p.temporary) rows.push(line(`${tr('projectws.temp.title', 'Temporary project.')} ${p.expires ? window.chatProjects.expiresText(p.expires) : ''}.`, button(tr('projectws.temp.keep', 'Keep as project'), keepIt, 'primary pjp-keep')));
+      if (!p.archived) rows.push(line(p.pinned ? tr('projectws.settings.pinned', 'Pinned to the top of your projects.') : tr('projectws.settings.unpinned', 'Listed by your sort order.'), button(p.pinned ? tr('projectws.list.unpin', 'Unpin') : tr('projectws.list.pin', 'Pin to top'), async () => { await h.flag?.(page.data.project, 'pinned', !page.data.project.pinned); await reload(true); }, 'pjp-pin')));
+      rows.push(line(p.archived ? tr('projectws.settings.archived', 'Archived: out of your project lists.') : tr('projectws.settings.archive', 'Archive it to take it out of your lists. Nothing is deleted.'), button(p.archived ? tr('projectws.list.unarchive', 'Move out of archive') : tr('projectws.list.archive', 'Archive'), async () => { await h.flag?.(page.data.project, 'archived', !page.data.project.archived); if (page) await reload(true); }, 'pjp-archive')));
+      rows.push(driveLine(p, line));
+      rows.push(line(tr('projectws.settings.export', 'A zip with the instructions, sources, chats and memory.'), button(tr('projectws.export', 'Export project…'), exportProject)));
+      rows.push(line(tr('projectws.settings.delete', 'Its chats stay, out of any project. Undo is offered for a moment.'), button(tr('chatpage.project.delete', 'Delete project'), askDelete, 'danger pjp-delete')));
+      root2.body.append(...rows);
+      return root2;
+    };
+    function setView(v) {
+      const was = page.view;
+      page.view = v;
+      root.dataset.view = v;
+      for (const b of tabButtons) { const on = b.dataset.view === v; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('on', on); }
+      cols.hidden = v !== 'overview';
+      viewBox.hidden = v === 'overview';
+      if (v === 'memory') { const m = memoryCard(page.data); m.querySelector('.pjp-memory-more:not([hidden])')?.click(); viewBox.replaceChildren(m, placesCard(page.data)); } // (the notes, then the project's key documents)
+      else if (v === 'settings') viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, projectCard(), instructionsCard(page.data), defaultsCard(page.data), permissionsCard(page.data), folderCard(page.data)));
+      else { viewBox.replaceChildren(); if (was && was !== 'overview') reload(true); } // (the overview's cards show what changed in the other views)
+    }
+    page.extras = () => { drawNotice(); if (page.view && page.view !== 'overview' && !page.editing.size) setView(page.view); };
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
@@ -1091,7 +1189,10 @@
     page.side = side;
     page.sub();
     page.recent.draw();
-    root.append(el('div', { className: 'pjp-wrap' }, head, el('div', { className: 'pjp-cols' }, ...main, side)));
+    const cols = el('div', { className: 'pjp-cols' }, ...main, side);
+    root.append(el('div', { className: 'pjp-wrap' }, head, notice, tabs, cols, viewBox));
+    drawNotice();
+    setView('overview');
     const mount = document.querySelector('.cp-main');
     document.getElementById('chat-root').hidden = true;
     mount.append(root);
@@ -1115,22 +1216,23 @@
   // The chats changed (a run started, a reply came, a chat moved) or the project did, in this view or in the sidebar: the lists redraw, and the
   // header and the overview follow an edit made elsewhere (never while something here is being edited).
   // Everything the overview shows, read again (the project's folder was changed outside, a source was added elsewhere). Not while something is being edited here.
-  async function reload() {
-    if (!page || page.editing.size || page.syncing) return;
+  async function reload(force = false) {
+    if (!page || (!force && page.editing.size) || page.syncing) return;
     page.syncing = true;
     const me = page;
     const fresh = await me.api.project(me.id).catch(() => null);
     me.syncing = false;
-    if (!fresh || me !== page || me.editing.size) return;
+    if (!fresh || me !== page || (!force && me.editing.size)) return;
     applyFresh(me, fresh);
   }
   async function refresh() {
     if (!page) return;
     page.redraw?.();
     const shown = page.host.projects().find((p) => p.id === page.id);
-    if (!shown) return;
+    if (!shown) { if (page.listed) close(); return; } // [temp projects] gone from the list since it was shown (deleted, or swept): the page goes too
+    page.listed = true;
     const mineNow = page.data.project;
-    if (shown.updated === mineNow.updated && shown.name === mineNow.name && shown.folderMissing === mineNow.folderMissing) return;
+    if (shown.updated === mineNow.updated && shown.name === mineNow.name && shown.folderMissing === mineNow.folderMissing && Boolean(shown.pinned) === Boolean(mineNow.pinned) && Boolean(shown.archived) === Boolean(mineNow.archived) && shown.expires === mineNow.expires) return;
     if (page.editing.size || page.syncing) return;
     page.syncing = true;
     const fresh = await page.api.project(page.id).catch(() => null);
@@ -1159,6 +1261,7 @@
     me.side.replaceChildren(...next);
     me.syncModel?.();
     me.sub?.();
+    me.extras?.(); // [temp projects] the notice, and the Memory or Settings view when one is open
   }
   // Coming back to Lumen after editing the project's files in another program: the page looks again (main reads the folder first).
   const onFocus = () => { if (page?.data.project.portable) reload(); };
