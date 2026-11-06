@@ -32,6 +32,23 @@ With **Memory** on, a project also keeps where its documents are, so neither you
 - **No duplicates, no dead ends.** A Google document is one entry in any view (edit, view, a shared link), a page is one entry with or without its tracking parameters, and a file moved to another folder under the same name keeps its entry (and its name and pin). A file that is gone from this computer, or a link the AI found dead (not found, 404), drops off, unless pinned.
 - **The Key documents card** on the project's page lists them: **Open** opens one in a tab, click a name to rename it, **Pin** keeps it first, **Remove** takes it off.
 - **What is kept.** Only the locations and names, never what the documents say, in `project-places.json` in Lumen's profile, encrypted with your system's keychain like memory. Turning Memory off stops recording and recalling them. Deleting the project deletes its list (Undo brings it back).
+## Many projects
+
+- **Find and sort.** With more than 6 projects the Projects block in lumen://chat has a **Find a project** box (it matches the name and the goal line; Escape clears it) and a switch between **Recent** (the project whose newest chat is most recent first) and **A–Z**. Lumen keeps the choice.
+- **A short list.** It shows 8 projects, then **Show N more** (and **Show less**). Pinned projects and the project whose page is open always show.
+- **Pin to top** (a project's ⋯ menu) keeps a project at the top, with a small mark; **Unpin** takes it off. Pinning doesn't count as using the project, so it doesn't change the Recent order of the others.
+- **Archive** (the ⋯ menu) takes a project out of the lists, with Undo. Nothing is deleted: its chats, files, folder and memory stay as they are, and its chats still work. **Archived (N)** at the foot of the block lists the archived projects; **Move out of archive** in a project's ⋯ menu brings it back.
+- **Move to project** and the tab menu's **Add to project** leave archived projects out and list pinned ones first; with more than 8 projects Move to project has a filter at the top.
+
+## All projects
+
+The grid button next to + in the Projects block (in lumen://chat, and in the sidebar's chat list, where it opens lumen://chat) and **Show N more** open **All projects**, every project you have on one page.
+
+- **Groups.** **Pinned**, **Recent** (the rest), **Temporary** and **Archived**, each with its count. Archived is folded; click it to open it. A search opens it too.
+- **A card** shows the project's mark (a colour and its first letter, the same every time), its name, Pinned or Temp, when it was last used, how many chats and key documents it has, its top three key documents and a line from its memory (a pinned note first) or its goal line. Click a card to open the project.
+- **⋯ on a card**: **Open project**, **Pin to top** / **Unpin**, **Rename…**, **Archive** / **Move out of archive**, and **Keep as project** for a temporary one.
+- **Find a project, a note or a document** looks in names, goal lines, memory lines and key document names. **Recent** / **A–Z** sorts inside each group, and **Cards** / **List** switches to one compact row per project. Lumen keeps both choices.
+- **Many projects.** The cards are drawn 24 at a time as you scroll.
 
 ## Projects in the sidebar
 
