@@ -25,19 +25,27 @@ fs.writeFileSync(STAND_IN, '');
 const FAKE = path.join(tmp, 'fake-agy.js');
 fs.writeFileSync(FAKE, `
 const fs = require('fs');
+const path = require('path');
 const argv = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_AGY_LOG, JSON.stringify(argv) + '\\n');
-const p = argv[argv.indexOf('-p') + 1] || '';
-const out = (/Save to (.+?)\\. Do not run/.exec(p) || [])[1];
+const dir = argv[argv.indexOf('--add-dir') + 1];
 const mode = process.env.FAKE_AGY_MODE || 'ok';
 const png = Buffer.from(${J(PNG)}, 'base64');
-if (mode === 'ok') { fs.writeFileSync(out, png); console.log('Saved the image to ' + out); }
-else if (mode === 'jpgname') { fs.writeFileSync(require('path').join(require('path').dirname(out), 'generated_image.jpg'), Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40)])); }
-else if (mode === 'notpicture') { fs.writeFileSync(out, 'this is not a picture'); }
+const conv = 'conv-' + process.pid;
+const say = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+const brain = path.join(process.env.HOME || dir, '.gemini', 'antigravity-cli', 'brain', conv);
+const reply = (text) => { say({ event: 'step_update', step_update: { conversation_id: conv, step_index: 3, state: 'DONE', step_type: 'agent_response', text_delta: text } }); };
+if (mode !== 'noinit') say({ event: 'init', conversation_id: conv, init: { model: 'gemini-3.8-flash-medium' } });
+say({ event: 'step_update', step_update: { conversation_id: conv, step_index: 1, state: 'ACTIVE', step_type: 'tool', tool_name: 'invoke_subagent' } });
+const art = (name, bytes) => { fs.mkdirSync(brain, { recursive: true }); const f = path.join(brain, name); fs.writeFileSync(f, bytes); return f; };
+// ok: like agy 1.5.1, the picture goes into its own artifact folder (never the one the prompt names), then it goes on for a minute
+if (mode === 'ok' || mode === 'noinit') { const f = art('picture_1793931749384.png', png); reply('Generated: [picture](file:///' + f.split(path.sep).join('/') + ')'); setTimeout(() => say({ event: 'result', result: { conversation_id: conv, status: 'SUCCESS' } }), 20000); }
+else if (mode === 'jpgname') { fs.writeFileSync(path.join(dir, 'generated_image.jpg'), Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40)])); }
+else if (mode === 'notpicture') { art('picture_1.png', 'this is not a picture'); reply('Done.'); }
 else if (mode === 'signedout') { console.error('Error: not signed in. Run agy and sign in with your Google account.'); process.exit(1); }
-else if (mode === 'refuse') { console.log("I can't create that image because it violates the content policy."); }
+else if (mode === 'refuse') { reply("I can't create that image because it violates the content policy."); say({ event: 'result', result: { conversation_id: conv, status: 'SUCCESS' } }); }
 else if (mode === 'slow') { setTimeout(() => {}, 60000); }
-else { console.log('Done.'); }
+else { reply('Done.'); say({ event: 'result', result: { conversation_id: conv, status: 'SUCCESS' } }); }
 `);
 const LOG = path.join(tmp, 'agy-calls.log');
 const calls = () => (fs.existsSync(LOG) ? fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
@@ -58,10 +66,19 @@ const fakeSpawn = (bin, argv, opts) => {
   {
     const userData = path.join(tmp, 'profile');
     fs.mkdirSync(userData);
-    const made = await imageAgy.generate({ bin, prompt: 'a red "fox" in the snow', userData, spawn: fakeSpawn, tmpRoot: tmp });
+    const steps = [];
+    const start = Date.now();
+    const made = await imageAgy.generate({ bin, prompt: 'a red "fox" in the snow', userData, spawn: fakeSpawn, tmpRoot: tmp, pollMs: 50, onProgress: (t) => steps.push(t) });
+    const took = Date.now() - start;
     const argv = calls().at(-1);
-    check('a picture agy saved comes back (base64, checked as a real PNG)', made.images.length === 1 && made.images[0].data === PNG && made.model === 'agy', J({ ...made, images: made.images.length }));
-    check('the run: --sandbox, --mode accept-edits, --add-dir the temp folder, --print-timeout, -p "Generate an image: … Save to <file>."', argv[0] === '--sandbox' && argv[argv.indexOf('--mode') + 1] === 'accept-edits' && argv.includes('--add-dir') && argv[argv.indexOf('--print-timeout') + 1] === imageAgy.PRINT_TIMEOUT && /^Generate an image: a red 'fox' in the snow\. Save to .+picture\.png\. Do not run any other tool\.$/.test(argv[argv.indexOf('-p') + 1]), J(argv));
+    check('the picture agy saved in its own artifact folder (brain/<conversation>/) comes back, checked as a real PNG', made.images.length === 1 && made.images[0].data === PNG && made.model === 'agy', J({ ...made, images: made.images.length }));
+    check(`the run is ended as soon as the picture is there, not when agy exits a minute later (${took} ms)`, took < 8000, took);
+    check('progress for the card: starting, drawing, saving', J(steps) === J(['Starting Antigravity…', 'Antigravity is drawing your picture…', 'Saving the picture…']), J(steps));
+    const home0 = imageAgy.imageHomeFor(userData);
+    check('the conversation\'s artifact folder is removed afterwards', !fs.existsSync(path.join(home0, '.gemini', 'antigravity-cli', 'brain')) || fs.readdirSync(path.join(home0, '.gemini', 'antigravity-cli', 'brain')).length === 0, '');
+    check('the run: --sandbox, --mode accept-edits, --add-dir the temp folder, --print-timeout, stream-json, no slash commands', argv[0] === '--sandbox' && argv[argv.indexOf('--mode') + 1] === 'accept-edits' && argv.includes('--add-dir') && argv[argv.indexOf('--print-timeout') + 1] === imageAgy.PRINT_TIMEOUT && argv[argv.indexOf('--output-format') + 1] === 'stream-json' && argv.includes('--disable-slash-commands'), J(argv));
+    const ask = argv[argv.indexOf('-p') + 1];
+    check('the prompt: generate_image once, the picture left where it is saved, no other tool, reply with its path', /^Use your generate_image tool once to make this picture: a red 'fox' in the snow\. Leave the image where generate_image saves it \(do not copy, move or convert it\) and use no other tool\. Then reply with only the image's full path\.$/.test(ask), ask);
     check('never auto-approve or skip permissions', !argv.some((a) => /always-approve|dangerously|skip-permissions/.test(a)), J(argv));
     const dir = argv[argv.indexOf('--add-dir') + 1];
     check('the output folder is a fresh temp folder, removed afterwards', path.basename(dir).startsWith('lumen-agy-image-') && path.dirname(dir) === tmp && !fs.existsSync(dir), dir);
@@ -73,12 +90,16 @@ const fakeSpawn = (bin, argv, opts) => {
 
     mode = 'jpgname';
     const jpg = await imageAgy.generate({ bin, prompt: 'x', userData, spawn: fakeSpawn, tmpRoot: tmp });
-    check('a picture saved under another name or type in the folder is found too', jpg.images.length === 1 && Buffer.from(jpg.images[0].data, 'base64')[0] === 0xff);
+    check('a picture saved in the temp folder, under another name or type, is found too', jpg.images.length === 1 && Buffer.from(jpg.images[0].data, 'base64')[0] === 0xff);
+    mode = 'noinit';
+    const noinit = await imageAgy.generate({ bin, prompt: 'x', userData, spawn: fakeSpawn, tmpRoot: tmp, pollMs: 50 });
+    check('no conversation id in the stream: a new artifact folder (or the path in the reply) is looked in', noinit.images.length === 1, '');
+    check('namedImages: only paths inside the allowed folders count', J(imageAgy.namedImages('see file:///C:/a/b/picture_1.jpg and /etc/x.png', [path.resolve('C:/a')])) === J([path.resolve('C:/a/b/picture_1.jpg')]) || process.platform !== 'win32', '');
 
     mode = 'edit';
     await imageAgy.generate({ bin, prompt: 'make it blue', source: { buffer: Buffer.from(PNG, 'base64'), mime: 'image/png' }, userData, spawn: fakeSpawn, tmpRoot: tmp }).catch(() => null);
     const editArgv = calls().at(-1);
-    check('an edit puts the picture in the folder and names it in the prompt (and it is never taken for the result)', /Generate an image: edit .+source\.png: make it blue/.test(editArgv[editArgv.indexOf('-p') + 1]), J(editArgv));
+    check('an edit puts the picture in the folder and names it in the prompt (and it is never taken for the result)', /^Use your generate_image tool once to edit the image .+source\.png as follows: make it blue\./.test(editArgv[editArgv.indexOf('-p') + 1]), J(editArgv));
 
     for (const [m, label, test] of [
       ['none', 'agy saved nothing: an error, no picture', (e) => e && !e.policy && /Done\.|no picture/.test(e.message)],
@@ -110,7 +131,10 @@ const fakeSpawn = (bin, argv, opts) => {
   {
     check('Antigravity is a choice for "Make pictures with", and Settings validates it', router.SETTINGS.includes('antigravity') && settingsBackend.validate('imageGen', 'antigravity') === 'antigravity' && router.labelOf('antigravity') === 'Antigravity');
     const ALL = { grokbuild: true, xai: true, gemini: true, openai: true, openrouter: true, antigravity: true };
-    check('Automatic never uses Antigravity, even when it is installed', !router.plan({ connected: ALL, current: 'antigravity:default' }).order.includes('antigravity'), J(router.plan({ connected: ALL, current: 'antigravity:default' }).order));
+    check('an Antigravity chat: its pictures are agy\'s own (first), then Grok Build and the API keys', J(router.plan({ connected: ALL, current: 'antigravity:gemini-3.8-flash-medium' }).order) === J(['antigravity', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter']), J(router.plan({ connected: ALL, current: 'antigravity:gemini-3.8-flash-medium' }).order));
+    check('Automatic on another chat: Antigravity last, after Grok Build and every API key', J(router.plan({ connected: ALL, current: 'claude-opus-5' }).order) === J(['grokbuild', 'xai', 'gemini', 'openai', 'openrouter', 'antigravity']));
+    check('Automatic with no API key and no Grok Build: agy makes the picture', J(router.plan({ connected: { antigravity: true }, current: 'claude-opus-5' }).order) === J(['antigravity']));
+    check('Grok Build picked (grok first, agy as the fallback), even in an Antigravity chat: Grok Build, then agy', J(router.plan({ setting: 'grokbuild', connected: { grokbuild: true, antigravity: true }, current: 'antigravity:default' }).order) === J(['grokbuild', 'antigravity']));
     check('picked: Antigravity first, then the Automatic order', J(router.plan({ setting: 'antigravity', connected: ALL }).order) === J(['antigravity', 'grokbuild', 'xai', 'gemini', 'openai', 'openrouter']));
     check('picked but not installed or signed out: the others, and Antigravity is named', J(router.plan({ setting: 'antigravity', connected: { ...ALL, antigravity: false } }).order) === J(['grokbuild', 'xai', 'gemini', 'openai', 'openrouter']) && router.notReady('antigravity') === 'Antigravity is not installed or signed in');
     const en = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'locales', 'en.json'), 'utf8'));
@@ -134,11 +158,13 @@ const fakeSpawn = (bin, argv, opts) => {
     let r = await route(make({ installed: true, signedIn: 'unknown' }));
     check('picked, installed: generate_image goes to agy, and the picture is credited to it', r.provider === 'antigravity' && r.credit === 'Antigravity · agy' && !r.insteadOf && calls().length === before + 1, J({ ...r, images: r.images.length }));
     mode = 'signedout';
-    r = await route(make({ installed: true, signedIn: 'unknown' }));
-    check('agy turns out signed out: OpenAI makes it, credited "instead of Antigravity"', r.provider === 'openai' && r.insteadOf === 'antigravity' && /instead of Antigravity/.test(r.credit), J({ ...r, images: r.images.length }));
+    const gone = make({ installed: true, signedIn: 'unknown' });
+    r = await route(gone);
+    check('agy turns out signed out: OpenAI makes it, credited "instead of Antigravity" with the reason', r.provider === 'openai' && r.insteadOf === 'antigravity' && /\(instead of Antigravity: not signed in or key rejected\)$/.test(r.credit), J({ ...r, images: r.images.length }));
+    check('… and agy is remembered as signed out (not run again until a run works)', gone.engines.antigravity.signedOut === true, '');
     mode = 'none';
     r = await route(make({ installed: true, signedIn: 'unknown' }));
-    check('agy saves no picture: the next engine makes it, named', r.provider === 'openai' && r.insteadOf === 'antigravity', J({ provider: r.provider, insteadOf: r.insteadOf }));
+    check('agy saves no picture: the next engine makes it, and the credit says what agy did', r.provider === 'openai' && r.insteadOf === 'antigravity' && /instead of Antigravity: failed: Done\./.test(r.credit), J({ provider: r.provider, credit: r.credit }));
     const n = calls().length;
     r = await route(make({ installed: false, signedIn: false }));
     check('agy not installed: it is never run, the next engine makes it, and why is said', r.provider === 'openai' && r.insteadOf === 'antigravity' && /not installed or signed in/.test(r.insteadWhy) && calls().length === n, J({ provider: r.provider, why: r.insteadWhy }));
@@ -149,6 +175,33 @@ const fakeSpawn = (bin, argv, opts) => {
     let off = null;
     try { await route(make({ installed: false, signedIn: false }, [])); } catch (e) { off = e; }
     check('agy picked, not installed, and nothing else connected: one clear message, no key asked for', off?.code === 'none' && /Antigravity is chosen for pictures/.test(off.userMessage || ''), off?.message);
+  }
+
+  // ---- an Antigravity chat on Automatic: "generate an image of a cat" is made by agy itself (it used to go to Grok Build)
+  {
+    const make = (grokImpl) => {
+      const agent = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', imageGen: () => 'auto' }, () => null, () => ({}), () => null);
+      const eng = { imageReady: async () => ({ installed: true, signedIn: eng.signedOut ? false : 'unknown' }), status: async () => { throw new Error('status() runs agy models: not for routing'); }, ensureBin: () => require('../../src/ai/antigravity').findAgy(), userData: path.join(tmp, 'profile-auto') };
+      agent.engines = { antigravity: eng, grokbuild: { status: async () => ({ installed: true, signedIn: true }) } };
+      agent.imageAgySpawn = fakeSpawn;
+      agent.imageBackendOverrides = { grokbuild: grokImpl };
+      return agent;
+    };
+    const grokCalls = [];
+    const grok = async () => { grokCalls.push(1); return { images: [{ data: PNG }], model: 'image_gen' }; };
+    const cat = (agent) => agent.routeImage({ prompt: 'a cat', current: 'antigravity:gemini-3.8-flash-medium', signal: new AbortController().signal });
+    mode = 'ok';
+    let r = await cat(make(grok));
+    check('Antigravity chat, Automatic, Grok Build signed in too: agy makes the cat, credited to it, Grok Build never asked', r.provider === 'antigravity' && r.credit === 'Antigravity · agy' && grokCalls.length === 0, J({ provider: r.provider, credit: r.credit, grok: grokCalls.length }));
+    mode = 'none';
+    r = await cat(make(grok));
+    check('agy actually fails: Grok Build makes it, and the card says why ("instead of Antigravity: failed: …")', r.provider === 'grokbuild' && /^Grok Build · image_gen \(instead of Antigravity: failed: /.test(r.credit) && grokCalls.length === 1, r.credit);
+    mode = 'ok';
+    const statuses = [];
+    const chat = []; chat.settings = { model: 'antigravity:gemini-3.8-flash-medium' };
+    const agent = make(grok);
+    await agent.routedImageTurn(chat, { prompt: 'a cat' }, 'antigravity:gemini-3.8-flash-medium', new AbortController().signal, (e) => { if (e.type === 'status' && e.text) statuses.push(e.text); });
+    check('the card shows agy\'s progress: who, then starting and drawing', statuses[0] === 'Making your picture with Antigravity…' && statuses.includes('Starting Antigravity…') && statuses.includes('Antigravity is drawing your picture…'), J(statuses));
   }
 
   delete process.env.LUMEN_AGY_BIN;

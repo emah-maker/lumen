@@ -111,7 +111,7 @@ const classify = (e) => fallback.classify(e);
     check('a chosen provider makes the picture when it can, and nobody else is asked', r.provider === 'gemini' && J(calls) === J(['gemini']) && !r.insteadOf && r.credit === 'Gemini · gemini-model', J({ calls, credit: r.credit }));
     calls.length = 0;
     r = await run({ grokbuild: ok('grokbuild'), gemini: bad('gemini', limitErr), openai: ok('openai') }, { setting: 'gemini' });
-    check('the chosen provider out of usage: the next connected one makes it, and the picture says instead of whom', r.provider === 'grokbuild' && J(calls) === J(['gemini', 'grokbuild']) && r.insteadOf === 'gemini' && r.insteadWhy === 'out of usage' && r.credit === 'Grok Build · grokbuild-model (instead of Gemini)', J({ calls, r: { ...r, images: 1 } }));
+    check('the chosen provider out of usage: the next connected one makes it, and the picture says instead of whom, and why', r.provider === 'grokbuild' && J(calls) === J(['gemini', 'grokbuild']) && r.insteadOf === 'gemini' && r.insteadWhy === 'out of usage' && r.credit === 'Grok Build · grokbuild-model (instead of Gemini: out of usage)', J({ calls, r: { ...r, images: 1 } }));
     check('the model is told why the chosen one did not make it', /instead of Gemini/.test(router.toolResult(r)) && /Gemini is picked for pictures but out of usage/.test(router.toolResult(r)), router.toolResult(r));
     calls.length = 0;
     r = await run({ grokbuild: ok('grokbuild'), openai: ok('openai') }, { setting: 'gemini', connected: { grokbuild: true, openai: true } });

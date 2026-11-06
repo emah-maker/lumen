@@ -40,7 +40,7 @@
 // who signs in with a Gemini API key keeps working too (modelProvider is copied and GEMINI_API_KEY passed on).
 //
 // WHAT THE MODEL MAY DO: Lumen's browser tools only, as for Claude Code and Grok Build. settings.json denies command,
-// unsandboxed, write_file, read_url and execute_url, allows only mcp(lumen/*), and turns the terminal sandbox on (so does
+// write_file, read_url and execute_url, allows only mcp(lumen/*), and turns the terminal sandbox on (so does
 // --sandbox); the working folder is a Lumen-owned empty folder; agy's hook denies a shell or file tool before it runs (below);
 // and Lumen stops the run if one is reported anyway (offToolOf), the same last line of defence grok-build.js has.
 //
@@ -315,7 +315,8 @@ function settingsFor({ folder, provider = null, fullAccess = false }) {
   return {
     ...(provider ? { modelProvider: provider } : {}), enableTelemetry: false, trustedWorkspaces: [folder],
     enableTerminalSandbox: true, toolPermission: 'request-review',
-    permissions: { allow: ['mcp(lumen/*)'], ask: [], deny: ['command(*)', 'unsandboxed(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)'] },
+    // (no unsandboxed(*): agy 1.5 ignores that rule and warns about it on stderr at every start, which then reads like the run's error; command(*) covers it)
+    permissions: { allow: ['mcp(lumen/*)'], ask: [], deny: ['command(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)'] },
   };
 }
 
@@ -333,6 +334,7 @@ function buildArgs({ prompt, conversation = null, model = 'default', fullAccess 
   return [
     '-p', prompt,
     '--output-format', 'stream-json', // (no --print-timeout: agy waits for the turn by default; Lumen's watchdog and Stop end a run)
+    '--disable-slash-commands', // "Disable slash command and skill expansion in print mode" (agy 1.5 --help): a message that starts with / is the user's text, and no command list is loaded
     ...(conversation ? ['--conversation', conversation] : []),
     ...(model !== 'default' && validModel(model) ? ['--model', model] : []),
     ...effortLib.cliArgs('antigravity', effort), // Settings → AI → AI providers: --effort (agy 1.2.16 --help; none: agy's own default)
@@ -441,6 +443,12 @@ class AntigravityEngine {
   async ensureBin() {
     if (this.bin && exists(this.bin)) return this.bin;
     return this.detect(true);
+  }
+
+  // For picture routing (agent.js imageConnected): { installed, signedIn: false | 'unknown' } without running anything (status() runs `agy models`).
+  async imageReady() {
+    const bin = await this.detect();
+    return { installed: Boolean(bin), signedIn: this.signedOut ? false : 'unknown' };
   }
 
   // { installed, signedIn: 'unknown', detail, models }. agy has no documented sign-in check that does not use a model, so signedIn

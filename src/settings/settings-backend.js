@@ -163,7 +163,7 @@ const DEFAULTS = {
   autoModel: true, // [ai] Claude Code with no model picked: choose haiku (everyday) / sonnet (code, multi-step) / opus (hard) per message (features/model-route.js)
   autoCompact: true, // [ai] an API chat near what one request can carry is summarized (/compact) instead of losing its oldest turns (features/chat-compact.js)
   autoExclude: [], // [ai] providers / models the picker's Auto never chooses: ids like 'openai', 'claudecode' or 'claude-opus-5' (ai/auto-model.js, docs/auto-model.md)
-  imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first) | off | one provider to ask first, then the others: grokbuild, xai, gemini, openai, openrouter, antigravity (only when picked) (ai/image-router.js)
+  imageGen: 'auto', // [ai] pictures the AI is asked to make: auto (a connected provider that makes pictures, the chat's own first; an Antigravity chat's are agy's) | off | one provider to ask first, then the others: grokbuild, xai, gemini, openai, openrouter, antigravity (ai/image-router.js)
   keysOff: [], // [key switches] API keys switched off in Settings → AI → API keys: kept saved, never used (main.js providerKey). Provider ids: anthropic, openai, xai, gemini, openrouter
   usageBars: true, // [ai] the small usage bars in the model pickers and the AI status card (renderer/usage-bars.js)
   recordSwitchTimings: false, // [diagnostics] time each tab switch on this computer, for Settings > Advanced > Export timings (features/switch-timing.js); no URLs or sites
