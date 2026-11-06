@@ -223,10 +223,12 @@
   }
   // Two things or more at once: the status line counts them, and what the reply itself runs meanwhile is a pill each under it (an agent has its
   // own row in the card's Agents list, never said twice). The pills stay on one line: the ones that do not fit become a "+N" pill.
-  // (While a Browser card works, the row keeps its place when it has no pills: hidden is then only invisible, step-ui.css "steady".)
+  // One step of the reply's own is no pill: the status line names it already ("3 things at once · Writing cp34.js"), a pill would say it twice.
+  // (While a card works, the row keeps its place when it has no pills: hidden is then only invisible, step-ui.css "steady".)
   function renderMany(card, all) {
     const box = card.el.querySelector(':scope > .act-many');
-    const list = all.length >= 2 ? all.filter((x) => !x.who) : [];
+    const own = all.length >= 2 ? all.filter((x) => !x.who) : [];
+    const list = own.length >= 2 ? own : [];
     if (!list.length) { box.hidden = true; return; }
     box.hidden = false;
     const key = JSON.stringify(list);
@@ -253,9 +255,11 @@
   function refreshCard(turn, card) {
     if (turn) card.turnRef = turn;
     const state = stateOf(turn, card);
+    const live = state === 'working' || state === 'approval' || state === 'helper';
+    const settling = !live && card.el.classList.contains('card-steady') ? card.el.getBoundingClientRect().height : null; // (the run ends: the height it had, for settle below)
     // [steady] A Browser (or web) card holds every slot in place while it works (step-ui.css "steady"). A step that turns it into a Computer
     // card (a command, a file, a program) is another kind of card: it lays out as one, the tab preview out of the way.
-    card.el.classList.toggle('act-hold', (card.surface === 'browser' || card.surface === 'web') && (state === 'working' || state === 'approval' || state === 'helper'));
+    card.el.classList.toggle('act-hold', (card.surface === 'browser' || card.surface === 'web') && live);
     if (card.el.dataset.state !== state || (card.app && !card.hbApp) || (card.hadBrowser && !card.hb)) { // (a card that began on a web search or a tool and moved to a tab is watched from then on; one that moved from a page to a program, too)
       card.el.dataset.state = state;
       if (card.app) { card.hb = true; card.hbApp = true; // (a program's window: its live picture runs only while a card is on screen)
@@ -268,7 +272,7 @@
     const wordOnly = card.wordWork && !card.otherApp && card.surface === 'app';
     const task = card.task || (wordOnly ? '' : card.first); // (a Word card without the user's task: just its state; the step being done is in the status bar, its document in the chip, never said twice)
     const sub = task ? tr('card.sub', { state: tr(`card.state.${state}`), task }) : tr(`card.state.${state}`);
-    if (card.sub.textContent !== sub) { card.sub.textContent = sub; card.el.setAttribute('aria-label', tr('card.aria', { title: card.title.textContent, sub })); }
+    if (card.sub.textContent !== sub) { card.sub.textContent = sub; card.sub.title = sub; card.el.setAttribute('aria-label', tr('card.aria', { title: card.title.textContent, sub })); }
     const steps = tr(card.count === 1 ? 'card.steps.one' : 'card.steps.other', { count: card.count });
     const sum = steps; // (the step being done is in the status bar right above: said there once, never again in the summary)
     if (card.sum.textContent !== sum) card.sum.textContent = sum;
@@ -294,6 +298,35 @@
     cardChip(card);
     statusBar(card, state); // (the screen reader hears it, throttled; a change of state at once)
     renderMany(card, state === 'working' || state === 'helper' ? nowList(card) : []);
+    steady(card.el, live, settling);
+  }
+  // [steady] Every card at work, whatever it shows (Browser, Computer, Files, Word, a review loop, agents), keeps its height while it runs
+  // (step-ui.css "card-steady"): its live lines are one line each, its numbers keep their width, and a part that has shown once keeps its place
+  // (data-seen: hidden is then only invisible) until the run ends. Then the card settles once: the empty parts fold away, its height glides there.
+  const SLOTS = ':scope > :is(.act-many, .act-say, .act-review, .act-files, .act-tabs, .act-shot2, .agents-card), :scope > .act-actions > button, :scope .act-titles > :is(.act-tabref, .act-skill)';
+  const HELD = '.act-many, .act-say, .act-tabs, .act-btn, .act-tabref';
+  const still = () => document.documentElement.classList.contains('pref-lite') || matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // A part shown for the first time in a card at work opens smoothly (its height from 0, the gap above it too), so what is under it glides down.
+  function grow(n) {
+    if (still() || !n.animate) return;
+    const h = n.getBoundingClientRect().height;
+    if (!h) return;
+    const gap = parseFloat(getComputedStyle(n.parentElement).rowGap) || 0;
+    n.animate([{ maxHeight: '0px', opacity: 0, marginTop: `${-gap}px`, overflow: 'hidden' }, { maxHeight: `${h}px`, opacity: 1, marginTop: '0px', overflow: 'hidden' }], { duration: 180, easing: 'ease-out' });
+  }
+  function steady(node, live, before) {
+    if (live) {
+      node.classList.add('card-steady');
+      const held = node.classList.contains('act-hold') ? HELD : null; // (a Browser card keeps these places from its first step: they do not grow in)
+      for (const n of node.querySelectorAll(SLOTS)) if (!n.hidden && !n.dataset.seen) { n.dataset.seen = '1'; if (!held || !n.matches(held)) grow(n); }
+      return;
+    }
+    if (!node.classList.contains('card-steady')) return;
+    node.classList.remove('card-steady');
+    for (const n of node.querySelectorAll('[data-seen]')) delete n.dataset.seen;
+    if (before == null || still()) return;
+    const after = node.getBoundingClientRect().height;
+    if (Math.abs(after - before) > 1) node.animate?.([{ height: `${before}px`, overflow: 'hidden' }, { height: `${after}px`, overflow: 'hidden' }], { duration: 180, easing: 'ease-out' });
   }
   // ---- the tabs this turn opened or used: chips (tab-ref.js) in the order they were first touched, each marked open or closed
   // (a closed one reopens from its chip, an open one switches to it); folded by default, the head says how many.
@@ -394,7 +427,7 @@
     const text = statusFor(card, state);
     card.status.hidden = false;
     card.status.dataset.state = state;
-    if (card.statusText.textContent !== text) card.statusText.textContent = text;
+    if (card.statusText.textContent !== text) { card.statusText.textContent = text; card.statusText.title = text; } // (one line, cut with an ellipsis: all of it in the tooltip)
     linkStatus(card, text);
     if (card.liveText === text) return;
     const write = () => { card.liveTimer = 0; card.liveAt = Date.now(); card.liveText = text; card.live.textContent = text; };
@@ -994,7 +1027,7 @@
       if (delta !== null && delta !== 0) now.append(el('span', { className: 'rv-trend ' + (delta > 0 ? 'up' : 'down'), textContent: (delta > 0 ? '▲' : '▼') + Math.abs(delta) }));
       head.append(now);
     }
-    if (r.title) head.append(el('span', { className: 'rv-what', textContent: r.title }));
+    if (r.title) head.append(el('span', { className: 'rv-what', textContent: r.title, title: r.title }));
     const track = el('ol', { className: 'rv-track' });
     for (const x of rounds) {
       const li = el('li', { className: 'rv-round' + (x.met ? ' met' : '') + (x.pending ? ' pending' : '') });
@@ -1003,9 +1036,9 @@
       track.append(li);
     }
     const kids = [head, track];
-    if (last && !last.met && last.fixes?.length && !pending) {
+    if (last && !last.met && last.fixes?.length && (!pending || card.el.classList.contains('card-steady'))) { // ([steady] while the loop runs, the last round's fixes stay up as the next round is rated: the card keeps its height)
       const fixes = el('ul', { className: 'rv-fixes' });
-      for (const f of last.fixes.slice(0, 3)) fixes.append(el('li', { textContent: f }));
+      for (const f of last.fixes.slice(0, 3)) fixes.append(el('li', { textContent: f, title: f }));
       kids.push(el('div', { className: 'rv-fixes-head', textContent: tr('card.review.fixes') }), fixes);
     }
     box.replaceChildren(...kids);
@@ -1165,5 +1198,5 @@
     if (turn) (turn.noteRows ||= []).push(node);
     return false;
   }
-  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard, skill, review, agentsRestored };
+  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard, skill, review, agentsRestored, grow };
 })();

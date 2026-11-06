@@ -184,6 +184,7 @@
 .ag-row.open .ag-now { display: block; -webkit-line-clamp: unset; }
 .ag-meta { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: var(--sp-1); color: var(--muted); font-variant-numeric: tabular-nums; font-size: var(--fs-xs); }
 .ag-tools:empty { display: none; }
+.ag-when { display: flex; align-items: baseline; gap: var(--sp-3); }
 @media (prefers-reduced-motion: reduce) { .agents-card, .agents-card[data-state="working"] .ag-icon, .ag-row[data-state="working"] .ag-dot { animation: none; } }
 /* Inside an activity card (one card per message): no card of its own, a small heading over the rows. */
 .agents-card.in-card { margin: 0; padding: 0; border: 0; border-radius: 0; background: none; max-width: none; gap: var(--sp-3); animation: none; }
@@ -245,3 +246,24 @@
 .rv-fixes-head { color: var(--muted); }
 .rv-fixes { margin: 0; padding-left: var(--sp-8); color: var(--text); }
 .rv-fixes li { margin: var(--sp-1) 0; }
+
+/* [steady] card-steady: a card at work (step-ui.js steady: every activity card, a Word card, a review loop; agents-card.js: an Agents card on its
+   own while one works) holds its height while what it says changes. Each live line is one line of a set height, cut with an ellipsis (all of it
+   in the tooltip); the clocks and counts keep their width; a part that has shown once keeps its place (data-seen: hidden is only invisible) and a
+   finished agent keeps its one-line row. The run's end is the one change: the card settles, its height glides (step-ui.js steady). */
+.card-steady { --steady-lh: 18px; } /* (a line of --fs-sm at 1.5) */
+.card-steady :is(.act-sub, .act-status-text, .act-pill-text, .act-skill, .ag-sub, .ag-name, .ag-now, .rv-what, .rv-fixes > li), .card-steady .act-steps > summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: var(--steady-lh); min-height: var(--steady-lh); }
+.card-steady :is(.ag-line, .rv-head) { line-height: var(--steady-lh); min-height: var(--steady-lh); }
+.card-steady .ag-row:not(.open) .ag-now { display: block; -webkit-line-clamp: unset; white-space: nowrap; } /* (a finished agent's summary: one line until the run ends, or a click opens it) */
+.card-steady .ag-row.open .ag-now { white-space: normal; }
+.card-steady .act-say { min-height: 2lh; } /* (its two-line clamp, filled or not) */
+.card-steady .rv-fixes { min-height: calc(3 * var(--steady-lh) + 2 * var(--sp-2)); } /* (up to three fixes, a line each) */
+.card-steady :is(.ag-time, .ag-tools, .ag-score, .rv-score, .rv-latest), .card-steady .act-steps > summary { font-variant-numeric: tabular-nums; }
+.card-steady .ag-meta { min-width: 11ch; line-height: var(--steady-lh); } /* ("12 tool calls", "1m 05s": a count that grows does not push the row's text) */
+.card-steady .ag-time { min-width: 5ch; text-align: end; }
+.act-card.card-steady > .act-many[hidden][data-seen] { display: flex !important; visibility: hidden; }
+.act-card.card-steady > .act-say[hidden][data-seen] { display: -webkit-box !important; visibility: hidden; }
+.act-card.card-steady > :is(.act-review, .act-files)[hidden][data-seen] { display: flex !important; visibility: hidden; }
+.act-card.card-steady > :is(.act-tabs, .act-shot2, .agents-card)[hidden][data-seen], .act-card.card-steady .act-titles > .act-tabref[hidden][data-seen] { display: block !important; visibility: hidden; }
+.act-card.card-steady .act-titles > .act-skill[hidden][data-seen] { display: inline-block !important; visibility: hidden; }
+.act-card.card-steady > .act-actions > button[hidden][data-seen] { display: block !important; visibility: hidden; }
