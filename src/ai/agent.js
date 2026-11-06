@@ -871,7 +871,7 @@ function historyFor(messages, model) {
 // carry settings.noMemory and get nothing.
 let memorySource = null;
 let memoryGen = 0;
-const memoryBlocks = new WeakMap(); // a chat's settings -> { key, project, text }
+const memoryBlocks = new WeakMap(); // a chat's settings -> { key, project, query, text }
 function setMemorySource(source) { memorySource = source; memoryGen++; }
 function memoryEdited() { memoryGen++; }
 function memoryBlockFor(settings) {
@@ -881,10 +881,11 @@ function memoryBlockFor(settings) {
   if (!on) return '';
   const seen = memoryBlocks.get(settings);
   const project = typeof settings.projectId === 'string' ? settings.projectId : null; // [project workspace] a project's chats also see what was saved for it
-  if (seen && seen.key === memoryGen && seen.project === project) return seen.text;
+  const query = typeof settings.memoryQuery === 'string' ? settings.memoryQuery : ''; // [project memory] the chat's first message, which ranks the project's entries
+  if (seen && seen.key === memoryGen && seen.project === project && seen.query === query) return seen.text;
   let text;
-  try { text = String(memorySource.text(project) || ''); } catch { text = ''; } // (unreadable now: the chat goes on without it)
-  memoryBlocks.set(settings, { key: memoryGen, project, text });
+  try { text = String(memorySource.text(project, query) || ''); } catch { text = ''; } // (unreadable now: the chat goes on without it)
+  memoryBlocks.set(settings, { key: memoryGen, project, query, text });
   return text;
 }
 
@@ -2308,6 +2309,7 @@ class Agent {
       // The system prompt (ADHD mode) is fixed per conversation: editing it mid-history breaks the
       // thinking-block prefix check on newer models. The model can change between messages (setModel).
       if (!messages.settings) messages.settings = { model: DEFAULT_MODEL, adhdMode: true, ...this.getOptions() };
+      if (typeof messages.settings.memoryQuery !== 'string' && userText) messages.settings.memoryQuery = String(userText).slice(0, 500); // [project memory] the first message picks which of a project's entries come first (kept, so the prompt stays the same)
       if (this.nextEffort != null && messages === this.messages) { if (this.nextEffort) messages.settings.effort = this.nextEffort; else delete messages.settings.effort; this.nextEffort = null; }
       if (this.nextModel && messages === this.messages) { messages.settings.model = this.nextModel; delete messages.settings.fallbackFrom; this.forgetAuto(messages.settings); this.nextModel = null; }
       // [model fallback] A stand-in from an earlier turn (fallbackFrom holds the user's own pick) goes back to the pick
@@ -4781,6 +4783,7 @@ ${prompt}` : prompt), historyImages: [] };
       searchChats: m.chatSearch?.() ? (q) => m.searchChats(q, chatId) : null,
       changed: (ev) => { try { emit({ type: 'memory', ...ev }); } catch { /* a closed view: the change stands */ } },
       read: () => this.markTainted(scope), // past chats hold what pages said, too
+      place: m.place ? (location, label) => m.place(chat.settings?.projectId, location, label) : null, // [project places] where a document, folder or site of the project is
     });
   }
   // ---- [/memory]
@@ -7622,15 +7625,26 @@ ${wordRule(this.filesInApps(), 'word')}`;
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
-    const noted = (err) => { if (scope && !scope.wrapped) scope.lastToolError = { tool: name, error: String(err?.message || err) }; throw err; }; // [no handoff] for the capability-gap note
-    if (!guard) return this.runTool(name, input).catch(noted);
+    const noted = (err) => { if (scope && !scope.wrapped) scope.lastToolError = { tool: name, error: String(err?.message || err) }; this.notePlaces(scope, name, input, null, err); throw err; }; // [no handoff] for the capability-gap note
+    if (!guard) return this.runTool(name, input).then((r) => { this.notePlaces(scope, name, input, r); return r; }, noted);
     try {
       const result = await this.runTool(name, input).catch(noted);
+      this.notePlaces(scope, name, input, result);
       const moved = await guard.settle();
       return moved && typeof result === 'string' ? `${result}\nThe page then redirected; it is now ${agentUrl(wc.getURL()) || wc.getURL()}.` : result;
     } finally {
       guard.release();
     }
+  }
+
+  // [project places] A tool call in a project's chat that touched a document, page, folder or Drive / OneDrive file: main records where it is
+  // (ai/project-places.js), or forgets a link the call found dead. Never for temporary chats, background tasks or outside agents (noMemory, no chat).
+  notePlaces(scope, name, input, result, err = null) {
+    try {
+      const settings = scope?.chat?.settings;
+      if (!settings || settings.noMemory || typeof settings.projectId !== 'string' || !this.browser.projectPlaces) return;
+      this.browser.projectPlaces(settings.projectId, { name, input, result: typeof result === 'string' ? result.slice(0, 400) : '', error: err ? String(err?.message || err).slice(0, 300) : '' });
+    } catch { /* best effort: never in the tool's way */ }
   }
 
   // Repeat-read shortcuts (snapshot.js) are for the sidebar's own chat only: MCP clients and direct

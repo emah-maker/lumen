@@ -159,6 +159,14 @@ button.pjp-hit { cursor: pointer; }
 .pjp-input:focus, .pjp-text:focus, .pjp-select:focus-visible, .pjp-model:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* files, pages, memory: short lists of rows */
+/* [project memory] the Memory card: add / edit in place, pinned notes, the filter and the tidy-up line */
+.pjp-memory-edit { display: flex; gap: var(--sp-3); align-items: center; width: 100%; }
+.pjp-memory-add:not([hidden]) { margin-bottom: var(--sp-4); }
+.pjp-memory-filter { width: 100%; flex: none; margin-bottom: var(--sp-3); }
+.pjp-memory-filter[hidden], .pjp-memory-more[hidden], .pjp-memory-tidy[hidden] { display: none; }
+.pjp-pin-chip { margin-right: var(--sp-3); padding: 0 var(--sp-3); font-size: 11px; line-height: 18px; }
+.pjp-memory .pjp-row-text { cursor: text; }
+.pjp-memory-tidy { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); margin-top: var(--sp-4); }
 .pjp-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 .pjp-list[hidden] { display: none; }
 .pjp-row { display: flex; align-items: center; gap: var(--cp-2); min-height: 40px; padding: var(--sp-2) var(--sp-3); margin-inline: calc(-1 * var(--sp-3)); border-radius: 10px; }
@@ -219,3 +227,11 @@ button.pjp-hit { cursor: pointer; }
 :root.pref-reduce-motion .pjp-composer, :root.pref-reduce-motion .pjp-chat-acts, :root.pref-reduce-motion .pjp-chat-card, :root.pref-reduce-motion .pjp .btn.small.pjp-row-btn { transition: none; }
 :root.pref-reduce-motion .pjp-chat-card:hover { transform: none; }
 :root.pref-reduce-motion .pjp-badge-live.running::before { animation: none; }
+
+/* [project places] Key documents and Where things are */
+.pjp-place-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--sp-3); }
+.pjp-place-kind { flex: none; padding: 0 var(--sp-3); font-size: 11px; line-height: 18px; }
+.pjp-place-name { cursor: text; }
+.pjp-place-loc { flex-basis: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px; }
+.pjp-place.pinned .pjp-place-name { font-weight: 600; }
+.pjp-places .pjp-h3 { margin: var(--sp-5) 0 var(--sp-3); font-size: 12px; font-weight: 600; color: var(--muted); }

@@ -590,25 +590,160 @@
     const root = card(tr('projectws.memory', 'Memory'), { tip: tr('projectws.memory.note', 'Saved in this project’s chats, so only its chats see it, next to your general memory.'), className: 'pjp-memory' });
     const count = el('span', { className: 'pjp-badge' });
     root.head.querySelector('h2').after(count);
-    const empty = note(data.memoryOn ? tr('projectws.empty.memory', 'Nothing saved for this project yet. What the AI saves in a chat of this project is kept here.') : tr('projectws.memory.off', 'Memory is off. Turn it on in Settings → AI → Instructions and memory, and what the AI saves in this project’s chats is kept here.'));
-    const draw = (entries) => {
+    const empty = note(data.memoryOn ? tr('projectws.empty.memory', 'Nothing saved for this project yet. The AI saves what you decide here (goals, deadlines, names), and you can add a note yourself.') : tr('projectws.memory.off', 'Memory is off. Turn it on in Settings → AI → Instructions and memory, and what the AI saves in this project’s chats is kept here.'));
+    // [project memory] Add a note yourself, edit one (click its text), pin it (always sent first, never pushed out), forget it; a filter once
+    // there are many, the first SHOWN_MEMORY with "Show all", and a line offering to forget what nobody has touched for months.
+    const SHOWN_MEMORY = 8;
+    const say = status();
+    let filter = '';
+    let all = false;
+    const change = async (what) => {
+      const out = await page.api.projectMemory(page.id, what).catch(() => null);
+      if (!out) { say.textContent = tr('projectws.memory.failed', 'Could not change memory.'); return false; }
+      data.memory = out.memory;
+      data.stale = out.stale;
+      say.textContent = out.ok ? '' : out.error;
+      draw();
+      return out.ok;
+    };
+    const search = el('input', { type: 'search', className: 'pjp-input pjp-memory-filter', placeholder: tr('projectws.memory.filter', 'Filter notes') });
+    search.setAttribute('aria-label', tr('projectws.memory.filter', 'Filter notes'));
+    search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); draw(); });
+    const more = quiet('', () => { all = !all; draw(); }, 'pjp-memory-more');
+    const tidy = el('p', { className: 'pjp-note pjp-memory-tidy' });
+    const editor = (value, onSave, onDone) => {
+      const input = el('input', { type: 'text', className: 'pjp-input', value, maxLength: 300 });
+      input.setAttribute('aria-label', tr('projectws.memory.input', 'Note'));
+      const save = button(tr('chatpage.project.save', 'Save'), async () => { const v = input.value.trim(); if (!v) return; save.disabled = true; const ok = await onSave(v); save.disabled = false; if (ok) onDone(); }, 'primary');
+      const cancel = button(tr('chatpage.project.cancel', 'Cancel'), () => onDone());
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); save.click(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.click(); }
+      });
+      const box = el('div', { className: 'pjp-memory-edit' }, input, save, cancel);
+      requestAnimationFrame(() => input.focus());
+      return box;
+    };
+    const addBox = el('div', { className: 'pjp-memory-add' });
+    addBox.hidden = true;
+    const add = button(tr('projectws.memory.add', 'Add'), () => {
+      add.hidden = true;
+      addBox.hidden = false;
+      page.editing.add('memory');
+      const done = () => { addBox.hidden = true; addBox.replaceChildren(); add.hidden = false; page.editing.delete('memory'); };
+      addBox.replaceChildren(editor('', (v) => change({ add: v }), done));
+    });
+    add.hidden = !data.memoryOn;
+    root.head.append(add);
+    function row(e) {
+      const li = el('li', { className: `pjp-row${e.pinned ? ' pinned' : ''}` });
+      li.dataset.memory = e.id;
+      const text = el('span', { className: 'pjp-row-text', textContent: e.text, tabIndex: 0, title: tr('projectws.instructions.click', 'Click to edit') });
+      const main = el('div', { className: 'pjp-row-main' }, text);
+      if (e.pinned) main.prepend(el('span', { className: 'pjp-chip pjp-pin-chip', textContent: tr('projectws.memory.pinned', 'Pinned') }));
+      const edit = () => {
+        page.editing.add('memory');
+        li.replaceChildren(editor(e.text, (v) => change({ update: { id: e.id, text: v } }), () => { page.editing.delete('memory'); draw(); }));
+      };
+      text.onclick = () => { if (!getSelection()?.toString()) edit(); };
+      text.addEventListener('keydown', (k) => { if (k.key === 'Enter' && !isImeEnter(k)) { k.preventDefault(); edit(); } });
+      const pin = button(e.pinned ? tr('projectws.memory.unpin', 'Unpin') : tr('projectws.memory.pin', 'Pin'), () => change({ pin: { id: e.id, on: !e.pinned } }), 'pjp-row-btn pjp-memory-pin');
+      pin.title = tr('projectws.memory.pinTip', 'A pinned note always goes to the AI first and is never pushed out.');
+      li.append(main, pin, twoStep(tr('projectws.forget', 'Forget'), tr('projectws.forgetAgain', 'Click again to forget'), async () => {
+        const ok = await page.api.projectMemoryForget(page.id, e.id).catch(() => false);
+        if (ok) { data.memory = data.memory.filter((x) => x.id !== e.id); data.stale = (data.stale || []).filter((x) => x !== e.id); draw(); } else li.querySelector('button:last-child').disabled = false;
+      }, 'pjp-row-btn'));
+      return li;
+    }
+    function draw() {
+      const entries = data.memory || [];
       count.textContent = entries.length ? String(entries.length) : '';
       count.hidden = !entries.length;
-      list.replaceChildren(...entries.map((e) => {
-        const li = el('li', { className: 'pjp-row' });
-        li.dataset.memory = e.id;
-        li.append(el('div', { className: 'pjp-row-main' }, el('span', { className: 'pjp-row-text', textContent: e.text })),
-          twoStep(tr('projectws.forget', 'Forget'), tr('projectws.forgetAgain', 'Click again to forget'), async () => {
-            const ok = await page.api.projectMemoryForget(page.id, e.id).catch(() => false);
-            if (ok) { data.memory = data.memory.filter((x) => x.id !== e.id); draw(data.memory); } else li.querySelector('button').disabled = false;
-          }, 'pjp-row-btn'));
-        return li;
-      }));
-      list.hidden = !entries.length;
+      search.hidden = entries.length <= SHOWN_MEMORY;
+      const shown = filter ? entries.filter((e) => e.text.toLowerCase().includes(filter)) : entries;
+      const cut = all || filter ? shown : shown.slice(0, SHOWN_MEMORY);
+      list.replaceChildren(...cut.map(row));
+      list.hidden = !cut.length;
+      more.hidden = Boolean(filter) || shown.length <= SHOWN_MEMORY;
+      more.textContent = all ? tr('projectws.showLess', 'Show less') : tr('projectws.showAll', 'Show all {n}', { n: shown.length });
       empty.hidden = Boolean(entries.length);
+      const old = (data.stale || []).length;
+      tidy.hidden = !old;
+      if (old) {
+        tidy.replaceChildren(el('span', { textContent: tr(old === 1 ? 'projectws.memory.stale1' : 'projectws.memory.stale', old === 1 ? '1 note hasn’t changed in 6 months. ' : '{n} notes haven’t changed in 6 months. ', { n: old }) }),
+          twoStep(tr('projectws.memory.tidy', 'Forget them'), tr('projectws.forgetAgain', 'Click again to forget'), () => change({ tidy: data.stale.slice() }), 'pjp-memory-tidy-btn'));
+      }
+    }
+    root.body.append(empty, addBox, search, list, more, tidy, say);
+    draw();
+    return root;
+  }
+
+  // ---- [project places] Key documents and Where things are: what the project's chats opened, read, edited or cited, most used first
+  // (ai/project-places.js). Open, rename (click the name), pin, remove; documents first, then the folders and sites the chats keep coming back to.
+  const PLACE_KIND = { file: 'File', pdf: 'PDF', doc: 'Word', sheet: 'Sheet', slides: 'Slides', drive: 'Drive', onedrive: 'OneDrive', web: 'Web', folder: 'Folder', site: 'Site' };
+  const SHOWN_PLACES = 6;
+  function placesCard(data) {
+    const root = card(tr('projectws.places', 'Key documents'), { tip: tr('projectws.places.tip', 'Where this project’s documents are: what its chats opened, read or edited, most used first. Each chat in the project gets this list, so the AI can open the right one straight away. Kept on this computer, encrypted.'), className: 'pjp-places' });
+    const say = status();
+    let all = false;
+    const change = async (what) => {
+      const out = await page.api.projectPlaces(page.id, what).catch(() => null);
+      if (!out) { say.textContent = tr('projectws.places.failed', 'Could not change the list.'); return false; }
+      if (what.open === undefined) { data.places = out.places; draw(); }
+      say.textContent = out.ok ? '' : out.error;
+      return out.ok;
     };
-    root.body.append(empty, list);
-    draw(data.memory);
+    const row = (p) => {
+      const li = el('li', { className: `pjp-row pjp-place${p.pinned ? ' pinned' : ''}` });
+      li.dataset.place = p.id;
+      const name = el('span', { className: 'pjp-row-text pjp-place-name', textContent: p.label, tabIndex: 0, title: tr('projectws.places.rename', 'Click to rename') });
+      const where = el('span', { className: 'pjp-place-loc', textContent: p.loc, title: p.loc });
+      const main = el('div', { className: 'pjp-row-main pjp-place-main' }, el('span', { className: 'pjp-chip pjp-place-kind', textContent: tr(`projectws.places.kind.${p.kind}`, PLACE_KIND[p.kind] || 'Link') }), name, where);
+      const rename = () => {
+        page.editing.add('places');
+        const input = el('input', { type: 'text', className: 'pjp-input', value: p.label, maxLength: 80 });
+        input.setAttribute('aria-label', tr('projectws.places.name', 'Name'));
+        let settled = false;
+        const done = async (keep) => { if (settled) return; settled = true; page.editing.delete('places'); if (keep && input.value.trim() !== p.label) await change({ rename: { id: p.id, label: input.value } }); else draw(); };
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); done(true); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } });
+        input.addEventListener('blur', () => done(true));
+        name.replaceWith(input);
+        input.focus();
+        input.select();
+      };
+      name.onclick = rename;
+      name.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e)) { e.preventDefault(); rename(); } });
+      li.append(main,
+        button(tr('projectws.sources.open', 'Open'), () => change({ open: p.id }), 'pjp-row-btn pjp-place-open'),
+        button(p.pinned ? tr('projectws.memory.unpin', 'Unpin') : tr('projectws.memory.pin', 'Pin'), () => change({ pin: { id: p.id, on: !p.pinned } }), 'pjp-row-btn pjp-place-pin'),
+        button(tr('projectws.places.remove', 'Remove'), () => change({ remove: p.id }), 'pjp-row-btn pjp-place-remove'));
+      return li;
+    };
+    function draw() {
+      const list = data.places || [];
+      const docs = list.filter((p) => p.kind !== 'folder' && p.kind !== 'site');
+      const spots = list.filter((p) => p.kind === 'folder' || p.kind === 'site');
+      const parts = [];
+      if (!data.memoryOn) parts.push(note(tr('projectws.places.off', 'Memory is off. With it on (Settings → AI → Instructions and memory), the documents this project’s chats use are listed here.')));
+      else if (!list.length) parts.push(note(tr('projectws.places.empty', 'Nothing yet. The documents, pages and Drive files this project’s chats open or edit show up here, most used first.')));
+      if (docs.length) {
+        const ul = el('ul', { className: 'pjp-list pjp-places-docs' });
+        ul.setAttribute('aria-label', tr('projectws.places', 'Key documents'));
+        ul.append(...(all ? docs : docs.slice(0, SHOWN_PLACES)).map(row));
+        parts.push(ul);
+        if (docs.length > SHOWN_PLACES) parts.push(quiet(all ? tr('projectws.showLess', 'Show less') : tr('projectws.showAll', 'Show all {n}', { n: docs.length }), () => { all = !all; draw(); }, 'pjp-places-more'));
+      }
+      if (spots.length) {
+        parts.push(el('h3', { className: 'pjp-h3', textContent: tr('projectws.places.where', 'Where things are') }));
+        const ul = el('ul', { className: 'pjp-list pjp-places-spots' });
+        ul.setAttribute('aria-label', tr('projectws.places.where', 'Where things are'));
+        ul.append(...spots.slice(0, SHOWN_PLACES).map(row));
+        parts.push(ul);
+      }
+      parts.push(say);
+      root.body.replaceChildren(...parts);
+    }
+    draw();
     return root;
   }
 
@@ -951,7 +1086,7 @@
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
-    const side = el('aside', { className: 'pjp-side' }, instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data));
+    const side = el('aside', { className: 'pjp-side' }, instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
     page.side = side;
     page.sub();
@@ -1010,6 +1145,8 @@
     me.data.files = fresh.files;
     me.data.totals = fresh.totals;
     me.data.memory = fresh.memory;
+    me.data.stale = fresh.stale;
+    me.data.places = fresh.places;
     me.root.setAttribute('aria-label', fresh.project.name);
     const title = me.root.querySelector('.pjp-title');
     const desc = me.root.querySelector('.pjp-desc');
@@ -1018,7 +1155,7 @@
     me.composerText?.setAttribute('placeholder', tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: fresh.project.name }));
     const folderBtn = me.root.querySelector('.pjp-open-folder');
     if (folderBtn) folderBtn.hidden = !fresh.project.folder;
-    const next = [instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), memoryCard(me.data)];
+    const next = [instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
     me.side.replaceChildren(...next);
     me.syncModel?.();
     me.sub?.();

@@ -91,6 +91,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectTabs: (id) => ipcRenderer.invoke('chats:project-tabs', id), // the web pages open in your windows
       projectFileRename: (id, fileId, name) => ipcRenderer.invoke('chats:project-file-rename', id, fileId, name),
       projectMemoryForget: (id, entryId) => ipcRenderer.invoke('chats:project-memory-forget', id, entryId),
+      projectPlaces: (id, change) => ipcRenderer.invoke('chats:project-places', id, change), // [project places] { open } | { pin } | { rename } | { remove } | { add }
+      projectMemory: (id, change) => ipcRenderer.invoke('chats:project-memory', id, change), // [project memory] { add } | { update: { id, text } } | { pin: { id, on } } | { tidy: [ids] }
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
       projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] { permissionMode, allowedHosts }
       setProject: (id, projectId) => ipcRenderer.invoke('chats:project-set', id, projectId),
