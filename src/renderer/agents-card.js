@@ -86,8 +86,9 @@
   let panels = 0;
   function paintTabs(card) {
     const CI = window.cardItems;
+    if (!CI) return;
     const agents = [...card.rows.values()].map((r) => r._a);
-    const on = Boolean(CI?.tabbed(agents));
+    const on = CI.tabbed(agents);
     card.el.classList.toggle('ag-tabbed', on);
     if (!on) {
       card.el.closest('.act-card')?.classList.remove('ag-rated');
