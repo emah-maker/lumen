@@ -12015,6 +12015,7 @@ window.browser.onTabs(watchFullChatTab);
 
 
 
+
 let sidebarTabShown = null;
 function followTabSidebar(state) {
 const switched = state.activeId !== sidebarTabShown;
@@ -12023,7 +12024,7 @@ sidebarTabShown = state.activeId;
 if (chatFull) return;
 if (sidebarPending > 0 && (!switched || first)) return;
 const want = Boolean(state.sidebar);
-if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) });
+if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first || switched, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) });
 }
 window.browser.onTabs(followTabSidebar);
 
