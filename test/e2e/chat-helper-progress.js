@@ -164,7 +164,7 @@ process.stdin.on('data', async (d) => {
     signal('end');
     check('[agents] the first agent is done, with its summary; the second still works', Boolean(await waitFor(async () => { const a = await agents(); return a[0]?.state === 'done' && a[0].now === 'The deck is rated 9/10' && a[1]?.state === 'working'; }, 10000)), JSON.stringify(await agents()));
     check('[agents] ...the card counts both', /1 working/.test(await agentsHead()) && /1 done/.test(await agentsHead()), await agentsHead());
-    check('[at once] the reply runs a command while the second agent works: the status line counts both, the command is a pill', Boolean(await waitFor(async () => /2 things at once/.test(await cardStatus()) && (await pills()).some((p) => /fix3\.js/.test(p)), 8000)), `${await cardStatus()} | ${JSON.stringify(await pills())}`);
+    check('[at once] the reply runs a command while the second agent works: the status line counts both and names the command, no pill saying it again', Boolean(await waitFor(async () => /2 things at once · .*fix3\.js/.test(await cardStatus()) && (await pills()).length === 0, 8000)), `${await cardStatus()} | ${JSON.stringify(await pills())}`);
     signal('fixdone');
     check("the CLI's follow-up appears as a reply in the same chat", Boolean(await waitFor(async () => /The reviewer rated the deck 9\/10\./.test(await text()), 15000)), `${await text()} | ${JSON.stringify(await app.evaluate(() => global.__tabChats.runs()))}`);
     check("[one card] the follow-up's command is a step of the same card, no second card", Boolean(await waitFor(async () => (await stepRows()).some((r) => /fix3\.js/.test(r.text)), 8000)) && (await cards()).act === 1, JSON.stringify([await cards(), await cardDump()]));

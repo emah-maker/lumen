@@ -35,7 +35,7 @@
     const tools = el('span', { className: 'ag-tools' });
     const score = el('span', { className: 'ag-score', hidden: true }); // [review loop] a reviewer's score, once it answered
     const main = el('div', { className: 'ag-main' }, el('div', { className: 'ag-line' }, name, bg), now);
-    row.append(el('span', { className: 'ag-dot', ariaHidden: 'true' }), main, el('div', { className: 'ag-meta' }, score, time, tools));
+    row.append(el('span', { className: 'ag-dot', ariaHidden: 'true' }), main, el('div', { className: 'ag-meta' }, el('span', { className: 'ag-when' }, score, time), tools)); // (a score on the clock's line: a reviewer that answers keeps its row's height)
     row._p = { name, bg, now, time, tools, score };
     // A finished agent's summary is cut to two lines; the row opens to show all of it.
     row.addEventListener('click', () => { if (row.dataset.state !== 'working' && row._a?.summary) row.classList.toggle('open'); });
@@ -47,10 +47,11 @@
     const p = row._p;
     row.dataset.state = a.state;
     p.name.textContent = a.desc || tr('agents.unnamed');
+    p.name.title = p.name.textContent; // (one line, cut with an ellipsis: all of it in the tooltip)
     p.bg.hidden = !a.background;
     const ended = ENDED.has(a.state);
     const text = ended ? (a.summary || tr(`agents.state.${a.state}`)) : (a.last || tr('agents.starting'));
-    if (p.now.textContent !== text) p.now.textContent = text;
+    if (p.now.textContent !== text) { p.now.textContent = text; p.now.title = text; }
     row.tabIndex = ended && a.summary ? 0 : -1;
     p.tools.textContent = a.tools ? tr(a.tools === 1 ? 'agents.tools.one' : 'agents.tools.other', { count: a.tools }) : '';
     const RT = window.reviewTrack;
@@ -73,6 +74,7 @@
     const parts = ['working', 'done', 'failed', 'stopped'].filter((k) => n[k]).map((k) => tr(`agents.count.${k}`, { count: n[k] }));
     card.sub.textContent = parts.join(' · ');
     card.el.dataset.state = n.working ? 'working' : n.failed ? 'failed' : 'done';
+    card.el.classList.toggle('card-steady', Boolean(n.working)); // [steady] a line each while any agent works (step-ui.css "card-steady"); inside an activity card, that card's state says it too
     card.el.setAttribute('aria-label', `${tr('agents.title')}: ${card.sub.textContent}`);
   }
 
@@ -97,9 +99,11 @@
     if (!box.card || !box.card.el.isConnected) { box.card = makeCard(); place(box.card.el); }
     const card = box.card;
     let row = card.rows.get(event.id);
+    const fresh = !row;
     if (!row) { row = makeRow(event); card.rows.set(event.id, row); card.list.append(row); }
     const was = row._a || {};
     paintRow(row, { ...was, ...event, startedAt: event.startedAt || was.startedAt });
+    if (fresh && card.rows.size > 1) window.stepUI?.grow?.(row); // ([steady] a second agent's row opens smoothly; the first comes with its card)
     paintHead(card);
     if (event.state === 'working') tick();
     return true;
