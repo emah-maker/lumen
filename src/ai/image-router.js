@@ -5,15 +5,18 @@
 //
 //   setting           Settings → AI → Image generation ("Make pictures with", imageGen): 'auto' (default), 'off', or one provider to use first.
 //   providers         grokbuild (Grok Build's image_gen / image_edit, through the user's own sign-in), xai (Grok API), gemini, openai, openrouter,
-//                     and antigravity (agy, through the user's Google sign-in: ai/image-agy.js), which is asked only when the user picks it
-//                     (a slow headless run, and agy has no sign-in check that costs nothing), never by Automatic.
+//                     and antigravity (agy, through the user's Google sign-in: ai/image-agy.js): first in an Antigravity chat (the picture is
+//                     made on the user's own Antigravity plan), otherwise last in Automatic (one slow headless run per picture), whenever
+//                     agy is installed and not known to be signed out.
 //                     Never a key the user has not set: only connected providers are ever asked, and a provider that is not connected
 //                     is never offered a request.
-//   order (auto)      the chat's own provider first when it can make pictures (a Grok Build or OpenAI chat), then the others: Grok Build
-//                     (a plan, no per-picture charge), then the API keys (Grok, Gemini, OpenAI, OpenRouter). Providers that are out of
+//   order (auto)      the chat's own provider first when it can make pictures (a Grok Build, Antigravity or OpenAI chat), then the others:
+//                     Grok Build (a plan, no per-picture charge), then the API keys (Grok, Gemini, OpenAI, OpenRouter), then Antigravity. Providers that are out of
 //                     usage right now (ai/fallback.js cooldowns) go last, those the user turned off for Auto (autoExclude) are left out
 //                     unless it is the chat's own provider. A chosen provider is asked first (even when it is turned off for Auto); when
 //                     it is not set up, out of usage or fails, the Automatic order takes over, and the picture says who made it.
+//                     When the provider that leads (the chosen one, else the chat's own) did not make the picture, its credit says why:
+//                     "Grok Build · image_gen (instead of Antigravity: made no picture)".
 //   failures          a provider that is out of usage, unreachable, rejected the key or just failed hands the request to the next one.
 //                     A provider that REFUSED the picture (its content policy) does not: its refusal is the answer, never retried elsewhere.
 //   editing           "edit the last picture" only goes to providers that edit (OpenAI, Gemini, OpenRouter, Grok Build).
@@ -22,15 +25,15 @@
 // 'failed' | 'aborted'. The message is written for the user (and the model that called the tool).
 
 const LABELS = { grokbuild: 'Grok Build', xai: 'Grok', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter', antigravity: 'Antigravity' };
-const ORDER = ['grokbuild', 'xai', 'gemini', 'openai', 'openrouter']; // Automatic's order
-const PICK_ONLY = ['antigravity']; // asked only when picked in Settings
+const ORDER = ['grokbuild', 'xai', 'gemini', 'openai', 'openrouter', 'antigravity']; // Automatic's order (agy last: one slow headless run per picture)
+const PICK_ONLY = []; // (none now: Antigravity used to be asked only when picked)
 const CAN_EDIT = { grokbuild: true, xai: false, gemini: true, openai: true, openrouter: true, antigravity: true };
-const SETTINGS = ['auto', 'off', ...ORDER, ...PICK_ONLY];
+const SETTINGS = ['auto', 'off', ...ORDER];
 
 const cleanSetting = (v) => (SETTINGS.includes(v) ? v : 'auto');
 
-// The chat's own provider as an image provider: 'openai:gpt-5.6' -> 'openai', 'grokbuild:default' -> 'grokbuild'; Claude, Claude Code,
-// Antigravity and Codex make no pictures of their own here (null).
+// The chat's own provider as an image provider: 'openai:gpt-5.6' -> 'openai', 'grokbuild:default' -> 'grokbuild', 'antigravity:…' ->
+// 'antigravity' (agy's own generate_image, on the user's Antigravity plan); Claude, Claude Code and Codex make no pictures here (null).
 function ownProviderOf(model) {
   const key = /^([a-z][a-z0-9]*):/.exec(String(model || ''))?.[1] || (/^claude/.test(String(model || '')) ? 'anthropic' : null);
   return ORDER.includes(key) ? key : null;
@@ -74,7 +77,7 @@ function fail(code, message, extra = {}) { return Object.assign(new Error(messag
 //   setting, current (the chat's model id), edit (boolean), prompt, source ({ buffer, mime } | null), signal,
 //   connected: () => Promise<{[key]: boolean}> | {...},  cooling(key), exclude: [],
 //   backends: { [key]: async ({ prompt, source, signal }) => ({ images: [{ data|url, alt }], model, said }) },
-//   isPolicy(err), classify(err), onTry(key) (optional, "Making it with X")
+//   isPolicy(err), classify(err), onTry(key) (optional, "Making it with X"), onProgress(key, text) (optional: a slow provider's own steps)
 // }
 async function route(deps) {
   const { prompt, source = null, signal, backends = {}, isPolicy = () => false, classify = null, onTry = null } = deps;
@@ -84,20 +87,27 @@ async function route(deps) {
   if (p.mode === 'off') throw fail('off', 'Picture making is turned off in Settings → AI → Image generation. Tell the user, and describe the picture in words instead.');
   if (!p.order.length) {
     if (p.missing) throw fail('none', `${labelOf(p.missing)} is chosen for pictures in Settings → AI → Image generation, but ${notReady(p.missing, edit)}, and no other connected AI can ${edit ? 'edit' : 'make'} pictures. Tell the user; do not ask them for a key in the chat.`, { missing: p.missing, userMessage: `${labelOf(p.missing)} is chosen for pictures (Settings → AI → Image generation) but ${notReady(p.missing, edit)}, and no other connected AI can ${edit ? 'edit' : 'make'} pictures. Set it up, or connect another provider.` });
-    throw fail('none', `No connected AI can ${edit ? 'edit' : 'make'} pictures. The user can connect an OpenAI, Grok or Gemini key, or OpenRouter (Settings → AI), sign in to Grok Build, or pick Antigravity in Settings → AI → Make pictures with. Tell them that; do not ask for a key in the chat.`);
+    throw fail('none', `No connected AI can ${edit ? 'edit' : 'make'} pictures. The user can connect an OpenAI, Grok or Gemini key, or OpenRouter (Settings → AI), or sign in to Grok Build or Antigravity. Tell them that; do not ask for a key in the chat.`);
   }
   const tried = [];
+  // The provider that should have made it: the chosen one, else the chat's own (an Antigravity chat's pictures are agy's). Passed over: why.
+  const lead = p.first || p.own || null;
+  const whyNot = (key) => {
+    if (key === p.missing) return notReady(key, edit);
+    const t = tried.find((x) => x.provider === key);
+    return t ? (t.said && t.why === 'failed' ? `failed: ${t.said}` : t.why) : 'out of usage';
+  };
   for (const key of p.order) {
     if (signal?.aborted) throw fail('aborted', 'Stopped by the user.');
     const backend = backends[key];
     if (typeof backend !== 'function') { tried.push({ provider: key, why: 'not available' }); continue; }
     if (onTry) { try { onTry(key); } catch { /* cosmetic */ } }
     try {
-      const made = await backend({ prompt, source, signal });
+      const made = await backend({ prompt, source, signal, onProgress: deps.onProgress ? (text) => { try { deps.onProgress(key, text); } catch { /* cosmetic */ } } : null });
       if (made?.images?.length) {
         const label = labelOf(key);
-        const instead = p.first && key !== p.first ? { insteadOf: p.first, insteadWhy: p.missing ? notReady(p.first, edit) : (tried.find((t) => t.provider === p.first)?.why || 'out of usage') } : {};
-        return { images: made.images, provider: key, label, model: made.model || null, said: made.said || '', credit: `${made.model ? `${label} · ${made.model}` : label}${instead.insteadOf ? ` (instead of ${labelOf(instead.insteadOf)})` : ''}`, tried, ...instead };
+        const instead = lead && key !== lead ? { insteadOf: lead, insteadWhy: whyNot(lead) } : {};
+        return { images: made.images, provider: key, label, model: made.model || null, said: made.said || '', credit: `${made.model ? `${label} · ${made.model}` : label}${instead.insteadOf ? ` (instead of ${labelOf(instead.insteadOf)}: ${instead.insteadWhy})` : ''}`, tried, ...instead };
       }
       tried.push({ provider: key, why: 'made no picture' });
     } catch (err) {
@@ -106,7 +116,7 @@ async function route(deps) {
       if (verdict.kind === 'refused') {
         throw fail('refused', `${labelOf(key)} declined this picture: ${oneLine(err?.message, 300) || 'it did not say why'}. This is ${labelOf(key)}'s content policy, so it was not tried elsewhere. Tell the user what ${labelOf(key)} said and offer to change the request.`, { provider: key, label: labelOf(key), userMessage: `${labelOf(key)} declined this picture: ${oneLine(err?.message, 300) || 'it did not say why'}`, tried });
       }
-      tried.push({ provider: key, why: WHY[verdict.kind] || 'failed', detail: oneLine(verdict.detail) });
+      tried.push({ provider: key, why: WHY[verdict.kind] || 'failed', detail: oneLine(verdict.detail), said: oneLine(err?.message, 80) });
     }
   }
   const list = tried.map((t) => `${labelOf(t.provider)} (${t.why}${t.detail && t.why === 'failed' ? `: ${t.detail}` : ''})`).join('; ');
