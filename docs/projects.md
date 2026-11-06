@@ -9,6 +9,47 @@ A **project** groups chats and gives the AI things to work from. Its page is the
 - **Continue where you left off**: the latest chats as cards with the last thing said, the time, and a mark while a reply is working or needs your OK. Below them are all the project's chats, with a search that looks in the chats and the project's files.
 - **Overview**: instructions (shown as text; Edit changes them), **Sources**, the folder, defaults and memory. The fine print is in each card's ⓘ tooltip.
 
+## Project memory
+
+With **Memory** on (Settings → AI → Instructions and memory), a project keeps notes of its own next to your general memory. Only the project's chats see them.
+
+- **The AI saves them on its own.** In a project's chat the AI is asked to save the project's lasting facts when you state or decide them: its goal, deadlines, decisions, names, conventions, who does what. One short fact per note. As with all memory, only what you say in your own messages, never text from a page, a file or a tool result, and the same approval card shows when the chat holds outside content. Each save shows in the chat as **Remembered: …** with **Undo**.
+- **No restatements.** A note that nearly repeats one the project already has (most of its words in common, or the same note with more said) updates that note instead of adding a second; the chat shows it as an update.
+- **The relevant ones first.** Each new chat in the project gets the project's notes before your general memory, in about 3,000 characters of their own: pinned notes first, then the ones that share words with the chat's first message, then the newest. The rest stay saved, and the AI can search them.
+- **Up to 60 notes per project.** A new note past that lets the project's oldest unpinned note go; Undo on the new note brings it back. A project whose 60 notes are all pinned asks you to unpin or forget one.
+- **The Memory card** on the project's page lists them, pinned first. **Add** writes a note yourself; click a note to edit it (Enter saves, Escape cancels); **Pin** keeps a note first and never pushed out; **Forget** asks for a second click. With more than 8 notes there is a filter and **Show all**. Notes that haven't changed in 6 months (and aren't pinned) get a line ("3 notes haven’t changed in 6 months") whose **Forget them** clears them. Nothing is dropped on its own for being old.
+- Settings → AI → Instructions and memory → **Saved memory** still lists every note, with the project's name on a project's. Deleting a project deletes its notes (Undo brings them back).
+
+## Key documents and where things are
+
+With **Memory** on, a project also keeps where its documents are, so neither you nor the AI has to look for them again.
+
+- **Kept on its own.** When the AI in a project's chat opens, reads, edits or cites a document (a file on this computer, a PDF, a Word document, a web page, a Google Drive or OneDrive file), Lumen records where it is, with a short name: the file's name, the page's title, or "Google Doc". Searches, Lumen's own pages and local test servers are left out.
+- **You can name one.** Say "the budget sheet is <link>" or "the photos are in D:\Lab\Photos" and the AI notes it with your name for it.
+- **Where things are.** A folder two of the project's files came from, or a site two of its pages are on, is listed below the documents.
+- **Most used first.** Each use counts, and older use counts less (half after two weeks). A project keeps up to 60; past that the least used one goes. Pinned ones always come first and are never pushed out.
+- **The AI gets them.** Each new chat in the project gets the top ones, about 1,500 characters, the ones that share words with your first message first, and is told to open the one it needs directly instead of searching.
+- **No duplicates, no dead ends.** A Google document is one entry in any view (edit, view, a shared link), a page is one entry with or without its tracking parameters, and a file moved to another folder under the same name keeps its entry (and its name and pin). A file that is gone from this computer, or a link the AI found dead (not found, 404), drops off, unless pinned.
+- **The Key documents card** on the project's page lists them: **Open** opens one in a tab, click a name to rename it, **Pin** keeps it first, **Remove** takes it off.
+- **What is kept.** Only the locations and names, never what the documents say, in `project-places.json` in Lumen's profile, encrypted with your system's keychain like memory. Turning Memory off stops recording and recalling them. Deleting the project deletes its list (Undo brings it back).
+## Many projects
+
+- **Find and sort.** With more than 6 projects the Projects block in lumen://chat has a **Find a project** box (it matches the name and the goal line; Escape clears it) and a switch between **Recent** (the project whose newest chat is most recent first) and **A–Z**. Lumen keeps the choice.
+- **A short list.** It shows 8 projects, then **Show N more** (and **Show less**). Pinned projects and the project whose page is open always show.
+- **Pin to top** (a project's ⋯ menu) keeps a project at the top, with a small mark; **Unpin** takes it off. Pinning doesn't count as using the project, so it doesn't change the Recent order of the others.
+- **Archive** (the ⋯ menu) takes a project out of the lists, with Undo. Nothing is deleted: its chats, files, folder and memory stay as they are, and its chats still work. **Archived (N)** at the foot of the block lists the archived projects; **Move out of archive** in a project's ⋯ menu brings it back.
+- **Move to project** and the tab menu's **Add to project** leave archived projects out and list pinned ones first; with more than 8 projects Move to project has a filter at the top.
+
+## All projects
+
+The grid button next to + in the Projects block (in lumen://chat, and in the sidebar's chat list, where it opens lumen://chat) and **Show N more** open **All projects**, every project you have on one page.
+
+- **Groups.** **Pinned**, **Recent** (the rest), **Temporary** and **Archived**, each with its count. Archived is folded; click it to open it. A search opens it too.
+- **A card** shows the project's mark (a colour and its first letter, the same every time), its name, Pinned or Temp, when it was last used, how many chats and key documents it has, its top three key documents and a line from its memory (a pinned note first) or its goal line. Click a card to open the project.
+- **⋯ on a card**: **Open project**, **Pin to top** / **Unpin**, **Rename…**, **Archive** / **Move out of archive**, and **Keep as project** for a temporary one.
+- **Find a project, a note or a document** looks in names, goal lines, memory lines and key document names. **Recent** / **A–Z** sorts inside each group, and **Cards** / **List** switches to one compact row per project. Lumen keeps both choices.
+- **Many projects.** The cards are drawn 24 at a time as you scroll.
+
 ## Projects in the sidebar
 
 The browser's AI sidebar uses the same projects. A strip under its header shows the project the open chat is in; click it to pick another (or none). A chat with no messages yet starts again in the project, so it gets the project's default model and plan setting; a chat with messages is moved, and Undo is offered. The sidebar's chat list shows the projects first, with the chevron, + and ⋯ of the chat page's list, and each chat row has Move to project. A project row opens that project's page in lumen://chat. The sidebar and the chat page share one chat, so a move made in one shows in the other.
@@ -22,7 +63,7 @@ The browser's AI sidebar uses the same projects. A strip under its header shows 
   - **Whole websites**: **Add a whole website…** takes a domain or a path (`docs.python.org/3/`, `northeastern.edu/coop`). When you type a bare domain or an address ending in `/`, the panel switches to **The whole site** for you (**Just this page** is one click away). A website is one row, "Website · whole site" or its path. When a chat needs it, the AI searches that site and reads pages under the address (never another host or a sibling path, at most 8 results and 6 pages per call) and names the pages it used.
   - The ⋯ menu: **Open** and **Re-read the page** (the title and icon again: from a tab that has it open, otherwise one request, only when you click) for pages and websites, **Rename** for any row (a name you give is kept when you re-read), **Remove** (a page or website shows Undo; a file asks first, because its text cannot be brought back). The search box above the chats looks in the sources too.
   - Pages pinned in earlier versions show up here unchanged; one with no title shows its site and path, and Re-read gives it a title.
-- **Memory**: when Memory is on, notes the AI saves in a project chat belong to that project only. They show on the project's page, where you can forget them.
+- **Memory**: when Memory is on, notes the AI saves in a project chat belong to that project only (see [Project memory](#project-memory)).
 - **Defaults**: a model for new chats, plan-first, and switches for connectors and MCP tools.
 - **Permissions**: how much the AI asks in the project's chats (**Use default** follows Settings → AI; or Ask, Auto-allow actions, Bypass permissions), and the sites allowed with **Always allow <site> in <project>** on a site card in its chats, each with Remove. The sidebar's bolt menu says "…, from project <name>" while the project's level applies, and choosing a level there in a project's chat asks **Only in <project>** or **Everywhere**. These stay on this computer: they are not synced and not written to `project.json`, so a folder can't switch Bypass on. Background tasks and routines still bypass only with Settings → AI → **Bypass in background tasks and routines too**.
 

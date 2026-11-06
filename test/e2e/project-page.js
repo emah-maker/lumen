@@ -1,7 +1,7 @@
 // [project page] The Projects block of lumen://chat's rail, a project's home base page and the same projects in the browser's AI sidebar, in a real
 // (invisible) window with a fake model:
 //  - a project is one row (no row of grey buttons under it): its name opens the project page, a + starts a chat in it and a ⋯ menu
-//    (Open project, New chat here, Instructions, Rename and folder) shows on hover or focus; every button has a name; the menu is
+//    (Open project, New chat here, Instructions, Rename and folder, Pin to top, Archive) shows on hover or focus; every button has a name; the menu is
 //    keyboard-driven (arrows, Escape gives focus back);
 //  - the page: the name and a goal line (both editable), quick actions, the box that starts a chat (model, attach; Enter sends, with the project's
 //    instructions), the latest chats as cards (what was said last, a mark while one is working), all the chats (newest first, pinned first, filter, pin,
@@ -118,7 +118,7 @@ const http = require('http');
     // ======== ⋯ menu ========
     await inPage(`document.querySelector('${row} .cp-pj-more').click()`);
     const items = await waitFor(() => inPage("[...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].map((b) => b.textContent)"));
-    check('the ⋯ menu lists Open project, New chat here, Add instructions, Rename and folder', JSON.stringify(items) === JSON.stringify(['Open project', 'New chat here', 'Add instructions', 'Rename and folder…']), JSON.stringify(items));
+    check('the ⋯ menu lists Open project, New chat here, Add instructions, Rename and folder, Pin to top, Archive', JSON.stringify(items) === JSON.stringify(['Open project', 'New chat here', 'Add instructions', 'Rename and folder…', 'Pin to top', 'Archive']), JSON.stringify(items));
     check('...and the first item has focus; ⋯ says it is expanded', (await inPage("document.activeElement.textContent")) === 'Open project' && (await inPage(`document.querySelector('${row} .cp-pj-more').getAttribute('aria-expanded')`)) === 'true');
     await inPage("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))");
     check('ArrowDown moves to the next item', (await inPage('document.activeElement.textContent')) === 'New chat here', await inPage('document.activeElement.textContent'));
@@ -157,7 +157,7 @@ const http = require('http');
     const pickItem = (text) => inPage(`[...document.querySelectorAll('.cp-pj-actions [role=menuitem]')].find((b) => b.textContent === ${JSON.stringify(text)}).click()`);
     const names = () => inPage("[...document.querySelectorAll('.pjp-sources .pjp-src .pjp-row-name')].map((n) => n.textContent)");
     const rowOf = (match) => `[...document.querySelectorAll('.pjp-sources .pjp-src')].find((r) => ${match})`;
-    check('the overview is Instructions, Sources, Folder, Defaults and Memory: files and pages are one card', JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")) === JSON.stringify(['Instructions', 'Sources', 'Folder', 'Defaults', 'Memory']), JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")));
+    check('the overview is Instructions, Sources, Folder, Defaults, Permissions, Memory and Key documents: files and pages are one card', JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")) === JSON.stringify(['Instructions', 'Sources', 'Folder', 'Defaults', 'Permissions', 'Memory', 'Key documents']), JSON.stringify(await inPage("[...document.querySelectorAll('.pjp-side .pjp-card .pjp-h')].map((h) => h.textContent)")));
     check('...empty, Sources says what it takes in one dashed box and has one Add button (no Pin a page, Add this tab or URL box)', /Add files, web pages or websites/.test(await inPage("document.querySelector('.pjp-sources').innerText")) && (await inPage("[...document.querySelectorAll('.pjp-sources button')].map((b) => b.textContent.trim()).filter(Boolean).join('|')")) === 'Add' && (await inPage("document.querySelectorAll('.pjp-sources input[type=url], .pjp-sources input[type=text]').length")) === 0, await inPage("document.querySelector('.pjp-sources').innerText"));
     await inPage("document.querySelector('.pjp-add-source').click()");
     check('Add opens one menu: upload files, a web page, a whole website, open tabs', JSON.stringify(await menuItems()) === JSON.stringify(['Upload files…', 'Add a web page…', 'Add a whole website…', 'Add open tabs…']), JSON.stringify(await menuItems()));

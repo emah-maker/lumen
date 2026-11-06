@@ -126,6 +126,7 @@
       onAdd: () => newProject(),
       onEdit: (p) => pj.editor({ api, project: p, onDone: async () => { await refresh(); rerender(); } }),
       onPage: (p) => { close?.(); window.assistant.openFullPage(p.id); },
+      onAll: () => { close?.(); window.assistant.openFullPage('all'); }, // [project list] All projects, in lumen://chat
       onInstructions: (p) => { close?.(); window.assistant.openFullPage(p.id, 'instructions'); },
       onNewChat: async (p) => { if (await startChat(p.id)) close?.(); },
     });

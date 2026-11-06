@@ -81,3 +81,21 @@
 .cp-pj-pick { position: fixed; z-index: 90; min-width: 200px; max-width: 280px; max-height: 300px; overflow-y: auto; padding: var(--cp-1); border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * var(--shadow-k))); }
 .cp-pj-pick-item { display: flex; align-items: center; justify-content: space-between; gap: var(--cp-2); width: 100%; min-height: 32px; padding: 0 var(--sp-5); border: none; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
 .cp-pj-pick-item:hover, .cp-pj-pick-item:focus-visible { outline: none; background: var(--hover); }
+
+/* [project list] many projects: the filter and sort switch, the pin mark, Show N more, and the Archived row */
+.cp-pj-bar-tools { display: flex; align-items: center; gap: var(--cp-1); padding: var(--cp-1) var(--cp-1) var(--cp-1) var(--cp-2); }
+.cp-pj-find { flex: 1; min-width: 0; height: 28px; box-sizing: border-box; padding: 0 var(--cp-2); border: 1px solid var(--hairline, var(--border)); border-radius: 8px; background: var(--field, transparent); color: var(--text); font: inherit; font-size: 12.5px; }
+.cp-pj-find:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.cp-pj-sort { flex: none; height: 28px; padding: 0 var(--cp-2); border: none; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.cp-pj-sort:hover { background: var(--cp-row); color: var(--text); }
+.cp-pj-sort:focus-visible, .cp-pj-more-rows:focus-visible, .cp-pj-shelf:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cp-pj-pinmark { color: var(--accent-text, var(--accent)); }
+.cp-pj-pinmark svg { width: 11px; height: 11px; fill: currentColor; stroke: none; }
+.cp-pj-none { margin: 0; padding: var(--cp-1) var(--sp-5); color: var(--muted); font-size: 12.5px; }
+.cp-pj-more-rows, .cp-pj-shelf { display: flex; align-items: center; gap: var(--cp-2); width: 100%; min-height: 28px; padding: 0 var(--cp-2); border: none; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.cp-pj-more-rows:hover, .cp-pj-shelf:hover { background: var(--cp-row); color: var(--text); }
+.cp-pj-shelf[aria-pressed="true"] { color: var(--text); }
+.cp-pj-item.archived .cp-pj-name { color: var(--muted); }
+.cp-pj-pick.long { max-height: 360px; }
+.cp-pj-pick-find { width: 100%; margin-bottom: var(--cp-1); }
+.cp-pj-pick-item[hidden] { display: none; }
