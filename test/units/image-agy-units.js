@@ -160,7 +160,7 @@ const fakeSpawn = (bin, argv, opts) => {
     mode = 'signedout';
     const gone = make({ installed: true, signedIn: 'unknown' });
     r = await route(gone);
-    check('agy turns out signed out: OpenAI makes it, credited "instead of Antigravity" with the reason', r.provider === 'openai' && r.insteadOf === 'antigravity' && /\(instead of Antigravity: not signed in or key rejected\)$/.test(r.credit), J({ ...r, images: r.images.length }));
+    check('agy turns out signed out: OpenAI makes it, credited "instead of Antigravity" with the reason', r.provider === 'openai' && r.insteadOf === 'antigravity' && r.credit === 'OpenAI · gpt-image-1 (instead of Antigravity: not signed in)' && r.insteadWhy === 'not signed in or key rejected', J({ ...r, images: r.images.length }));
     check('… and agy is remembered as signed out (not run again until a run works)', gone.engines.antigravity.signedOut === true, '');
     mode = 'none';
     r = await route(make({ installed: true, signedIn: 'unknown' }));
@@ -181,7 +181,7 @@ const fakeSpawn = (bin, argv, opts) => {
   {
     const make = (grokImpl) => {
       const agent = new Agent({ activeTab: () => null, listTabs: () => [], noTabReason: () => '', imageGen: () => 'auto' }, () => null, () => ({}), () => null);
-      const eng = { imageReady: async () => ({ installed: true, signedIn: eng.signedOut ? false : 'unknown' }), status: async () => { throw new Error('status() runs agy models: not for routing'); }, ensureBin: () => require('../../src/ai/antigravity').findAgy(), userData: path.join(tmp, 'profile-auto') };
+      const eng = { detect: async () => 'agy', imageReady: () => require('../../src/ai/antigravity').AntigravityEngine.prototype.imageReady.call(eng), status: async () => { throw new Error('status() runs agy models: not for routing'); }, ensureBin: () => require('../../src/ai/antigravity').findAgy(), userData: path.join(tmp, 'profile-auto') };
       agent.engines = { antigravity: eng, grokbuild: { status: async () => ({ installed: true, signedIn: true }) } };
       agent.imageAgySpawn = fakeSpawn;
       agent.imageBackendOverrides = { grokbuild: grokImpl };
@@ -192,6 +192,20 @@ const fakeSpawn = (bin, argv, opts) => {
     const cat = (agent) => agent.routeImage({ prompt: 'a cat', current: 'antigravity:gemini-3.8-flash-medium', signal: new AbortController().signal });
     mode = 'ok';
     let r = await cat(make(grok));
+    // Automatic outside an Antigravity chat: agy only once a run has shown it is signed in (it has no sign-in check that costs nothing)
+    {
+      const claude = make(grok);
+      let conn = await claude.imageConnected('claude-sonnet-5');
+      check('Automatic in another chat: an installed agy nobody has seen work is not asked', conn.antigravity === false, J(conn));
+      conn = await claude.imageConnected('antigravity:gemini-3.8-flash-medium');
+      check('… but in an Antigravity chat it is (the user is using agy)', conn.antigravity === true, J(conn));
+      claude.engines.antigravity.signedOut = false; // an agy run worked
+      conn = await claude.imageConnected('claude-sonnet-5');
+      check('… and once an agy run has worked, Automatic asks it (last) in any chat', conn.antigravity === true, J(conn));
+      claude.engines.antigravity.signedOut = true;
+      conn = await claude.imageConnected('antigravity:gemini-3.8-flash-medium');
+      check('… and never after a run said it is signed out, not even in an Antigravity chat', conn.antigravity === false, J(conn));
+    }
     check('Antigravity chat, Automatic, Grok Build signed in too: agy makes the cat, credited to it, Grok Build never asked', r.provider === 'antigravity' && r.credit === 'Antigravity · agy' && grokCalls.length === 0, J({ provider: r.provider, credit: r.credit, grok: grokCalls.length }));
     mode = 'none';
     r = await cat(make(grok));

@@ -47,6 +47,14 @@ const classify = (e) => fallback.classify(e);
     check('unknown settings mean Automatic', router.cleanSetting('banana') === 'auto' && router.cleanSetting(undefined) === 'auto' && router.cleanSetting('off') === 'off' && router.cleanSetting('xai') === 'xai');
   }
 
+  // ---- the credit under a picture: the reason in a few words, never past the 80 characters keepImages stores
+  {
+    const long = await router.route({ prompt: 'a cat', setting: 'gemini', connected: ALL, current: 'claude-opus-5', isPolicy, classify, backends: { gemini: async () => { throw new Error('the image service answered with something long and unexpected that keeps going on and on'); }, grokbuild: picture('image_gen') } });
+    check('a long failure reason is cut with … so the credit stays within 80 characters and ends in a closing bracket', long.credit.length <= 80 && /^Grok Build · image_gen \(instead of Gemini: failed: the image service.*…\)$/.test(long.credit) && long.insteadWhy.startsWith('failed: the image service answered with something long and unexpected'), J({ credit: long.credit, n: long.credit.length }));
+    const missing = await router.route({ prompt: 'a cat', setting: 'xai', connected: { gemini: true }, current: 'claude-opus-5', isPolicy, classify, backends: { gemini: picture('gemini-2.5-flash-image') } });
+    check('a chosen provider that is not set up: "(instead of Grok: not set up)"; the full reason stays for the model', missing.credit === 'Gemini · gemini-2.5-flash-image (instead of Grok: not set up)' && /not connected/.test(missing.insteadWhy), J(missing.credit));
+  }
+
   // ---- routing, fallback, refusals
   {
     const calls = [];

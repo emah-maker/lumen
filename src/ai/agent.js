@@ -3886,9 +3886,16 @@ ${prompt}` : prompt), historyImages: [] };
     const out = { openai: has('openai'), xai: has('xai'), gemini: has('gemini'), openrouter: false, grokbuild: false, antigravity: false };
     out.openrouter = has('openrouter') && Boolean(providers.openRouterImageModel(String(current || '').startsWith('openrouter:') ? String(current).slice(11) : null));
     try { const st = await this.engines?.grokbuild?.status?.(); out.grokbuild = st?.installed === true && st?.signedIn === true; } catch { out.grokbuild = false; }
-    // Antigravity: installed and not known to be signed out (agy has no sign-in check that costs nothing). imageReady() only looks for the
-    // binary; status() (a test's fake engine) would run `agy models`.
-    try { const eng = this.engines?.antigravity; const st = await (eng?.imageReady ? eng.imageReady() : eng?.status?.()); out.antigravity = st?.installed === true && st?.signedIn !== false; } catch { out.antigravity = false; }
+    // Antigravity: installed and signed in. agy has no sign-in check that costs nothing, so "signed in" is what a run has shown (imageReady():
+    // true after an agy run worked, false after one said signed out, 'unknown' before either). Unknown counts only where agy is the user's own
+    // choice: an Antigravity chat (the user is using agy) or "Make pictures with: Antigravity". Automatic elsewhere never tries an agy nobody
+    // has seen work. imageReady() only looks for the binary; status() (a test's fake engine) would run `agy models`.
+    try {
+      const eng = this.engines?.antigravity;
+      const st = await (eng?.imageReady ? eng.imageReady() : eng?.status?.());
+      const own = String(current || '').startsWith('antigravity:') || this.imageSetting() === 'antigravity';
+      out.antigravity = st?.installed === true && (st.signedIn === true || (own && st.signedIn !== false));
+    } catch { out.antigravity = false; }
     return out;
   }
 
@@ -3903,7 +3910,7 @@ ${prompt}` : prompt), historyImages: [] };
       grokbuild: async ({ prompt, source, signal }) => imageGrok.generate({ bin: await this.engines.grokbuild.ensureBin(), prompt, source, signal, userData: this.engines.grokbuild.userData }),
       antigravity: async ({ prompt, source, signal, onProgress }) => { // [image routing] agy (imageAgySpawn: tests' fake agy); a sign-in failure is remembered
         const eng = this.engines.antigravity;
-        try { return await require('./image-agy').generate({ bin: await eng.ensureBin(), prompt, source, signal, onProgress, userData: eng.userData, ...(this.imageAgySpawn ? { spawn: this.imageAgySpawn } : {}) }); } catch (err) { if (err?.status === 401) { eng.signedOut = true; eng.statusCache = null; } throw err; }
+        try { const made = await require('./image-agy').generate({ bin: await eng.ensureBin(), prompt, source, signal, onProgress, userData: eng.userData, ...(this.imageAgySpawn ? { spawn: this.imageAgySpawn } : {}) }); eng.signedOut = false; return made; } catch (err) { if (err?.status === 401) { eng.signedOut = true; eng.statusCache = null; } throw err; }
       },
       ...(this.imageBackendOverrides || {}),
     };

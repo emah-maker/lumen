@@ -7,7 +7,7 @@
 //  - an outage on the first provider moves on to the next; a content-policy refusal does not (its words are the answer).
 //  - "draw a cat" typed to Claude Code never reaches the CLI: it is routed straight to a provider.
 //  - Settings → AI → Make pictures with: a chosen provider makes it when it can; one that is not connected hands it to the next
-//    connected one, named ("instead of Grok"); off asks nobody; nothing unconnected is ever asked.
+//    connected one, named with the reason ("instead of Grok: not set up"); off asks nobody; nothing unconnected is ever asked.
 const fs = require('fs');
 const path = require('path');
 const { Agent } = require('../../src/ai/agent');
@@ -120,7 +120,7 @@ const fakes = (over = {}) => {
     fakes();
     events = await send(chat('claudecode:default'), 'draw a dog', 1).done;
     const status = events.filter((e) => e.type === 'status').map((e) => e.text).join(' | ');
-    check('a chosen provider that is not connected (no Grok key): Grok is never asked, the next connected one makes it, and both the status and the credit say so', !asked.some((a) => a.name === 'xai') && asked[0]?.name === 'gemini' && events.some((e) => e.type === 'image' && e.credit === 'Gemini · gemini-2.5-flash-image (instead of Grok)') && /with Gemini \(Grok isn’t available\)/.test(status), J({ asked, credit: events.find((e) => e.type === 'image')?.credit, status }));
+    check('a chosen provider that is not connected (no Grok key): Grok is never asked, the next connected one makes it, and both the status and the credit say so', !asked.some((a) => a.name === 'xai') && asked[0]?.name === 'gemini' && events.some((e) => e.type === 'image' && e.credit === 'Gemini · gemini-2.5-flash-image (instead of Grok: not set up)') && /with Gemini \(Grok isn’t available\)/.test(status), J({ asked, credit: events.find((e) => e.type === 'image')?.credit, status }));
 
     setting = 'auto';
     excluded = ['gemini'];

@@ -445,10 +445,11 @@ class AntigravityEngine {
     return this.detect(true);
   }
 
-  // For picture routing (agent.js imageConnected): { installed, signedIn: false | 'unknown' } without running anything (status() runs `agy models`).
+  // For picture routing (agent.js imageConnected): { installed, signedIn } without running anything (status() runs `agy models`).
+  // signedIn: true once an agy run worked (signedOut === false), false after one said signed out, 'unknown' before either.
   async imageReady() {
     const bin = await this.detect();
-    return { installed: Boolean(bin), signedIn: this.signedOut ? false : 'unknown' };
+    return { installed: Boolean(bin), signedIn: this.signedOut === true ? false : this.signedOut === false ? true : 'unknown' };
   }
 
   // { installed, signedIn: 'unknown', detail, models }. agy has no documented sign-in check that does not use a model, so signedIn

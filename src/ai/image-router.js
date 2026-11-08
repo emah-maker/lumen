@@ -65,6 +65,7 @@ function judge(err, { isPolicy, classify }) {
   return { kind: info.kind || 'other', detail: info.detail || String(err?.message || err || '') };
 }
 
+const CREDIT_MAX = 80; // the credit line under a picture (agent.js keepImages keeps this many characters)
 const WHY = { limit: 'out of usage', unreachable: 'unreachable', auth: 'not signed in or key rejected', other: 'failed' };
 const oneLine = (s, n = 160) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -97,6 +98,19 @@ async function route(deps) {
     const t = tried.find((x) => x.provider === key);
     return t ? (t.said && t.why === 'failed' ? `failed: ${t.said}` : t.why) : 'out of usage';
   };
+  // The same reason in a few words, for the credit under the picture (kept to CREDIT_MAX: agent.js keepImages stores 80 characters).
+  const shortWhy = (key) => {
+    if (key === p.missing) return edit && !CAN_EDIT[key] ? 'cannot edit' : key === 'grokbuild' || key === 'antigravity' ? 'not installed or signed in' : 'not set up';
+    const t = tried.find((x) => x.provider === key);
+    return t ? (t.why === 'not signed in or key rejected' ? 'not signed in' : t.said && t.why === 'failed' ? `failed: ${t.said}` : t.why) : 'out of usage';
+  };
+  const creditOf = (base, insteadOf) => {
+    if (!insteadOf) return base;
+    const head = `${base} (instead of ${labelOf(insteadOf)}: `;
+    const why = shortWhy(insteadOf);
+    const room = CREDIT_MAX - head.length - 1;
+    return `${head}${why.length <= room ? why : `${why.slice(0, Math.max(0, room - 1)).trimEnd()}…`})`;
+  };
   for (const key of p.order) {
     if (signal?.aborted) throw fail('aborted', 'Stopped by the user.');
     const backend = backends[key];
@@ -107,7 +121,7 @@ async function route(deps) {
       if (made?.images?.length) {
         const label = labelOf(key);
         const instead = lead && key !== lead ? { insteadOf: lead, insteadWhy: whyNot(lead) } : {};
-        return { images: made.images, provider: key, label, model: made.model || null, said: made.said || '', credit: `${made.model ? `${label} · ${made.model}` : label}${instead.insteadOf ? ` (instead of ${labelOf(instead.insteadOf)}: ${instead.insteadWhy})` : ''}`, tried, ...instead };
+        return { images: made.images, provider: key, label, model: made.model || null, said: made.said || '', credit: creditOf(made.model ? `${label} · ${made.model}` : label, instead.insteadOf), tried, ...instead };
       }
       tried.push({ provider: key, why: 'made no picture' });
     } catch (err) {
