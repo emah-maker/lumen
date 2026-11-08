@@ -26,6 +26,10 @@
 // on the card first), setup ("Set up…": opens `section`; nothing is changed here), tip (a new thing to know about, with
 // no setting: just the line). `section`: where the setting lives in Settings ("More in Settings" opens it).
 const OFFERS = [
+  // ---- 0.5.97
+  // [ai tab tidy] features/ai-tab-tidy.js: Lumen closes the AI's leftover tabs itself, keeps the ones its answer links to for a while, about 8 per chat
+  { id: 'aiTabsTidy', key: 'aiTabsTidy', since: '0.5.97', kind: 'toggle', section: 'ai-tabs' },
+  { id: 'aiTabsGrace', key: 'aiTabsGrace', since: '0.5.97', kind: 'choice', choices: ['15m', '1h', '4h'], section: 'ai-tabs' },
   // ---- 0.5.96
   // [automations] lumen://automations: an item's tab stays open after it is done (features/automations-runtime.js)
   { id: 'automationsKeepTabs', key: 'automationsKeepTabs', since: '0.5.96', kind: 'toggle', section: 'ai-tabs' },
