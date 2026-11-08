@@ -4247,6 +4247,7 @@ function switchTab(id, { wake = true } = {}) {
   }
   // Shown in the strip only. Waking a sleeping tab reloads it, and a drag that is then cancelled
   // (Escape) has no way to put that page back to sleep. It loads later, if it is still in front.
+  if (id !== activeId) fitTabSidebar(tab);
   if (tab.sleeping && !wake) {
     activeId = id;
     layout();
@@ -4295,6 +4296,18 @@ function switchTab(id, { wake = true } = {}) {
   schedulePreload(4000); // (the neighbours of the tab now in front, once things are quiet)
   scheduleReadySync(curRec); // (which tabs to keep ready now: after the switch has settled, once per burst)
   return true;
+}
+// [sidebar per tab] The page area a tab switch shows is the incoming tab's own: its sidebar open or closed, not the tab left's. Laid out at
+// the old tab's width first, a tab with its sidebar closed came in narrow beside an empty strip and widened a moment later, once the UI had
+// closed the sidebar (and a tab with it open came in wide and narrowed). The UI reports the same size when it has followed (followTabSidebar).
+function fitTabSidebar(tab) {
+  const full = contentBounds.fullWidth || 0;
+  if (!(full > 0) || chatFullTab != null || !curRec?.boundsReported) return; // (no layout from the UI yet; a full-page chat is the sidebar itself)
+  const shownOpen = contentBounds.width < full;
+  const wantOpen = tabSidebarOpen(tab);
+  if (wantOpen === shownOpen) return;
+  if (wantOpen && !(curRec.sidebarColumn > 0)) return; // (never open in this window yet: its width comes from the UI)
+  contentBounds = { ...contentBounds, width: wantOpen ? Math.max(0, full - curRec.sidebarColumn) : full };
 }
 // A burst of switches (Ctrl+Tab held, clicks in a row): the view swap waits one frame and goes to the latest tab only, so a tab passed through is
 // not shown and hidden again (each a GPU frame). The strip is not held back: it answers at once (sendTabs, above).
@@ -11002,6 +11015,7 @@ function applyContentBounds(bounds) {
     fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
   if (curRec) { curRec.boundsReported = true; curRec.holdViews = false; } // (a first tab opened while the UI loaded shows now)
+  if (curRec && contentBounds.fullWidth > contentBounds.width) curRec.sidebarColumn = contentBounds.fullWidth - contentBounds.width; // [sidebar per tab] the sidebar's width, for a switch to a tab with it open (fitTabSidebar)
   layout();
 }
 ipcMain.on('content-bounds', (_e, bounds) => applyContentBounds(bounds));
