@@ -3080,7 +3080,7 @@
   "sidebar.perm.auto": "Auto-allow actions",
   "sidebar.perm.auto.desc": "Clicks and types on any site without asking. Still asks about PDFs, signed-in accounts, uploads and sending what it read elsewhere.",
   "sidebar.perm.bypass": "Bypass permissions",
-  "sidebar.perm.bypass.desc": "Skips every card. The AI won’t ask before acting, sending an email, posting or changing things in your connected apps, saving to memory after reading a page, deleting a lot of a document, reading PDFs, using your signed-in accounts, or sending what it read anywhere.",
+  "sidebar.perm.bypass.desc": "Skips every card: no asking before acting, sending email, saving to memory, reading PDFs or using your accounts.",
   "sidebar.perm.confirm": "Click again to confirm",
   "sidebar.perm.note": "Sites with AI off, tabs you keep it off and Hands-off mode still apply. Choosing a file for an upload still needs you.",
   "composer.bypass": "Bypass permissions on",
