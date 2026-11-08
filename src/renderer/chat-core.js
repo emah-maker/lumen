@@ -1852,7 +1852,7 @@ window.assistant.onEvent((event) => {
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   // [skills] After a run ended (opt-in, Settings → Skills): "Save how I did this as a skill?" or "Update the skill?" (skills.js)
-  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
+  if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) offerSkill(event); return; }
   if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
   // A picture the engine made, found once its reply text was already whole (reply_complete: agent.js enginePictures runs after the
   // text): drawn under that reply, not dropped with the finished turn.
@@ -1915,10 +1915,12 @@ window.assistant.onEvent((event) => {
       endStream(); // (its streaming dot goes: the text before a file card is whole)
       turn.text = null;
       turn.textSource = '';
-      const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
       const cardEl = window.aiFiles.card(event.file, { live: true });
+      if (fileAgain(event.file, cardEl)) { window.stepUI?.fileMade(turn, event.file); break; } // [quiet run] the same file written again: its card, updated
+      const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
       bubble.append(cardEl);
       appendToTurn(bubble);
+      fileShown(event.file, bubble);
       if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
       window.stepUI?.fileMade(turn, event.file); // the Terminal / Files card offers it too
       announce(t('aifile.added', { name: event.file.name }));
@@ -2171,7 +2173,7 @@ function agentEvent(t, event) {
     if (t === turn && turn.working?.isConnected) { appendToTurn(node); return; }
     if (t.text?.isConnected) t.text.after(node); else append(node);
   };
-  const show = () => { window.agentsCard?.update(t, event, place); window.stepUI?.refreshAll(t); }; // (the card counts what runs at once: [at once])
+  const show = () => { window.agentsCard?.update(t, event, place); window.stepUI?.refreshAll(t); if (t !== turn) runOver(t); }; // (the card counts what runs at once: [at once]; [quiet run] the last agent of a run that ended: its answer and skill offer)
   if (window.agentsCard) show(); else loadStepUI().then(show);
 }
 
@@ -2180,7 +2182,7 @@ function lateCardEvent(t, event) {
   switch (event.type) {
     case 'card_files': window.stepUI?.filesMade(t, event.files); break;
     case 'thumb': window.stepUI?.thumb(t, event); break;
-    case 'helper': window.stepUI?.helper(t, event); break;
+    case 'helper': window.stepUI?.helper(t, event); runOver(t); break;
     case 'agent': agentEvent(t, event); break;
     case 'skill': window.stepUI?.skill(t, event); break;
     case 'review': window.stepUI?.review(t, event); break;
@@ -2219,9 +2221,14 @@ function lateCardEvent(t, event) {
 function finishTurn(event, { early }) {
   settleThinking();
   dropEmptyBubbles();
+  // [quiet run] A turn that ends while its run goes on (helpers, reviewers or agents still at work on its card) is not a finished reply: what it
+  // said is the card's live line, its bubble put away (unless it asks the user something, or an approval waits), and it gets no Try again, no
+  // suggestions and no skill offer; those come when the run is over (runOver).
+  const goesOn = !turn.failed && !turn.stopped && !turn.stopRequested && Boolean(window.stepUI?.runGoesOn?.(turn));
+  const folded = goesOn && window.runQuiet ? window.runQuiet.interim(turn.textSource, { waiting: approvals.size > 0 }) : '';
   finishReply(turn.text, turn.textSource, { latest: true });
   // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
-  if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
+  if (!goesOn && !turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
     const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only' });
     row.append(regenButton());
     turn.working.before(row);
@@ -2233,6 +2240,7 @@ function finishTurn(event, { early }) {
   for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); } // (a block a card or step moved on from)
   for (const step of turn.steps.values()) if (step.classList.contains('running') && !step.dataset.helper) step.className = 'step stopped'; // (a helper's step goes on after the reply: its own end says how it went)
   window.stepUI?.finalize(turn, { ...event, reply: turn.text?.source || '' });
+  if (folded) { window.stepUI.fold(turn, folded); foldBubble(turn); }
   turn.working.remove();
   if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
   else {
@@ -2243,10 +2251,11 @@ function finishTurn(event, { early }) {
   // After Stop, or a reply that failed, the waiting messages are not sent on their own: they come back to the box (below).
   const backToBox = Boolean((turn.stopRequested || turn.failed) && !turn.interrupted);
   // [reply suggestions] A reply that ended on its own, with nothing queued to go next: the chips under it (renderer/reply-suggest.js).
-  const clean = !turn.failed && !turn.stopped && !turn.stopRequested && !turn.interrupted && !line.mine(forOtherChat).length;
+  const clean = !goesOn && !turn.failed && !turn.stopped && !turn.stopRequested && !turn.interrupted && !line.mine(forOtherChat).length;
   document.dispatchEvent(new CustomEvent('lumen:reply-done', { detail: { clean, text: turn.text?.source || '', bubble: turn.text || null, chatId: shownChatId } }));
   finishedRun = { runId, turn };
   finishedRuns.set(runId, turn);
+  if (!goesOn) { dropFolded(turn); if (!early) releaseOffer(turn); }
   while (finishedRuns.size > 8) finishedRuns.delete(finishedRuns.keys().next().value);
   turn = null;
   clearTimeout(stopTimer);
@@ -2348,15 +2357,87 @@ function latePicture(event) {
   announce(t('genimg.made'));
 }
 
+// [quiet run] One file card per file in an exchange (the user's message and the run that answers it): a file written again is its card, updated
+// in place with a flash, not a second card. runQuiet.fileKey: one key per path.
+const filesShown = { user: null, cards: new Map() };
+function fileSlots() {
+  const user = [...messages.querySelectorAll(':scope > .msg.user')].at(-1) || null;
+  if (filesShown.user !== user) { filesShown.user = user; filesShown.cards.clear(); }
+  return filesShown.cards;
+}
+function fileShown(file, bubble) { const key = window.runQuiet?.fileKey(file); if (key) fileSlots().set(key, bubble); }
+function fileAgain(file, cardEl) {
+  const key = window.runQuiet?.fileKey(file);
+  const bubble = key ? fileSlots().get(key) : null;
+  if (!bubble?.isConnected) return false;
+  bubble.replaceChildren(cardEl);
+  bubble.classList.remove('ai-file-updated');
+  void bubble.offsetWidth; // (the flash again, for a file written a third time)
+  bubble.classList.add('ai-file-updated');
+  bubble.dataset.updated = t('aifile.updatedTag');
+  announce(t('aifile.updated', { name: file.name }));
+  return true;
+}
+// [quiet run] "Save how I did this as a skill?" once per run, at its very end: an offer for a turn whose run goes on waits (the newest one), and
+// shows when the run is over; a run that showed one, whatever the user picked (No thanks too), shows no other. The run: its card, which every
+// turn of it shares (step-ui.js carryOn), else the turn.
+const skillOffers = window.runQuiet?.offerGate();
+const runOf = (t) => t?.cards?.[t.cards.length - 1]?.el || t || null;
+function offerSkill(event) {
+  const t = finishedTurn(event.runId);
+  if (!skillOffers || !t) { window.showSkillOffer?.(append, event); return; }
+  if (window.stepUI?.runGoesOn?.(t)) { skillOffers.hold(runOf(t), event); return; }
+  const offer = skillOffers.show(runOf(t), event);
+  if (offer) window.showSkillOffer?.(append, offer);
+}
+// [quiet run] A folded turn's bubble waits out of sight, the newest one of its run only: when the run ends with no turn after it (its last agent or
+// helper done), that bubble is the answer and shows, with its suggestions; when a turn ends the run with words of its own, it goes.
+const foldedOf = new WeakMap(); // run -> its newest folded bubble
+function foldBubble(t) {
+  const bubble = t.text;
+  if (!bubble) return;
+  bubble.hidden = true;
+  bubble.classList.add('run-folded');
+  const run = runOf(t);
+  const old = foldedOf.get(run);
+  if (old && old !== bubble) old.remove();
+  foldedOf.set(run, bubble);
+}
+function dropFolded(t) {
+  const run = runOf(t);
+  const old = foldedOf.get(run);
+  if (old && old !== t.text) old.remove();
+  foldedOf.delete(run);
+}
+function runOver(t) {
+  if (!t || turn === t || window.stepUI?.runGoesOn?.(t)) return;
+  const run = runOf(t);
+  const bubble = foldedOf.get(run);
+  foldedOf.delete(run);
+  if (bubble?.isConnected) {
+    bubble.hidden = false;
+    bubble.classList.remove('run-folded');
+    if (!turn) document.dispatchEvent(new CustomEvent('lumen:reply-done', { detail: { clean: !line.mine(forOtherChat).length, text: bubble.source || bubble.textContent || '', bubble, chatId: shownChatId } }));
+  }
+  releaseOffer(t);
+}
+function releaseOffer(t) {
+  if (!skillOffers || !t || turn === t || window.stepUI?.runGoesOn?.(t)) return;
+  const offer = skillOffers.release(runOf(t));
+  if (offer && !forOtherChat(offer.chatId)) window.showSkillOffer?.(append, offer);
+}
+
 // A file card for a reply that already ended early (see latePicture): placed after that reply's text or its last late card.
 function lateFile(event) {
   if (!window.aiFiles || !event.file) return;
-  const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
   const cardEl = window.aiFiles.card(event.file, { live: true });
+  if (fileAgain(event.file, cardEl)) return; // [quiet run]
+  const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
   bubble.append(cardEl);
   const anchor = earlyEnded.files || earlyEnded.pics || earlyEnded.bubble;
   if (anchor?.isConnected) anchor.after(bubble); else append(bubble);
   earlyEnded.files = bubble;
+  fileShown(event.file, bubble);
   if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
   announce(t('aifile.added', { name: event.file.name }));
 }
