@@ -3599,6 +3599,8 @@
   "aifile.openedTab": "Opened in a new tab",
   "aifile.inCanvas": "Showing in the canvas",
   "aifile.added": "A file was added to the chat: {name}",
+  "aifile.updated": "A file in the chat was updated: {name}",
+  "aifile.updatedTag": "Updated",
   "genimg.menu": "Picture actions",
   "genimg.remote": "Show picture from {host}",
   "genimg.remoteFail": "Couldn't load that picture.",
