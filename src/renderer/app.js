@@ -2951,7 +2951,8 @@ window.browser.onTabs(watchFullChatTab);
 
 // [sidebar per tab] Every tabs state names whether the sidebar is open on the tab in front. A tab switch (or the first state of a window,
 // a tab moved here) shows that tab's answer; a state for the same tab only follows a change made elsewhere (a window showing a tab that
-// shares its chat), and not while this window's own answer is on its way to main.
+// shares its chat), and not while this window's own answer is on its way to main. A switch applies it at once, with no slide: main has
+// already laid the incoming page out for its own sidebar (main.js fitTabSidebar), and a slide would show the tab left's snapshot over it.
 let sidebarTabShown = null;
 function followTabSidebar(state) {
   const switched = state.activeId !== sidebarTabShown;
@@ -2960,7 +2961,7 @@ function followTabSidebar(state) {
   if (chatFull) return; // a full-page chat is the sidebar open (watchFullChatTab docks it back when its tab is left)
   if (sidebarPending > 0 && (!switched || first)) return; // (a state sent before this window's own answer, which it already carries: the welcome, a click before the first state)
   const want = Boolean(state.sidebar);
-  if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) }); // (the state's own front tab: the strip may not have drawn it yet)
+  if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first || switched, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) }); // (the state's own front tab: the strip may not have drawn it yet)
 }
 window.browser.onTabs(followTabSidebar);
 
