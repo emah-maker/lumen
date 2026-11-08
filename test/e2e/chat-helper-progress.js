@@ -121,7 +121,9 @@ process.stdin.on('data', async (d) => {
     await ui.press('#prompt', 'Enter');
 
     // ---- 1. the reply ends at once; the card says a helper is working
+    const bubbleTexts = () => ui.evaluate(() => [...document.querySelectorAll('#messages > .msg.assistant')].filter((b) => b.getClientRects().length).map((b) => b.textContent));
     check('the reply that starts the helper shows', Boolean(await waitFor(async () => /separate reviewer agent is now checking/.test(await text()), 30000)), `${await text()} | stderr: ${stderr.join('').slice(-800)}`);
+    check('[quiet run] ...as the live line of the card, not a bubble: the run goes on', /separate reviewer agent is now checking/.test(await ui.evaluate(() => document.querySelector('#messages .act-card .act-say')?.textContent || '')) && !(await bubbleTexts()).some((x) => /separate reviewer agent/.test(x)), JSON.stringify(await bubbleTexts()));
     check('...the card does not say Done: a helper is working', Boolean(await waitFor(async () => (await cardState()) === 'helper', 8000)), `${await cardState()} | ${await cardStatus()}`);
     const status1 = await cardStatus();
     const pills = () => ui.evaluate(() => [...document.querySelectorAll('#messages .act-card .act-many:not([hidden]) .act-pill')].map((p) => p.textContent));
@@ -164,9 +166,10 @@ process.stdin.on('data', async (d) => {
     signal('end');
     check('[agents] the first agent is done, with its summary; the second still works', Boolean(await waitFor(async () => { const a = await agents(); return a[0]?.state === 'done' && a[0].now === 'The deck is rated 9/10' && a[1]?.state === 'working'; }, 10000)), JSON.stringify(await agents()));
     check('[agents] ...the card counts both', /1 working/.test(await agentsHead()) && /1 done/.test(await agentsHead()), await agentsHead());
-    check('[at once] the reply runs a command while the second agent works: the status line counts both, the command is a pill', Boolean(await waitFor(async () => /2 things at once/.test(await cardStatus()) && (await pills()).some((p) => /fix3\.js/.test(p)), 8000)), `${await cardStatus()} | ${JSON.stringify(await pills())}`);
+    check('[at once] the reply runs a command while the second agent works: the status line counts both and names the command, no pill saying it again', Boolean(await waitFor(async () => /2 things at once · .*fix3\.js/.test(await cardStatus()) && (await pills()).length === 0, 8000)), `${await cardStatus()} | ${JSON.stringify(await pills())}`);
     signal('fixdone');
     check("the CLI's follow-up appears as a reply in the same chat", Boolean(await waitFor(async () => /The reviewer rated the deck 9\/10\./.test(await text()), 15000)), `${await text()} | ${JSON.stringify(await app.evaluate(() => global.__tabChats.runs()))}`);
+    check('[quiet run] ...the follow-up, said while the second agent works, is the line of the card too, not a bubble', !(await bubbleTexts()).some((x) => /rated the deck 9\/10/.test(x)), JSON.stringify(await bubbleTexts()));
     check("[one card] the follow-up's command is a step of the same card, no second card", Boolean(await waitFor(async () => (await stepRows()).some((r) => /fix3\.js/.test(r.text)), 8000)) && (await cards()).act === 1, JSON.stringify([await cards(), await cardDump()]));
     check('[one card] ...which is still not Done: the second agent works', (await cardState()) === 'helper', await cardState());
     check('[at once] one thing left at work: no pills, the status line names it', (await pills()).length === 0 && /Helper working/.test(await cardStatus()) && !/at once/.test(await cardStatus()), `${await cardStatus()} | ${JSON.stringify(await pills())}`);
@@ -175,7 +178,8 @@ process.stdin.on('data', async (d) => {
     signal('end2');
     check('the card is Done when the last helper ends', Boolean(await waitFor(async () => (await cardState()) === 'completed', 10000)), `${await cardState()} | ${await cardStatus()}`);
     check('[agents] ...both agents done, the card says so', (await agents()).every((x) => x.state === 'done') && /2 done/.test(await agentsHead()) && (await agents())[1].now === 'Unit 2 rated 8/10', JSON.stringify([await agents(), await agentsHead()]));
-    check('...under the earlier reply, in the same chat, with no new message of the user\'s', (await chatId()) === chat && (await ui.evaluate(() => document.querySelectorAll('#messages .msg.user').length)) === userBubbles && (await ui.evaluate(() => { const t = document.getElementById('messages').innerText; return t.indexOf('separate reviewer agent') < t.indexOf('rated the deck 9/10'); })), `${chat} ${await chatId()}`);
+    check('...under the earlier reply, in the same chat, with no new message of the user\'s', (await chatId()) === chat && (await ui.evaluate(() => document.querySelectorAll('#messages .msg.user').length)) === userBubbles && Boolean(await waitFor(() => ui.evaluate(() => { const t = document.getElementById('messages').innerText; return t.indexOf('separate reviewer agent is now checking') < 0 && t.indexOf('rated the deck 9/10') > 0; }), 5000)), `${chat} ${await chatId()}`);
+    check('[quiet run] the run is over: its last words are the answer, a bubble under the card; the interim line is gone', Boolean(await waitFor(async () => { const b = await bubbleTexts(); return b.some((x) => /rated the deck 9\/10/.test(x)) && !b.some((x) => /separate reviewer agent is now checking/.test(x)); }, 5000)), JSON.stringify(await bubbleTexts()));
     check('...and the chat is idle after it (no working line, no run)', await waitFor(async () => (await running()) === 0 && (await ui.evaluate(() => !document.querySelector('#messages .working'))), 8000) === true, String(await running()));
     const saved = await app.evaluate(() => global.__agent.messages.map((m) => ({ role: m.role, text: (Array.isArray(m.content) ? m.content : []).filter((b) => b.type === 'text').map((b) => b.text).join('') })));
     check("the follow-up is saved with the chat's history (a second assistant reply)", saved.filter((m) => m.role === 'assistant').length === 2 && /9\/10/.test(saved[saved.length - 1].text) && saved.filter((m) => m.role === 'user').length === 1, JSON.stringify(saved));

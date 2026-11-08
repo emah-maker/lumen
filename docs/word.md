@@ -63,6 +63,7 @@ While the AI works in Word, the chat's one live activity card is titled **Word**
 - the subtitle says only Working or Done, and the button says **Show in Word**;
 - in the status line, what is being done without the document's name again (the chip shows it; "Reading the document", "Saving the document"): "Replacing 2 bullets under “Experience”", "Adding a table of 3 rows after “Results”"; the step row keeps the full label;
 - at the end, the last picture and "Done" with the answer.
+- while it works, the card keeps its height: the status line is one line (hover for all of it) and a part that has shown keeps its place until the run ends, like every live card.
 
 ## For developers
 
