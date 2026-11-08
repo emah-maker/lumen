@@ -212,7 +212,9 @@ const PAGES = {
     await rt('(r) => r.store.write()');
     const raw = fs.readFileSync(await app.evaluate(() => global.__automations.file), 'utf8');
     const enc = (await state()).keychain;
-    check('the automations file is encrypted with the keychain (no name or email in it)', !enc || (/"enc"/.test(raw) && !/sam@example\.edu/.test(raw) && !/Sam/.test(raw)), raw.slice(0, 200));
+    // (the file is only an envelope: format, version and the encrypted body; the names are looked for in the decoded bytes, not in the base64 text, where "Sam" turns up by chance in a long body)
+    const encOk = (text) => { let j; try { j = JSON.parse(text); } catch { return false; } const bytes = Buffer.from(String(j.enc || ''), 'base64').toString('latin1'); return JSON.stringify(Object.keys(j).sort()) === '["enc","format","version"]' && j.enc.length > 0 && !/sam@example\.edu/.test(bytes) && !/Sam/.test(bytes) && !/sam@example\.edu/.test(text.replace(j.enc, '')) && !/Sam/.test(text.replace(j.enc, '')); };
+    check('the automations file is encrypted with the keychain (no name or email in it)', !enc || (encOk(raw)), raw.slice(0, 200));
     check('no page errors in the window', errors.length === 0, errors.join(' | '));
   } catch (err) {
     failures++;

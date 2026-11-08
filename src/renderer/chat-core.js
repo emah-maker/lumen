@@ -2617,6 +2617,7 @@ const permScopeRow = Object.assign(document.createElement('div'), { className: '
 const permScopeText = Object.assign(document.createElement('p'), { className: 'perm-note' });
 const permScopeProject = Object.assign(document.createElement('button'), { type: 'button', className: 'btn perm-scope-project', id: 'perm-scope-project' });
 const permScopeAll = Object.assign(document.createElement('button'), { type: 'button', className: 'btn perm-scope-all', id: 'perm-scope-all', textContent: t('sidebar.perm.scope.all') });
+permScopeProject.setAttribute('role', 'menuitem'); permScopeAll.setAttribute('role', 'menuitem'); // (buttons inside the role=menu)
 permScopeRow.append(permScopeText, permScopeProject, permScopeAll);
 permScopeProject.onclick = () => applyPermScope('project');
 permScopeAll.onclick = () => applyPermScope('all');
