@@ -4247,6 +4247,7 @@ function switchTab(id, { wake = true } = {}) {
   }
   // Shown in the strip only. Waking a sleeping tab reloads it, and a drag that is then cancelled
   // (Escape) has no way to put that page back to sleep. It loads later, if it is still in front.
+  if (id !== activeId) fitTabSidebar(tab);
   if (tab.sleeping && !wake) {
     activeId = id;
     layout();
@@ -4295,6 +4296,18 @@ function switchTab(id, { wake = true } = {}) {
   schedulePreload(4000); // (the neighbours of the tab now in front, once things are quiet)
   scheduleReadySync(curRec); // (which tabs to keep ready now: after the switch has settled, once per burst)
   return true;
+}
+// [sidebar per tab] The page area a tab switch shows is the incoming tab's own: its sidebar open or closed, not the tab left's. Laid out at
+// the old tab's width first, a tab with its sidebar closed came in narrow beside an empty strip and widened a moment later, once the UI had
+// closed the sidebar (and a tab with it open came in wide and narrowed). The UI reports the same size when it has followed (followTabSidebar).
+function fitTabSidebar(tab) {
+  const full = contentBounds.fullWidth || 0;
+  if (!(full > 0) || chatFullTab != null || !curRec?.boundsReported) return; // (no layout from the UI yet; a full-page chat is the sidebar itself)
+  const shownOpen = contentBounds.width < full;
+  const wantOpen = tabSidebarOpen(tab);
+  if (wantOpen === shownOpen) return;
+  if (wantOpen && !(curRec.sidebarColumn > 0)) return; // (never open in this window yet: its width comes from the UI)
+  contentBounds = { ...contentBounds, width: wantOpen ? Math.max(0, full - curRec.sidebarColumn) : full };
 }
 // A burst of switches (Ctrl+Tab held, clicks in a row): the view swap waits one frame and goes to the latest tab only, so a tab passed through is
 // not shown and hidden again (each a GPU frame). The strip is not held back: it answers at once (sendTabs, above).
@@ -7034,7 +7047,7 @@ const chatNotEmpty = (cid) => chatRuns.has(cid) || chats().list().some((c) => c.
 // The tabs (of every window, or just `rec`'s) the AI opened that may be closed, as [{ rec, tab }]. `runId` / `chatId` narrow it
 // to that run's / chat's; neither: all of them. `busy: true` answers the other question: the ones a run is working in right now,
 // which a close keeps (and says so).
-function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null, busy: wantBusy = false } = {}) {
+function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null, busy: wantBusy = false, ids = null } = {}) {
   const found = [];
   const own = new Set(chatId != null ? [chatId] : []);
   if (runId != null) for (const r of winRecs) for (const x of rcAlive(r) ? tabsOf(r) : []) if (x.openedBy?.runId === runId && x.openedBy.chatId != null) own.add(x.openedBy.chatId);
@@ -7045,7 +7058,7 @@ function aiTabSelect({ runId = null, chatId = null, auto = false, rec = null, bu
     if (!rcAlive(r)) continue;
     const audibleIds = auto ? tabsOf(r).filter((x) => x.openedBy && alive(x) && x.view.webContents.isCurrentlyAudible()).map((x) => x.id) : []; // [ai manners] a tab playing sound stays open after the run
     const opts = { runId, chatId, boundIds: [...bound], busyIds: busy, audibleIds, activeId: activeIdOf(r), auto };
-    for (const tab of wantBusy ? manners.busyKept(tabsOf(r), opts) : manners.closeSelection(tabsOf(r), opts)) found.push({ rec: r, tab });
+    for (const tab of wantBusy ? manners.busyKept(tabsOf(r), opts) : manners.closeSelection(tabsOf(r), opts)) if (!ids || ids.includes(tab.id)) found.push({ rec: r, tab }); // (ids: [ai tab tidy] just these tabs)
   }
   return found;
 }
@@ -7154,6 +7167,93 @@ const cleanSelector = (o) => ({ runId: Number.isFinite(Number(o?.runId)) && o?.r
 const aiTabsCloseFor = (o) => { const s = cleanSelector(o); return s.runId === null && s.chatId === null ? { closed: 0, kept: 0, token: 0 } : aiTabsClose(s); };
 ipcMain.handle('agent:ai-tabs-close', (_e, o) => aiTabsCloseFor(o));
 ipcMain.handle('agent:ai-tabs-undo', (_e, token) => aiTabsReopen(Number(token)));
+// ---------- [ai tab tidy] Lumen tidies the AI's tabs itself (features/ai-tab-tidy.js; Settings → AI tabs → "Tidy up the AI's tabs", aiTabsTidy)
+// so the model spends nothing on closing them: a finished run's leftovers close, the tabs its answer links to stay in a "Kept from <chat>"
+// group and sleep, then close after the grace period (aiTabsGrace), and a chat keeps about 8. Everything closed has Undo. (Tests opt in: LUMEN_AI_TIDY_TEST=1.)
+let tidyLib = null;
+const tidy = () => (tidyLib ||= require('./features/ai-tab-tidy'));
+const tidyOn = () => readSettings().aiTabsTidy !== false && readSettings().closeAiTabs !== 'off' && (!TEST || process.env.LUMEN_AI_TIDY_TEST === '1');
+const tidyUrl = (x) => (alive(x) ? realUrl(x.view.webContents) || x.view.webContents.getURL() : x.sleepUrl || '');
+function tidyFacts(r) {
+  const bound = [...chatBind.entries()].filter(([, cid]) => chatNotEmpty(cid)).map(([id]) => id);
+  const audibleIds = tabsOf(r).filter((x) => x.openedBy && alive(x) && x.view.webContents.isCurrentlyAudible()).map((x) => x.id);
+  return { boundIds: bound, busyIds: [...agent.runTabIds()], audibleIds, activeId: activeIdOf(r) };
+}
+const aiQuiet = new Map(); // runId -> { n, tokens, pending }: tabs closed mid-run to keep the chat at about 8, shown with the run's own close (one Undo)
+// (a close takes a second or two, the page check and its beforeunload: the run's end waits for the ones still going)
+async function aiQuietTake(runId) {
+  const q = aiQuiet.get(runId);
+  if (!q) return { n: 0, tokens: [] };
+  await Promise.all([...q.pending]);
+  aiQuiet.delete(runId);
+  return q;
+}
+function aiUndoMerge(tokens) {
+  const items = tokens.filter(Boolean).flatMap((tk) => { const list = aiCloseUndo.get(tk) || []; aiCloseUndo.delete(tk); return list; });
+  if (!items.length) return 0;
+  aiCloseUndo.set(++aiCloseSeq, items);
+  return aiCloseSeq;
+}
+// open_tab for a chat that has about 8 tabs of its own: the oldest idle one closes first (quietly; the run's close row has Undo).
+function aiTabsMakeRoom() {
+  const by = runOf();
+  if (!tidyOn() || by.chatId == null) return;
+  const ids = tidy().capPlan(tabs, { chatId: by.chatId, ...tidyFacts(curRec) }).map((x) => x.id);
+  if (!ids.length) return;
+  if (!aiQuiet.has(by.runId)) aiQuiet.set(by.runId, { n: 0, tokens: [], pending: new Set() });
+  while (aiQuiet.size > 50) aiQuiet.delete(aiQuiet.keys().next().value);
+  const q = aiQuiet.get(by.runId);
+  const going = aiTabsClose({ ids }).then((r) => { if (r.closed) { q.n += r.closed; q.tokens.push(r.token); } }).catch(() => {}).finally(() => q.pending.delete(going));
+  q.pending.add(going);
+}
+// The run's final answer links to or names a tab: that one is a result, kept (keep:true) when the run's tabs close.
+function aiTabsKeepLinked(runId, text) {
+  if (!tidyOn()) return;
+  const own = allTabsEverywhere().filter((x) => x.openedBy?.runId === runId);
+  for (const id of tidy().linkedIds(own, text, tidyUrl)) { const x = own.find((y) => y.id === id); if (manners.keepAfterRun(x)) x.openedBy.linked = true; }
+}
+// After the close, the run's kept tabs leave the folded "AI tabs" group for one "Kept from <chat>" group per chat.
+function aiTabsToKept(runId, chatId) {
+  if (!tidyOn() || readSettings().groupAiTabs === false) return;
+  const name = (() => { const title = chats().list().find((c) => c.id === chatId)?.title || ''; const s = title.length > 32 ? `${title.slice(0, 31)}…` : title; return s ? t('tabs.keptGroup', { task: s }) : t('tabs.keptGroupNoTitle'); })();
+  for (const r of [...winRecs]) {
+    if (!rcAlive(r) || r.agent) continue;
+    withWindow(r, () => {
+      const kept = tabs.filter((x) => x.openedBy?.runId === runId && x.openedBy.keep && !x.closing && !x.pinned && !x.userMoved && tabGroups.groups.get(x.groupId)?.aiTabs);
+      if (!kept.length) return;
+      let group = [...tabGroups.groups.values()].find((g) => g.aiKept === chatId);
+      for (const x of kept) { tabGroups.remove(x.id); if (group) tabGroups.add(x.id, group.id); }
+      if (!group) { group = tabGroups.create(name, kept.map((x) => x.id), { color: 'gray' }); group.aiKept = chatId; group.collapsed = true; }
+      sendTabs();
+    });
+  }
+}
+// Every minute: tabs whose run is over (a helper's late tab, one kept at the end, one restored after a restart). Leftovers close;
+// kept ones sleep after 15 minutes unused and close after the grace period. The strip's toast has Undo.
+async function aiTabsSweep(now = Date.now()) {
+  if (!tidyOn() || manners.cleanCloseSetting(readSettings().closeAiTabs) !== 'always') return { closed: 0, slept: 0 };
+  const liveRunIds = [...chatRuns.values()].map((r) => r.runId);
+  const grace = tidy().graceMs(readSettings().aiTabsGrace);
+  const ids = [];
+  let slept = 0;
+  for (const r of [...winRecs]) {
+    if (!rcAlive(r) || r.agent) continue;
+    const facts = tidyFacts(r);
+    for (const x of tabsOf(r)) if (x.openedBy && facts.busyIds.includes(x.id)) x.openedBy.usedAt = now; // (in use: its idle clock starts again)
+    const front = tabsOf(r).find((x) => x.id === facts.activeId);
+    if (front?.openedBy && !front.openedBy.keep) { front.openedBy.keep = true; front.openedBy.usedAt = now; } // (the user has looked at it: kept like a result, not closed the moment they look away)
+    const plan = tidy().sweepPlan(tabsOf(r), { now, liveRunIds, grace, asleep: (x) => !alive(x), ...facts });
+    ids.push(...plan.close.map((x) => x.id));
+    for (const x of plan.sleep) withWindow(r, () => { try { if (alive(x)) { sleepTab(x); slept++; } } catch { /* gone */ } });
+    if (plan.sleep.length) withWindow(r, () => sendTabs());
+  }
+  if (!ids.length) return { closed: 0, kept: 0, token: 0, slept };
+  const res = await aiTabsClose({ ids });
+  if (res.closed) aiCloseNote(res.rec || curRec, res);
+  return { closed: res.closed, kept: res.kept, token: res.token, slept };
+}
+if (!TEST) setInterval(() => { aiTabsSweep().catch(() => {}); }, 60 * 1000).unref?.();
+if (TEST) global.__aiTabTidy = { sweep: (now) => aiTabsSweep(now), marks: () => allTabsEverywhere().filter((x) => x.openedBy).map((x) => ({ id: x.id, url: tidyUrl(x), ...x.openedBy, asleep: !alive(x), group: tabGroups.groups.get(x.groupId)?.name || null })) };
 // The sidebar's "hide the tabs the AI opened" toggle: a saved setting (prefs:ui carries it to the strip). It only leaves them out of
 // the strip: they stay open and stay the AI's (its tools, the chat's own tab, Close tabs the AI opened all still reach them).
 ipcMain.handle('tabs:hide-ai', async (_e, on) => {
@@ -9236,6 +9336,7 @@ const agentOpenTab = (url, opts = {}) => {
   const governed = ai || (opts && 'show' in opts);
   // (An outside agent's tab opens in front of ITS OWN window, which is nobody else's.)
   const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true && !stayOnUsersTab(), asked: userAskedToSee(), runTabId: runOwnTabId(), activeId }) : !rest.background));
+  if (ai && !mcp) aiTabsMakeRoom(); // [ai tab tidy] about 8 tabs per chat
   const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: { ...runOf(), keep: keep === true } } : {}) }); // (keep: left open when the run ends)
   const tab = governed && !mcp && agent.currentScope() ? asAiSwitch(open) : open(); // (the AI's tool call: its own switch, below)
   if (fromPage) chatPageRt.retarget(tab.id);
@@ -10914,6 +11015,7 @@ function applyContentBounds(bounds) {
     fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
   if (curRec) { curRec.boundsReported = true; curRec.holdViews = false; } // (a first tab opened while the UI loaded shows now)
+  if (curRec && contentBounds.fullWidth > contentBounds.width) curRec.sidebarColumn = contentBounds.fullWidth - contentBounds.width; // [sidebar per tab] the sidebar's width, for a switch to a tab with it open (fitTabSidebar)
   layout();
 }
 ipcMain.on('content-bounds', (_e, bounds) => applyContentBounds(bounds));
@@ -11837,7 +11939,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     }
     if (run.doneMsg && msg.type === 'tool' && run.thumbs) { run.thumbs = null; run.thumbTarget = null; } // (see below: a helper's step after 'done')
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
-    if (msg.type === 'done' && !run.deleted) { aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
+    if (msg.type === 'done' && !run.deleted) { aiTabsKeepLinked(runId, run.reply); aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
     if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone (a live picture of an app window changes neither)
     if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in
@@ -11904,9 +12006,10 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (!run.deleted && !temporaryChats.has(runChat)) missionFinished(run); // [mission control] the page's Recent list
       tellUser(run, chatRunsLib.outcome(run));
       setImmediate(pushAgentTarget);
+      const quietNow = run.deleted ? Promise.resolve({ n: 0, tokens: [] }) : aiQuietTake(runId); // [ai tab tidy] tabs closed mid-run to keep the chat at about 8: on the same row and Undo
       if (aiTabs?.mode === 'close') { // Settings > "Close tabs the AI opened when it finishes": Always
-        aiTabsClose({ runId }, { auto: true }).then((r) => { chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: r.closed, kept: r.kept, busy: r.busy, token: r.token }); if (r.closed) aiCloseNote(r.rec || curRec, r); }).catch(() => {}); // (the toast has Undo too, for when the row under the reply is gone)
-      }
+        Promise.all([aiTabsClose({ runId }, { auto: true }), quietNow]).then(([r, quiet]) => { aiTabsToKept(runId, runChat); const n = r.closed + quiet.n; const token = quiet.n ? aiUndoMerge([r.token, ...quiet.tokens]) : r.token; chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n, kept: r.kept, busy: r.busy, token }); if (n) aiCloseNote(r.rec || curRec, { closed: n, kept: r.kept, busy: r.busy, token }); }).catch(() => {}); // (the toast has Undo too, for when the row under the reply is gone)
+      } else quietNow.then((quiet) => { if (quiet.n) chatPageRt.emit(to(), 'agent:event', { type: 'ai_tabs_closed', runId, n: quiet.n, kept: 0, busy: 0, token: aiUndoMerge(quiet.tokens) }); }).catch(() => {});
     } else if (msg.type === 'tool_done' && !run.deleted) (stampRun(run), isOpen() ? saveChatSoon(chatGeneration) : saveChatOfSoon(runChat, run.messages));
     else if (msg.type === 'usage' && isOpen()) { ui()?.send('chats:usage', describeUsage(msg.usage)); chatPageRt.broadcast('chats:usage', describeUsage(msg.usage), ui()); }
     else if (msg.type === 'context' && isOpen()) { ui()?.send('chats:context', msg.context); chatPageRt.broadcast('chats:context', msg.context, ui()); } // [context] the meter under the composer

@@ -3414,6 +3414,64 @@ if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else root.agentPill = api;
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
+// ---- run-quiet.js
+
+
+
+
+
+
+
+
+
+
+(function (root) {
+const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+
+function asks(text) {
+const s = clean(text).replace(/[\s*_`)\]"'”’]+$/, '');
+return /\?$/.test(s);
+}
+
+function interim(text, { waiting = false } = {}) {
+const s = clean(text);
+if (!s || waiting || asks(s)) return '';
+return s;
+}
+
+function fileKey(file) {
+const p = String(file?.path || file?.name || '').trim().replace(/\\/g, '/').replace(/\/+/g, '/');
+return p.toLowerCase();
+}
+
+function offerGate() {
+const shown = new WeakSet();
+const held = new WeakMap();
+return {
+hold(run, offer) { if (run && offer && !shown.has(run)) held.set(run, offer); },
+show(run, offer) {
+if (!run || !offer || shown.has(run)) return null;
+shown.add(run);
+held.delete(run);
+return offer;
+},
+release(run) {
+const offer = run ? held.get(run) : null;
+if (!offer) return null;
+held.delete(run);
+if (shown.has(run)) return null;
+shown.add(run);
+return offer;
+},
+shown: (run) => Boolean(run) && shown.has(run),
+};
+}
+
+const api = { asks, interim, fileKey, offerGate };
+if (typeof module === 'object' && module.exports) module.exports = api;
+else root.runQuiet = api;
+})(this);
+;
 // ---- chat-queue.js
 
 
@@ -4250,7 +4308,7 @@ if (stepUILoad) return stepUILoad;
 const head = document.head;
 head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
 const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages));
+stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('card-items.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages));
 return stepUILoad;
 }
 if (window.stepUI) window.stepUI.init(messages);
@@ -5634,7 +5692,7 @@ if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok
 
 if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
 
-if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) window.showSkillOffer?.(append, event); return; }
+if (event.type === 'skill_offer') { if (!turn && event.runId === aiTabsRunId && !forOtherChat(event.chatId)) offerSkill(event); return; }
 if (event.type === 'done' && earlyEnded && event.runId === earlyEnded.runId) { if (!forOtherChat(event.chatId)) lateDone(event); else earlyEnded = null; return; }
 
 
@@ -5697,10 +5755,12 @@ finishReply(turn.text, turn.textSource);
 endStream();
 turn.text = null;
 turn.textSource = '';
-const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
 const cardEl = window.aiFiles.card(event.file, { live: true });
+if (fileAgain(event.file, cardEl)) { window.stepUI?.fileMade(turn, event.file); break; }
+const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
 bubble.append(cardEl);
 appendToTurn(bubble);
+fileShown(event.file, bubble);
 if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
 window.stepUI?.fileMade(turn, event.file);
 announce(t('aifile.added', { name: event.file.name }));
@@ -5953,7 +6013,7 @@ if (card?.isConnected) { window.agentsCard.into(card, node); return; }
 if (t === turn && turn.working?.isConnected) { appendToTurn(node); return; }
 if (t.text?.isConnected) t.text.after(node); else append(node);
 };
-const show = () => { window.agentsCard?.update(t, event, place); window.stepUI?.refreshAll(t); };
+const show = () => { window.agentsCard?.update(t, event, place); window.stepUI?.refreshAll(t); if (t !== turn) runOver(t); };
 if (window.agentsCard) show(); else loadStepUI().then(show);
 }
 
@@ -5962,7 +6022,7 @@ function lateCardEvent(t, event) {
 switch (event.type) {
 case 'card_files': window.stepUI?.filesMade(t, event.files); break;
 case 'thumb': window.stepUI?.thumb(t, event); break;
-case 'helper': window.stepUI?.helper(t, event); break;
+case 'helper': window.stepUI?.helper(t, event); runOver(t); break;
 case 'agent': agentEvent(t, event); break;
 case 'skill': window.stepUI?.skill(t, event); break;
 case 'review': window.stepUI?.review(t, event); break;
@@ -6001,9 +6061,14 @@ break;
 function finishTurn(event, { early }) {
 settleThinking();
 dropEmptyBubbles();
+
+
+
+const goesOn = !turn.failed && !turn.stopped && !turn.stopRequested && Boolean(window.stepUI?.runGoesOn?.(turn));
+const folded = goesOn && window.runQuiet ? window.runQuiet.interim(turn.textSource, { waiting: approvals.size > 0 }) : '';
 finishReply(turn.text, turn.textSource, { latest: true });
 
-if (!turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
+if (!goesOn && !turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
 const row = Object.assign(document.createElement('div'), { className: 'msg assistant reply-actions-only' });
 row.append(regenButton());
 turn.working.before(row);
@@ -6015,6 +6080,7 @@ endStream();
 for (const old of messages.querySelectorAll(':scope > .msg.assistant.streaming')) { flushStreaming(old); old.classList.remove('streaming'); }
 for (const step of turn.steps.values()) if (step.classList.contains('running') && !step.dataset.helper) step.className = 'step stopped';
 window.stepUI?.finalize(turn, { ...event, reply: turn.text?.source || '' });
+if (folded) { window.stepUI.fold(turn, folded); foldBubble(turn); }
 turn.working.remove();
 if (early) earlyEnded = { runId: event.runId, bubble: turn.text };
 else {
@@ -6025,10 +6091,11 @@ if (event.aiTabs && event.aiTabs.mode !== 'close') window.showAiTabs?.(append, e
 
 const backToBox = Boolean((turn.stopRequested || turn.failed) && !turn.interrupted);
 
-const clean = !turn.failed && !turn.stopped && !turn.stopRequested && !turn.interrupted && !line.mine(forOtherChat).length;
+const clean = !goesOn && !turn.failed && !turn.stopped && !turn.stopRequested && !turn.interrupted && !line.mine(forOtherChat).length;
 document.dispatchEvent(new CustomEvent('lumen:reply-done', { detail: { clean, text: turn.text?.source || '', bubble: turn.text || null, chatId: shownChatId } }));
 finishedRun = { runId, turn };
 finishedRuns.set(runId, turn);
+if (!goesOn) { dropFolded(turn); if (!early) releaseOffer(turn); }
 while (finishedRuns.size > 8) finishedRuns.delete(finishedRuns.keys().next().value);
 turn = null;
 clearTimeout(stopTimer);
@@ -6131,14 +6198,86 @@ announce(t('genimg.made'));
 }
 
 
+
+const filesShown = { user: null, cards: new Map() };
+function fileSlots() {
+const user = [...messages.querySelectorAll(':scope > .msg.user')].at(-1) || null;
+if (filesShown.user !== user) { filesShown.user = user; filesShown.cards.clear(); }
+return filesShown.cards;
+}
+function fileShown(file, bubble) { const key = window.runQuiet?.fileKey(file); if (key) fileSlots().set(key, bubble); }
+function fileAgain(file, cardEl) {
+const key = window.runQuiet?.fileKey(file);
+const bubble = key ? fileSlots().get(key) : null;
+if (!bubble?.isConnected) return false;
+bubble.replaceChildren(cardEl);
+bubble.classList.remove('ai-file-updated');
+void bubble.offsetWidth;
+bubble.classList.add('ai-file-updated');
+bubble.dataset.updated = t('aifile.updatedTag');
+announce(t('aifile.updated', { name: file.name }));
+return true;
+}
+
+
+
+const skillOffers = window.runQuiet?.offerGate();
+const runOf = (t) => t?.cards?.[t.cards.length - 1]?.el || t || null;
+function offerSkill(event) {
+const t = finishedTurn(event.runId);
+if (!skillOffers || !t) { window.showSkillOffer?.(append, event); return; }
+if (window.stepUI?.runGoesOn?.(t)) { skillOffers.hold(runOf(t), event); return; }
+const offer = skillOffers.show(runOf(t), event);
+if (offer) window.showSkillOffer?.(append, offer);
+}
+
+
+const foldedOf = new WeakMap();
+function foldBubble(t) {
+const bubble = t.text;
+if (!bubble) return;
+bubble.hidden = true;
+bubble.classList.add('run-folded');
+const run = runOf(t);
+const old = foldedOf.get(run);
+if (old && old !== bubble) old.remove();
+foldedOf.set(run, bubble);
+}
+function dropFolded(t) {
+const run = runOf(t);
+const old = foldedOf.get(run);
+if (old && old !== t.text) old.remove();
+foldedOf.delete(run);
+}
+function runOver(t) {
+if (!t || turn === t || window.stepUI?.runGoesOn?.(t)) return;
+const run = runOf(t);
+const bubble = foldedOf.get(run);
+foldedOf.delete(run);
+if (bubble?.isConnected) {
+bubble.hidden = false;
+bubble.classList.remove('run-folded');
+if (!turn) document.dispatchEvent(new CustomEvent('lumen:reply-done', { detail: { clean: !line.mine(forOtherChat).length, text: bubble.source || bubble.textContent || '', bubble, chatId: shownChatId } }));
+}
+releaseOffer(t);
+}
+function releaseOffer(t) {
+if (!skillOffers || !t || turn === t || window.stepUI?.runGoesOn?.(t)) return;
+const offer = skillOffers.release(runOf(t));
+if (offer && !forOtherChat(offer.chatId)) window.showSkillOffer?.(append, offer);
+}
+
+
 function lateFile(event) {
 if (!window.aiFiles || !event.file) return;
-const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
 const cardEl = window.aiFiles.card(event.file, { live: true });
+if (fileAgain(event.file, cardEl)) return;
+const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant ai-files' });
 bubble.append(cardEl);
 const anchor = earlyEnded.files || earlyEnded.pics || earlyEnded.bubble;
 if (anchor?.isConnected) anchor.after(bubble); else append(bubble);
 earlyEnded.files = bubble;
+fileShown(event.file, bubble);
 if (event.main) window.aiFiles.autoOpen(event.file, cardEl);
 announce(t('aifile.added', { name: event.file.name }));
 }
@@ -12015,6 +12154,7 @@ window.browser.onTabs(watchFullChatTab);
 
 
 
+
 let sidebarTabShown = null;
 function followTabSidebar(state) {
 const switched = state.activeId !== sidebarTabShown;
@@ -12023,7 +12163,7 @@ sidebarTabShown = state.activeId;
 if (chatFull) return;
 if (sidebarPending > 0 && (!switched || first)) return;
 const want = Boolean(state.sidebar);
-if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) });
+if (want !== ($('toggle-sidebar').getAttribute('aria-pressed') === 'true')) showSidebar(want, { fromTab: true, instant: first || switched, newTab: isNewTabPage(state.tabs.find((t) => t.id === state.activeId)) });
 }
 window.browser.onTabs(followTabSidebar);
 

@@ -230,6 +230,8 @@ const DEFAULTS = {
   oneChatPerTab: false, // [chat per tab] off: a tab with no chat of its own keeps showing the chat you are in; on: it starts empty (features/tab-chats.js followPlan)
   aiStayOnMyTab: false, // [ai] INVERTED in Settings (switch "Bring tabs the AI opened to the front" is on when this is false): true = the AI never brings a tab to the front (open_tab / switch_tab show:true is ignored): the user's tab stays in view (main.js stayOnUsersTab)
   closeAiTabs: 'always', // [ai] close the tabs the AI opened when it finishes: off | ask | always (features/ai-manners.js). Always by default: a tab the user needs stays (the one in front, typed text, sound, keep:true)
+  aiTabsTidy: true, // [ai tab tidy] Lumen tidies the AI's tabs itself (features/ai-tab-tidy.js): a finished run's leftovers close, the tabs its answer links to are kept, sleep, then close after aiTabsGrace; about 8 per chat
+  aiTabsGrace: '1h', // [ai tab tidy] how long a kept AI tab no one uses stays open: 15m | 1h | 4h
   keepViewedAiTabs: true, // [ai] a tab the AI opened stays open after it finishes if the user clicked it in the tab strip to look at it (main.js 'tab:switch'); off: it closes like any other
   dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini: the first with a key) | openai | gemini | off (ai/dictation.js)
   dictationAutoSend: false, // [dictation] on: the transcript is sent at once; off: it goes into the box to read over first
@@ -316,6 +318,7 @@ function validate(key, value) {
     case 'aiEffort': return require('../ai/effort').cleanAll(value);
     case 'aiInstructionsAbout': case 'aiInstructionsStyle': return typeof value === 'string' ? require('../ai/custom-instructions').clean(value) : null;
     case 'closeAiTabs': return pick(value, ['off', 'ask', 'always'], null);
+    case 'aiTabsGrace': return pick(value, ['15m', '1h', '4h'], null);
     case 'dictationProvider': return pick(value, require('../ai/dictation').SETTINGS, null);
     case 'imageGen': return pick(value, require('../ai/image-router').SETTINGS, null);
     case 'keysOff': return Array.isArray(value) ? [...new Set(value.map(String).filter((v) => KEY_PROVIDERS.includes(v)))] : null;
