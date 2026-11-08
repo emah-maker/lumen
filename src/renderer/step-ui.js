@@ -291,7 +291,7 @@
     const appLive = card.surface === 'app' && card.app && (card.app.status === 'working' || card.app.status === 'paused');
     card.resumeBtn.hidden = !(appLive && card.app.status === 'paused');
     card.stopBtn.hidden = !appLive;
-    const saying = state === 'working' && Boolean(card.sayText);
+    const saying = (state === 'working' || state === 'helper') && Boolean(card.sayText); // ([quiet run] what a turn said while the run goes on stays up)
     card.say.hidden = !saying;
     if (saying && card.say.textContent !== card.sayText) card.say.textContent = card.sayText;
     refreshTabs(card, state);
@@ -911,6 +911,21 @@
     refreshCard(turn, card);
     return true;
   }
+  // [quiet run] The reply ends but its run goes on: a helper, a reviewer or an agent of its own still works on its card (stateOf 'helper').
+  function runGoesOn(turn) {
+    const card = turn?.cards?.[turn.cards.length - 1];
+    if (!card?.el.isConnected || card.stopped) return false;
+    return Boolean(turn.helpers?.size || card.review?.rounds?.some((x) => x.pending) || card.el.querySelector('.agents-card .ag-row[data-state="working"]'));
+  }
+  // What such a turn said, as the card's live line (the turn has ended: finalize cleared the line it had).
+  function fold(turn, text) {
+    const card = turn?.cards?.[turn.cards.length - 1];
+    const line = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!card?.el.isConnected || !line) return false;
+    card.sayText = line.length > 240 ? line.slice(0, 239) + '…' : line;
+    refreshCard(turn, card);
+    return true;
+  }
   // Another program on the PC (src/desktop): the same card, with the program's window as its preview, its state in the status bar.
   const IMAGE = /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/;
   function desktop(turn, event, opts) {
@@ -1198,5 +1213,5 @@
     if (turn) (turn.noteRows ||= []).push(node);
     return false;
   }
-  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard, skill, review, agentsRestored, grow };
+  window.stepUI = { helper, bare, filesMade, opener: null, init, makeRow, setLabel, add, update, done, endCard, finalize, refreshAll, thumb, fileMade, narrate, desktop, restoreNodes, toggle, labelFor, carryOn, liveCard, skill, review, agentsRestored, grow, runGoesOn, fold };
 })();

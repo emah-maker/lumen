@@ -86,7 +86,7 @@ check('system: JSON array, written as the person', /ONLY a JSON array/.test(lib.
       check(`page: ${path.basename(page)} loads the detector, then the chips, after chat-core`, a > 0 && b > a && c > b, J({ a, b, c }));
     }
     const core = src('src/renderer/chat-core.js');
-    check('chat-core: a finished reply says whether it ended on its own', /'lumen:reply-done'/.test(core) && /clean = !turn\.failed && !turn\.stopped && !turn\.stopRequested && !turn\.interrupted && !line\.mine\(forOtherChat\)\.length/.test(core));
+    check('chat-core: a finished reply says whether it ended on its own (a turn inside a run that goes on did not: [quiet run])', /'lumen:reply-done'/.test(core) && /clean = !goesOn && !turn\.failed && !turn\.stopped && !turn\.stopRequested && !turn\.interrupted && !line\.mine\(forOtherChat\)\.length/.test(core));
     const page = src('src/renderer/reply-suggest.js');
     check('chips: a click sends the text through the composer', /prompt\.value = text;[\s\S]*form\.requestSubmit\(\)/.test(page));
     check('chips: they go when typing, sending, or a new message arrives', /prompt\.addEventListener\('input'/.test(page) && /addEventListener\('submit', clear/.test(page) && /\.msg\.user, \.msg\.assistant\.streaming/.test(page));
