@@ -157,7 +157,7 @@ async function main() {
     const postsBefore = () => fakes.seen.filter((r) => r.service === 'todoist' && r.method === 'POST').length;
     const denied = await run({ toolUses: [{ input: { app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } } }], answer: false });
     const card = denied.events.find((e) => e.type === 'approval');
-    check('add_task shows a card with what it will do, with auto-allow on, and an "Always allow" because it only adds', card?.action === 'tool' && /Todoist/.test(card.title) && /Buy a stapler/.test(card.args) && /tomorrow 9am/.test(card.args) && !card.noAlways && card.alwaysFor?.app === 'Todoist' && card.noBypass === true && card.note === 'connector' && card.fields?.list?.map((f) => f.key).join() === 'content,due', JSON.stringify(card));
+    check('add_task shows a card with what it will do, with auto-allow on, and an "Always allow" because it only adds', card?.action === 'tool' && /Todoist/.test(card.title) && /Buy a stapler/.test(card.args) && /tomorrow 9am/.test(card.args) && !card.noAlways && card.alwaysFor?.app === 'Todoist' && card.guarded === true && card.note === 'connector' && card.fields?.list?.map((f) => f.key).join() === 'content,due', JSON.stringify(card));
     check('deny: nothing is sent to Todoist, and the model is told', postsBefore() === 0 && denied.results[0]?.error && /did not allow/.test(denied.results[0].text), JSON.stringify({ posts: postsBefore(), r: denied.results }));
     const allowed = await run({ toolUses: [{ input: { app: 'canvas', action: 'courses' } }, { input: { app: 'todoist', action: 'add_task', args: { content: 'Buy a stapler', due: 'tomorrow 9am' } } }], answer: true });
     const card2 = allowed.events.find((e) => e.type === 'approval');

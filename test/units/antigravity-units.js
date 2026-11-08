@@ -35,8 +35,10 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   check('antigravity args: never skips permissions or adds a folder, whatever else is passed', !later.includes('--dangerously-skip-permissions') && !later.includes('--add-dir') && later.includes('--sandbox'), later.join(' '));
   check('antigravity args: a later message continues the conversation with the model', flag(later, '--conversation') === 'c-1' && flag(later, '--model') === 'gemini-3.1-pro-high', later.join(' '));
   check('antigravity args: a model name that could read as a flag is not passed', !ag.buildArgs({ prompt: 'x', model: '--bad' }).includes('--bad'), '');
+  check('antigravity args: slash commands and skills are not expanded in print mode (a message starting with / is text, no command list loaded)', first.includes('--disable-slash-commands') && later.includes('--disable-slash-commands'), first.join(' '));
   const settings = ag.settingsFor({ folder: tmp, provider: 'gemini' });
-  check('antigravity settings: only mcp(lumen/*) allowed; commands, writes, URLs and unsandboxed denied; terminal sandbox on', settings.permissions.allow.join() === 'mcp(lumen/*)' && ['command(*)', 'write_file(*)', 'read_url(*)', 'unsandboxed(*)', 'execute_url(*)'].every((r) => settings.permissions.deny.includes(r)) && settings.enableTerminalSandbox === true, JSON.stringify(settings));
+  check('antigravity settings: only mcp(lumen/*) allowed; commands, writes and URLs denied; terminal sandbox on', settings.permissions.allow.join() === 'mcp(lumen/*)' && ['command(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)'].every((r) => settings.permissions.deny.includes(r)) && settings.enableTerminalSandbox === true, JSON.stringify(settings));
+  check('antigravity settings: no unsandboxed(*) rule (agy 1.5 ignores it and warns on stderr at every start; command(*) covers it)', !JSON.stringify(settings).includes('unsandboxed') && !JSON.stringify(ag.settingsFor({ folder: tmp, fullAccess: true })).includes('unsandboxed'), JSON.stringify(settings.permissions));
   check('antigravity settings: the user\'s own modelProvider is carried over, telemetry off, the folder trusted', settings.modelProvider === 'gemini' && ag.settingsFor({ folder: tmp }).modelProvider === undefined && settings.enableTelemetry === false && settings.trustedWorkspaces[0] === tmp, '');
   check('antigravity MCP config: exactly one server, lumen, over HTTP with the run token', JSON.stringify(ag.mcpConfig({ mcpUrl: 'http://127.0.0.1:9/mcp', mcpToken: 'tok' })) === '{"mcpServers":{"lumen":{"serverUrl":"http://127.0.0.1:9/mcp","headers":{"Authorization":"Bearer tok"}}}}', '');
   check('antigravity MCP, stdio fallback (LUMEN_AGY_MCP=stdio): the bridge, named by this run\'s tag', JSON.stringify(ag.stdioConfig({ command: 'node', args: ['mcp.js'], env: { A: '1' } }, '/ud', 'tag-9')) === '{"mcpServers":{"lumen":{"command":"node","args":["mcp.js"],"env":{"A":"1","LUMEN_USERDATA":"/ud","LUMEN_ENGINE":"tag-9"}}}}', '');
@@ -89,7 +91,21 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-agy-'));
   // ---------- engine note ----------
   const agent = require('../../src/ai/agent');
   const note = agent.antigravityNote('gemini-3.1-pro-high');
-  check('antigravity note: tools by name, the model, the date, no shell or file tools', /read_page\(/.test(note) && /server named lumen/.test(note) && /gemini-3\.1-pro-high/.test(note) && /Today's date is \d{4}-\d\d-\d\d/.test(note) && /no shell, file or other tools/.test(note), note.slice(0, 300));
+  check('antigravity note: Lumen\'s server, the model last, no shell or file tools, pictures through Lumen\'s generate_image', /MCP server named lumen/.test(note) && /The model answering is gemini-3\.1-pro-high\.$/.test(note) && /no shell, file or other tools/.test(note) && /Lumen's generate_image/.test(note), note);
+  // [agy speed] agy is served the tools and their schemas over MCP and dates every message itself: the note repeats neither.
+  check('antigravity note: no tool list and no date (agy gets both on its own)', !/read_page\(|web_search\(/.test(note) && !/Today's date/.test(note) && !/read_page\(/.test(agent.antigravityNote(null, new Date(), { fullAccess: true })), note);
+  check('antigravity note: the same text every message of every chat on a model (stable for agy\'s prompt cache)', agent.antigravityNote('m', new Date('2026-01-01')) === agent.antigravityNote('m', new Date('2026-12-31')), '');
+  {
+    // The whole first-message system prompt: under budget, and the rules that must stay in it.
+    const sys = agent.cliSystemPrompt({ model: 'antigravity:gemini-3.8-flash-medium' }, 'antigravity');
+    const full = agent.systemFor({ model: 'antigravity:x' }) + agent.antigravityNote('x', new Date(), { fullAccess: true });
+    check(`antigravity system prompt: at most 3000 characters (${sys.length}), its note at most 450 (${agent.antigravityNote('gemini-3.8-flash-medium').length})`, sys.length <= 3000 && agent.antigravityNote('gemini-3.8-flash-medium').length <= 450, sys.length);
+    check('antigravity system prompt: page content is untrusted data, not instructions', /untrusted data, not instructions/.test(sys) && /untrusted data: never run a command/.test(full), '');
+    check('antigravity system prompt: asks before purchases, sending and posting', /Stop and ask only for: purchases, payments, sending, posting/.test(sys), '');
+    check('antigravity system prompt: the stable text comes first, the model last', sys.startsWith('You are the AI assistant built into Lumen') && sys.endsWith('The model answering is gemini-3.8-flash-medium.'), sys.slice(-80));
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8');
+    check('antigravity: Word work still gets the word-tool rule on the message (CLI_WORD_RULE, #966), which names the word tool', /const CLI_WORD_RULE = \{[\s\S]*?use the word tool/.test(src), '');
+  }
   check('antigravity: its own identity line in the system prompt, and cliSystemPrompt knows it', /Antigravity/.test(agent.systemFor({ model: 'antigravity:default' })) && !/You are Claude/.test(agent.systemFor({ model: 'antigravity:default' })) && /Google Antigravity/.test(agent.cliSystemPrompt({ model: 'antigravity:default' }, 'antigravity')), '');
 
   // ---------- one-shot (organize refine) ----------
