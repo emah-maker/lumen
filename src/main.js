@@ -2586,6 +2586,32 @@ function sizeSpares() {
     if (now.width !== w || now.height !== h) s.view.setBounds({ x: 0, y: 0, width: w, height: h });
   } catch { /* gone, or not made yet */ }
 }
+// A new-tab page behind another tab is laid out for the tab area's new size (once it has settled), so switching back to it shows a page
+// already laid out for it. A hidden view takes no new bounds (the page keeps its old size until it is shown), and sized only at the switch
+// (presizeTab) the page could draw a frame at its old size before the new one reached it, then move every card (test/e2e/newtab-no-jump.js,
+// "switching back to a new tab after the window was resized"). So the size goes to the page itself, as the full-width layout does
+// (setOverlay), and stays on until the view shown has had its real size a moment (layoutBody, `heldSize`).
+let hiddenNewTabTimer = null;
+function sizeHiddenNewTabsSoon() {
+  clearTimeout(hiddenNewTabTimer);
+  hiddenNewTabTimer = setTimeout(() => {
+    hiddenNewTabTimer = null;
+    const width = pageWidth();
+    const height = contentBounds.height;
+    if (!(width > 0) || !(height > 0)) return;
+    for (const tab of tabs) {
+      if (tab.id === activeId || tab.split || tab.fullscreen || !alive(tab) || tab.view.getVisible()) continue;
+      try {
+        if (!isNewTab(tab.view.webContents.getURL())) continue;
+        const now = tab.view.getBounds();
+        if (!tab.heldSize && now.width === contentBounds.width && now.height === height && !tab.overlay) continue; // (already that size)
+        setOverlay(tab, { screenPosition: 'desktop', screenSize: { width, height }, viewPosition: { x: 0, y: 0 }, deviceScaleFactor: 0, viewSize: { width, height }, scale: 1 });
+        tab.heldSize = true;
+      } catch { /* gone */ }
+    }
+  }, 250);
+  hiddenNewTabTimer.unref?.();
+}
 function layoutBody() {
   // Showing a view (after the sidebar spring, a tab switch) must not take the keyboard from the UI:
   // Chromium can hand focus to a view that becomes visible (a moment later), which ate keys typed in
@@ -2634,10 +2660,13 @@ function layoutBody() {
       }
       const boundsKey = `${at.x},${at.y},${at.width},${at.height},${tab.fullscreen ? 1 : 0}`;
       if (tab.pdfBoundsKey !== boundsKey) { if (tab.pdfBoundsKey !== undefined) pokePdf(tab); tab.pdfBoundsKey = boundsKey; } // (resized while a PDF is open: draw again)
+      // (a new-tab page sized while hidden, see sizeHiddenNewTabsSoon: the size it was given comes off once the view has its own)
+      if (tab.heldSize && !tab.heldSizeTimer) tab.heldSizeTimer = setTimeout(() => { tab.heldSize = false; tab.heldSizeTimer = null; if (alive(tab)) layout(); }, 400);
     }
-    if (!overlay) setOverlay(tab, null);
+    if (!overlay && !tab.heldSize) setOverlay(tab, null);
   }
   sizeSpares();
+  sizeHiddenNewTabsSoon();
   sendSplitLayout(sp);
   spotifyWeb.clip(contentBounds); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
   appleMusicWeb.clip(contentBounds);
