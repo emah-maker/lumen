@@ -15,6 +15,7 @@ const root = path.join(__dirname, '..', '..');
 const FO = require('../../src/features/feature-offers');
 const ALL = FO.OFFERS.map(FO.seenKey); // a fresh install records every line as seen
 const SIX = ['aiMemory', 'planModeDefault', 'skillsFromClaudeCode', 'telegramChannel', 'dictation', 'actingHelpers']; // the first batch
+const SEEN = [...SIX, 'automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace']; // ...and the newest lines (the 0.5.96 and 0.5.97 ones; none is a switch that ships on), so the card's first six still hold a switch that ships on (autoNewChat)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sorted = (a) => JSON.stringify([...(a || [])].sort());
 
@@ -63,7 +64,7 @@ const sorted = (a) => JSON.stringify([...(a || [])].sort());
   }
 
   // A profile that saw the first batch (0.5.55-0.5.60) and nothing since, updated to this version.
-  const updated = makeProfile({ lastSeenVersion: '0.5.87', featureOffersSeen: SIX });
+  const updated = makeProfile({ lastSeenVersion: '0.5.87', featureOffersSeen: SEEN });
   let firstIds = [];
   {
     const { app, ui, open, card, urls, present, press, choose } = await launch(updated);
@@ -74,18 +75,18 @@ const sorted = (a) => JSON.stringify([...(a || [])].sort());
       check('update: the card shows the new settings on the empty chat', c?.title === 'New in Lumen' && c.rows.length === FO.CARD_MAX, JSON.stringify(c));
       // (the newest release in OFFERS heads the card, with its offers in OFFERS order; every heading after it is older)
       const vnum = (v) => v.split('.').map(Number).reduce((n, x) => n * 1000 + x, 0);
-      const newest = FO.OFFERS.map((o) => o.since).sort((x, y) => vnum(y) - vnum(x))[0];
-      const newestIds = FO.OFFERS.filter((o) => o.since === newest && !SIX.includes(o.id)).map((o) => o.id).slice(0, FO.CARD_MAX);
+      const newest = FO.OFFERS.filter((o) => !SEEN.includes(o.key || o.id)).map((o) => o.since).sort((x, y) => vnum(y) - vnum(x))[0];
+      const newestIds = FO.OFFERS.filter((o) => o.since === newest && !SEEN.includes(o.key || o.id)).map((o) => o.id).slice(0, FO.CARD_MAX);
       const heads = (c?.releases || []).map((r) => r.replace(/^In /, ''));
       check('grouped by release, newest first', c?.releases[0] === `In ${newest}` && newestIds.length > 0 && firstIds.slice(0, newestIds.length).join() === newestIds.join() && heads.length >= 2 && heads.every((v, i) => i === 0 || vnum(v) < vnum(heads[i - 1])), JSON.stringify({ releases: c?.releases, firstIds, newestIds }));
-      check('a long batch is capped with "More in Settings"', c?.foot.join() === `${FO.OFFERS.length - SIX.length - FO.CARD_MAX} more in Settings,Not now,Don’t show again`, JSON.stringify(c?.foot));
+      check('a long batch is capped with "More in Settings"', c?.foot.join() === `${FO.OFFERS.length - SEEN.length - FO.CARD_MAX} more in Settings,Not now,Don’t show again`, JSON.stringify(c?.foot));
       check('the card was loaded after start, not with the window', c?.lazy === true, JSON.stringify(c));
       const row = (id) => c?.rows.find((r) => r.id === id);
       check('the ad blocker is a choice: Lumen’s built-in (in use) or uBlock Origin Lite', JSON.stringify(row('adBlocker')?.control) === JSON.stringify({ type: 'choice', value: 'lumen', options: ['Lumen’s built-in', 'uBlock Origin Lite'] }), JSON.stringify(row('adBlocker')));
       check('a setting that ships on is a switch that shows on', JSON.stringify(row('autoNewChat')?.control) === '{"type":"switch","on":true}', JSON.stringify(row('autoNewChat')));
       check('a setting that needs more has Set up…, a new thing to know has just its line', row('extensionSites')?.control.text === 'Set up…' && row('accountTabs')?.control.type === 'none', JSON.stringify(c?.rows));
       check('each line is plain', c?.rows.every((r) => r.name && r.desc && r.desc.length < 200), JSON.stringify(c?.rows));
-      const want = [...SIX, ...firstIds.map((id) => FO.seenKey(FO.OFFERS.find((o) => o.id === id)))];
+      const want = [...SEEN, ...firstIds.map((id) => FO.seenKey(FO.OFFERS.find((o) => o.id === id)))];
       await waitFor(() => sorted(settingsOf(updated).featureOffersSeen) === sorted(want), 4000);
       check('once it has been on screen, those lines are recorded as shown (and only those)', sorted(settingsOf(updated).featureOffersSeen) === sorted(want), JSON.stringify(settingsOf(updated).featureOffersSeen));
 
