@@ -47,6 +47,14 @@ const classify = (e) => fallback.classify(e);
     check('unknown settings mean Automatic', router.cleanSetting('banana') === 'auto' && router.cleanSetting(undefined) === 'auto' && router.cleanSetting('off') === 'off' && router.cleanSetting('xai') === 'xai');
   }
 
+  // ---- the credit under a picture: the reason in a few words, never past the 80 characters keepImages stores
+  {
+    const long = await router.route({ prompt: 'a cat', setting: 'gemini', connected: ALL, current: 'claude-opus-5', isPolicy, classify, backends: { gemini: async () => { throw new Error('the image service answered with something long and unexpected that keeps going on and on'); }, grokbuild: picture('image_gen') } });
+    check('a long failure reason is cut with … so the credit stays within 80 characters and ends in a closing bracket', long.credit.length <= 80 && /^Grok Build · image_gen \(instead of Gemini: failed: the image service.*…\)$/.test(long.credit) && long.insteadWhy.startsWith('failed: the image service answered with something long and unexpected'), J({ credit: long.credit, n: long.credit.length }));
+    const missing = await router.route({ prompt: 'a cat', setting: 'xai', connected: { gemini: true }, current: 'claude-opus-5', isPolicy, classify, backends: { gemini: picture('gemini-2.5-flash-image') } });
+    check('a chosen provider that is not set up: "(instead of Grok: not set up)"; the full reason stays for the model', missing.credit === 'Gemini · gemini-2.5-flash-image (instead of Grok: not set up)' && /not connected/.test(missing.insteadWhy), J(missing.credit));
+  }
+
   // ---- routing, fallback, refusals
   {
     const calls = [];
@@ -111,7 +119,7 @@ const classify = (e) => fallback.classify(e);
     check('a chosen provider makes the picture when it can, and nobody else is asked', r.provider === 'gemini' && J(calls) === J(['gemini']) && !r.insteadOf && r.credit === 'Gemini · gemini-model', J({ calls, credit: r.credit }));
     calls.length = 0;
     r = await run({ grokbuild: ok('grokbuild'), gemini: bad('gemini', limitErr), openai: ok('openai') }, { setting: 'gemini' });
-    check('the chosen provider out of usage: the next connected one makes it, and the picture says instead of whom', r.provider === 'grokbuild' && J(calls) === J(['gemini', 'grokbuild']) && r.insteadOf === 'gemini' && r.insteadWhy === 'out of usage' && r.credit === 'Grok Build · grokbuild-model (instead of Gemini)', J({ calls, r: { ...r, images: 1 } }));
+    check('the chosen provider out of usage: the next connected one makes it, and the picture says instead of whom, and why', r.provider === 'grokbuild' && J(calls) === J(['gemini', 'grokbuild']) && r.insteadOf === 'gemini' && r.insteadWhy === 'out of usage' && r.credit === 'Grok Build · grokbuild-model (instead of Gemini: out of usage)', J({ calls, r: { ...r, images: 1 } }));
     check('the model is told why the chosen one did not make it', /instead of Gemini/.test(router.toolResult(r)) && /Gemini is picked for pictures but out of usage/.test(router.toolResult(r)), router.toolResult(r));
     calls.length = 0;
     r = await run({ grokbuild: ok('grokbuild'), openai: ok('openai') }, { setting: 'gemini', connected: { grokbuild: true, openai: true } });
