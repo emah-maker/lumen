@@ -90,7 +90,7 @@ const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwA
   await pickImage('openai');
   const route = () => app.evaluate(async () => { global.__imgCalls = []; const r = await global.__agent.routeImage({ prompt: 'a lighthouse', current: 'claude-sonnet-5', signal: new AbortController().signal }); return { provider: r.provider, credit: r.credit, insteadOf: r.insteadOf || null, calls: global.__imgCalls }; });
   let made = await route();
-  check('OpenAI picked but its key is off: Gemini makes the picture, and the picture says instead of whom', made.provider === 'gemini' && J(made.calls) === J(['gemini']) && made.credit === 'Gemini · gemini-2.5-flash-image (instead of OpenAI)', J(made));
+  check('OpenAI picked but its key is off: Gemini makes the picture, and the picture says instead of whom', made.provider === 'gemini' && J(made.calls) === J(['gemini']) && made.credit === 'Gemini · gemini-2.5-flash-image (instead of OpenAI: not set up)', J(made));
 
   // ---- switch OpenAI back on: no retyping
   await waitFor(() => inSettings("Boolean(document.querySelector('[data-provider=openai] .key-switch'))"));
