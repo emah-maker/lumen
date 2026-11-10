@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The gray box over Muse is gone, for real this time.** On Windows a playing video (Muse's avatar) could still show as a gray rectangle over the page, in the page's top corner. 0.5.87's fix set `--disable-direct-composition-video-overlays`, a switch this Electron's Chromium no longer has, so it did nothing: Chromium still reported hardware overlay planes for every video format. Lumen now turns DirectComposition off on Windows (`--disable-direct-composition`), which the overlay planes need: videos are drawn by the GPU compositor like the rest of the page, and drawing stays on the GPU. A new check also makes sure every Chromium switch and feature Lumen sets is one the shipped Electron knows; it found two more that it no longer has (`--remote-debugging-address`, and `WebContentsForceDark` behind the experimental **Dark mode for all websites** setting), listed in the test for their own fix. Tests: `test/units/chromium-switches-units.js`, `test/e2e/video-overlays.js`.
+
 ## 0.5.96 (2026-11-08)
 
 - **A new-tab page left behind another tab no longer jumps when you come back after resizing the window.** Its cards could show for a frame at the old window width and then all move to the new one, because a page behind another tab does not take a new size until it is shown again. The page is now laid out for the new size while it waits, so it comes back already in place. Tests: `test/e2e/newtab-no-jump.js`.
