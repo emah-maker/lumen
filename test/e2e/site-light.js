@@ -26,6 +26,10 @@ const PAGES = {
   light: page('body{background:#fff;color:#222}.card{background:#fafafa;margin:8px;padding:8px}', `${para(6)}${cards(6)}`),
   // half dark whatever it is told: the light page is no better, so it is not kept
   same: page('body{background:#121212;color:#eee}.card{background:#fff;margin:8px;padding:8px}', `${para(6)}${cards(6)}`),
+  // caught between themes (YouTube reloads itself to switch): half dark for its first 1.6 s, then a whole dark page. Not kept.
+  switching: page(`body{background:#fff;color:#222}.card{background:#fff;border:1px solid #ddd;margin:8px;padding:8px}
+    @media (prefers-color-scheme: dark){body{background:#121212;color:#eee}.ready .card{background:#1e1e1e;border-color:#333}}`,
+  `<div class="side">${para(6)}</div><div class="main">${cards(6)}</div><script>setTimeout(() => document.body.classList.add('ready'), 1600)</script>`),
 };
 
 (async () => {
@@ -77,12 +81,15 @@ const PAGES = {
   check('...and its host is kept', st.kept.includes(host('half')), JSON.stringify(st.kept));
   const saved = path.join(profile, 'half-dark-sites.json');
   await sleep(300);
-  check('...saved in the profile', fs.existsSync(saved) && JSON.parse(fs.readFileSync(saved, 'utf8')).hosts.includes(host('half')), fs.existsSync(saved) ? fs.readFileSync(saved, 'utf8') : 'no file');
+  check('...saved in the profile', fs.existsSync(saved) && host('half') in (JSON.parse(fs.readFileSync(saved, 'utf8')).sites || {}), fs.existsSync(saved) ? fs.readFileSync(saved, 'utf8') : 'no file');
 
   st = await visit(url('full'));
   check('a whole dark mode keeps the dark theme', st.dark === true && st.bg === 'rgb(18, 18, 18)' && !st.kept.includes(host('full')), JSON.stringify(st));
   st = await visit(url('light'));
   check('a page with no dark mode is left as it is', st.dark === true && st.bg === 'rgb(255, 255, 255)' && !st.kept.includes(host('light')), JSON.stringify(st));
+  st = await visit(url('switching'));
+  check('a page caught mid-switch is tried, then reads whole when told dark again', st.log.some((x) => x.again && !halfDark(x.again)), JSON.stringify(st.log));
+  check('...so it is not kept, and keeps the dark theme', st.dark === true && !st.kept.includes(host('switching')), JSON.stringify(st));
   st = await visit(url('same'));
   check('a page that looks half dark either way is tried, and its light page found no better', st.log.some((x) => x.after) && !st.kept.includes(host('same')), JSON.stringify(st.log));
   check('...so it keeps the dark theme', st.dark === true, JSON.stringify(st));

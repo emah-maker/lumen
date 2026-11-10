@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { schemeFor, watcher } = require('../../src/browser/chrome-identity');
-const { mixed, halfDark, lightIsBetter, hostOf, createStore } = require('../../src/browser/half-dark');
+const { mixed, halfDark, lightIsBetter, trial, hostOf, createStore, KEEP_FOR } = require('../../src/browser/half-dark');
 
 // ---- the override for a site found half dark
 const isLight = (u) => hostOf(u) === 'www.halfdark.test';
@@ -79,7 +79,8 @@ assert.strictEqual(lightIsBetter(glassdoor, null), false);
     assert.strictEqual(a.known(u), true);
     assert.strictEqual(a.isLight('https://www.halfdark.test/Job'), true, 'the whole host');
     assert.strictEqual(a.isLight('https://other.halfdark.test/'), false, 'another host of the same site is measured on its own');
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { hosts: ['www.halfdark.test'] });
+    const savedFile = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.deepStrictEqual([savedFile.version, Object.keys(savedFile.sites)], [2, ['www.halfdark.test']]);
     assert.deepStrictEqual(createStore({ file }).hosts(), ['www.halfdark.test'], 'kept after a restart');
 
     const v = 'https://even.test/';
@@ -94,9 +95,50 @@ assert.strictEqual(lightIsBetter(glassdoor, null), false);
     assert.strictEqual(a.worthTrying(w), true, 'the tab moved on before the light page was measured: tried again later');
     assert.deepStrictEqual(createStore({ file }).hosts(), ['www.halfdark.test'], 'only kept hosts are saved');
 
+    // a list saved before the third reading: left unread, so a site saved from one reading (youtube.com) follows the theme and is measured again
+    fs.writeFileSync(file, JSON.stringify({ hosts: ['www.youtube.com'] }));
+    const old = createStore({ file });
+    assert.strictEqual(old.isLight('https://www.youtube.com/'), false, 'an old list: the theme again');
+    assert.strictEqual(old.worthTrying('https://www.youtube.com/'), true, '...and measured again');
+    // kept for 30 days, then measured again
+    let clock = 1000;
+    const timed = createStore({ now: () => clock });
+    timed.keep('https://www.halfdark.test/');
+    clock += KEEP_FOR - 1;
+    assert.strictEqual(timed.isLight('https://www.halfdark.test/'), true, 'kept within 30 days');
+    clock += 2;
+    assert.strictEqual(timed.isLight('https://www.halfdark.test/'), false, 'after 30 days: the theme again');
+    assert.strictEqual(timed.worthTrying('https://www.halfdark.test/'), true, '...and measured again');
+    assert.deepStrictEqual(timed.hosts(), []);
+
     fs.writeFileSync(file, 'not json');
     assert.deepStrictEqual(createStore({ file }).hosts(), [], 'a broken file is an empty list');
     assert.deepStrictEqual(createStore({ file: path.join(dir, 'missing.json') }).hosts(), []);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  // ---- the trial: dark, light, dark again. Each reading in turn; what the tab was told after each step.
+  const run = async (readings, { moveAt = -1 } = {}) => {
+    const store = createStore();
+    const told = [];
+    let n = 0;
+    const r = await trial({
+      url: 'https://www.site.test/', store,
+      probe: async () => readings[n++] ?? null,
+      apply: (u) => told.push(store.isLight(u || 'https://www.site.test/') ? 'light' : 'dark'),
+      wait: async () => {},
+      here: () => n !== moveAt,
+    });
+    return { r, told, kept: store.known('https://www.site.test/'), again: store.worthTrying('https://www.site.test/') };
+  };
+  let t = await run([glassdoor, lightPage, glassdoor]);
+  assert.deepStrictEqual([t.r, t.told, t.kept], ['light', ['light', 'dark', 'light'], true], 'half dark both times it was told dark: kept, light');
+  t = await run([mixedOnly, lightPage, fullDark]);
+  assert.deepStrictEqual([t.r, t.told, t.kept], ['dark', ['light', 'dark', 'dark'], false], 'whole the second time it was told dark (caught mid-switch, as YouTube was): not kept');
+  assert.strictEqual(t.again, false, '...and not tried again this run');
+  t = await run([fullDark]);
+  assert.deepStrictEqual([t.r, t.told], ['dark', []], 'a whole dark page: one reading, nothing told');
+  t = await run([mixedOnly, { ...mixedOnly, dark: false }]);
+  assert.deepStrictEqual([t.r, t.told, t.kept], ['dark', ['light', 'dark'], false], 'the light page no better: the theme again');
+  t = await run([glassdoor, lightPage, glassdoor], { moveAt: 2 });
+  assert.deepStrictEqual([t.r, t.told.at(-1), t.kept, t.again], ['moved', 'dark', false, true], 'the page moved on (a reload to change theme): the theme again, tried later');
   console.log('site-light-units: ok');
 })().catch((e) => { console.error(e); process.exit(1); });

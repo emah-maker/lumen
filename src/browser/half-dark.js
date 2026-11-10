@@ -1,8 +1,11 @@
 // Sites whose dark mode is only half built, found by looking at the page instead of by a list of names. In a dark theme a page is measured once it has
 // loaded: how much of its visible text is drawn in nearly the colour of what is behind it (light text on a card the site left white, dark text on a
-// panel it turned dark). When much of it is, the page is told the system is light (browser/chrome-identity.js watcher) and measured again; the host
-// is kept only when the light page reads far better, so a site whose own light page is no better keeps the dark theme. Kept hosts are saved and get
-// the light page from the start of their next visit. (Glassdoor was the case that showed it: dark new sections over white review and job cards.)
+// panel it turned dark). When much of it is, the page is told the system is light (browser/chrome-identity.js watcher) and measured again, then
+// told dark once more and measured a third time (trial); the host is kept only when the light page reads far better than both dark ones, so a site
+// whose own light page is no better keeps the dark theme, and so does a page caught while it was still switching (YouTube reloads itself to change
+// theme: one reading taken mid-switch was enough to save youtube.com as half dark for good). Kept hosts are saved and get the light page
+// from the start of their next visit, for 30 days, then they are measured again. (Glassdoor was the case that showed it: dark new sections over
+// white review and job cards.)
 const fs = require('fs');
 const path = require('path');
 
@@ -88,22 +91,55 @@ function lightIsBetter(before, after) {
   return readable && even && !unreadable(after) && mixed(after) < 0.25;
 }
 
+// One page's whole measure. `probe()` reads the page (PROBE); `apply(url)` tells the tab what `store` now says for url (no url: its address);
+// `wait()` gives the page time to redraw; `here()` is whether the tab still shows url. Returns 'light' (kept), 'dark', or 'moved' (tried again later).
+async function trial({ url, store, probe, apply, wait, here, log = () => {} }) {
+  const before = await probe();
+  log({ url, before });
+  if (!halfDark(before) || !here()) return 'dark';
+  store.try(url);
+  apply(url);
+  await wait();
+  const after = here() ? await probe() : null;
+  log({ url, before, after });
+  const done = (verdict, measured = true) => { store.drop(url, { measured }); apply(); return verdict; };
+  if (!here()) return done('moved', false);
+  if (!lightIsBetter(before, after)) return done('dark');
+  // Dark again: a page that was only between themes (or still drawing) reads whole now, and keeps the theme.
+  store.pause(url);
+  apply(url);
+  await wait();
+  const again = here() ? await probe() : null;
+  log({ url, before, after, again });
+  if (!here()) return done('moved', false);
+  if (!halfDark(again) || !lightIsBetter(again, after)) return done('dark');
+  store.keep(url);
+  apply(url);
+  return 'light';
+}
+
 function hostOf(url) {
   try { const u = new URL(url); return /^https?:$/.test(u.protocol) ? u.hostname.toLowerCase() : ''; } catch { return ''; }
 }
 
-// The hosts found so far, saved in `file`. `trying` holds a host while its light page is measured (it is told light, not yet kept).
-function createStore({ file } = {}) {
-  const hosts = new Set();
+const KEEP_FOR = 30 * 24 * 60 * 60 * 1000; // a kept host is measured again after this (a site finishes its dark mode)
+// The hosts found so far, saved in `file` as { version: 2, sites: { host: when kept } }. `trying` holds a host while its light page is measured (it is
+// told light, not yet kept). A file without a version is from before the third reading (trial) and is left unread: its hosts are measured again.
+function createStore({ file, now = Date.now } = {}) {
+  const sites = new Map(); // host -> when it was kept
+  const live = (h) => sites.has(h) && now() - sites.get(h) < KEEP_FOR;
   const trying = new Set();
   const notBetter = new Set(); // (measured this run and the light page was no better: not tried again until Lumen restarts)
   if (file) {
-    try { for (const h of JSON.parse(fs.readFileSync(file, 'utf8')).hosts || []) if (typeof h === 'string' && h) hosts.add(h); } catch { /* none yet */ }
+    try {
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (saved?.version === 2) for (const [h, at] of Object.entries(saved.sites || {})) if (h && Number.isFinite(at)) sites.set(h, at);
+    } catch { /* none yet */ }
   }
   let saving = Promise.resolve();
   const save = () => {
     if (!file) return saving;
-    const data = JSON.stringify({ hosts: [...hosts].sort() }, null, 2);
+    const data = JSON.stringify({ version: 2, sites: Object.fromEntries([...sites].filter(([h]) => live(h)).sort()) }, null, 2);
     saving = saving.then(async () => {
       const tmp = `${file}.${process.pid}.tmp`;
       await fs.promises.mkdir(path.dirname(file), { recursive: true });
@@ -113,15 +149,16 @@ function createStore({ file } = {}) {
     return saving;
   };
   return {
-    isLight: (url) => { const h = hostOf(url); return Boolean(h) && (hosts.has(h) || trying.has(h)); },
-    known: (url) => hosts.has(hostOf(url)),
+    isLight: (url) => { const h = hostOf(url); return Boolean(h) && (live(h) || trying.has(h)); },
+    known: (url) => live(hostOf(url)),
     try: (url) => { const h = hostOf(url); if (h) trying.add(h); },
-    keep: (url) => { const h = hostOf(url); trying.delete(h); if (h && !hosts.has(h)) { hosts.add(h); save(); } },
+    pause: (url) => { const h = hostOf(url); trying.delete(h); }, // (told dark again for the third reading: still not tried twice at once)
+    keep: (url) => { const h = hostOf(url); trying.delete(h); if (h) { sites.delete(h); sites.set(h, now()); save(); } },
     drop: (url, { measured = true } = {}) => { const h = hostOf(url); trying.delete(h); if (h && measured) notBetter.add(h); }, // (not measured: the tab moved on)
-    worthTrying: (url) => { const h = hostOf(url); return Boolean(h) && !hosts.has(h) && !trying.has(h) && !notBetter.has(h); },
-    hosts: () => [...hosts],
+    worthTrying: (url) => { const h = hostOf(url); return Boolean(h) && !live(h) && !trying.has(h) && !notBetter.has(h); },
+    hosts: () => [...sites.keys()].filter(live),
     saved: () => saving,
   };
 }
 
-module.exports = { PROBE, mixed, halfDark, lightIsBetter, hostOf, createStore };
+module.exports = { PROBE, mixed, halfDark, lightIsBetter, trial, hostOf, createStore, KEEP_FOR };

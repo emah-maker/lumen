@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **YouTube follows the dark theme again.** Lumen tells a site whose dark mode is half built that the system is light, and it decided that from one reading of the page. YouTube reloads itself to change theme, so one reading taken mid-switch saved it as half dark for good, and it stayed light. A site is now kept light only when it reads half dark both times it is told dark, before and after its light page, and it is checked again after 30 days. Sites saved by the old check are measured again.
+- **uBlock Origin hides ads inside frames, and its rules come back off.** Its element hiding went only to the top page (another frame's rules could hide things there), and a rule it took back stayed, because Lumen's extension support ignored which frame a sheet was for and had no `chrome.tabs.removeCSS`. Both now work for frames in the same process as the page.
+
 ## 0.5.96 (2026-11-08)
 
 - **A new-tab page left behind another tab no longer jumps when you come back after resizing the window.** Its cards could show for a frame at the old window width and then all move to the new one, because a page behind another tab does not take a new size until it is shown again. The page is now laid out for the new size while it waits, so it comes back already in place. Tests: `test/e2e/newtab-no-jump.js`.

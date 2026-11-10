@@ -7,6 +7,8 @@
 //  - chrome.webRequest gives every request tabId -1 ("no tab"), so uBlock took each as a background request and blocked nothing. The tab
 //    is filled in from what the extension sees anyway: its content scripts' messages (the document and its tab), the tab's navigations
 //    (webNavigation, from the library), and a page's own requests (its document, after the tab committed that origin).
+//  - The library's chrome.tabs has no removeCSS (uBlock Origin takes its element-hiding rules back with it): it is added here, answered in
+//    main.js with the frame-aware insertCSS (browser/extension-css.js).
 // Pages with context isolation (Manifest V3, uBlock Origin Lite) are left alone: the library's preload covers them.
 (() => {
   if (process.contextIsolated || !globalThis.location?.href.startsWith('chrome-extension://')) return;
@@ -79,13 +81,26 @@
     hasListeners: () => source.hasListeners(),
   };
   const base = completed.webRequest;
-  let api = completed;
+  const replaced = {};
   if (base) {
     const webRequest = { ...base };
     if (native?.webRequest?.onHeadersReceived) webRequest.onHeadersReceived = native.webRequest.onHeadersReceived;
     for (const name of Object.keys(webRequest)) if (/^on[A-Z]/.test(name) && webRequest[name]?.addListener) webRequest[name] = event(webRequest[name]);
-    api = Object.freeze(Object.assign(Object.create(Object.getPrototypeOf(completed)), Object.fromEntries(Object.keys(completed).map((k) => [k, completed[k]])), { webRequest }));
+    replaced.webRequest = webRequest;
   }
+  if (completed.tabs && typeof completed.tabs.removeCSS !== 'function') {
+    const { ipcRenderer } = require('electron');
+    const id = completed.runtime.id;
+    const removeCSS = (tabId, details, callback) => {
+      const done = ipcRenderer.invoke('crx-msg', id, 'tabs.removeCSS', tabId, details).then(() => undefined, () => undefined);
+      if (typeof callback === 'function') { done.then(() => callback()); return undefined; }
+      return done;
+    };
+    replaced.tabs = { ...completed.tabs, removeCSS };
+  }
+  const api = Object.keys(replaced).length
+    ? Object.freeze(Object.assign(Object.create(Object.getPrototypeOf(completed)), Object.fromEntries(Object.keys(completed).map((k) => [k, completed[k]])), replaced))
+    : completed;
   // `chrome` and `browser` both give it; a page assigning one to the other (uBlock's vapi.js) changes nothing.
   for (const name of ['chrome', 'browser']) {
     try { Object.defineProperty(globalThis, name, { get: () => api, set: () => {}, enumerable: true, configurable: false }); } catch (err) { console.error(`[lumen] MV2 ${name}:`, err); }
