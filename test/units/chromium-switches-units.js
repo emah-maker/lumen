@@ -69,7 +69,6 @@ else {
   // Each is to be fixed on its own; take it out of here then (the check below fails once it is known again, or gone from src/).
   const KNOWN_DEAD = {
     'remote-debugging-address': 'features/ai-agents.js: Chromium binds the DevTools port to 127.0.0.1 anyway',
-    WebContentsForceDark: 'settings-backend.js: "Dark mode for all websites" sets a feature Chromium no longer has',
   };
   const DEAD = 'disable-direct-composition-video-overlays';
   const found = inBinary(bin, [...words, DEAD]);

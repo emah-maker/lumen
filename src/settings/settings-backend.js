@@ -425,7 +425,7 @@ function applyAtLaunch(app, settings) {
   if (!launched.hardwareAcceleration || process.argv.includes('--lumen-safe-gpu')) app.disableHardwareAcceleration();
   // Chromium gives up on the GPU for the whole session after a few GPU process crashes in a short time (a driver reset, a GPU-mode switch): keep restarting it.
   else if (!process.env.LUMEN_TEST_KEEP_GPU_CRASH_LIMIT) app.commandLine.appendSwitch('disable-gpu-process-crash-limit'); // (the env: a test that shows what happens without it)
-  if (launched.forceDarkWebsites) app.commandLine.appendSwitch('enable-features', 'WebContentsForceDark');
+  // (forceDarkWebsites is applied per page, over DevTools: applyChromeIdentity in main.js)
   return launched;
 }
 
