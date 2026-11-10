@@ -1775,6 +1775,8 @@ async function setupExtensions() {
   for (const type of ['frame', 'service-worker']) ses.registerPreloadScript({ id: `lumen-dnr-${type}`, type, filePath: path.join(__dirname, 'preload', 'extensions-dnr-preload.js') });
   // Keeps the store page off Electron's native webstorePrivate, which crashes Lumen (see the file).
   ses.registerPreloadScript({ id: 'lumen-webstore', type: 'frame', filePath: path.join(__dirname, 'features', 'webstore-preload.js') });
+  // chrome.tabs.insertCSS/removeCSS in the frame they name, as user sheets when asked (uBlock Origin's element hiding: browser/extension-css.js).
+  ses.registerPreloadScript({ id: 'lumen-extension-css', type: 'frame', filePath: path.join(__dirname, 'preload', 'extension-css-preload.js') });
   // Keeps the library's extension APIs out of Chromium's own PDF viewer, which they broke (see the file).
   ses.registerPreloadScript({ id: 'lumen-pdf-viewer', type: 'frame', filePath: path.join(__dirname, 'features', 'pdf-viewer-preload.js') });
   ElectronChromeExtensions.handleCRXProtocol(ses); // extension icons in the toolbar
@@ -1797,6 +1799,11 @@ async function setupExtensions() {
     },
     removeWindow: () => {},
   });
+  { // (the library's own insertCSS ignored the frame and the origin, and it has no removeCSS)
+    const css = require('./browser/extension-css').handlers((id) => extensions.ctx.store.getTabById(id));
+    extensions.ctx.router.handle('tabs.insertCSS', css.insertCSS);
+    extensions.ctx.router.handle('tabs.removeCSS', css.removeCSS);
+  }
   extensions.on('browser-action-popup-created', (popup) => {
     const place = popup.updatePosition.bind(popup);
     const sizeIt = popup.setSize.bind(popup);
@@ -6049,25 +6056,21 @@ function applyChromeIdentity(wc) {
   };
   lightSchemes.set(wc, lightScheme);
   // [half dark] In a dark theme a page is measured a moment after it loads, and again later (a page that draws its content late): when much of its
-  // text can't be read, it is told light and measured again, and the site is kept only when that reads far better (browser/half-dark.js).
+  // text can't be read, it is told light, then dark again, and the site is kept only when light reads far better than both (browser/half-dark.js trial).
   let measuring = false;
   const measure = async () => {
     const url = wc.isDestroyed() ? '' : wc.getURL();
     if (measuring || !/^https?:/i.test(url) || !nativeTheme.shouldUseDarkColors || !halfDark().worthTrying(url)) return; // (only a web page is measured: the New Tab page never loads the module)
     measuring = true;
     try {
-      const probe = () => wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: HALF_DARK.PROBE }]).catch(() => null);
-      const before = await probe();
-      if (TEST) (global.__halfDarkLog ||= []).push({ url, before });
-      if (!HALF_DARK.halfDark(before) || wc.isDestroyed() || wc.getURL() !== url) return;
-      halfDark().try(url);
-      lightScheme(url);
-      await new Promise((r) => { const t = setTimeout(r, 700); t.unref?.(); });
-      const still = !wc.isDestroyed() && wc.getURL() === url;
-      const after = still ? await probe() : null;
-      if (TEST) (global.__halfDarkLog ||= []).push({ url, before, after });
-      if (still && HALF_DARK.lightIsBetter(before, after)) halfDark().keep(url);
-      else { halfDark().drop(url, { measured: still }); if (!wc.isDestroyed()) lightScheme(wc.getURL()); }
+      await HALF_DARK.trial({
+        url, store: halfDark(),
+        probe: () => wc.executeJavaScriptInIsolatedWorld(PAGE_TEXT_WORLD, [{ code: HALF_DARK.PROBE }]).catch(() => null),
+        apply: (u) => { if (!wc.isDestroyed()) lightScheme(u || wc.getURL()); },
+        wait: () => new Promise((r) => { const t = setTimeout(r, 700); t.unref?.(); }),
+        here: () => !wc.isDestroyed() && wc.getURL() === url,
+        log: (entry) => { if (TEST) (global.__halfDarkLog ||= []).push(entry); },
+      });
     } finally { measuring = false; }
   };
   wc.on('did-finish-load', () => { for (const ms of [1200, 4500]) { const t = setTimeout(measure, ms); t.unref?.(); } });

@@ -5,6 +5,8 @@
 // Covers: the one-step switch from Settings (release list, download, signature, install, Lumen steps aside), that the extension starts and its
 // blocking reaches a real tab (Electron 44's two gaps, preload/extensions-mv2-preload.js), a restart in that mode, a release refused for
 // its signature, and switching back (removed, Lumen's blocker back).
+// Also its element hiding (chrome.tabs.insertCSS/removeCSS, browser/extension-css.js): a YouTube-like grid whose ad item collapses, a frame's own
+// rule kept to that frame, the rule taken back, and the page told dark in a dark theme while uBlock Origin runs.
 // Not covered: the real uBlock Origin and GitHub (no network in tests).
 // Run alone: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/e2e/ublock-origin.js (a throwaway profile; no window shows)
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
@@ -30,6 +32,16 @@ const { buildCrx } = require('../fixtures/extensions/build-crx');
     const origin = `http://127.0.0.1:${server.address().port}`;
     if (req.url.startsWith('/releases')) { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ tag_name: '1.0.0', assets: [{ name: 'uBlock0_1.0.0.chromium.zip', browser_download_url: `${origin}/zip` }, { name: 'uBlock0_1.0.0.chromium.crx', browser_download_url: `${origin}/ubo.crx` }] })); return; }
     if (req.url.startsWith('/ubo.crx')) { res.setHeader('Content-Type', 'application/x-chrome-extension'); res.end(served); return; }
+    // A YouTube-like home grid (the third item holds an ad slot, as YouTube's ytd-rich-item-renderer does) whose own CSS says display:block
+    // !important (a weaker selector than the rule's). Its frame has an ad box of its own; the top page has one too, that the frame's rule
+    // must leave alone.
+    if (req.url.startsWith('/grid-frame')) { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><div class="frame-ad" style="height:40px">frame ad</div>'); return; }
+    if (req.url.startsWith('/grid')) {
+      res.setHeader('Content-Type', 'text/html');
+      const item = (i) => `<div class="item" id="i${i}">${i === 2 ? '<div class="ad-slot">ad</div>' : `video ${i}`}</div>`;
+      res.end(`<!doctype html><title>grid</title><style>body{margin:0}#grid{display:flex;flex-wrap:wrap;width:330px}#grid .item{display:block!important;width:100px;height:60px;margin:5px}</style><div id="grid">${[0, 1, 2, 3, 4, 5].map(item).join('')}</div><div class="frame-ad" id="top-ad">top box</div><iframe src="/grid-frame"></iframe>`);
+      return;
+    }
     if (req.url.startsWith('/standin-ad.js')) { res.setHeader('Content-Type', 'text/javascript'); res.end('window.adRan = true;'); return; }
     res.setHeader('Content-Type', 'text/html');
     // The ad script's outcome becomes the page title: "loaded" (nothing took it) or "blocked" (the extension's listener did).
@@ -109,6 +121,28 @@ const { buildCrx } = require('../fixtures/extensions/build-crx');
     check('...the ad request never reached the server', adRequests() === ads0, `${adRequests()} vs ${ads0}`);
     const seen = JSON.parse(await background('JSON.stringify(self.seen)') || '[]');
     check('...and it saw the request with its tab (not -1)', seen.length > 0 && seen.every((t) => t >= 0), JSON.stringify(seen));
+
+    // ---- its element hiding, in the frame each rule names; and the page follows a dark theme
+    await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'dark'; });
+    const gridTab = await app.evaluate((_e, u) => global.__agent.browser.openTab(u).id, `${origin}/grid?${Date.now()}`);
+    await waitFor(() => app.evaluate((_e, i) => { const wc = global.__settings.contents(i); return Boolean(wc && !wc.isLoading()); }, gridTab), 10000);
+    // (Playwright tells every page it attaches to that the system is light: that is undone, so the page sees Lumen's theme)
+    for (const p of app.context().pages()) if (p.url().includes('/grid')) await p.emulateMedia({ colorScheme: null }).catch(() => {});
+    const inGrid = (code) => app.evaluate(async (_e, [i, c]) => { try { return await global.__settings.contents(i).executeJavaScript(c); } catch (err) { return 'ERROR ' + err.message; } }, [gridTab, code]);
+    const inFrame = (code) => app.evaluate(async (_e, [i, c]) => { const fr = global.__settings.contents(i).mainFrame.frames[0]; return fr ? fr.executeJavaScript(c).catch((err) => 'ERROR ' + err.message) : 'no frame'; }, [gridTab, code]);
+    const layout = "(() => { const r = (id) => document.getElementById(id).getBoundingClientRect(); return { ad: getComputedStyle(document.getElementById('i2')).display, i3: Math.round(r('i3').left), i2slot: Math.round(r('i1').right + 10), topAd: getComputedStyle(document.getElementById('top-ad')).display, sheets: document.styleSheets.length }; })()";
+    const hidden = await waitFor(() => inGrid(layout).then((v) => (v?.ad === 'none' ? v : null)), 10000);
+    check('a uBlock-style rule hides the grid item that holds an ad, over the page\'s own display:block !important', hidden?.ad === 'none', JSON.stringify(await inGrid(layout)));
+    check('...and the slot collapses: the next item moves into it (no hole)', hidden && hidden.i3 === hidden.i2slot, JSON.stringify(hidden));
+    check('...the sheet is not one of the page\'s (document.styleSheets)', hidden?.sheets === 1, JSON.stringify(hidden));
+    check('a frame\'s rule hides the ad in that frame', (await waitFor(() => inFrame("getComputedStyle(document.querySelector('.frame-ad')).display").then((v) => (v === 'none' ? v : null)), 8000)) === 'none', await inFrame("getComputedStyle(document.querySelector('.frame-ad')).display"));
+    check('...and not in the top page', hidden?.topAd === 'block', JSON.stringify(hidden));
+    await inGrid("postMessage('standin-uncss', '*')");
+    const shown = await waitFor(() => inGrid(layout).then((v) => (v?.ad === 'block' ? v : null)), 8000);
+    check('removeCSS takes the rule back out: the item shows again', shown?.ad === 'block', JSON.stringify(await inGrid(layout)));
+    check('a dark theme: the page is told prefers-color-scheme: dark while uBlock Origin runs', (await inGrid("matchMedia('(prefers-color-scheme: dark)').matches")) === true);
+    await app.evaluate(({ nativeTheme }) => { nativeTheme.themeSource = 'system'; });
+    await app.evaluate((_e, i) => global.__agent.browser.closeTab?.(i), gridTab).catch(() => {});
 
     // ---- a restart in uBlock Origin mode
     await app.close();
