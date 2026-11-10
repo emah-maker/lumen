@@ -6003,6 +6003,7 @@ const halfDark = () => (halfDarkStore ||= HALF_DARK.createStore({ file: halfDark
 let halfDarkSaved = null;
 const isHalfDarkLight = (u) => { if (!halfDarkStore && !(halfDarkSaved ??= fs.existsSync(halfDarkFile()))) return false; return halfDark().isLight(u); };
 if (TEST) Object.defineProperty(global, '__halfDark', { configurable: true, get: () => ({ ...require('./browser/half-dark'), store: halfDark }) }); // (tests read and measure with it)
+const forceDarkAtLaunch = () => { try { return settingsBackend.launched.forceDarkWebsites === true; } catch { return false; } }; // (settingsBackend is made further down)
 function applyChromeIdentity(wc) {
   if (identified.has(wc)) return;
   try {
@@ -6031,6 +6032,9 @@ function applyChromeIdentity(wc) {
     activityScripts.add(wc, send, sessionId), // [hide activity] other sites' frames too (features/hide-activity.js)
   ]));
   const autoAttach = (sessionId) => send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId).catch(() => {});
+  // [force dark] "Dark mode for all websites": Chromium's auto dark mode, per page and per out-of-process frame. (Chrome turns it on from its
+  // WebContentsForceDark feature in a layer Electron doesn't have, so that feature did nothing here.) The setting applies at launch.
+  const darken = (sessionId) => (forceDarkAtLaunch() ? send('Emulation.setAutoDarkModeOverride', { enabled: true }, sessionId).catch(() => {}) : Promise.resolve());
   wc.debugger.on('message', (_e, method, params) => {
     if (method !== 'Target.attachedToTarget') return;
     const { sessionId, targetInfo } = params;
@@ -6040,7 +6044,7 @@ function applyChromeIdentity(wc) {
     // the pause, so waiting for them before resuming deadlocked it (navigator.serviceWorker.register() never settled).
     // The identity command is sent first and the worker is resumed at once; the worker applies it before it runs a script.
     if (!frame) { identify(sessionId).catch(() => {}); resume(); return; }
-    Promise.all([identify(sessionId), script(sessionId), autoAttach(sessionId)]).finally(resume);
+    Promise.all([identify(sessionId), darken(sessionId), script(sessionId), autoAttach(sessionId)]).finally(resume);
   });
   let languages = lang(); // navigator.languages follows the Languages setting: re-applied at the next navigation after it changes
   const follow = (details) => {
@@ -6078,6 +6082,7 @@ function applyChromeIdentity(wc) {
   wc.on('did-start-navigation', follow);
   wc.on('did-redirect-navigation', follow);
   identify();
+  darken();
   script();
   autoAttach();
 }

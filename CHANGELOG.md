@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Dark mode for all websites works.** The experimental setting (Settings → Experimental) did nothing: it turned on Chromium's `WebContentsForceDark` feature, which only Chrome's own browser layer reads, and Electron doesn't have that layer. Lumen now turns Chromium's auto dark mode on itself, in every page and frame, so a site with no dark theme of its own is drawn dark. It still takes effect after a restart. Tests: `test/e2e/force-dark.js`.
+
 ## 0.5.97 (2026-11-10)
 
 - **The gray box over Muse is gone, for real this time.** On Windows a playing video (Muse's avatar) could still show as a gray rectangle over the page, in the page's top corner. 0.5.87's fix set `--disable-direct-composition-video-overlays`, a switch this Electron's Chromium no longer has, so it did nothing: Chromium still reported hardware overlay planes for every video format. Lumen now turns DirectComposition off on Windows (`--disable-direct-composition`), which the overlay planes need: videos are drawn by the GPU compositor like the rest of the page, and drawing stays on the GPU. A new check also makes sure every Chromium switch and feature Lumen sets is one the shipped Electron knows; it found two more that it no longer has (`--remote-debugging-address`, and `WebContentsForceDark` behind the experimental **Dark mode for all websites** setting), listed in the test for their own fix. Tests: `test/units/chromium-switches-units.js`, `test/e2e/video-overlays.js`.
