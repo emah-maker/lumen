@@ -228,7 +228,9 @@ app.commandLine.appendSwitch('disable-features', 'FedCm');
 // Windows hands a playing video to a hardware overlay plane, which sits above everything else and ignores the page's clipping.
 // With Lumen's stacked page views (and a laptop's two GPUs) it came out as a gray rectangle over the page, in the wrong
 // place and bigger than the video (Muse's animated avatar). Videos are drawn by the compositor instead, as with any other content.
-if (process.platform === 'win32') app.commandLine.appendSwitch('disable-direct-composition-video-overlays');
+// Chromium has no switch for the video overlays alone any more (--disable-direct-composition-video-overlays is gone: it did nothing,
+// overlays stayed on), so DirectComposition, which the overlays need, is off. (test/units/chromium-switches-units.js)
+if (process.platform === 'win32') app.commandLine.appendSwitch('disable-direct-composition');
 // Test runs are silent: no sound from pages (a YouTube test, a video on a test page) while someone works nearby.
 if (TEST && !process.env.LUMEN_TEST_ALLOW_AUDIO) app.commandLine.appendSwitch('mute-audio'); // (LUMEN_TEST_ALLOW_AUDIO=1: a test that needs Chromium to report a tab as playing sound, e.g. NTUI_AUDIO=1 test/e2e/tabui.js)
 
