@@ -1799,10 +1799,11 @@ async function setupExtensions() {
     },
     removeWindow: () => {},
   });
-  { // (the library's own insertCSS ignored the frame and the origin, and it has no removeCSS)
-    const css = require('./browser/extension-css').handlers((id) => extensions.ctx.store.getTabById(id));
-    extensions.ctx.router.handle('tabs.insertCSS', css.insertCSS);
-    extensions.ctx.router.handle('tabs.removeCSS', css.removeCSS);
+  { // (the library's own insertCSS ignored the frame and the origin, and it has no removeCSS; loaded on an extension's first call, off startup)
+    let css = null;
+    const call = (op) => (...args) => (css ||= require('./browser/extension-css').handlers((id) => extensions.ctx.store.getTabById(id)))[op](...args);
+    extensions.ctx.router.handle('tabs.insertCSS', call('insertCSS'));
+    extensions.ctx.router.handle('tabs.removeCSS', call('removeCSS'));
   }
   extensions.on('browser-action-popup-created', (popup) => {
     const place = popup.updatePosition.bind(popup);
