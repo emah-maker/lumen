@@ -11028,7 +11028,7 @@ return `${state.activeId}#${groups}#${tabs}`;
 
 
 function aiHiddenTab(tab, state) {
-return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.aiForUser && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
 }
 const hideAiButton = $('hide-ai-tabs');
 

@@ -1825,7 +1825,7 @@ function layoutSig(state) {
 // [ai manners] The sidebar's toggle (ui-prefs.js sets window.lumenHideAiTabs): the tabs the AI opened are left out of the strip, except the one
 // in front (and one being dragged), and one playing sound (its speaker button would vanish), so nothing you are using vanishes. They stay open; the toggle shows how many are out of sight.
 function aiHiddenTab(tab, state) {
-  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.aiForUser && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
 }
 const hideAiButton = $('hide-ai-tabs');
 // What the toggle reports, counted from the same rule the strip draws by: `hidden` tabs are out of the strip; `shown` are the AI's tabs that are
