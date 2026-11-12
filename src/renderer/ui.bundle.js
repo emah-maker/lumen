@@ -8798,6 +8798,7 @@ return li;
 
 
 
+
 (() => {
 const api = window.assistant?.dictation;
 const byId = (id) => document.getElementById(id);
@@ -8825,6 +8826,7 @@ const hintEl = bar.querySelector('.dictation-hint');
 let state = 'idle';
 let session = null;
 let pressAt = 0;
+let prep = '';
 
 const label = () => ({
 idle: tr('dictation.start', { key: MAC ? '⇧⌘Space' : 'Ctrl+Shift+Space' }),
@@ -8840,8 +8842,13 @@ mic.setAttribute('aria-pressed', String(state === 'recording'));
 mic.setAttribute('aria-busy', String(state === 'sending' || state === 'starting'));
 bar.hidden = state !== 'recording' && state !== 'sending';
 bar.dataset.state = state;
-hintEl.textContent = state === 'sending' ? tr('dictation.sending') : tr('dictation.escHint');
+hintEl.textContent = prep || (state === 'sending' ? tr('dictation.sending') : tr('dictation.escHint'));
 }
+api.onProgress?.((p) => {
+if (!(p?.total > 0)) return;
+prep = p.done >= p.total ? '' : tr('dictation.downloading', { percent: Math.floor((p.done / p.total) * 100) });
+if (state === 'recording' || state === 'sending') render();
+});
 render();
 
 const clock = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -8881,6 +8888,7 @@ render();
 note(status?.message || tr('dictation.error.other', { provider: '', status: '?' }), true);
 return;
 }
+prep = status.local && !status.local.ready && status.provider === 'local' ? tr('dictation.firstUse', { size: `${Math.max(1, Math.round((status.local.bytesNeeded || 0) / 1e6))} MB` }) : '';
 let stream;
 try {
 stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
@@ -8961,6 +8969,7 @@ result = bytes.byteLength > (s.status.maxBytes || 8 * 1024 * 1024) ? { error: tr
 result = { error: tr('dictation.error.audioLocal', { detail: String(err?.message || err).slice(0, 80) }) };
 }
 if (s.cancelled || session !== s) return;
+prep = '';
 release();
 state = 'idle';
 render();

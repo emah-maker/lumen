@@ -83,7 +83,7 @@ const OFFERS = [
   { id: 'skills', key: 'skillsFromClaudeCode', since: '0.5.55', value: true, kind: 'toggle', section: 'skills' },
   // [telegram] features/telegram.js: requests from the user's own Telegram bot (it needs a token and pairing in Settings)
   { id: 'telegram', key: 'telegramChannel', since: '0.5.55', value: true, kind: 'setup', section: 'telegram' },
-  // [dictation] ai/dictation.js: the mic in the chat box (audio goes to the user's own OpenAI or Gemini key, set in Settings)
+  // [dictation] ai/dictation.js: the mic in the chat box (on this device with no key; ready, so not offered, wherever that runs)
   { id: 'voice', key: 'dictation', since: '0.5.55', kind: 'setup', section: 'voice-input', ready: 'dictation' },
 ];
 

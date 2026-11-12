@@ -10355,28 +10355,69 @@ const meetingHelper = lazy(() => require('./features/meeting').createMeetingHelp
 }));
 if (TEST) global.__meetingHelper = meetingHelper;
 
-// [dictation] Voice input in the chat box (ai/dictation.js, renderer/dictation.js). The recording arrives once, goes to the
-// provider chosen in Settings with the user's key (the page never sees the key), and the buffer is cleared afterwards;
-// nothing is written to disk. The sidebar and the chat page may ask (UI_ONLY_IPC, chat-page.js CHAT_IPC).
+// [dictation] Voice input in the chat box (ai/dictation.js, renderer/dictation.js). With no key the recording is turned into
+// text on this computer (ai/local-stt.js: whisper.cpp and a Whisper model, downloaded on first use into
+// <userData>/speech-to-text); with the user's OpenAI or Gemini key it goes to that provider first (the page never sees the
+// key). Each engine is tried in turn; the buffer is cleared afterwards. The sidebar and the chat page may ask (UI_ONLY_IPC,
+// chat-page.js CHAT_IPC).
 const dictationLib = () => require('./ai/dictation'); // (loaded with the first use of the mic)
+let localSttInstance = null;
+function localStt() {
+  if (!localSttInstance) {
+    localSttInstance = require('./ai/local-stt').createLocalStt({
+      dir: path.join(app.getPath('userData'), 'speech-to-text'),
+      // (tests never download: a hook stands in for the network, or the download fails at once)
+      fetchImpl: (url, init) => (TEST ? (global.__sttNetHook ? global.__sttNetHook(url, init) : Promise.reject(new Error('no network in tests'))) : net.fetch(url, { ...init, headers: { 'user-agent': `Lumen/${app.getVersion()}` } })),
+    });
+  }
+  return localSttInstance;
+}
+const localSttSupported = () => require('./ai/local-stt').supported(process.platform, process.arch);
 function dictationState() {
   const s = readSettings();
-  const choice = dictationLib().choose(s.dictationProvider, (p) => Boolean(providerKey(p)));
-  if (!choice.provider) { const m = dictationLib().unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
-  return { provider: choice.provider, label: dictationLib().LABELS[choice.provider], format: dictationLib().FORMATS[choice.provider], maxSeconds: dictationLib().MAX_SECONDS, maxBytes: dictationLib().MAX_BYTES, autoSend: s.dictationAutoSend === true };
+  const lib = dictationLib();
+  const choice = lib.choose(s.dictationProvider, (p) => Boolean(providerKey(p)), localSttSupported());
+  if (!choice.provider) { const m = lib.unavailableMessage(choice); return { provider: null, reason: choice.reason, message: t(m.key, m.params) }; }
+  const local = choice.engines.includes('local') ? localStt().status(app.getLocale()) : null;
+  return {
+    provider: choice.provider, engines: choice.engines, label: lib.LABELS[choice.provider], format: lib.formatFor(choice.engines),
+    maxSeconds: lib.MAX_SECONDS, maxBytes: lib.MAX_BYTES, autoSend: s.dictationAutoSend === true,
+    local: local && { ready: local.ready, bytesNeeded: local.bytesNeeded }, // (the first use downloads; the page says so)
+  };
 }
-ipcMain.handle('dictation:status', () => dictationState());
-ipcMain.handle('dictation:transcribe', async (_e, bytes, format) => {
+ipcMain.handle('dictation:status', () => {
+  const state = dictationState();
+  if (state.provider === 'local' && !state.local?.ready && (!TEST || global.__sttNetHook)) localStt().prepare(app.getLocale()); // the mic was pressed: the download runs while the user speaks
+  return state;
+});
+ipcMain.handle('dictation:transcribe', async (event, bytes, format) => {
   const state = dictationState();
   if (!state.provider) return { error: state.message, settings: true };
   if (!(bytes instanceof Uint8Array)) return { error: t('dictation.error.empty') };
   if (format !== state.format) return { error: t('dictation.error.changed') }; // the setting changed while recording
   const audio = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const lib = dictationLib();
+  const failures = [];
+  let off = null;
   try {
-    const res = await dictationLib().transcribe({ provider: state.provider, key: providerKey(state.provider), audio, format, models: providerModels[state.provider], fetchImpl: netFetch() });
-    return res.error ? { error: t(res.error.key, res.error.params), settings: res.error.key === 'dictation.error.key' } : { text: res.text, autoSend: state.autoSend };
+    for (const engine of state.engines) {
+      let res;
+      if (engine === 'local') {
+        off = localStt().onProgress((p) => { if (!event.sender.isDestroyed()) event.sender.send('dictation:progress', p); });
+        res = await localStt().transcribe({ audio, locale: app.getLocale() });
+        off(); off = null;
+      } else {
+        res = await lib.transcribe({ provider: engine, key: providerKey(engine), audio, format, models: providerModels[engine], fetchImpl: netFetch() });
+      }
+      if (!res.error) return { text: res.text, autoSend: state.autoSend, engine };
+      if (res.error.key === 'dictation.error.cancelled') return { error: t(res.error.key) };
+      failures.push({ engine, error: res.error });
+    }
+    const m = lib.combineFailures(failures, (e) => t(e.key, e.params));
+    return { error: t(m.key, m.params), settings: lib.needsSettings(failures) };
   } finally {
-    audio.fill(0); // (the only copy in this process)
+    off?.();
+    audio.fill(0); // (the only copy in this process; the on-device engine's temporary file is already deleted)
   }
 });
 

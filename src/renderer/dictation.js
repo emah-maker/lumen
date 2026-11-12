@@ -2,8 +2,9 @@
 // whose functions it uses (showAttachNote, sendComposer).
 //
 // Chromium's SpeechRecognition can't work in Electron (no Google speech key), so the page records the microphone itself
-// (getUserMedia + MediaRecorder, WebM/Opus) and main sends the recording, once, to the provider chosen in Settings → AI
-// (ai/dictation.js), with the user's own key; the key never reaches this page. Nothing is saved: the recording lives in
+// (getUserMedia + MediaRecorder) and main turns the recording into text: on this computer with no key (ai/local-stt.js,
+// downloaded on first use while the user speaks; the bar shows how far it is), or with the user's own OpenAI or Gemini key
+// (ai/dictation.js); the key never reaches this page. Nothing is saved: the recording lives in
 // memory until its text comes back. Lumen allows the microphone for its own sidebar and chat page only (main.js ownPageMic).
 //
 // Click the mic to start and again to stop, or hold it (or Ctrl+Shift+Space / ⇧⌘Space in the box) and let go to stop.
@@ -36,6 +37,7 @@
   let state = 'idle'; // idle | starting | recording | sending
   let session = null; // { stream, recorder, chunks, ctx, raf, timer, startedAt, status, cancelled }
   let pressAt = 0; // when the press (pointer or shortcut) that started the recording began
+  let prep = ''; // the on-device engine's first-use download, while it runs: shown in the bar
 
   const label = () => ({
     idle: tr('dictation.start', { key: MAC ? '⇧⌘Space' : 'Ctrl+Shift+Space' }),
@@ -51,8 +53,13 @@
     mic.setAttribute('aria-busy', String(state === 'sending' || state === 'starting'));
     bar.hidden = state !== 'recording' && state !== 'sending';
     bar.dataset.state = state;
-    hintEl.textContent = state === 'sending' ? tr('dictation.sending') : tr('dictation.escHint');
+    hintEl.textContent = prep || (state === 'sending' ? tr('dictation.sending') : tr('dictation.escHint'));
   }
+  api.onProgress?.((p) => {
+    if (!(p?.total > 0)) return;
+    prep = p.done >= p.total ? '' : tr('dictation.downloading', { percent: Math.floor((p.done / p.total) * 100) });
+    if (state === 'recording' || state === 'sending') render();
+  });
   render();
 
   const clock = (ms) => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
@@ -92,6 +99,7 @@
       note(status?.message || tr('dictation.error.other', { provider: '', status: '?' }), true); // (Settings: add a key, or turn voice input back on)
       return;
     }
+    prep = status.local && !status.local.ready && status.provider === 'local' ? tr('dictation.firstUse', { size: `${Math.max(1, Math.round((status.local.bytesNeeded || 0) / 1e6))} MB` }) : '';
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
@@ -172,6 +180,7 @@
       result = { error: tr('dictation.error.audioLocal', { detail: String(err?.message || err).slice(0, 80) }) };
     }
     if (s.cancelled || session !== s) return; // Esc while it was being sent: the text is dropped
+    prep = '';
     release();
     state = 'idle';
     render();

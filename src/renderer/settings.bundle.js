@@ -5070,7 +5070,7 @@ select('chatAutoDeleteDays', tr('settings.ai.chatAutoDelete', 'Delete chats not 
 );
 slots.get('ai-chat').group(tr('settings.ai.groupVoice', 'Voice input')).append(
 select('dictationProvider', tr('settings.ai.dictationProvider', 'Voice input'), tr('settings.ai.dictationProviderDesc', ''),
-['auto', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
+['auto', 'local', 'openai', 'gemini', 'off'].map((v) => [v, tr(`settings.ai.dictationProvider.${v}`, { auto: 'Automatic', local: 'On this device (no key)', openai: 'OpenAI', gemini: 'Google Gemini', off: 'Off' }[v])])),
 toggle('dictationAutoSend', tr('settings.ai.dictationAutoSend', 'Send voice messages at once'), tr('settings.ai.dictationAutoSendDesc', '')),
 );
 slots.get('ai-helpers').append(

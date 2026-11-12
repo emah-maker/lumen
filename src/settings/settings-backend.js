@@ -233,7 +233,7 @@ const DEFAULTS = {
   aiTabsTidy: true, // [ai tab tidy] Lumen tidies the AI's tabs itself (features/ai-tab-tidy.js): a finished run's leftovers close, the tabs its answer links to are kept, sleep, then close after aiTabsGrace; about 8 per chat
   aiTabsGrace: '1h', // [ai tab tidy] how long a kept AI tab no one uses stays open: 15m | 1h | 4h
   keepViewedAiTabs: true, // [ai] a tab the AI opened stays open after it finishes if the user clicked it in the tab strip to look at it (main.js 'tab:switch'); off: it closes like any other
-  dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini: the first with a key) | openai | gemini | off (ai/dictation.js)
+  dictationProvider: 'auto', // [dictation] who turns the chat box's voice input into text: auto (OpenAI, then Gemini, then on this device: the keyed ones first, each falling back to the next) | local (on this device, ai/local-stt.js, no key) | openai | gemini | off (ai/dictation.js)
   dictationAutoSend: false, // [dictation] on: the transcript is sent at once; off: it goes into the box to read over first
   translateOffer: true, // offer to translate pages in another language (features/translate.js); never automatic
   translateTarget: '', // '' = Lumen's language

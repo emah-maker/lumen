@@ -1,19 +1,23 @@
-// Voice input for the chat box (renderer/dictation.js): the recording is turned into text by one of
-// the user's own API providers. Chromium's SpeechRecognition can't work in Electron (it needs
-// Google's private speech key; preload/permissions-preload.js hides it from sites for that reason),
-// so the audio goes, once, to the provider chosen here and to nothing else. Nothing is written to disk.
+// Voice input for the chat box (renderer/dictation.js): the recording is turned into text on this computer (ai/local-stt.js,
+// Whisper, no key) or by one of the user's own API providers. Chromium's SpeechRecognition can't work in Electron (it needs
+// Google's private speech key; preload/permissions-preload.js hides it from sites for that reason), so the audio goes to the
+// engines chosen here and to nothing else.
+//
+// Automatic: the user's OpenAI key, then Gemini key (the more accurate engines, when a key exists), then on-device; each is
+// tried when the one before fails, and the message names what failed only when every one did. With no key at all the
+// on-device engine is used, with nothing to set up.
 //
 // Pure: main.js passes the key and the fetch, so test/units/dictation-units.js runs it without Electron.
-// Keys stay in the main process; the renderer only learns which provider is used.
+// Keys stay in the main process; the renderer only learns which engine is used.
 
-const PROVIDERS = ['openai', 'gemini']; // the order "auto" tries them in
-const SETTINGS = ['auto', 'openai', 'gemini', 'off'];
-const LABELS = { openai: 'OpenAI', gemini: 'Google Gemini' };
+const PROVIDERS = ['openai', 'gemini']; // the key engines, in the order "auto" tries them (on-device comes after them)
+const SETTINGS = ['auto', 'local', 'openai', 'gemini', 'off'];
+const LABELS = { openai: 'OpenAI', gemini: 'Google Gemini', local: 'On-device' };
 const MAX_SECONDS = 120;
 const MAX_BYTES = 8 * 1024 * 1024; // 2 minutes of 16 kHz WAV is 3.8 MB; WebM/Opus far less
 // What each provider is sent: OpenAI takes the recorder's WebM/Opus as it is; Gemini's documented audio
 // types don't include WebM, so the page turns the recording into 16 kHz mono WAV first.
-const FORMATS = { openai: 'webm', gemini: 'wav' };
+const FORMATS = { openai: 'webm', gemini: 'wav', local: 'wav' }; // (OpenAI takes WAV too, for a chain that ends on-device)
 const MIME = { webm: 'audio/webm', wav: 'audio/wav' };
 const OPENAI_MODELS = ['gpt-4o-mini-transcribe', 'whisper-1']; // the second when the key can't use the first
 const GEMINI_FALLBACK = 'gemini-2.5-flash';
@@ -22,20 +26,40 @@ const TIMEOUT_MS = 60000;
 
 const cleanSetting = (value) => (SETTINGS.includes(value) ? value : 'auto');
 
-// setting: dictationProvider; has(provider) -> is a key set. Returns { provider } or { provider: null, reason, need }.
-// reason 'off': turned off in Settings; 'no-key': the provider asked for (or any, for auto) has no key.
-function choose(setting, has) {
+// setting: dictationProvider; has(provider) -> is a key set; localOk: on-device recognition runs on this computer.
+// Returns { provider, engines } (provider: the first engine tried) or { provider: null, reason, need }.
+// reason 'off': turned off in Settings; 'no-key': the key engine asked for (or any, for auto where on-device can't run)
+// has no key; 'local-unsupported': on-device asked for on a computer it can't run on.
+function choose(setting, has, localOk = false) {
   const s = cleanSetting(setting);
   if (s === 'off') return { provider: null, reason: 'off', need: [] };
-  const order = s === 'auto' ? PROVIDERS : [s];
-  const provider = order.find((p) => has(p)) || null;
-  return provider ? { provider } : { provider: null, reason: 'no-key', need: order };
+  if (s === 'local') return localOk ? { provider: 'local', engines: ['local'] } : { provider: null, reason: 'local-unsupported', need: [] };
+  // A key engine chosen by name: it, then on-device if it fails (the audio then stays on the computer).
+  if (s !== 'auto') return has(s) ? { provider: s, engines: localOk ? [s, 'local'] : [s] } : { provider: null, reason: 'no-key', need: [s] };
+  const engines = [...PROVIDERS.filter((p) => has(p)), ...(localOk ? ['local'] : [])];
+  return engines.length ? { provider: engines[0], engines } : { provider: null, reason: 'no-key', need: PROVIDERS, localUnsupported: true };
 }
+
+// The recording's format for a chain of engines: WebM/Opus (smaller) only when OpenAI is the only one; else 16 kHz WAV.
+const formatFor = (engines) => (Array.isArray(engines) && engines.length && engines.every((e) => e === 'openai') ? 'webm' : 'wav');
+
+// Every engine failed: [{ engine, error: { key, params } }] -> { key, params } for t(). One failure reads as itself; more
+// are listed, each engine with what went wrong (render(error) -> its text: main passes t).
+function combineFailures(failures, render) {
+  const list = (failures || []).filter((f) => f?.error);
+  if (!list.length) return { key: 'dictation.error.other', params: { provider: '', status: '?' } };
+  if (list.length === 1) return list[0].error;
+  return { key: 'dictation.error.allFailed', params: { details: list.map((f) => `${LABELS[f.engine] || f.engine}: ${render(f.error)}`).join(' ') } };
+}
+// Whether the failures call for the Settings link (a rejected key, or nothing that can run here).
+const needsSettings = (failures) => (failures || []).some((f) => ['dictation.error.key', 'dictation.error.localUnsupported'].includes(f?.error?.key));
 
 // The message for a mic button with nothing to send the audio to: { key, params } for t().
 function unavailableMessage(choice) {
   if (!choice || choice.provider) return null;
   if (choice.reason === 'off') return { key: 'dictation.off', params: {} };
+  if (choice.reason === 'local-unsupported') return { key: 'dictation.error.localUnsupported', params: {} };
+  if (choice.localUnsupported) return { key: 'dictation.needKeyNoLocal', params: { providers: choice.need.map((p) => LABELS[p]).join(' or ') } };
   if (choice.need.length === 1) return { key: 'dictation.needKey', params: { provider: LABELS[choice.need[0]] } };
   return { key: 'dictation.needAnyKey', params: { providers: choice.need.map((p) => LABELS[p]).join(' or ') } };
 }
@@ -154,4 +178,4 @@ function ownPageMic({ permission, mediaTypes, requestingUrl, pageUrl, isMainFram
   return Boolean(isOwnPage(requestingUrl) && isOwnPage(pageUrl));
 }
 
-module.exports = { ownPageMic, PROVIDERS, SETTINGS, LABELS, FORMATS, MAX_SECONDS, MAX_BYTES, OPENAI_MODELS, PROMPT, cleanSetting, choose, unavailableMessage, geminiModel, buildRequest, parseResponse, mapError, transcribe };
+module.exports = { ownPageMic, PROVIDERS, formatFor, combineFailures, needsSettings, SETTINGS, LABELS, FORMATS, MAX_SECONDS, MAX_BYTES, OPENAI_MODELS, PROMPT, cleanSetting, choose, unavailableMessage, geminiModel, buildRequest, parseResponse, mapError, transcribe };
