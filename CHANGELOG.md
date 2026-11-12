@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Tabs you ask the AI to open show with your tabs.** "Open my quiz notes in Lumen" (or a short follow-up such as "for diff eq") put the opened tabs in the folded AI tabs group, behind "Hide tabs the AI opened", and the end-of-run clean-up could close them. Now a tab the AI opens, reuses or switches to because you asked for it sits in the strip with your own tabs, is never hidden, and stays open after the run. Using it makes it yours; one you never touch (a tab it opened by mistake) is tidied after the usual grace period.
+
 ## 0.5.98 (2026-11-10)
 
 - **Dark mode for all websites works.** The experimental setting (Settings → Experimental) did nothing: it turned on Chromium's `WebContentsForceDark` feature, which only Chrome's own browser layer reads, and Electron doesn't have that layer. Lumen now turns Chromium's auto dark mode on itself, in every page and frame, so a site with no dark theme of its own is drawn dark. It still takes effect after a restart. Tests: `test/e2e/force-dark.js`.

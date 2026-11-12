@@ -3830,12 +3830,14 @@ ${prompt}` : prompt), historyImages: [] };
       });
       if (pick.action === 'reuse-own') {
         this.pinTab(pick.id);
+        this.browser.handToUserIfAsked?.(pick.id); // [ai tabs] the user asked for this page: the tab is theirs now
         return `Opened tab ${pick.id} (this chat's own tab, reused: no new tab): ${await this.execute('navigate', { url: input.url, read: input.read })}`;
       }
       if (pick.action !== 'existing') return '';
       if (pick.mine) {
         this.pinTab(pick.id);
         if (input.keep === true) this.browser.keepAiTab?.(pick.id);
+        this.browser.handToUserIfAsked?.(pick.id);
         return `Tab ${pick.id} already has that page (this chat's own tab): no new tab was opened. Read it with read_page or screenshot.`;
       }
       if (manners.userAskedToSee(text) && input.show !== false) {
@@ -8094,6 +8096,7 @@ ${same}
         if (listed && this.tabBusyElsewhere(input.tab_id)) throw new Error(TAB_BUSY);
         if (!listed || !this.browser.switchTab(input.tab_id, { show: input.show === true })) throw new Error(`No tab with id ${input.tab_id}.`);
         if (input.keep === true) this.browser.keepAiTab?.(input.tab_id); // [ai manners] a tab of its own the user needs after the run
+        this.browser.handToUserIfAsked?.(input.tab_id); // [ai tabs] the user asked to open or see it: theirs now, out of the AI tabs group
         this.pinTab(input.tab_id);
         const wc = this.requireTab();
         return `Switched to tab ${input.tab_id}: "${wc.getTitle()}" ${agentUrl(wc.getURL()) ?? listed.url}`.trimEnd();
