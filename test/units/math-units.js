@@ -245,6 +245,44 @@ check('display math: money and price tiers stay text', () => {
     assert.ok(!html.includes('<math'), `${s}: ${html}`);
   }
 });
+// ---- the Fe–Fe3C lever-rule reply: display math in numbered list items, with a bare % in \text{}
+const LEVER1 = String.raw`W_{Fe_3C'} = \frac{C_0 - 0.76}{6.70 - 0.76} = 0.049 \Rightarrow C_0 = 0.76 + 0.049(5.94) = 1.05 \text{ wt% C}`;
+const LEVER2 = String.raw`W_\alpha = \frac{6.70 - C_0}{6.70 - 0.022} = 0.846 \Rightarrow C_0 = 6.70 - 0.846(6.678) = 1.05 \text{ wt% C}`;
+const twoBlocks = (html, what) => {
+  assert.ok(!html.includes('math-src'), `${what}: ${html}`);
+  assert.ok(!html.includes('$$') && !/<pre/.test(html), `${what}: ${html}`);
+  assert.strictEqual((html.match(/<div class="math-block"><math[^>]*display="block"/g) || []).length, 2, `${what}: ${html}`);
+  assert.match(html, /^<ol><li>/, what);
+  assert.strictEqual((html.match(/<li>/g) || []).length, 3, what);
+};
+for (const indent of ['   ', '    ']) {
+  const n = indent.length;
+  check(`lever rule: $$ on lines of their own, ${n}-space indent in a numbered list, renders both`, () => {
+    twoBlocks(md.render(`Use the Fe–Fe₃C diagram.\n\n1. Solve for $C_0$ from the primary cementite fraction using the lever rule:\n\n${indent}$$\n${indent}${LEVER1}\n${indent}$$\n\n2. Solve for $C_0$ again from the total ferrite fraction:\n\n${indent}$$\n${indent}${LEVER2}\n${indent}$$\n\n3. Both give $C_0 \\approx 1.05$ wt% C.`).replace(/^<p>[^]*?<\/p>/, ''), `own lines, ${n}`);
+  });
+  check(`lever rule: $$…$$ on one line, ${n}-space indent in a numbered list, renders both`, () => {
+    twoBlocks(md.render(`1. Solve for $C_0$ from the primary cementite fraction using the lever rule:\n\n${indent}$$${LEVER1}$$\n\n2. Solve for $C_0$ again:\n${indent}$$${LEVER2}$$\n3. Done.`), `one line, ${n}`);
+  });
+}
+check('lever rule: a bare % is read as a percent sign; an escaped \\% and \\\\% stay as written', () => {
+  for (const t of [`$$${LEVER1}$$`, `$${LEVER2}$`, '$$50\\% = 0.5$$', '$$a \\\\ 5% b$$', '$x % y$']) {
+    const html = md.render(t);
+    assert.ok(!html.includes('math-src'), `${t}: ${html}`);
+  }
+  assert.match(md.render('$$5% \\text{ wt% C}$$'), /<mo>%<\/mo>|>%</);
+});
+check('lever rule: display math in a block quote renders (on its own lines and on one line)', () => {
+  for (const src of [`> Note:\n> $$\n> ${LEVER1}\n> $$\n> done`, `> $$${LEVER2}$$`, `>$$\n>${LEVER1}\n>$$`]) {
+    const html = md.render(src);
+    assert.match(html, /<blockquote>[^]*<div class="math-block"><math[^]*<\/blockquote>/, html);
+    assert.ok(!html.includes('$$') && !html.includes('&gt;'), html);
+  }
+});
+check('display math Temml cannot read shows its source in the text style, not a code block', () => {
+  const html = md.render('1. Step:\n\n   $$\\frac{a$$\n\n2. Next');
+  assert.match(html, /<div class="math-block math-failed"><code class="math-src">\\frac\{a<\/code><\/div>/, html);
+  assert.ok(!/<pre/.test(html), html);
+});
 delete globalThis.temml;
 
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }

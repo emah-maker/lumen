@@ -679,6 +679,8 @@ animation:bubble-in var(--t-snappy) var(--spring-snappy);
 .msg.assistant .math-block math{font-size:1.18em;}
 .msg.assistant sub, .msg.assistant sup{font-size:0.75em;line-height:0;}
 .msg.assistant code.math-src{background:none;padding:0;font-style:italic;color:var(--text);}
+.msg.assistant .math-failed{text-align:center;white-space:normal;overflow-wrap:anywhere;}
+.msg.assistant .math-failed code.math-src{font-family:inherit;}
 .msg.assistant pre.math-src{background:none;box-shadow:none;text-align:center;font:italic 13px ui-monospace, "Cascadia Code", Consolas, monospace;white-space:pre-wrap;}
 .msg.assistant .table-wrap{overflow-x:auto;margin:0 0 var(--sp-4);scrollbar-width:thin;scrollbar-color:var(--border) transparent;}
 .msg.assistant table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;}
