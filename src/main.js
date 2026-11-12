@@ -2376,7 +2376,7 @@ function tabState() {
           pinned: Boolean(t.pinned),
           sleeping: true,
           chat: tabChatMark(t.id),
-          aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab
+          aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), // [ai manners] the AI opened this tab (aiForUser: because the user asked for it, so it shows with theirs)
           openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window: the strip says whose
           aiKeepOff: manners.isKeptOff(t), // [ai off-tab]
           ...splitMark(t),
@@ -2414,7 +2414,7 @@ function tabState() {
         account: t.account ? accounts().badge(t.account) : null, // [account tabs] { id, name, color }: the strip's colored mark
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
-        aiOpened: manners.isAiTab(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
+        aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
         openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window ("Opened by Claude Desktop")
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...splitMark(t), // [split view]
@@ -4405,7 +4405,7 @@ function aiGroup() {
   return null;
 }
 function joinAiGroup(tab) {
-  if (!manners.isAiTab(tab) || tab.pinned || curRec?.agent || readSettings().groupAiTabs === false) return;
+  if (!manners.isAiTab(tab) || manners.forUser(tab) || tab.pinned || curRec?.agent || readSettings().groupAiTabs === false) return; // (a tab the user asked for shows with theirs)
   const group = aiGroup();
   if (group) { if (tab.groupId !== group.id) { if (tab.groupId) tabGroups.remove(tab.id); tabGroups.add(tab.id, group.id); } return; }
   if (tab.groupId) tabGroups.remove(tab.id);
@@ -6302,7 +6302,7 @@ function focusAddress() {
 }
 
 // [ai manners] with "hide tabs the AI opened" on, the tabs it leaves out of the strip are skipped (the one in front, and one playing sound, stay)
-const aiTabHidden = (t) => readSettings().hideAiTabs === true && manners.isAiTab(t) && t.id !== activeId && !(alive(t) && t.view.webContents.isCurrentlyAudible?.());
+const aiTabHidden = (t) => readSettings().hideAiTabs === true && manners.isAiTab(t) && !manners.forUser(t) && t.id !== activeId && !(alive(t) && t.view.webContents.isCurrentlyAudible?.());
 function cycleTab(direction) {
   const list = tabs.filter((t) => !aiTabHidden(t));
   const index = list.findIndex((t) => t.id === activeId);
@@ -9365,6 +9365,21 @@ const agentActiveTab = () => {
 const stayOnUsersTab = () => readSettings().aiStayOnMyTab === true;
 // [ai manners] the run's latest user message asked to see or go to a tab (manners.showsTab): only then may its open_tab / switch_tab come to the front
 const userAskedToSee = () => { try { const m = agent.currentScope()?.chat; for (let i = (m?.length || 0) - 1; i >= 0; i--) { const x = m[i]; if (x?.role !== 'user') continue; const text = typeof x.content === 'string' ? x.content : Array.isArray(x.content) ? x.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : ''; if (!text.trim()) continue; return manners.userAskedToSee(text); } } catch { /* no run */ } return false; };
+// [ai tabs] the run's chat asked for the tab itself ("open the quiz notes in Lumen", or a short follow-up to that: manners.userAskedToOpen).
+// A tab the run opens, reuses or switches to for that is marked forUser: it shows with the user's tabs (not folded into the AI tabs group, not
+// hidden by the sidebar toggle) and is kept when the run ends. It becomes the user's once they use it; one they never touch (opened by
+// mistake) is tidied after the grace period like any kept AI tab. A helper's tabs never are (it works for the run, not for the user).
+const userTextsNewestFirst = (max = 2) => { const out = []; try { const m = agent.currentScope()?.chat; for (let i = (m?.length || 0) - 1; i >= 0 && out.length < max; i--) { const x = m[i]; if (x?.role !== 'user') continue; const text = typeof x.content === 'string' ? x.content : Array.isArray(x.content) ? x.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : ''; if (text.trim()) out.push(text); } } catch { /* no run */ } return out; };
+const userAskedToOpen = () => { const s = agent.currentScope(); return Boolean(s?.chat && !s.helper && !mcpCall()) && manners.userAskedToOpen(userTextsNewestFirst()); };
+function handToUserIfAsked(id) {
+  const hit = tabAnywhere(id);
+  const tab = hit?.t;
+  if (!tab?.openedBy || tab.rec?.agent || !userAskedToOpen()) return false;
+  if (!manners.markForUser(tab)) return false;
+  const rec = tab.rec;
+  if (rec && winRecs.has(rec) && rcAlive(rec)) withWindow(rec, () => { leaveAiGroup(tab); sendTabs(); });
+  return true;
+}
 const runOwnTabId = () => { const s = agent.currentScope(); return s?.chat ? (s.tabId ?? activeId) : activeId; };
 const runOf = (scope = agent.currentScope()) => ({ chatId: scope?.chatId ?? null, runId: scope?.runId ?? null });
 const agentOpenTab = (url, opts = {}) => {
@@ -9376,8 +9391,9 @@ const agentOpenTab = (url, opts = {}) => {
   const governed = ai || (opts && 'show' in opts);
   // (An outside agent's tab opens in front of ITS OWN window, which is nobody else's.)
   const show = mcp || (!fromPage && (governed ? manners.showsTab({ show: wantShow === true && !stayOnUsersTab(), asked: userAskedToSee(), runTabId: runOwnTabId(), activeId }) : !rest.background));
+  const forUser = ai && !mcp && userAskedToOpen(); // [ai tabs] the user asked for this tab: shown with their tabs, kept after the run
   if (ai && !mcp) aiTabsMakeRoom(); // [ai tab tidy] about 8 tabs per chat
-  const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: { ...runOf(), keep: keep === true } } : {}) }); // (keep: left open when the run ends)
+  const open = () => openTab(url, { ...rest, background: !show, ...(ai && !mcp ? { openedBy: { ...runOf(), keep: keep === true, forUser } } : {}) }); // (keep: left open when the run ends)
   const tab = governed && !mcp && agent.currentScope() ? asAiSwitch(open) : open(); // (the AI's tool call: its own switch, below)
   if (fromPage) chatPageRt.retarget(tab.id);
   else if (show && !mcp) bindRunChatTo(tab.id);
@@ -9819,7 +9835,7 @@ const agent = new Agent({
   passwordFilled: (wc) => Boolean(passwordsRt?.filledIn(wc)), // [passwords] run_script refuses a site in a tab where the user filled a saved password
   externalTools: mcpClient, // [mcp client]
   connectors: connectorsFacade, // [connectors] the one `connector` tool
-  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), closeTab: inRun((id) => closeTab(id, { ai: true })), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
+  activeTab: inRun(agentActiveTab), tabInFront: inRun(agentTabInFront), tabById: inRun(agentTabById), noTabReason: inRun(noTabReason), listTabs: inRun(listTabs), openTab: inRun(agentOpenTab), switchTab: inRun(agentSwitchTab), keepAiTab: inRun((id) => manners.keepAfterRun(tabAnywhere(id)?.t)), handToUserIfAsked: inRun(handToUserIfAsked), closeTab: inRun((id) => closeTab(id, { ai: true })), requestCloseTab: inRun(agentRequestCloseTab), // keepAiTab: [ai manners] switch_tab keep:true, a tab of the AI's that the user needs after the run
   hasUnsavedInput: inRun(agentHasUnsavedInput), unsavedState: inRun(agentUnsavedState), saveState: inRun(agentSaveState), askTabs: inRun(askTabsList), groupTabs: inRun(groupTabsFor), ungroupTabs: inRun(ungroupTabsFor), effectiveModel, anthropicAuth,
   tabExistsElsewhere: (id) => Boolean(tabAnywhere(id)), // [agent window] lets an outside agent's call be refused by name when it names a tab outside its own window
   recordGap: (info) => gapLog().record(info), // [no handoff]

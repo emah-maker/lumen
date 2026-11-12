@@ -19,9 +19,11 @@
 // ---- tabs the AI opened
 // `by`: { chatId, runId } of the run that opened it (null ids: an outside agent, or Lumen opening a tab for a chat), and `keep`:
 // the AI said the user needs it open after the task (open_tab / switch_tab keep:true), so the close when a run ends leaves it.
+// `forUser`: the user asked for this tab (userAskedToOpen): kept too, and shown with their tabs (not in the AI tabs group, not hidden).
+// It is still the AI's until the user uses it, so one opened by mistake that the user never looks at is tidied later (ai-tab-tidy grace).
 function markOpened(tab, by = {}, now = Date.now()) {
   if (!tab) return tab;
-  tab.openedBy = { chatId: by.chatId ?? null, runId: by.runId ?? null, at: now, ...(by.keep === true ? { keep: true } : {}) };
+  tab.openedBy = { chatId: by.chatId ?? null, runId: by.runId ?? null, at: now, ...(by.keep === true || by.forUser === true ? { keep: true } : {}), ...(by.forUser === true ? { forUser: true } : {}) };
   return tab;
 }
 // The AI says this tab of its own is needed after the task (the page the user asked to see, a sign-in or checkout left for them to
@@ -41,12 +43,12 @@ function handOver(tab) {
 const isAiTab = (tab) => Boolean(tab && tab.openedBy);
 // The mark as the saved session keeps it: { chatId, at } or null. A run id means nothing after a restart (ids start again), so it
 // is not kept: a restored tab belongs to its chat, and "close this chat's tabs", the tab menu and the setting still reach it.
-const savedMark = (tab) => (tab && tab.openedBy && !tab.pinned ? { chatId: tab.openedBy.chatId ?? null, at: Number(tab.openedBy.at) || 0, ...(tab.openedBy.keep ? { keep: true } : {}) } : null);
+const savedMark = (tab) => (tab && tab.openedBy && !tab.pinned ? { chatId: tab.openedBy.chatId ?? null, at: Number(tab.openedBy.at) || 0, ...(tab.openedBy.keep ? { keep: true } : {}), ...(tab.openedBy.forUser ? { forUser: true } : {}) } : null);
 // Puts a saved mark back on a restored tab (not on one that is pinned or was placed by hand: that tab is the user's).
 function restoreMark(tab, saved) {
   if (!tab || !saved || typeof saved !== 'object' || tab.pinned || tab.userMoved) return tab;
   const chatId = typeof saved.chatId === 'string' && saved.chatId ? saved.chatId : null;
-  return markOpened(tab, { chatId, runId: null, keep: saved.keep === true }, Number.isFinite(saved.at) && saved.at > 0 ? saved.at : Date.now());
+  return markOpened(tab, { chatId, runId: null, keep: saved.keep === true, forUser: saved.forUser === true }, Number.isFinite(saved.at) && saved.at > 0 ? saved.at : Date.now());
 }
 // Has the user taken this tab over without handOver having been called (pinned, dragged to a place by hand)?
 // A group the AI or Lumen's own automatic grouping put it in does not count: only a move or a pin of the user's.
@@ -250,6 +252,26 @@ function showsTab({ show = false, asked = false, runTabId = null, activeId = nul
 // the user's own text counts (never a page's or the model's).
 const SHOW_ASK = /\b(go to|switch (me )?to|take me to|bring (it |that |the \w+ )?(up|to the front)|show me|pull up|open (it |that |this |them |the \w+ )?(up )?(for me|in front|so i can see)|let me see|jump to)\b/i;
 function userAskedToSee(text) { return typeof text === 'string' && text.length < 4000 && SHOW_ASK.test(text); }
+// Did the user ask for the tab itself: "open the quiz notes in Lumen", "open them in tabs", "pull up my syllabus", "can you open the Canvas
+// page" (and everything SHOW_ASK counts)? A tab opened for that is the user's, not the AI's: it is not folded into the AI tabs group, hidden
+// or closed when the run ends (main.js handToUserIfAsked). `texts`: the user's messages, newest first. A short follow-up ("for diff eq",
+// "the second one") answers the request before it, so that one is read too. A question or a task ("find me...") is not an ask to open.
+const OPEN_ASK = /^\W*(?:(?:please|pls|can you|could you|would you|now|ok(?:ay)?|and|also|then|just)[\s,]+)*(?:open|re-?open|pull up|bring up)\b|\b(?:open|pull up|bring up)\b[^.?!\n]{0,120}?\b(?:in lumen|in (?:a |new |separate |their own |its own )*tabs?|for me)\b/i;
+const asksOpen = (text) => typeof text === 'string' && text.length < 4000 && (OPEN_ASK.test(text) || SHOW_ASK.test(text));
+// The user asked for this AI tab (switch_tab to it, or open_tab reusing it): kept and shown with their tabs. False if it is not the AI's.
+function markForUser(tab) {
+  if (!tab?.openedBy) return false;
+  tab.openedBy.keep = true;
+  tab.openedBy.forUser = true;
+  return true;
+}
+const forUser = (tab) => Boolean(tab?.openedBy?.forUser);
+function userAskedToOpen(texts) {
+  const list = (Array.isArray(texts) ? texts : [texts]).filter((x) => typeof x === 'string' && x.trim());
+  if (!list.length) return false;
+  if (asksOpen(list[0])) return true;
+  return list[0].trim().length <= 60 && !/\?\s*$/.test(list[0]) && asksOpen(list[1]);
+}
 
 // ---- which keys and clicks came from the AI
 // A tool's sendInputEvent runs inside agentInput(wc, fn); the page view's key and mouse handlers (main.js) ask
@@ -311,6 +333,6 @@ module.exports = {
   TYPING_GRACE_MS, TYPING_WAIT_CAP_MS, FOCUS_RECENT_MS, CLOSE_SETTINGS, ACTION_TOOLS, HANDS_OFF_PROMPT,
   markOpened, keepAfterRun, handOver, isAiTab, takenOver, closeSelection, busyKept, focusAfterAiClose, savedMark, restoreMark, cleanCloseSetting, closeAfterRun,
   isKeptOff, keepOff, offTabCheck, offTabRefusal, userTookOverRefusal, OFF_TAB_NOTE,
-  closeDecision, closeLeft, autosaveHost, autosaveScript, CLOSE_REFUSAL, closeGranted, isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab, userAskedToSee,
+  closeDecision, closeLeft, autosaveHost, autosaveScript, CLOSE_REFUSAL, closeGranted, isAutomationRead, automationVerdict, isActionTool, handsOffRefusal, handsOffCheck, typingWait, guardsFocus, showsTab, userAskedToSee, userAskedToOpen, forUser, markForUser,
   agentInput, agentInputAsync, isAgentInput, userInput, tabInFront, confirmLanded,
 };

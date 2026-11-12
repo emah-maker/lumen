@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Tabs you ask the AI to open show with your tabs.** "Open my quiz notes in Lumen" (or a short follow-up such as "for diff eq") put the opened tabs in the folded AI tabs group, behind "Hide tabs the AI opened", and the end-of-run clean-up could close them. Now a tab the AI opens, reuses or switches to because you asked for it sits in the strip with your own tabs, is never hidden, and stays open after the run. Using it makes it yours; one you never touch (a tab it opened by mistake) is tidied after the usual grace period.
 - **The AI can email a file for you.** Ask it to email a PDF it made (or a file you attached or named) and it does it: the file goes in the email itself, not as a Drive link. Gmail's drafts and sends take files now, the email's card lists each one with its size, and you press Send there. If Lumen doesn't have Google's permission for drafts and sending yet, Google's own permission page opens right after you approve, instead of the AI telling you to go to Settings. Sending no longer needs a switch in Settings first: every email waits for Send on its card, and the Settings switch now only lets you tell the AI in a chat that it may send without asking. Also fixed: an email approved on its card was refused ("needs the user's approval") because the AI wasn't told which calls were sends.
 
 ## 0.5.98 (2026-11-10)
