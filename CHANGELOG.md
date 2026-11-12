@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI can email a file for you.** Ask it to email a PDF it made (or a file you attached or named) and it does it: the file goes in the email itself, not as a Drive link. Gmail's drafts and sends take files now, the email's card lists each one with its size, and you press Send there. If Lumen doesn't have Google's permission for drafts and sending yet, Google's own permission page opens right after you approve, instead of the AI telling you to go to Settings. Sending no longer needs a switch in Settings first: every email waits for Send on its card, and the Settings switch now only lets you tell the AI in a chat that it may send without asking. Also fixed: an email approved on its card was refused ("needs the user's approval") because the AI wasn't told which calls were sends.
+
 ## 0.5.98 (2026-11-10)
 
 - **Dark mode for all websites works.** The experimental setting (Settings → Experimental) did nothing: it turned on Chromium's `WebContentsForceDark` feature, which only Chrome's own browser layer reads, and Electron doesn't have that layer. Lumen now turns Chromium's auto dark mode on itself, in every page and frame, so a site with no dark theme of its own is drawn dark. It still takes effect after a restart. Tests: `test/e2e/force-dark.js`.

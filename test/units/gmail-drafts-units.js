@@ -223,12 +223,20 @@ async function connector() {
 
   const draft = { app: 'gmail', action: 'create_draft', args: { to: 'lee@school.edu', subject: 'Re: Grades', body: 'Thank you!\nAda', reply_to_message_id: '18c0ffee01' } };
   check('create_draft input is valid; a bad address or a reply id that isn’t one is refused', registry.validate(draft) === null && /expected form/.test(registry.validate({ app: 'gmail', action: 'create_draft', args: { to: 'nobody', subject: 's', body: 'b' } }) || '') && /expected form/.test(registry.validate({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b', reply_to_message_id: '../x' } }) || ''), registry.validate(draft));
-  const before = await fails(() => svc.describeWrite(draft));
-  check('without Allow drafts, no card: the AI is told to have the user press Allow drafts', /Allow drafts first/.test(before) && /Settings → Apps and connections/.test(before), before);
-  check('…and the action itself refuses too, sending nothing', /Allow drafts first/.test(await fails(() => svc.call(draft))) && g.made.length === 0, '');
+  const before = await svc.describeWrite(draft);
+  check('without Google’s drafts permission, the card still shows, says Google asks once after it, and never sends the user to Settings; nothing is asked of Google for the card', /Google then asks you once/.test(before.fixed) && !/Settings/.test(before.detail) && g.allowCalls === 0 && g.made.length === 0, JSON.stringify(before));
   check('the AI can’t start Allow drafts: it isn’t an action', !registry.get('gmail').actions.allow_drafts && g.allowCalls === 0, '');
+  const allowReal = google.allowDrafts;
+  google.allowDrafts = async () => { g.allowCalls++; throw new Error('Gmail was not connected.'); };
+  const declined = await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }));
+  check('an approved draft without the permission opens Google’s consent once; declined there, nothing is made and the AI is told to offer another try (no Settings)', g.allowCalls === 1 && g.made.length === 0 && /wasn’t given/.test(declined) && /Nothing was made/.test(declined) && /try again/.test(declined) && !/Settings/.test(declined), declined);
+  google.allowDrafts = async () => { g.allowCalls++; }; // (the page closed with nothing granted)
+  const none = await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }));
+  check('…and a consent that ends without the permission makes nothing either', g.allowCalls === 2 && g.made.length === 0 && /didn’t give Lumen permission/.test(none), none);
+  google.allowDrafts = allowReal;
   await svc.allowDrafts('gmail');
-  check('Allow drafts (the Settings button) runs the Google step, and the card shows drafts on', g.allowCalls === 1 && card().drafts === 'on', JSON.stringify(card()));
+  check('Allow drafts (the Settings button) runs the Google step, and the card shows drafts on', g.allowCalls === 3 && card().drafts === 'on', JSON.stringify(card()));
+  const noAsk = g.allowCalls;
 
   const c = await svc.describeWrite(draft);
   check('the card: To, Cc, Subject and Text editable, in that order, labelled plainly', c.fields.map((f) => `${f.key}:${f.label}`).join() === 'to:To,cc:Cc,subject:Subject,body:Text' && c.fields[3].multiline && !c.fields[0].multiline, JSON.stringify(c.fields));
@@ -258,7 +266,8 @@ async function connector() {
   const certain = await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }));
   check('the AI hears “Nothing was made” only for a failure marked certain; any other says it may have been made', /may have been made/.test(unknown) && !/Nothing was made/.test(unknown) && /invalidArgument\)\. Nothing was made\./.test(certain), JSON.stringify({ unknown, certain }));
   g.composeError = Object.assign(new Error('Allow drafts first.'), { kind: 'scope' });
-  check('a 403 for a missing permission says “Allow drafts first”', /Allow drafts first/.test(await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }))), '');
+  const lost = await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }));
+  check('a 403 for a missing permission says Google took it back and nothing was made, and the next approved one asks Google again (no Settings)', /no longer has permission/.test(lost) && /Nothing was made/.test(lost) && /asks Google for the permission/.test(lost) && !/Settings/.test(lost), lost);
   g.composeError = Object.assign(new Error('Google signed Lumen out.'), { reconnect: true });
   check('an ended sign-in (401) says to sign in again, and the card turns to Needs sign-in', /isn’t signed in/.test(await fails(() => svc.call({ app: 'gmail', action: 'create_draft', args: { to: 'a@x.org', subject: 's', body: 'b' } }))) && card().status === 'needs-signin', JSON.stringify(card()));
   g.composeError = null;
@@ -284,7 +293,8 @@ async function connector() {
   await pending;
   await agent.runConnector(input);
   check('allowed with an edit: the draft has the edited subject', g.made.length === n + 1 && /\r\nSubject: What I wrote\r\n/.test(unRaw(g.made[n].message.raw)), unRaw(g.made[n].message.raw));
-  check('the tool for a chat lists create_draft as a write', /create_draft\(to,cc\?,subject,body,reply_to_message_id\?\)!/.test(svc.defs()[0].description), svc.defs()[0].description);
+  check('the tool for a chat lists create_draft as a write, with files to attach', /create_draft\(to,cc\?,subject,body,reply_to_message_id\?,attach\?\)!/.test(svc.defs()[0].description), svc.defs()[0].description);
+  check('with the permission there, no draft asked Google again', g.allowCalls === noAsk, String(g.allowCalls));
   const bgAgent = new agentLib.Agent({ ...browser, background: true }, () => null, () => ({}));
   events.length = 0;
   const bgErr = await fails(() => bgAgent.allowConnector({ ...input, args: { ...input.args } }, gate()));

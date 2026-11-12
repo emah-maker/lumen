@@ -6040,15 +6040,16 @@ ${prompt}` : prompt), historyImages: [] };
       if (this.browser.handsOff?.() && !this.userRun()) throw new Error('The user keeps the AI from acting for them (hands-off mode), so this change in a connected service is not allowed. Tell the user what you would have done.');
       const upload = input.app === 'drive' && input.action === 'upload' ? this.connectorUploadFile(input) : null; // [drive] the one local file this upload would send, checked like upload_file's
       const updating = input.app === 'drive' && input.action === 'update' ? this.connectorUpdateFiles(input) : null; // [drive] the local files an update would send, each checked the same way
-      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal, file: upload || updating });
-      const sendFile = updating ? this.connectorUpdatePairs(updating, names?.plan) : upload; // an update sends only the files the card paired with a Drive file
+      const attaching = input.app === 'gmail' && (input.action === 'create_draft' || input.action === 'send') && input.args?.attach ? this.connectorAttachFiles(input, run?.chat || taskScope.getStore()?.chat) : null; // [gmail] the files an email carries, each checked like an upload's
+      const { title, detail, fixed, fields, names } = await svc.describeWrite(input, { signal, file: upload || updating || attaching });
+      const sendFile = updating ? this.connectorUpdatePairs(updating, names?.plan) : upload || attaching; // an update sends only the files the card paired with a Drive file
       // A Gmail send (opt-in): the card, unless the user typed in THIS chat that it may go (and every recipient is one they typed), then
       // a 10 second Undo first. Auto-allow and "always" never answer the card (noAlways); Bypass permissions does (the log says so: via 'bypass').
       const sending = Boolean(svc.isSend?.(input));
       const conAct = connectors.get(input.app)?.actions?.[input.action];
-      const always = connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good; after this chat reads a page, only a private one (a task, an event)
+      const always = attaching ? { skip: false, offer: false } : connectorAlways.alwaysDecision({ app: input.app, name: input.action, action: conAct, sending, tainted: Boolean(holder?.tainted), list: svc.alwaysList?.() || [] }); // an add (a task, an event, a draft) the user may allow for good; after this chat reads a page, only a private one (a task, an event). A draft with files always shows its card (it names the files).
       let via = 'card';
-      if (sending) {
+      if (sending && svc.sendingOn?.()) { // (the user's typed permission counts only with Settings' "send without the card" switch on; otherwise every send is a card)
         const verdict = sendLib.typedGrant({ typed: run?.chat?.typed || taskScope.getStore()?.chat?.typed || [], standing: (run?.chat || taskScope.getStore()?.chat)?.sendNoAsk === true, args: input.args, replyAddress: names?.replyAddress || '' });
         if (verdict.direct) { await this.sendUndoWindow(input, { emit, signal }); via = verdict.mode; }
       }
@@ -6167,6 +6168,31 @@ ${list.text}` }]);
     let mtimeMs = 0;
     try { mtimeMs = require('fs').statSync(f.path).mtimeMs; } catch { /* the provider says it can't be read */ }
     return { name: f.name, type: f.type, size: f.size, path: f.path, mtimeMs };
+  }
+
+  // [gmail] The files an email carries (args.attach: one per line): a chat attachment's ref, or a path. A path is taken when the user allowed
+  // files on this computer, or when it is a file the AI itself wrote in THIS chat (features/ai-files.js: the PDF it just made), through the
+  // same checks either way (no credentials folders, no Lumen profile, a regular file under the size cap). The card lists each file; only
+  // those go, each looked at again before its bytes are read. -> [{ name, type, size, path, mtimeMs }]
+  connectorAttachFiles(input, chat) {
+    const GD = require('../features/gmail-drafts');
+    const items = String(input.args?.attach || '').split(/\r?\n/).map((x) => x.trim().replace(/^["'`]|["'`]$/g, '')).filter(Boolean);
+    if (!items.length) return null;
+    if (items.length > GD.MAX_ATTACHMENTS) throw new Error(`At most ${GD.MAX_ATTACHMENTS} files in one email. Nothing was made or sent.`);
+    const out = items.map((item) => {
+      if (/^f_[0-9a-f]{24}$/.test(item)) return this.connectorLocalFile({ file: item });
+      if (this.browser.deviceAccess?.() === true) return this.connectorLocalFile({ path: item });
+      const [made] = aiFiles.resolveFiles([item]);
+      if (!made || !aiFiles.wasWritten(chat, made)) throw new Error(`${item.slice(0, 200)} isn’t a file you made in this chat or one the user attached, and files on this computer are off. Nothing was made or sent. Ask the user to attach it to the chat (or to turn on Settings → AI → "Let the AI use files on this computer"), then call this again.`);
+      const real = deviceAccess.checkedPath(made.path, 'file', this.deviceOpts());
+      let f;
+      try { f = uploadFiles.describePicked(real); } catch (err) { throw new Error(`${deviceAccess.shown(real)}: ${err.message}`); }
+      let mtimeMs = 0;
+      try { mtimeMs = require('fs').statSync(f.path).mtimeMs; } catch { /* the provider says it can't be read */ }
+      return { name: f.name, type: f.type, size: f.size, path: f.path, mtimeMs };
+    });
+    if (out.reduce((n, f) => n + f.size, 0) > GD.MAX_ATTACH_BYTES) throw new Error(`Those files add up to more than ${GD.MAX_ATTACH_BYTES / 1048576} MB, more than one Gmail email carries. Nothing was made or sent. Attach fewer, or upload the big one to Drive and put its link in the text.`);
+    return out;
   }
 
   connectorUploadFile(input) {
