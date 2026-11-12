@@ -1628,6 +1628,23 @@ function applyRects(widgets, items) {
 //         spotifyWebStatus()? ({ state: 'loading'|'ready'|'offline'|'failed', drm: 'unknown'|'ok'|'missing' }: the Web player's view), spotifyWebReload()?,
 //         tradingviewLists()? (TradingView's account answer, read with the user's TradingView cookies; see TVW.ACCOUNT_URL),
 //         openExternal(url)? (the user's default browser, for OAuth consent pages), signInMs? }
+// [connectors] Gmail: more than this much base64 in raw goes to the upload address instead of the JSON body.
+const GMAIL_JSON_MAX = 3.5e6;
+// The request for one draft or send. An email with big attachments goes to Google's upload address for the same path
+// (/upload/gmail/v1/…, uploadType=multipart: the JSON part without `raw`, then the message itself as message/rfc822), which takes
+// emails up to 35 MB; a small one is the JSON body with `raw`, as before.
+function gmailRequest(base, path, body) {
+  const msg = body?.message && typeof body.message === 'object' ? body.message : body;
+  const raw = typeof msg?.raw === 'string' ? msg.raw : '';
+  if (raw.length <= GMAIL_JSON_MAX) return { url: `${base}${path}`, body: JSON.stringify(body), type: 'application/json' };
+  const meta = body?.message ? { ...body, message: { ...body.message } } : { ...body };
+  if (meta.message) delete meta.message.raw; else delete meta.raw;
+  const boundary = `lumen_${require('crypto').randomBytes(12).toString('hex')}`;
+  const head = Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: message/rfc822\r\n\r\n`, 'utf8');
+  const out = Buffer.concat([head, Buffer.from(raw, 'base64url'), Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')]);
+  return { url: `${String(base).replace(/\/gmail\/v1$/, '/upload/gmail/v1')}${path}?uploadType=multipart`, body: out, type: `multipart/related; boundary=${boundary}`, upload: true };
+}
+
 function createWidgets(deps) {
   const cache = new Map(); // id -> { data, error, at, key, pending, undo, notice }
   const recent = []; // times of recent network requests (the rate limit)
@@ -3185,7 +3202,8 @@ function createWidgets(deps) {
         // Sent once: no retry through a fresh session (retry: false). Only a failure that certainly happened before the request reached
         // Google (not sent at all, no such host, connection refused, offline) says nothing was made; any other (a timeout, a connection
         // dropped after sending, an unreadable answer) may have made the draft, and says so (kind 'maybe').
-        res = await x.raw(`${x.endpoint('gmail')}${path}`, { method: 'POST', body: JSON.stringify(body), headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': 'application/json' }, max: 1e6, budget: 'search', retry: false }); // (one the user allowed: the search budget, not the cards' polling one)
+        const req = gmailRequest(x.endpoint('gmail'), path, body);
+        res = await x.raw(req.url, { method: 'POST', body: req.body, headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'Content-Type': req.type }, max: 1e6, budget: 'search', retry: false, ...(req.upload ? { timeout: 180e3 } : {}) }); // (one the user allowed: the search budget, not the cards' polling one)
       } catch (err) {
         if (err?.notSent || NOT_SENT_NET.test(String(err?.why || ''))) throw certain(new OA.OAuthError(`Couldn’t reach Gmail, so no ${noun} was ${made}. ${err?.notSent ? str(err.message, 120) : 'Check the connection and try again.'}`, { kind: 'unreached' }));
         throw maybe();
@@ -3211,4 +3229,4 @@ function createWidgets(deps) {
   return { retryNow, flush, aiStatusChanged, aiStatusSoon, routinesChanged, routinesSoon, engineChanged, spotifyReconnect, list, forPage, refresh, refreshAll, test, save: saveWidget, remove, setServiceSecret, restore, move, place, resize, layout, resetLayout, projects, tradingviewLists, search, setSavedPlaces, setLocationConsent, relocate, state, actionFrom, act, cache, spotifyStart, spotifyDisconnect, gmailConnect, gmailAuthState, gmailApi, gmailCancel, gmailDisconnect, gmailOpenSignIn, gmailAccounts, googleSessionChanged, slackStatus, githubStart, githubCli, githubCancel, githubSignOut, githubStatus, slackStart, slackFinish, slackCancel, slackDisconnect, slackChannels, slackConnectToken, slackPaste, slackAuto, gmailAllowDrafts, gmailCompose, gmailSend };
 }
 
-module.exports = { INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };
+module.exports = { gmailRequest, GMAIL_JSON_MAX, INLINE, createWidgets, cleanList, cleanWidget, cleanSizes, httpsUrl, CONNECTORS, ENDPOINTS, SPANS, HEIGHTS, MAX_WIDGETS };

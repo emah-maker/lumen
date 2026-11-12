@@ -1885,7 +1885,7 @@ window.assistant.onEvent((event) => {
     case 'text_block':
       settleThinking();
       endStream();
-      if (turn.text && turn.textSource?.trim()) turn.lastSaid = { el: turn.text, text: turn.text.textContent }; // (an engine that ends a block before its step: that block is the step's narration)
+      if (turn.text && turn.textSource?.trim()) (turn.saidBlocks ||= []).push(turn.text); // (an engine that ends a block before its step: that block is the step's narration; two blocks before one step are both)
       turn.text = null; // next text starts a fresh block after any tool steps
       if (event.type === 'text_block') window.stepUI?.endCard(turn); // (narration does not end the card either: one turn is one card, which stays until the turn ends, see step-ui.js endCard)
       turn.textSource = '';
@@ -1928,9 +1928,16 @@ window.assistant.onEvent((event) => {
     }
     case 'text': {
       endThinking();
-      if (!turn.text) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); window.stepUI?.endCard(turn); }
+      if (!turn.text) {
+        turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' }));
+        window.stepUI?.endCard(turn);
+        // [quiet run] Words that come while the run's helpers, agents or reviewers still work on its card are progress, not the answer: the card's
+        // live line as they stream, never a bubble. finishTurn shows the bubble after all if the run is over by the turn's end, or if it asks something.
+        if (approvals.size === 0 && window.stepUI?.runGoesOn?.(turn)) { turn.text.hidden = true; turn.text.classList.add('run-folded'); turn.text.dataset.liveFold = '1'; }
+      }
       turn.textSource += event.text;
       renderStreaming(turn.text, turn.textSource);
+      if (turn.text.dataset.liveFold) { const paras = turn.textSource.split(/\n\s*\n/).filter((p) => p.trim()); window.stepUI?.narrate(turn, paras[paras.length - 1] || ''); }
       break;
     }
     case 'retry':
@@ -1946,11 +1953,11 @@ window.assistant.onEvent((event) => {
       finishReply(turn.text, turn.textSource);
       turn.approvalsWaiting ||= () => approvals.size > 0;
       const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {}); // (never a raw tool name)
-      const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
-      turn.lastSaid = null; // (words before a step: that step's live line in the card, not a bubble)
+      const said = [...(turn.saidBlocks || []), ...(turn.text && turn.textSource?.trim() ? [turn.text] : [])].filter((el) => el.isConnected);
+      turn.saidBlocks = null; // (words before a step, however many blocks: that step's live line in the card, not bubbles)
       const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
       turn.seg = null; // (thinking after this step is a row of its own, after it)
-      if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
+      if (said.length && window.stepUI?.narrate(turn, said[said.length - 1].textContent)) for (const el of said) el.remove();
       if (event.helper) step.dataset.helper = '1'; // [background helpers] a helper's step: the reply ending does not stop it (finishTurn)
       if (!event.id) step.className = 'step done';
       if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') })); // [connectors] what a write made, with its link
@@ -2226,6 +2233,15 @@ function finishTurn(event, { early }) {
   // suggestions and no skill offer; those come when the run is over (runOver).
   const goesOn = !turn.failed && !turn.stopped && !turn.stopRequested && Boolean(window.stepUI?.runGoesOn?.(turn));
   const folded = goesOn && window.runQuiet ? window.runQuiet.interim(turn.textSource, { waiting: approvals.size > 0 }) : '';
+  const blocksBefore = (turn.saidBlocks || []).filter((el) => el.isConnected && el !== turn.text); // (the turn's earlier blocks since its last step)
+  turn.saidBlocks = null;
+  if (folded) for (const el of blocksBefore) el.remove(); // (all of what it said since its last step was progress: the card's line is the latest of it)
+  if (!folded && turn.text?.dataset.liveFold) { turn.text.hidden = false; turn.text.classList.remove('run-folded'); delete turn.text.dataset.liveFold; } // (streamed into the card, but the run is over, or it asks the user something: it is the answer)
+  if (!goesOn && !turn.failed && turn.cards?.length && window.runQuiet && turn.text) { // [quiet run] the final answer of a run with a card: without its status filler ("Status: …", "I'm waiting on…"), which the card said
+    for (const el of blocksBefore) if (window.runQuiet.filler(el.source || '')) el.remove();
+    const tidy = window.runQuiet.finalReply(turn.textSource);
+    if (tidy !== turn.textSource) { turn.textSource = tidy; turn.text.source = tidy; turn.text.flushed = false; }
+  }
   finishReply(turn.text, turn.textSource, { latest: true });
   // A reply that ended on a step or a notice (stopped, or its last act was a tool) can be asked again too.
   if (!goesOn && !turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
@@ -3269,7 +3285,13 @@ function drawItems(items, userEntries, replyEntries) {
       else before = [];
     }
   }
-  for (const item of items) {
+  const oneRun = window.runQuiet?.oneCardPerRun && window.stepUI ? window.runQuiet.oneCardPerRun(items) : { merged: new Map(), earlier: new Set() }; // [quiet run] one run, one card (run-quiet.js)
+  for (const raw of items) {
+    if (oneRun.earlier.has(raw)) { // (a turn of a run that went on: its steps are in the run's one card, drawn with its last turn; its words were that card's line)
+      if (raw.text && window.runQuiet.asks(raw.text)) drawItems([{ role: 'assistant', text: raw.text, at: raw.at, model: raw.model }], userEntries, replyEntries);
+      continue;
+    }
+    const item = oneRun.merged.get(raw) || raw;
     if (item.plan && window.planModeUI) { // [plan mode] a proposed plan: its card again, after any words that came with it
       if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
       append(window.planModeUI.card(item.plan));
@@ -3311,6 +3333,8 @@ function drawItems(items, userEntries, replyEntries) {
         continue;
       }
       if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); } // its thinking (collapsed) and the steps it took
+      // [quiet run] A turn that ended while its run went on: what it said was the card's line then, so no bubble now (unless it asked something).
+      if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
       else if (item.steps) {
         const summary = document.createElement('div');
         summary.className = 'step done restored';
@@ -3319,10 +3343,11 @@ function drawItems(items, userEntries, replyEntries) {
         append(summary);
       }
       bubble.className = 'msg assistant';
-      bubble.innerHTML = window.renderMarkdown(item.text);
+      const said = item.cards && item.tools?.length && window.runQuiet ? window.runQuiet.finalReply(item.text) : item.text; // [quiet run] the answer without its status filler, as when it ended
+      bubble.innerHTML = window.renderMarkdown(said);
       bubble._tabs = item.tabs || null; // [tab chips] the tabs it names, as they were
       decorateCode(bubble);
-      finishReply(bubble, item.text);
+      finishReply(bubble, said);
       if ('steps' in item) replyEntries.push({ bubble, item }); // (the reply that closes its exchange; a text before a step has none)
       if (item.generated?.length) { // the words, then the pictures under them
         bubble.classList.add('restored');
@@ -3355,7 +3380,7 @@ function renderLatest(items) {
   const lastReply = items[lastIndex]?.role === 'assistant' && !items[lastIndex].text
     ? [...messages.querySelectorAll('.msg.assistant.gen-pics.restored')].pop()
     : [...messages.querySelectorAll('.msg.assistant.restored:not(.gen-pics)')].pop();
-  if (lastUser && (lastUser.text || lastUser.images?.length || lastUser.files?.length) && lastReply && items[lastIndex]?.role === 'assistant') {
+  if (lastUser && (lastUser.text || lastUser.images?.length || lastUser.files?.length) && lastReply && items[lastIndex]?.role === 'assistant' && !items[lastIndex].interim) { // ([quiet run] a reply drawn while its run goes on has no bubble: Try again waits for the answer)
     const imgs = (lastUser.images || []).filter((src) => typeof src === 'string' && /^data:image\/[a-z+.-]+;base64,/.test(src)).map((src) => {
       const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/);
       return { media_type, data, url: src };
@@ -3363,7 +3388,7 @@ function renderLatest(items) {
     lastAsk = { text: lastUser.text || '', images: [...imgs, ...restoredFiles(lastUser.files)], tabs: null };
     if (items[lastIndex].acted) { const step = document.createElement('div'); step.className = 'step done restored'; step.dataset.acts = '1'; step.hidden = true; lastReply.before(step); }
     lastReply.querySelector('.reply-copy')?.remove();
-    finishReply(lastReply, items[items.length - 1].text, { latest: true });
+    { const last = items[items.length - 1]; finishReply(lastReply, last.cards && last.tools?.length && window.runQuiet ? window.runQuiet.finalReply(last.text) : last.text, { latest: true }); }
   } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length || items[lastIndex].files?.length)) {
     // It ends on your message: its reply stopped before saying anything. Regenerate and Edit still work.
     const lastBubble = [...messages.querySelectorAll('.msg.user')].pop();
