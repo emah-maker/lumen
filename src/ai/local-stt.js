@@ -95,7 +95,7 @@ const short = (err) => String(err?.message || err || '').slice(0, 120);
 
 // deps: { dir, platform?, arch?, fetchImpl, spawnImpl?, tmpdir?, extract?(zip, into) -> Promise, cpus?, builds?, models? (tests: small files) }
 function createLocalStt({
-  dir, platform = process.platform, arch = process.arch, fetchImpl, spawnImpl = (...a) => require('child_process').spawn(...a),
+  dir, platform = process.platform, arch = process.arch, fetchImpl, spawnImpl = (...a) => require('./cli-utils').spawn(...a), // (the hidden-spawn helper: no console window, no shell)
   tmpdir = os.tmpdir(), extract = extractZip, cpus = () => os.cpus().length, stallMs = STALL_MS, runTimeoutMs = RUN_TIMEOUT_MS,
   builds = BUILDS, models = MODELS,
 }) {
@@ -289,7 +289,7 @@ function findFile(root, name) {
 function extractZip(zip, into) {
   const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
   return new Promise((resolve, reject) => {
-    const child = require('child_process').spawn(tar, ['-xf', zip, '-C', into], { windowsHide: true, stdio: 'ignore' });
+    const child = require('./cli-utils').spawn(tar, ['-xf', zip, '-C', into], { stdio: 'ignore' });
     child.on('error', reject);
     child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`unzip failed (${code})`))));
   });
