@@ -666,7 +666,7 @@ contextBridge.exposeInMainWorld('assistant', {
     onChanged: on('research:changed'),
   },
   offers: { get: () => ipcRenderer.invoke('offers:get'), act: (action, arg) => ipcRenderer.invoke('offers:act', action, arg) },
-  dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format) },
+  dictation: { status: () => ipcRenderer.invoke('dictation:status'), transcribe: (bytes, format) => ipcRenderer.invoke('dictation:transcribe', bytes, format), onProgress: (fn) => ipcRenderer.on('dictation:progress', (_e, p) => fn(p)) },
 
   meeting: {
     getState: () => ipcRenderer.invoke('meeting:state'),

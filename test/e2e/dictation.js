@@ -1,5 +1,7 @@
 // Voice input in the chat box, in the real app (hidden window, throwaway profile, no keys, no network). Checked: the mic button is in the
-// sidebar's composer and on lumen://chat; with no OpenAI or Gemini key the status (and a click) says which key to add; the microphone is
+// sidebar's composer and on lumen://chat; with no OpenAI or Gemini key, on Windows, voice input runs on this device (ai/local-stt.js) with no
+// Settings nudge: silence comes back empty without a download, and a recording whose first-use download fails (tests have no network)
+// says what failed; elsewhere the status says which key to add; a click with voice input Off points to Settings; the microphone is
 // allowed for Lumen's own sidebar and chat page (audio only: the camera still is not), while a web page still reads "prompt"; Settings'
 // "Off" turns it off; Esc puts the button back. The transcription requests themselves are covered by test/units/dictation-units.js.
 // Run: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/e2e/dictation.js
@@ -29,9 +31,29 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
     check('sidebar: the mic button sits in the composer', await ui.evaluate(() => Boolean(document.querySelector('#composer #mic-btn')) && document.getElementById('mic-btn').dataset.state === 'idle'));
     const status = await ui.evaluate(() => window.assistant.dictation.status());
-    check('no key: no provider, and the message names both keys', status.provider === null && /OpenAI or Google Gemini/.test(status.message) && !('key' in status), JSON.stringify(status));
-    const refused = await ui.evaluate(() => window.assistant.dictation.transcribe(new Uint8Array([1, 2, 3]), 'webm'));
-    check('no key: a transcription is refused before anything is sent', Boolean(refused.error) && refused.settings === true, JSON.stringify(refused));
+    const onDevice = process.platform === 'win32';
+    // A 16 kHz mono 16-bit WAV, made in the page: silence, or a tone loud enough to be speech.
+    const wavIn = (page, amp) => page.evaluate((a) => {
+      const n = 16000; const v = new DataView(new ArrayBuffer(44 + n * 2)); const s = (at, t) => { for (let i = 0; i < t.length; i++) v.setUint8(at + i, t.charCodeAt(i)); };
+      s(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); s(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 16000, true); v.setUint32(28, 32000, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); s(36, 'data'); v.setUint32(40, n * 2, true);
+      for (let i = 0; i < n; i++) v.setInt16(44 + i * 2, Math.round(Math.sin(i / 10) * a * 32767), true);
+      return window.assistant.dictation.transcribe(new Uint8Array(v.buffer), 'wav');
+    }, amp);
+    if (onDevice) {
+      check('no key on Windows: on-device voice input, no message, no key named', status.provider === 'local' && status.engines.join() === 'local' && status.format === 'wav' && !status.message && !('key' in status), JSON.stringify(status));
+      check('no key on Windows: the first use is announced (not downloaded yet in a fresh profile)', status.local && status.local.ready === false && status.local.bytesNeeded > 50e6, JSON.stringify(status.local));
+      const quiet = await wavIn(ui, 0);
+      check('silence: empty text, no error (nothing downloaded, nothing invented)', quiet && quiet.text === '' && !quiet.error, JSON.stringify(quiet));
+      const loud = await wavIn(ui, 0.3);
+      check('a recording whose first-use download fails: says what failed, no Settings nudge', /couldn't be downloaded/.test(loud.error || '') && !loud.settings && !/API key/.test(loud.error), JSON.stringify(loud));
+      let leftovers = [];
+      try { leftovers = fs.readdirSync(path.join(profile, 'speech-to-text')).filter((n) => /\.part|\.zip$|^ggml-/.test(n)); } catch { /* never created: nothing left either */ }
+      check('…and the failed download leaves nothing behind', !leftovers.length, leftovers.join());
+    } else {
+      check('no key where on-device cannot run: no provider, and the message names both keys', status.provider === null && /OpenAI or Google Gemini/.test(status.message) && !('key' in status), JSON.stringify(status));
+      const refused = await ui.evaluate(() => window.assistant.dictation.transcribe(new Uint8Array([1, 2, 3]), 'webm'));
+      check('no key: a transcription is refused before anything is sent', Boolean(refused.error) && refused.settings === true, JSON.stringify(refused));
+    }
 
     // Lumen's own page: the microphone is allowed (no prompt); the camera is not.
     const micState = await ui.evaluate(() => navigator.permissions.query({ name: 'microphone' }).then((s) => s.state, (e) => `error ${e.message}`));
@@ -50,17 +72,15 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     }), webUrl);
     check('web page: microphone still reads "prompt" (not granted)', webState === 'prompt', webState);
 
-    // A click with no key explains which key to add, with a way to Settings.
-    await ui.evaluate(() => { document.body.classList.remove('sidebar-hidden'); });
-    await ui.evaluate(() => document.getElementById('mic-btn').dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true })));
-    const note = await waitFor(() => ui.evaluate(() => { const n = document.getElementById('attachment-note'); return n && !n.hidden && n.textContent; }));
-    check('a click with no key: the note says which key to add, with Open Settings', /API key/.test(note || '') && /Open Settings/.test(note || ''), note);
-    check('and the button is back to idle', await waitFor(() => ui.evaluate(() => document.getElementById('mic-btn').dataset.state === 'idle')));
-
-    // Off in Settings.
+    // Off in Settings; a click then says how to turn it back on, with a way to Settings (and never opens the microphone).
     await app.evaluate(() => global.__settings.backend.set('dictationProvider', 'off'));
     const off = await ui.evaluate(() => window.assistant.dictation.status());
     check('Settings Off: no provider, and it says how to turn it back on', off.provider === null && off.reason === 'off' && /Settings/.test(off.message), JSON.stringify(off));
+    await ui.evaluate(() => { document.body.classList.remove('sidebar-hidden'); });
+    await ui.evaluate(() => document.getElementById('mic-btn').dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true })));
+    const note = await waitFor(() => ui.evaluate(() => { const n = document.getElementById('attachment-note'); return n && !n.hidden && n.textContent; }));
+    check('a click with voice input off: the note says so, with Open Settings', /off/i.test(note || '') && /Open Settings/.test(note || ''), note);
+    check('and the button is back to idle', await waitFor(() => ui.evaluate(() => document.getElementById('mic-btn').dataset.state === 'idle')));
     const bad = await app.evaluate(() => global.__settings.backend.set('dictationProvider', 'groq').then(() => 'accepted', (e) => e.message));
     check('Settings: an unknown provider is refused', bad !== 'accepted', bad);
     await app.evaluate(() => global.__settings.backend.set('dictationProvider', 'auto'));
@@ -71,7 +91,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     const inChat = (code) => app.evaluate((_e, [id, c]) => global.__chatPage.contents(id).executeJavaScript(c, true), [chatId, code]);
     check('chat page: the mic button sits in the composer', await waitFor(() => inChat("Boolean(document.querySelector('#composer #mic-btn'))")));
     const chatStatus = await inChat('window.assistant.dictation.status()');
-    check('chat page: the status call is allowed and says no key', chatStatus && chatStatus.provider === null && /API key/.test(chatStatus.message), JSON.stringify(chatStatus));
+    check('chat page: the status call is allowed and matches the sidebar', chatStatus && (onDevice ? chatStatus.provider === 'local' && !chatStatus.message : chatStatus.provider === null && /API key/.test(chatStatus.message)), JSON.stringify(chatStatus));
     const chatMic = await inChat("navigator.permissions.query({ name: 'microphone' }).then((s) => s.state)");
     check('chat page: microphone permission reads granted', chatMic === 'granted', chatMic);
   } catch (err) {

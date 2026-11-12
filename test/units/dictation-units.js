@@ -40,13 +40,25 @@ const audio = () => Buffer.from('fake-audio-bytes');
     check('gemini chosen and set', D.choose('gemini', both).provider === 'gemini');
     check('off: never a provider, even with keys', D.choose('off', both).provider === null && D.choose('off', both).reason === 'off');
     check('an unknown or missing setting reads as auto', D.choose(undefined, both).provider === 'openai' && D.choose('groq', geminiOnly).provider === 'gemini');
-    check('settings choices', D.SETTINGS.join() === 'auto,openai,gemini,off');
+    check('settings choices', D.SETTINGS.join() === 'auto,local,openai,gemini,off');
+    // On-device (ai/local-stt.js): no key needed, so voice input works out of the box where it can run.
+    check('auto, no key, on-device runs here: on-device, nothing to set up', D.choose('auto', none, true).provider === 'local' && D.choose('auto', none, true).engines.join() === 'local');
+    check('auto with keys: the keys first, on-device last as the fallback', D.choose('auto', both, true).engines.join() === 'openai,gemini,local' && D.choose('auto', geminiOnly, true).engines.join() === 'gemini,local');
+    check('auto without on-device: the keys only', D.choose('auto', both, false).engines.join() === 'openai,gemini');
+    check('local chosen: on-device only, never a key engine', D.choose('local', both, true).engines.join() === 'local');
+    check('local chosen where it cannot run: says so', D.choose('local', both, false).provider === null && D.choose('local', both, false).reason === 'local-unsupported');
+    check('a key engine chosen by name: it, then on-device', D.choose('openai', both, true).engines.join() === 'openai,local' && D.choose('gemini', both, false).engines.join() === 'gemini');
+    check('a key engine chosen by name without its key: still asks for that key', D.choose('openai', geminiOnly, true).provider === null && D.choose('openai', geminiOnly, true).need.join() === 'openai');
+    check('off stays off with on-device available', D.choose('off', both, true).provider === null);
+    check('format: WebM only when OpenAI is the only engine', D.formatFor(['openai']) === 'webm' && D.formatFor(['openai', 'local']) === 'wav' && D.formatFor(['local']) === 'wav' && D.formatFor(['gemini']) === 'wav' && D.formatFor([]) === 'wav');
   }
 
   // ---- the no-key message
   {
-    const any = D.unavailableMessage(D.choose('auto', () => false));
-    check('no key at all: names both providers', any.key === 'dictation.needAnyKey' && any.params.providers === 'OpenAI or Google Gemini', JSON.stringify(any));
+    check('no key, on-device runs here: no message at all (no Settings nudge)', D.unavailableMessage(D.choose('auto', () => false, true)) === null);
+    const any = D.unavailableMessage(D.choose('auto', () => false, false));
+    check('no key where on-device cannot run: names both providers and why', any.key === 'dictation.needKeyNoLocal' && any.params.providers === 'OpenAI or Google Gemini', JSON.stringify(any));
+    check('local chosen where it cannot run: its own message', D.unavailableMessage(D.choose('local', () => false, false)).key === 'dictation.error.localUnsupported');
     const one = D.unavailableMessage(D.choose('gemini', () => false));
     check('one provider chosen: names that one', one.key === 'dictation.needKey' && one.params.provider === 'Google Gemini', JSON.stringify(one));
     check('turned off: says so', D.unavailableMessage(D.choose('off', () => true)).key === 'dictation.off');
@@ -160,7 +172,17 @@ const audio = () => Buffer.from('fake-audio-bytes');
     check('renderer: MediaRecorder + getUserMedia, audio only', /new MediaRecorder\(/.test(r) && /getUserMedia\(\{ audio: /.test(r) && !/video:/.test(r));
     check('renderer: no storage of the audio', !/localStorage|indexedDB|sessionStorage|caches\./.test(r));
     check('renderer: loaded by the sidebar and the chat page', /src="dictation\.js"/.test(read('src/renderer/index.src.html')) && /src="dictation\.js"/.test(read('src/renderer/chat-page.html')));
-    check('renderer: the size cap is checked before the recording is sent', /bytes\.byteLength > \(s\.status\.maxBytes/.test(r) && /maxBytes: dictationLib\(\)\.MAX_BYTES/.test(main));
+    check('renderer: the size cap is checked before the recording is sent', /bytes\.byteLength > \(s\.status\.maxBytes/.test(r) && /maxBytes: lib\.MAX_BYTES/.test(main));
+    check('main: engines are tried in turn; the combined message only when all failed', /for \(const engine of state\.engines\)/.test(main) && /combineFailures\(failures/.test(main));
+    check('main: the on-device engine is loaded lazily, never at startup', /require\('\.\/ai\/local-stt'\)\.createLocalStt/.test(main) && !/^const \w+ = require\('\.\/ai\/local-stt'\)/m.test(main));
+    check('main: tests never download the speech model', /TEST \? \(global\.__sttNetHook/.test(main));
+    const between = (a, b) => main.slice(main.indexOf(a), main.indexOf(b));
+    check('main: the mic\'s status call starts the first-use download; dictationState (the offers card) never does',
+      between("ipcMain.handle('dictation:status'", "ipcMain.handle('dictation:transcribe'").includes('localStt().prepare(') && !between('function dictationState()', "ipcMain.handle('dictation:status'").includes('prepare('));
+    for (const p of ['src/preload/preload.js', 'src/features/chat-preload.js']) {
+      check(`${p}: the download progress reaches the page`, /onProgress: \(fn\) => ipcRenderer\.on\('dictation:progress'/.test(read(p)));
+    }
+    check('renderer: shows the first-use download and its progress', /dictation\.firstUse/.test(r) && /dictation\.downloading/.test(r) && /api\.onProgress\?\.\(/.test(r));
     check('renderer: Esc cancels, in the capture phase', /e\.key !== 'Escape'/.test(r) && /stopImmediatePropagation/.test(r));
     const src = read('src/features/shortcuts-help.js');
     check('shortcuts sheet: mod+shift+space listed once, no clash', (src.match(/'mod\+shift\+space'/g) || []).length === 1);
@@ -169,6 +191,18 @@ const audio = () => Buffer.from('fake-audio-bytes');
     const docs = read('docs/settings.md');
     check('docs: both settings have rows', /`dictationProvider`/.test(docs) && /`dictationAutoSend`/.test(docs));
     check('privacy: PRIVACY.md says where the audio goes', /voice input/i.test(read('PRIVACY.md')));
+    check('privacy: PRIVACY.md describes on-device voice input and its download', /on this device/i.test(read('PRIVACY.md')) && /whisper\.cpp/.test(read('PRIVACY.md')));
+  }
+
+  // ---- several engines failing
+  {
+    const render = (e) => `<${e.key}>`;
+    const one = D.combineFailures([{ engine: 'local', error: { key: 'dictation.error.localRun', params: { detail: 'x' } } }], render);
+    check('one engine failed: its own message', one.key === 'dictation.error.localRun' && one.params.detail === 'x');
+    const two = D.combineFailures([{ engine: 'openai', error: { key: 'dictation.error.quota', params: {} } }, { engine: 'local', error: { key: 'dictation.error.localDownload', params: {} } }], render);
+    check('every engine failed: each named with what went wrong', two.key === 'dictation.error.allFailed' && two.params.details === 'OpenAI: <dictation.error.quota> On-device: <dictation.error.localDownload>', JSON.stringify(two));
+    check('nothing recorded as failing: a generic message, not a throw', D.combineFailures([], render).key === 'dictation.error.other');
+    check('Settings link: for a rejected key or nothing that can run, not for a download failure', D.needsSettings([{ engine: 'openai', error: { key: 'dictation.error.key' } }]) && D.needsSettings([{ engine: 'local', error: { key: 'dictation.error.localUnsupported' } }]) && !D.needsSettings([{ engine: 'local', error: { key: 'dictation.error.localDownload' } }]));
   }
 
   console.log(`\ndictation-units: ${failures ? `${failures} failed` : 'all passed'}`);

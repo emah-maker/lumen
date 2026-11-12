@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Voice input works without an API key.** The mic button in the chat box used to say "Voice input needs an API key from OpenAI or Google Gemini" unless you had one. On Windows it now turns your words into text on your computer, with no key and no account: the audio never leaves the device. The first use downloads the speech recognition (whisper.cpp and a Whisper base model, about 70 MB, once, while you speak; the bar shows how far it is), each file checked against a fixed SHA-256 hash. After that a short message takes about a second. With an OpenAI or Gemini key, **Automatic** still sends the recording to that provider first (more accurate) and falls back to this device if it fails; Settings → AI → **Voice input** has a new **On this device (no key)** choice to keep audio local always. A Settings message appears only when every engine failed, and it says what each one hit. Silence comes back empty instead of the made-up "you" Whisper writes for it. macOS and Linux have no prebuilt program yet, so they still need a key. The Meeting helper's **Listen** uses the same engine. Tests: `test/units/local-stt-units.js`, `test/units/dictation-units.js`, `test/e2e/dictation.js`.
+
 ## 0.5.98 (2026-11-10)
 
 - **Dark mode for all websites works.** The experimental setting (Settings → Experimental) did nothing: it turned on Chromium's `WebContentsForceDark` feature, which only Chrome's own browser layer reads, and Electron doesn't have that layer. Lumen now turns Chromium's auto dark mode on itself, in every page and frame, so a site with no dark theme of its own is drawn dark. It still takes effect after a restart. Tests: `test/e2e/force-dark.js`.
