@@ -116,6 +116,37 @@ try {
   check('gap log: a damaged line is skipped', log.list().length === 1);
 } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 
+// [finish listed] A Codex run on Canvas (2026-11-12): it saw the course listed, read only the open tabs, and stopped with a curly-quoted
+// "couldn’t"; after "huh read it" it stopped again on "I’m checking which class materials correspond to Tuesday."
+{
+  const J = JSON.stringify;
+  const ask = 'figure out what i missed in mech of mats on tuesday';
+  const gaveUp = 'I found your mechanics of materials course listed in Canvas, but the open course pages I could read were for differential equations and another class. I couldn’t identify what mechanics of materials covered Tuesday from the available tabs.';
+  check('curly quotes: a give-up written with ’ (couldn’t) is caught like one written with \'', handoff.classify(gaveUp, ask).handoff && handoff.classify(gaveUp, ask).kind === 'cannot', J(handoff.classify(gaveUp, ask)));
+  check('curly quotes: straightQuotes turns ‘ ’ “ ” into plain quotes', handoff.straightQuotes('‘a’ “b”') === '\'a\' "b"');
+  const interim = 'Your Canvas dashboard labels **ME2355 18886** as Mechanics of Materials. Its recent module is **Week 12: Mohr’s circle (Ch. 12.8–12.10) and pressure vessels (Ch. 14)**. I haven’t opened the lecture notes yet; I’m checking which class materials correspond to Tuesday.';
+  const v = handoff.classify(interim, 'huh read it');
+  check('unfinished: a final reply that ends on what it is about to do is caught (kind unfinished)', v.handoff && v.kind === 'unfinished', J(v));
+  check('unfinished: "I\'ll now open the Week 12 module." as the last line is caught', handoff.classify('The course is ME2355. I\'ll now open the Week 12 module.', ask).kind === 'unfinished');
+  const done = [
+    'Tuesday (Nov 10) covered Mohr’s circle, Ch. 12.8–12.10. I read the Week 12 module and the lecture notes, and the homework is HW 11, due Friday.',
+    'Tuesday covered Mohr’s circle. If you want, I’ll check the calendar for the next quiz too.',
+    'Tuesday covered Mohr’s circle. Want me to open the lecture notes?',
+    'I checked the Week 12 module and the announcements: Tuesday covered Mohr’s circle.',
+  ];
+  for (const r of done) check(`unfinished: an answer is left alone: "${r.slice(0, 50)}…"`, !handoff.classify(r, ask).handoff, J(handoff.classify(r, ask)));
+  check('unfinished: a long answer that ends "I\'ll check back" style is not judged (only short replies)', !handoff.classify(`${'Tuesday covered Mohr\'s circle and the stress transformation equations in detail. '.repeat(40)}I'm checking the slides next.`, ask).handoff);
+  check('unfinished: its own follow-up says to carry on, and the others keep the usual one', handoff.followupFor('unfinished') === handoff.FOLLOWUP_UNFINISHED && /said what you would do next/.test(handoff.FOLLOWUP_UNFINISHED) && handoff.followupFor('cannot') === handoff.FOLLOWUP && handoff.isRetryText(handoff.FOLLOWUP_UNFINISHED));
+  check('follow-up: a target seen listed but not opened is to be opened and read, and a weekday is the most recent one', /Open what you saw listed but didn't open \(a course, page, file, link\)/.test(handoff.FOLLOWUP) && /a weekday means the latest one/.test(handoff.FOLLOWUP));
+  check('follow-ups: neither tells the model to close tabs', !/close/i.test(handoff.FOLLOWUP + handoff.FOLLOWUP_UNFINISHED));
+  check('gap log: an unfinished reply has words of its own', /stopped before/.test(gaps.MISSING.unfinished || ''));
+  const tabsAsk = require('../../src/features/tabs-ask');
+  const asleep = tabsAsk.renderTabs([{ id: 31, title: 'Dashboard', url: 'https://northeastern.instructure.com/', asleep: true }]).text;
+  check('sleeping tab: the model is told how to read it itself (switch_tab, then read_page), not to open it in the tab strip', /switch_tab to it/.test(asleep) && /read_page/.test(asleep) && !/tab strip/.test(asleep), asleep);
+  const sys = systemFor({ model: 'codex:gpt-6-luna' });
+  check('system prompt: a link that is listed but not open is followed, and a Canvas course is opened, not only the open tab read', /listed but not open: follow it/.test(sys) && /Canvas: open the course, its Modules/.test(sys) && !/read that tab/.test(sys) && !/open_tab only to show/.test(sys));
+}
+
 // Settings: the switch ships on and has its docs row.
 const backend = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'settings', 'settings-backend.js'), 'utf8');
 check('setting: aiGapLog defaults on', /aiGapLog: true/.test(backend));

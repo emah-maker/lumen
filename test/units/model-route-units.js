@@ -62,5 +62,13 @@ check('a follow-up can still go up', tier(heavyBrief, { previous: { tier: 'light
 check('standard follow-up keeps standard over light', tier('yes', { previous: { tier: 'standard', turns: 3 } }) === 'standard');
 check('route() carries the tier through follow-ups', route({ engine: 'claudecode', picked: 'default', prompt: 'continue', previous: prev }).model === 'opus');
 
+// [finish listed] Finding out what is on a course site nobody has open is research, not a quick task: it went to Codex's smallest model
+// (GPT-6 Luna), which read the open tabs and stopped (2026-11-12).
+for (const p of ['figure out what i missed in mech of mats on tuesday', 'what’s due this week on canvas', 'catch me up on my thermo class', 'find out what we covered in lecture']) {
+  const t = tierFor(p, { tools: true });
+  check('gather: "' + p + '" is research, never the light tier', t.kind === 'research' && t.tier !== 'light', JSON.stringify(t));
+}
+for (const p of ['hi', 'thanks!', 'what is 2+2']) check('gather: "' + p + '" is still not research', tierFor(p, { tools: true }).kind !== 'research', JSON.stringify(tierFor(p, { tools: true })));
+
 if (failures) { console.log(`\n${failures} model-route check(s) failed`); process.exit(1); }
 console.log('\nAll model-route checks passed');

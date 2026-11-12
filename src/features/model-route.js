@@ -91,6 +91,10 @@ const REWRITE = /\b(?:translate|translation|rewrite|rephrase|reword|paraphrase|p
 const MATH = /\b(?:prove|proof|theorem|lemma|derive|derivation|integral|derivative|eigen\w+|combinatori\w+|calculus|algebra|olympiad|solve (?:for|the equation)|equations?)\b/i;
 const MATH_HARD = /\b(?:prove|proof|theorem|lemma|olympiad)\b/i;
 const RESEARCH = /\b(?:research|literature review|find sources|peer-?reviewed|scholarly|citations?|bibliograph\w+|fact-?check|state of the art|systematic review|deep dive|what does the (?:research|evidence|literature) say|(?:sources?|references?) (?:on|for|about)|studies (?:on|about|show))\b/i;
+// Finding something out that sits on pages nobody has open yet ("figure out what I missed in mech of mats on Tuesday", "what's due this
+// week on Canvas", "catch me up on the course"): the model has to find the course or page, open it and read several parts of it, so it
+// is research too. A short prompt like that went to the smallest model, which read the open tabs and stopped.
+const GATHER = /\b(?:figure out|find out|work out what|what (?:did )?i (?:miss|missed)|i missed|catch me up|get me up to speed|what (?:was|got|did we) (?:covered|cover|go over)|what(?:'s| is) due|what do i have due|dig up|track down|go through (?:my|the) (?:courses?|classes|canvas|modules|inbox|emails?|files?)|on (?:canvas|blackboard|moodle|brightspace|gradescope|piazza|zybooks))\b/i;
 // Checking a claim, a table or a value against a source ("double check the tables", "is this right", "look it up"): the model has to find
 // the source, read it and compare, so it is research: never the smallest model, and the tools stay on.
 const VERIFY = /\b(?:double[- ]?check|re-?check|verify|verification|fact[- ]?check|check (?:the|this|that|these|those|my|if|whether) (?:\w+ ){0,2}(?:tables?|values?|numbers?|figures?|data|facts?|claims?|answers?|results?|sources?|steam|units?|properties)|look (?:it|this|that|them) up|look up (?:the |a )?(?:tables?|values?|numbers?|figures?|data|sources?|steam|propert(?:y|ies)|references?)|is (?:this|that|it) (?:right|correct|true|accurate)|are (?:these|those|they) (?:right|correct|accurate)|confirm (?:the |these |those |this |that |my )?(?:\w+ )?(?:values?|numbers?|figures?|data|facts?)|find (?:the|a) source|(?:what'?s|where'?s) the source)\b/i;
@@ -115,7 +119,7 @@ function situationOf(prompt, { imageCount = 0, tabCount = 0, page = false, unatt
   if (!imageCount && IMAGEGEN.test(t)) return { kind: 'imagegen', multi: false };
   if (CODE_WORDS.test(t)) return { kind: 'code', multi: false };
   if (MATH.test(t)) return { kind: 'reasoning', multi: false };
-  if (RESEARCH.test(t) || VERIFY.test(t) || tabCount >= 3) return { kind: 'research', multi: false };
+  if (RESEARCH.test(t) || VERIFY.test(t) || GATHER.test(t.replace(/[‘’]/g, "'")) || tabCount >= 3) return { kind: 'research', multi: false };
   if (COMPARE.test(t)) return { kind: 'compare', multi: false };
   if (REWRITE.test(t) && !browsing) return { kind: 'rewrite', multi: false };
   const words = lengthAsked(t);

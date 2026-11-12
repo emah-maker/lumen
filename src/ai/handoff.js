@@ -9,7 +9,11 @@ const RETRY_CLOSE = '</lumen_retry>';
 const RETRY_BLOCK = /<lumen_retry>[\s\S]*?<\/lumen_retry>\s*/g;
 
 // What the AI is told on the follow-up turn. Never shown in the chat (transcriptFor drops the block).
-const FOLLOWUP = `${RETRY_OPEN}Your last reply handed the work back to me. Don't. In one line, list what you tried. Then try a different approach with the tools you have: another tool, another page or source, or a different route to the same result. Don't ask me to paste, open, copy, click or do any step you can do. If the answer is a script, command or formula, giving it to me is complete: don't go hunting for MATLAB, Octave, Python or any other program on this computer just to run it yourself. Stop only if you are blocked by a sign-in only I can do, a purchase, a message to send, a CAPTCHA, a choice only I can make, or a destructive change that needs my OK, and say which.${RETRY_CLOSE}`;
+const FOLLOWUP = `${RETRY_OPEN}Your last reply handed the work back to me. Don't. In one line, list what you tried. Then try a different approach with the tools you have: another tool, another page or source, or a different route to the same result. Open what you saw listed but didn't open (a course, page, file, link); a weekday means the latest one. Don't ask me to paste, open, copy, click or do any step you can do. If the answer is a script, command or formula, giving it to me is complete: don't go hunting for MATLAB, Octave, Python or any other program on this computer just to run it yourself. Stop only if you are blocked by a sign-in only I can do, a purchase, a message to send, a CAPTCHA, a choice only I can make, or a destructive change that needs my OK, and say which.${RETRY_CLOSE}`;
+
+// The follow-up for a final reply that only said what the AI would do next ("I'm checking which ..."): carry on.
+const FOLLOWUP_UNFINISHED = `${RETRY_OPEN}Your last reply stopped before the work was done: it said what you would do next, then ended. Do it now with your tools and answer my question. If you saw what you need listed (a course, page, file or link), open it and read it. Stop only if you are blocked by a sign-in only I can do, a purchase, a message to send, a CAPTCHA, a choice only I can make, or a destructive change that needs my OK, and say which.${RETRY_CLOSE}`;
+const followupFor = (kind) => (kind === 'unfinished' ? FOLLOWUP_UNFINISHED : FOLLOWUP);
 
 // Reasons that need the user. Checked first: a reply that has one is never a handoff.
 const LEGIT = [
@@ -40,10 +44,19 @@ const HANDOFF = [
 // A request for an explanation or instructions: "you can ..." is then the answer, not a handoff.
 const INSTRUCTIONAL = /^\s*(?:please\s+)?(?:how (?:do|can|should|would|could|to|does)|what(?:'s| is| are| does| should)|why\b|when\b|where\b|which\b|who\b|explain|tell me|walk me through|teach me|show me how|steps? (?:to|for)|can you (?:explain|tell me|show me how)|is it (?:possible|ok|okay)|should i|do i need|what do i)\b|\bhow (?:do|can|could|should|would) (?:i|you|one|we)\b|\bhow to\b|\bwalk me through\b|\bstep[- ]by[- ]step\b|\binstructions\b/i;
 
+// A final reply whose last sentence says what the AI is about to do ("I'm checking which class materials match Tuesday.",
+// "I haven't opened the notes yet."): the run ended on an interim line, not an answer. Only the last sentence is judged, so an
+// answer that ends on what it did, or on a question, is left alone.
+const UNFINISHED = /\bI(?:'m| am) (?:now |still |currently |going to |about to )?(?:check(?:ing)?|look(?:ing)? (?:at|for|into|through)|open(?:ing)?|read(?:ing)?|search(?:ing)?|find(?:ing)?|go(?:ing)? through|pull(?:ing)? up)\b|\bI(?:'ll| will) (?:now |next |then )?(?:check|look (?:at|for|into|through)|open|read|search|find|go through|pull up)\b|\bI (?:haven't|have not) (?:\w+ ){0,3}yet\b|\bnext,? I(?:'ll| will)\b/i;
+const lastSentence = (body) => body.split(/(?<=[.!?])\s+|\n+/).filter((x) => x.trim()).pop() || '';
+
+// GPT models write ’ (couldn’t, I’m) where the patterns here have ': the reply and the request are read with straight quotes.
+const straightQuotes = (text) => String(text || '').replace(/[‘’ʼ′]/g, "'").replace(/[“”]/g, '"');
+
 // The reply with what is not the AI's own words taken out: fenced code, quoted lines and inline code (a draft or page text
 // that contains "paste" or "I can't" is not the AI giving up).
 function bodyOf(reply) {
-  return String(reply || '')
+  return straightQuotes(reply)
     .replace(/```[\s\S]*?(?:```|$)/g, ' ')
     .replace(/^\s*>.*$/gm, ' ')
     .replace(/`[^`\n]*`/g, ' ')
@@ -87,7 +100,7 @@ function classify(reply, request = '') {
   const tail = body.slice(-STRONG_WINDOW);
   const head = body.slice(0, STRONG_WINDOW);
   const legit = LEGIT.find(([, re]) => re.test(tail) || (body.length < SHORT_REPLY && re.test(body)));
-  const instructional = INSTRUCTIONAL.test(String(request || ''));
+  const instructional = INSTRUCTIONAL.test(straightQuotes(request));
   const kinds = [];
   for (const [kind, strong, re] of HANDOFF) {
     if (kind === 'user-step' && instructional) continue; // they asked for instructions
@@ -95,6 +108,9 @@ function classify(reply, request = '') {
     if (hit) kinds.push([kind, strong]);
   }
   if (legit) return { handoff: false, kind: null, legit: legit[0] };
+  // An interim line left as the final reply (see UNFINISHED): not after a long answer, a code answer or a question.
+  const last = lastSentence(body);
+  if (body.length < SHORT_REPLY * 2 && !used.codeMain && UNFINISHED.test(last) && !/\?\s*$/.test(last) && !/\b(?:if you|let me know|when you|once you|you want|you'd like)\b/i.test(last)) return { handoff: true, kind: 'unfinished', legit: null };
   // The user's own call: the reply ends on a question that offers a choice or asks what is meant.
   const lastLine = body.split(/\n+/).filter(Boolean).pop() || '';
   if (/\?\s*$/.test(lastLine) && CHOICE.test(lastLine) && !kinds.some(([k]) => k === 'paste' || k === 'access')) return { handoff: false, kind: null, legit: 'choice' };
@@ -123,4 +139,4 @@ function finalReply(messages) {
 const isRetryText = (text) => String(text || '').includes(RETRY_OPEN);
 const withoutRetry = (text) => String(text || '').replace(RETRY_BLOCK, '');
 
-module.exports = { classify, finalReply, bodyOf, isRetryText, withoutRetry, FOLLOWUP, RETRY_OPEN, RETRY_CLOSE, RETRY_BLOCK };
+module.exports = { classify, finalReply, bodyOf, isRetryText, withoutRetry, FOLLOWUP, FOLLOWUP_UNFINISHED, followupFor, straightQuotes, RETRY_OPEN, RETRY_CLOSE, RETRY_BLOCK };

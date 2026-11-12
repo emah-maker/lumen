@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI finishes a find-it-on-Canvas question instead of stopping at your open tabs.** Asked "figure out what I missed in mech of mats on Tuesday", a Codex chat saw the course on the Canvas dashboard, read only the tabs already open, and answered that it couldn’t tell; after "huh read it" it stopped again on "I’m checking which class materials correspond to Tuesday." Four fixes. Auto now counts "figure out", "what I missed", "what's due", "catch me up" and course sites (Canvas, Blackboard, Moodle, Gradescope and the like) as research, so it gets a mid-size model (GPT-6.1 Sol on Codex) instead of the smallest one. The give-up check that gives the AI one more try now reads curly quotes: GPT models write “couldn’t”, which it used to miss, so the retry never ran. It also catches a final reply that only says what it is about to do ("I’m checking…", "I haven’t opened the notes yet") and tells the AI to carry on (the step reads **Carrying on…**). The AI is told to open a course, page or link it saw listed, and that a weekday means the most recent one; a sleeping tab tells it to switch to the tab and read it, instead of suggesting you open it. Tests: , .
+
 ## 0.5.98 (2026-11-10)
 
 - **Dark mode for all websites works.** The experimental setting (Settings → Experimental) did nothing: it turned on Chromium's `WebContentsForceDark` feature, which only Chrome's own browser layer reads, and Electron doesn't have that layer. Lumen now turns Chromium's auto dark mode on itself, in every page and frame, so a site with no dark theme of its own is drawn dark. It still takes effect after a restart. Tests: `test/e2e/force-dark.js`.
