@@ -6,7 +6,8 @@
 //
 //   parseAddresses(text)        "a@x.org, Ada <b@y.org>" -> [{ name, address }] (throws a message for a bad one)
 //   encodeWords(text)           a header value: plain ASCII as it is, anything else as RFC 2047 encoded words
-//   buildMessage(draft)         { to, cc?, subject, body, inReplyTo?, references? } -> the message text (CRLF lines)
+//   buildMessage(draft)         { to, cc?, subject, body, inReplyTo?, references?, attachments? } -> the message text (CRLF lines);
+//                               attachments [{ name, type, bytes }] make it multipart/mixed: the text, then each file in base64
 //   toRaw(text)                 base64url, what Gmail's `raw` field takes
 //   replyHeaders(original)      a message's Message-ID and References -> { inReplyTo, references } for a reply
 //   composePath(path)           the drafts path, or throws for anything else
@@ -15,6 +16,8 @@
 
 const MAX_RECIPIENTS = 50;
 const MAX_BODY_BYTES = 200000; // the text of one draft (the connector's own cap on its argument is lower)
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACH_BYTES = 18 * 1048576; // all files together: base64 makes them about a third bigger, under Gmail's 25 MB for one email
 // An address: a plain local part and a domain with at least one dot. No quoted local parts, comments or IP literals.
 const ADDRESS = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@(?=.{4,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
 
@@ -91,7 +94,37 @@ function bodyLines(text) {
   return b.toString('base64').replace(/.{76}(?=.)/g, '$&\r\n');
 }
 
-function buildMessage({ to, cc = '', bcc = '', subject, body, inReplyTo = '', references = '' }) {
+// A file's name for its headers: no folder, no control characters, quotes or backslashes, at most 150 characters. A name that isn't plain
+// ASCII goes as an RFC 2231 filename* (what Gmail and mail apps show) next to an ASCII fallback.
+function fileName(name) {
+  const base = String(name || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f\u007f"\\]/g, '').replace(/\s+/g, ' ').trim().slice(0, 150);
+  return base || 'attachment';
+}
+const MIME_TYPE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/i;
+const pct = (s) => encodeURIComponent(s).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+function attachmentPart({ name, type, bytes }) {
+  const n = fileName(name);
+  const ascii = /^[\x20-\x7e]*$/.test(n);
+  const plain = ascii ? n : n.replace(/[^\x20-\x7e]/g, '_');
+  const star = ascii ? '' : `;\r\n filename*=UTF-8''${pct(n)}`;
+  const t = MIME_TYPE.test(String(type || '')) ? String(type).toLowerCase() : 'application/octet-stream';
+  const b64 = Buffer.from(bytes).toString('base64').replace(/.{76}(?=.)/g, '$&\r\n');
+  return `Content-Type: ${t}; name="${plain}"\r\nContent-Disposition: attachment; filename="${plain}"${star}\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64}`;
+}
+function checkAttachments(list) {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list)) refuse('The attachments aren’t a list.');
+  if (list.length > MAX_ATTACHMENTS) refuse(`At most ${MAX_ATTACHMENTS} files in one email.`);
+  let total = 0;
+  for (const a of list) {
+    if (!a || !(a.bytes instanceof Uint8Array)) refuse('An attachment has no contents.');
+    total += a.bytes.length;
+  }
+  if (total > MAX_ATTACH_BYTES) refuse(`The files add up to more than ${MAX_ATTACH_BYTES / 1048576} MB, more than one Gmail email can carry. Attach fewer, or upload the big one to Drive and put its link in the text.`);
+  return list;
+}
+
+function buildMessage({ to, cc = '', bcc = '', subject, body, inReplyTo = '', references = '', attachments }) {
   const toList = parseAddresses(to, 'To');
   if (!toList.length) refuse('A draft needs at least one address in To.');
   const ccList = parseAddresses(cc, 'Cc');
@@ -108,8 +141,17 @@ function buildMessage({ to, cc = '', bcc = '', subject, body, inReplyTo = '', re
     if (!r) refuse('The message replied to has no usable Message-ID.');
     headers.push(`In-Reply-To: ${r.inReplyTo}`, `References: ${r.references}`);
   }
-  headers.push('MIME-Version: 1.0', 'Content-Type: text/plain; charset="UTF-8"', 'Content-Transfer-Encoding: base64');
-  return `${headers.join('\r\n')}\r\n\r\n${bodyLines(body)}\r\n`;
+  const files = checkAttachments(attachments);
+  const textPart = ['Content-Type: text/plain; charset="UTF-8"', 'Content-Transfer-Encoding: base64'];
+  if (!files.length) {
+    headers.push('MIME-Version: 1.0', ...textPart);
+    return `${headers.join('\r\n')}\r\n\r\n${bodyLines(body)}\r\n`;
+  }
+  // (a random boundary that starts "=_": base64 lines never hold "=" before their end, so no line of any part can match it)
+  const boundary = `=_lumen_${require('crypto').randomBytes(12).toString('hex')}`;
+  headers.push('MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${boundary}"`);
+  const parts = [`${textPart.join('\r\n')}\r\n\r\n${bodyLines(body)}`, ...files.map(attachmentPart)];
+  return `${headers.join('\r\n')}\r\n\r\n${parts.map((p) => `--${boundary}\r\n${p}\r\n`).join('')}--${boundary}--\r\n`;
 }
 
 const toRaw = (text) => Buffer.from(String(text), 'utf8').toString('base64url');
@@ -132,4 +174,4 @@ function draftsLink(email, id = '') {
   return who ? `https://mail.google.com/mail/${who}#drafts${msg}` : `https://mail.google.com/mail/u/0/#drafts${msg}`;
 }
 
-module.exports = { draftsLink, ADDRESS, MAX_RECIPIENTS, DRAFTS_PATH, DraftError, parseAddresses, encodeWords, buildMessage, toRaw, replyHeaders, composePath };
+module.exports = { fileName, MAX_ATTACHMENTS, MAX_ATTACH_BYTES, draftsLink, ADDRESS, MAX_RECIPIENTS, DRAFTS_PATH, DraftError, parseAddresses, encodeWords, buildMessage, toRaw, replyHeaders, composePath };

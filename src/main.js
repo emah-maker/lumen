@@ -9507,9 +9507,9 @@ const connectorsGoogleReal = {
   },
   api: (p) => widgets.gmailApi(p),
   drafts: () => widgets.gmailAuthState().compose, // the shared Google sign-in has gmail.compose (the user pressed Allow drafts)
-  allowDrafts: () => widgets.gmailAllowDrafts(), // Settings' Allow drafts button only
+  allowDrafts: () => widgets.gmailAllowDrafts(), // Settings' Allow drafts button, or a chat's draft or send right after the user approved its card (connectors/service.js call)
   compose: (body) => widgets.gmailCompose(body), // POST /users/me/drafts and nothing else (never send)
-  send: (body) => widgets.gmailSend(body), // the one send request, only after the Allow sending switch, then a card or typed permission (connectors/service.js)
+  send: (body) => widgets.gmailSend(body), // the one send request, after its card (or typed permission with the Settings switch on) (connectors/service.js)
   feed: () => googleMailFeed(require('./features/gmail-atom').feedUrl(0)),
   connect: () => widgets.gmailConnect({}),
   disconnect: () => widgets.gmailDisconnect(),
@@ -9606,6 +9606,8 @@ const connectorsFacade = {
   addAlways: (key) => { const cur = connectorAlwaysList(); if (!cur.includes(key) && require('./features/connectors/always').KEY.test(key)) writeSettings({ ...readSettings(), connectorAlways: [...cur, key].slice(0, 200) }); }, // (agent.js allowConnector: only from the card's Always, never in a tainted chat)
   defs: (opts) => (anyConnected() ? connectorsSvc().defs(opts) : []), // opts.readOnly: a background task or routine (no writes)
   isWrite: (input) => connectorsSvc().isWrite(input),
+  isSend: (input) => connectorsSvc().isSend(input), // [gmail] a send: its own card (Send / Cancel) and how it was allowed (sendVia)
+  sendingOn: () => (anyConnected() ? connectorsSvc().sendingOn() : false), // [gmail] Settings' "send without the card" switch (typed permission)
   describeWrite: (input, opts) => connectorsSvc().describeWrite(input, opts),
   call: (input, opts) => connectorsSvc().call(input, opts),
   pageTarget: (input) => connectorsSvc().pageTarget(input), // [canvas pages] Canvas is read from its pages in a tab (agent.js runCanvasPages): where, that the sign-in is good, or that it ended
