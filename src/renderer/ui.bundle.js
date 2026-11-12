@@ -125,7 +125,9 @@ if (!ready) loadTemml(chem);
 if (ready) {
 try {
 const env = /^\s*\\begin\{/.test(tex);
-const clean = prepare(tex.replace(/\\label\{[^}]*\}/g, ''));
+
+
+const clean = prepare(tex.replace(/\\label\{[^}]*\}/g, '')).replace(/(?<!\\)((?:\\\\)*)%/g, '$1\\%');
 const lone = display === false && new RegExp('^\\s*-?\\\\frac\\{[^{}]*\\}\\{[^{}]*\\}\\s*$').test(tex);
 const src = (display === 'inline' || lone) && !env ? `\\displaystyle ${clean}` : clean;
 const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500, macros: { ...MACROS } });
@@ -137,6 +139,8 @@ return display === 'inline' || env || tex.length > 40 || /\\(hspace|kern|hskip|q
 }
 const block = display === true;
 const shown = escapeHtml(block ? tex.trim() : tex);
+
+if (ready && block) return `<div class="math-block math-failed"><code class="math-src">${shown}</code></div>`;
 
 const data = ready ? '' : ` data-tex="${escapeHtml(tex)}" data-display="${block ? 1 : display === 'inline' ? 'i' : 0}"`;
 return block ? `<pre class="math-src"${data}>${shown}</pre>` : `<code class="math-src"${data}>${shown}</code>`;
@@ -227,7 +231,10 @@ let fenced = false;
 let open = -1;
 const put = (tex, display) => { maths.push({ tex, display }); return `${maths.length - 1}`; };
 const lineStart = (k) => k === 0 || source[k - 1] === '\n';
-const onlySpaceBefore = (k) => { const b = source.lastIndexOf('\n', k - 1) + 1; return !source.slice(b, k).trim(); };
+
+const onlySpaceBefore = (k) => { const b = source.lastIndexOf('\n', k - 1) + 1; return /^[ \t]*(>[ \t]*)*$/.test(source.slice(b, k)); };
+
+const unquote = (k, tex) => (source.slice(source.lastIndexOf('\n', k - 1) + 1, k).includes('>') ? tex.replace(/\n[ \t]*(?:>[ \t]?)+/g, '\n') : tex);
 while (i < source.length) {
 
 if (!fenced && lineStart(i) && /^```(math|latex|tex)[ \t]*(\n|$)/.test(source.slice(i, i + 12))) {
@@ -264,10 +271,10 @@ if (c === '\\' && source[i + 1] === '$') { out += '$'; i += 2; continue; }
 let m = null;
 if (source.startsWith('$$', i)) {
 const e = displayDollarEnd(source, i, onlySpaceBefore(i));
-if (e !== -1) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
+if (e !== -1) m = { tex: unquote(i, source.slice(i + 2, e)), end: e + 2, display: true };
 else if (onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1) {
 const stop = partialEnd(source, i);
-const tex = source.slice(i + 2, stop);
+const tex = unquote(i, source.slice(i + 2, stop));
 
 if (texLike(tex) && closeOpen) m = { tex: closePartial(tex), end: stop, display: true };
 else if (open === -1 && !closeOpen && stop === source.length && (texLike(tex) || !tex.trim())) open = i;
