@@ -1750,6 +1750,7 @@ function itemExtras(chatMessages, m, mi) {
   if (meta.tools) out.tools = meta.tools;
   if (meta.task) out.task = meta.task; // [activity cards] the request in a few words, for the card's subtitle
   if (meta.written) { const rows = aiFiles.restoreWritten(meta.written); if (rows.length) out.written = rows; } // [activity cards] the files the turn wrote: rows for its Files card, ids of the file registry (never the stored paths)
+  if (meta.interim) out.interim = true; // [quiet run] its words were the card's line while the run went on: a chat drawn again shows no bubble for them
   if (meta.cards) out.cards = true; // [activity cards] saved by a version that draws cards: its steps carry bounded, masked inputs
   if (meta.agents) out.agents = meta.agents; // [agents card] the reply's subagents
   if (meta.skills) out.skills = meta.skills; // [skills] the skill the reply worked by
@@ -2131,6 +2132,7 @@ class Agent {
     if (last < 0) return;
     const patch = branches.cleanMeta({ tabs: this.tabsOfReply(messages[last], info), thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, touched: info.touched, written: info.written, cards: info.cards, task: info.task, auto: info.auto, agents: info.agents, skills: info.skills, review: info.review });
     if (patch) branches.setMeta(messages[last], patch);
+    if ('interim' in info) branches.setMeta(messages[last], { interim: info.interim === true ? true : undefined }); // [quiet run] (false clears it: the run was over after all)
   }
 
   // [tab chips] The tabs a reply names (its [[tab:ID]] markers; for the run's last reply, also the tabs its steps worked on), as { id: { t, u, s } }.

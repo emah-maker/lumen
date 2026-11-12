@@ -52,6 +52,7 @@ function cleanMeta(raw) {
   }
   if (Array.isArray(raw.touched)) { const ids = [...new Set(raw.touched.filter((n) => Number.isInteger(n) && n >= 0 && n < 1e9))].slice(0, 24); if (ids.length) out.touched = ids; } // [activity cards] the tabs the turn used
   if (raw.cards === true) out.cards = true;
+  if (raw.interim === true) out.interim = true; // [quiet run] a turn that ended while its run went on (helpers or agents still at work): its words were the card's line
   if (Array.isArray(raw.agents)) { // [agents card] the subagents the reply started, as they last stood
     const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
     const num = (v) => (Number.isFinite(v) && v >= 0 ? Math.round(v) : 0);

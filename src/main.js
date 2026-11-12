@@ -11903,6 +11903,11 @@ function noteRunTabs(run, ids) { // the tabs a run names, as they look now (or a
 }
 // The saved reply keeps one small frame (the live ones are sharp and bigger): scaled down once, here, not per frame.
 function savedThumb(t) { return t && Number.isInteger(t.tabId) ? { tabId: t.tabId, s: t.s, url: t.url || '', title: t.title || '' } : undefined; } // (the tab, never its picture)
+// [quiet run] The run goes on after its turn ended: a helper Claude Code ran in the background still works, an agent of its own does, or a helper
+// ended well (the CLI then goes on with its result in a turn of its own). Engines without helpers never go on: their turn is the answer.
+function runGoesOnAfter(run) {
+  return Boolean(run.liveHelpers?.size || run.helperEnded === true || run.details?.agents?.some((a) => a && a.state === 'working'));
+}
 function stampRun(run, done = null) {
   try {
     const d = run.details;
@@ -11912,6 +11917,7 @@ function stampRun(run, done = null) {
       if (done && d.touched?.length) noteRunTabs(run, d.touched.filter(Number.isInteger)); // (the card's Tabs list: each tab as it last looked, so a closed one still reads after a restart)
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
+    if (done) info.interim = !run.error && !run.stopped && runGoesOnAfter(run); // [quiet run] its words were the card's line, not the answer
     if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, agents: d.agents?.length ? d.agents : undefined, skills: d.skills?.length ? d.skills : undefined, review: (d.review && reviewTrackLib.saved(d.review)) || undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
@@ -11981,7 +11987,13 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   };
   const out = createCoalescer(sendOut);
   const emit = (msg) => {
+    if (msg.type === 'helper' && typeof msg.id === 'string') { // [quiet run] which background helpers still work (runGoesOnAfter); one that ended well makes the CLI go on with its result
+      if (msg.state === 'working' || msg.state === 'progress') (run.liveHelpers ||= new Set()).add(msg.id);
+      else { run.liveHelpers?.delete(msg.id); if (msg.state === 'done') run.helperEnded = true; }
+    }
     if (msg.type === 'followup_start') { // [background helpers] Claude Code began a turn of its own (a helper ended): this run is the chat's running one again, with a reply of its own
+      if (!run.deleted) agent.stampMessages(run.messages, run.startLen, { interim: true }); // [quiet run] the turn before was not the answer: the run went on (a chat drawn again shows no bubble for it)
+      run.helperEnded = false;
       run.startLen = run.messages.length;
       run.details = { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [], ...(run.details?.agents ? { agents: run.details.agents } : {}), ...(run.details?.skills ? { skills: run.details.skills } : {}), ...(run.details?.review ? { review: run.details.review } : {}) }; // ([agents card] its agents go on: the same card)
       run.thumbs?.stop();
