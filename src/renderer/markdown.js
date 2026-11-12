@@ -67,7 +67,9 @@
     if (ready) {
       try {
         const env = /^\s*\\begin\{/.test(tex);
-        const clean = prepare(tex.replace(/\\label\{[^}]*\}/g, ''));
+        // A bare % starts a TeX comment and swallows the rest of its line ("\text{ wt% C}" loses its closing brace and
+        // the whole formula fails): read it as the percent sign the model meant.
+        const clean = prepare(tex.replace(/\\label\{[^}]*\}/g, '')).replace(/(?<!\\)((?:\\\\)*)%/g, '$1\\%');
         const lone = display === false && new RegExp('^\\s*-?\\\\frac\\{[^{}]*\\}\\{[^{}]*\\}\\s*$').test(tex); // a lone \frac{3}{4} is drawn full size, like the converted plain 3/4
         const src = (display === 'inline' || lone) && !env ? `\\displaystyle ${clean}` : clean;
         const html = temml.renderToString(src, { displayMode: display === true || env, throwOnError: true, annotate: true, trust: false, maxSize: 20, maxExpand: 500, macros: { ...MACROS } });
@@ -79,6 +81,8 @@
     }
     const block = display === true;
     const shown = escapeHtml(block ? tex.trim() : tex);
+    // Temml is here and can't read it: the source in the text's own style, on a line of its own, not a code block.
+    if (ready && block) return `<div class="math-block math-failed"><code class="math-src">${shown}</code></div>`;
     // Waiting for Temml (or mhchem): marked, to be typeset in place once it is here. A formula it can't read stays source.
     const data = ready ? '' : ` data-tex="${escapeHtml(tex)}" data-display="${block ? 1 : display === 'inline' ? 'i' : 0}"`;
     return block ? `<pre class="math-src"${data}>${shown}</pre>` : `<code class="math-src"${data}>${shown}</code>`;
@@ -169,7 +173,10 @@
     let open = -1;
     const put = (tex, display) => { maths.push({ tex, display }); return `${maths.length - 1}`; };
     const lineStart = (k) => k === 0 || source[k - 1] === '\n';
-    const onlySpaceBefore = (k) => { const b = source.lastIndexOf('\n', k - 1) + 1; return !source.slice(b, k).trim(); };
+    // ("> $$" in a block quote counts as a line of its own: its quote marks are not text.)
+    const onlySpaceBefore = (k) => { const b = source.lastIndexOf('\n', k - 1) + 1; return /^[ \t]*(>[ \t]*)*$/.test(source.slice(b, k)); };
+    // A formula over several quoted lines: the quote marks that start its lines are not TeX.
+    const unquote = (k, tex) => (source.slice(source.lastIndexOf('\n', k - 1) + 1, k).includes('>') ? tex.replace(/\n[ \t]*(?:>[ \t]?)+/g, '\n') : tex);
     while (i < source.length) {
       // A ```math (or latex, tex) fence is a display formula, as GitHub and several models write one.
       if (!fenced && lineStart(i) && /^```(math|latex|tex)[ \t]*(\n|$)/.test(source.slice(i, i + 12))) {
@@ -206,10 +213,10 @@
       let m = null;
       if (source.startsWith('$$', i)) {
         const e = displayDollarEnd(source, i, onlySpaceBefore(i));
-        if (e !== -1) m = { tex: source.slice(i + 2, e), end: e + 2, display: true };
+        if (e !== -1) m = { tex: unquote(i, source.slice(i + 2, e)), end: e + 2, display: true };
         else if (onlySpaceBefore(i) && source.indexOf('$$', i + 2) === -1) {
           const stop = partialEnd(source, i);
-          const tex = source.slice(i + 2, stop);
+          const tex = unquote(i, source.slice(i + 2, stop));
           // Still being written (or cut off): a streaming reply waits for it; a finished one shows what there is of it.
           if (texLike(tex) && closeOpen) m = { tex: closePartial(tex), end: stop, display: true };
           else if (open === -1 && !closeOpen && stop === source.length && (texLike(tex) || !tex.trim())) open = i;

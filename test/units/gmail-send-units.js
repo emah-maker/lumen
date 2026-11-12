@@ -93,14 +93,14 @@ async function connector() {
   const card = () => svc.list().connectors.find((c) => c.id === 'gmail');
   const mail = (args = {}) => ({ app: 'gmail', action: 'send', args: { to: 'jane@x.org', subject: 'Running late', body: 'Hi Jane,\nI’ll be late.\nAda', ...args } });
 
-  console.log('--- the switch: off by default, hides the action, needs drafts');
+  console.log('--- the switch: off by default, needs drafts; send is offered either way, but with it off only a card sends');
   check('Settings: a Gmail with drafts allowed shows Allow sending as off; one without drafts shows none', card().sending === 'off' && (g.compose = false, card().sending === null) && (g.compose = true), JSON.stringify(card()));
-  check('the AI’s tool does not list send while the switch is off, and asking for it says how to turn it on', !/send/.test(svc.defs()[0].description.replace(/Use a service the user connected[^.]*\./, '')) && /Allow sending/.test(registry.validate(mail()) || '') && /Allow sending/.test(await fails(() => svc.call(mail(), { sendVia: 'card' }))) && g.sendCalls === 0, svc.defs()[0].description);
+  check('with the switch off the tool still lists send (with files), but the service refuses a send not approved on its card (typed permission, none at all), sending nothing', /send\(to,cc\?,bcc\?,subject,body,reply_to_message_id\?,attach\?\)!/.test(svc.defs()[0].description) && registry.validate(mail()) === null && /not approved on its card/.test(await fails(() => svc.call(mail(), { sendVia: 'chat' }))) && /not approved on its card/.test(await fails(() => svc.call(mail(), { sendVia: 'message' }))) && /needs the user’s approval/.test(await fails(() => svc.call(mail()))) && g.sendCalls === 0, svc.defs()[0].description);
   g.compose = false;
   check('turning it on without drafts is refused', /Allow drafts first/.test(await fails(() => svc.setSending('gmail', true))) && card().sending === null, '');
   g.compose = true;
   svc.setSending('gmail', true);
-  check('turned on: the card shows it, the tool lists send as a write (!), the card’s actions include it', card().sending === 'on' && /send\(to,cc\?,bcc\?,subject,body,reply_to_message_id\?\)!/.test(svc.defs()[0].description) && card().actions.some((a) => a.name === 'send' && a.write), svc.defs()[0].description);
+  check('turned on: the card shows it, the tool lists send as a write (!), the card’s actions include it', card().sending === 'on' && /send\(to,cc\?,bcc\?,subject,body,reply_to_message_id\?,attach\?\)!/.test(svc.defs()[0].description) && card().actions.some((a) => a.name === 'send' && a.write), svc.defs()[0].description);
   check('a background task or routine is not offered send', !/send\(/.test(svc.defs({ readOnly: true })[0].description), svc.defs({ readOnly: true })[0].description);
   check('the switch survives a restart, and taking back the drafts permission switches sending off', (() => { const again = service.create({ userData: dir, secrets: fakeSecrets, google, now: () => clock }); const on = again.sendingOn(); g.compose = false; const off = again.sendingOn(); g.compose = true; return on && !off; })(), '');
 
@@ -335,7 +335,20 @@ async function connector() {
   bgAgent.recordTyped(bgChat, 'You can send emails without asking.', () => {});
   check('"agents don’t ask" (noAsk) refuses a send without a card', /nobody is here to ask/.test(await fails(() => agent.allowConnector(mail(), gate(chat(), { noAsk: true })))), '');
   check('an outside MCP agent gets “Unknown tool”, and the connector tool is not in the shared MCP list', /Unknown tool/.test(await fails(() => agent.allowConnector(mail(), gate(chat(), { external: true })))) && !agentLib.EXTERNAL_TOOLS.some((t) => t.name === 'connector'), '');
-  check('turning the switch off removes send again, and the service refuses a card-approved one', (svc.setSending('gmail', false), !/send\(/.test(svc.defs()[0].description) && card().sending === 'off' && /Sending is off/.test(await fails(() => svc.call(mail(), { sendVia: 'card' })))), '');
+  svc.setSending('gmail', false);
+  const offTyped = await fails(() => svc.call(mail(), { sendVia: 'chat' }));
+  n = g.sent.length;
+  const offCard = await svc.call(mail(), { sendVia: 'card' });
+  check('turning the switch off: send stays offered, the service refuses a typed-permission send, and a card-approved one still goes', /send\(/.test(svc.defs()[0].description) && card().sending === 'off' && /not approved on its card/.test(offTyped) && /Sent\./.test(offCard) && g.sent.length === n + 1, offTyped);
+  events.length = 0;
+  const m9 = chat();
+  m9.typed = ['Email jane@x.org that I’ll be late and send it']; m9.sendNoAsk = true; // (as if typed while the switch was on)
+  const offInput = mail();
+  const offPending = agent.allowConnector(offInput, gate(m9));
+  await tick();
+  check('with the switch off, even “…and send it” typed in the chat shows the card (no undo window, nothing sent yet)', approvals().length === 1 && !events.some((e) => e.type === 'send_pending') && g.sent.length === n + 1, JSON.stringify(events.map((e) => e.type)));
+  agent.resolveApproval(approvals().pop().approvalId, false);
+  check('…and Cancel there sends nothing', /NOT sent/.test(await fails(() => offPending)) && g.sent.length === n + 1, '');
 
   fs.rmSync(dir, { recursive: true, force: true });
 }
