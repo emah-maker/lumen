@@ -3425,6 +3425,9 @@ else root.agentPill = api;
 
 
 
+
+
+
 (function (root) {
 const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 
@@ -3438,6 +3441,44 @@ const s = clean(text);
 if (!s || waiting || asks(s)) return '';
 return s;
 }
+
+
+const LEADS = [
+/^(?:status|progress)\s*:/i,
+/^(?:i'?m|i am|we'?re|we are)\s+(?:now\s+|still\s+)?waiting\s+(?:on|for)\b/i,
+/^(?:still\s+)?waiting\s+(?:on|for)\b/i,
+/^(?:all\s+|the\s+)?(?:\w+\s+)?(?:agents?|helpers?|reviewers?|subagents?|workers?)\s+(?:are|is)\s+(?:still\s+|now\s+)?(?:running|working|in progress|under way|underway)\b/i,
+];
+
+const LATER = /^(?:i'?ll|i will|we'?ll|i'?m going to)\b[^.!?]*\b(?:as (?:each|it|they|one|soon as)\b|once (?:each|it|they|all|the)\b|when (?:each|it|they|all|the)\b[^.!?]*\b(?:finish|finishes|done|complete|completes|ready|back)\b|in the background)/i;
+const WAIT = /^(?:i'?m|i am|we'?re|we are)\s+(?:now\s+|still\s+)?waiting\s+(?:on|for)\b/i;
+const waits = (s) => LATER.test(s) || WAIT.test(s);
+const sentences = (p) => p.match(/[^.!?]+(?:[.!?]+["'”’)\]]*|$)\s*/g) || [p];
+const plain = (p) => p.replace(/\*\*|__/g, '').replace(/^[\s*_]+|[\s*_]+$/g, '');
+const structured = (p) => /^\s*(?:[-*+]\s|\d+[.)]\s|#|\||>)/m.test(p);
+function tidy(text) {
+const src = String(text || '');
+if (!src.trim() || src.includes('```')) return { kept: [src], cut: false };
+const kept = [];
+let cut = false;
+for (const p of src.split(/\r?\n[ \t]*\r?\n/)) {
+if (!p.trim()) continue;
+if (structured(p) || asks(p)) { kept.push(p); continue; }
+const body = plain(p).trim();
+if (LEADS.some((re) => re.test(body))) { cut = true; continue; }
+const parts = sentences(p.trim());
+const keep = parts.filter((x) => !waits(plain(x).trim()));
+if (keep.length === parts.length) { kept.push(p); continue; }
+cut = true;
+if (keep.length) kept.push(keep.join('').trim());
+}
+return { kept, cut };
+}
+function finalReply(text) {
+const { kept, cut } = tidy(text);
+return cut && kept.length ? kept.join('\n\n') : String(text || '');
+}
+const filler = (text) => { const { kept, cut } = tidy(text); return cut && !kept.length; };
 
 function fileKey(file) {
 const p = String(file?.path || file?.name || '').trim().replace(/\\/g, '/').replace(/\/+/g, '/');
@@ -3467,7 +3508,7 @@ shown: (run) => Boolean(run) && shown.has(run),
 };
 }
 
-const api = { asks, interim, fileKey, offerGate };
+const api = { asks, interim, finalReply, filler, fileKey, offerGate };
 if (typeof module === 'object' && module.exports) module.exports = api;
 else root.runQuiet = api;
 })(this);
@@ -5725,7 +5766,7 @@ case 'turn_start':
 case 'text_block':
 settleThinking();
 endStream();
-if (turn.text && turn.textSource?.trim()) turn.lastSaid = { el: turn.text, text: turn.text.textContent };
+if (turn.text && turn.textSource?.trim()) (turn.saidBlocks ||= []).push(turn.text);
 turn.text = null;
 if (event.type === 'text_block') window.stepUI?.endCard(turn);
 turn.textSource = '';
@@ -5768,9 +5809,16 @@ break;
 }
 case 'text': {
 endThinking();
-if (!turn.text) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); window.stepUI?.endCard(turn); }
+if (!turn.text) {
+turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' }));
+window.stepUI?.endCard(turn);
+
+
+if (approvals.size === 0 && window.stepUI?.runGoesOn?.(turn)) { turn.text.hidden = true; turn.text.classList.add('run-folded'); turn.text.dataset.liveFold = '1'; }
+}
 turn.textSource += event.text;
 renderStreaming(turn.text, turn.textSource);
+if (turn.text.dataset.liveFold) { const paras = turn.textSource.split(/\n\s*\n/).filter((p) => p.trim()); window.stepUI?.narrate(turn, paras[paras.length - 1] || ''); }
 break;
 }
 case 'retry':
@@ -5786,11 +5834,11 @@ settleThinking();
 finishReply(turn.text, turn.textSource);
 turn.approvalsWaiting ||= () => approvals.size > 0;
 const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
-const said = turn.text && turn.textSource?.trim() ? { el: turn.text, text: turn.text.textContent } : turn.lastSaid?.el.isConnected ? turn.lastSaid : null;
-turn.lastSaid = null;
+const said = [...(turn.saidBlocks || []), ...(turn.text && turn.textSource?.trim() ? [turn.text] : [])].filter((el) => el.isConnected);
+turn.saidBlocks = null;
 const step = window.stepUI ? window.stepUI.add(turn, { ...event, label: event.label || fallback }, { messages, append: appendToTurn, task: lastAsk?.text, runId }) : plainStep(event, event.label || fallback);
 turn.seg = null;
-if (said && window.stepUI?.narrate(turn, said.text)) said.el.remove();
+if (said.length && window.stepUI?.narrate(turn, said[said.length - 1].textContent)) for (const el of said) el.remove();
 if (event.helper) step.dataset.helper = '1';
 if (!event.id) step.className = 'step done';
 if (event.name === 'connector_done' && /^https:\/\//.test(String(event.link || ''))) step.append(' ', Object.assign(document.createElement('a'), { className: 'step-link', href: event.link, textContent: t('step.connectorOpen') }));
@@ -6066,6 +6114,15 @@ dropEmptyBubbles();
 
 const goesOn = !turn.failed && !turn.stopped && !turn.stopRequested && Boolean(window.stepUI?.runGoesOn?.(turn));
 const folded = goesOn && window.runQuiet ? window.runQuiet.interim(turn.textSource, { waiting: approvals.size > 0 }) : '';
+const blocksBefore = (turn.saidBlocks || []).filter((el) => el.isConnected && el !== turn.text);
+turn.saidBlocks = null;
+if (folded) for (const el of blocksBefore) el.remove();
+if (!folded && turn.text?.dataset.liveFold) { turn.text.hidden = false; turn.text.classList.remove('run-folded'); delete turn.text.dataset.liveFold; }
+if (!goesOn && !turn.failed && turn.cards?.length && window.runQuiet && turn.text) {
+for (const el of blocksBefore) if (window.runQuiet.filler(el.source || '')) el.remove();
+const tidy = window.runQuiet.finalReply(turn.textSource);
+if (tidy !== turn.textSource) { turn.textSource = tidy; turn.text.source = tidy; turn.text.flushed = false; }
+}
 finishReply(turn.text, turn.textSource, { latest: true });
 
 if (!goesOn && !turn.failed && !turn.text?.querySelector?.('.reply-regen') && lastAsk && !turn.text?.source?.trim()) {
@@ -7151,6 +7208,8 @@ fileCards();
 continue;
 }
 if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); }
+
+if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
 else if (item.steps) {
 const summary = document.createElement('div');
 summary.className = 'step done restored';
@@ -7159,10 +7218,11 @@ summary.firstChild.textContent = t(item.steps === 1 ? 'chat.usedActions.one' : '
 append(summary);
 }
 bubble.className = 'msg assistant';
-bubble.innerHTML = window.renderMarkdown(item.text);
+const said = item.cards && item.tools?.length && window.runQuiet ? window.runQuiet.finalReply(item.text) : item.text;
+bubble.innerHTML = window.renderMarkdown(said);
 bubble._tabs = item.tabs || null;
 decorateCode(bubble);
-finishReply(bubble, item.text);
+finishReply(bubble, said);
 if ('steps' in item) replyEntries.push({ bubble, item });
 if (item.generated?.length) {
 bubble.classList.add('restored');
@@ -7195,7 +7255,7 @@ const lastUser = u >= 0 ? items[u] : null;
 const lastReply = items[lastIndex]?.role === 'assistant' && !items[lastIndex].text
 ? [...messages.querySelectorAll('.msg.assistant.gen-pics.restored')].pop()
 : [...messages.querySelectorAll('.msg.assistant.restored:not(.gen-pics)')].pop();
-if (lastUser && (lastUser.text || lastUser.images?.length || lastUser.files?.length) && lastReply && items[lastIndex]?.role === 'assistant') {
+if (lastUser && (lastUser.text || lastUser.images?.length || lastUser.files?.length) && lastReply && items[lastIndex]?.role === 'assistant' && !items[lastIndex].interim) {
 const imgs = (lastUser.images || []).filter((src) => typeof src === 'string' && /^data:image\/[a-z+.-]+;base64,/.test(src)).map((src) => {
 const [, media_type, data] = src.match(/^data:(image\/[a-z+.-]+);base64,(.*)$/);
 return { media_type, data, url: src };
@@ -7203,7 +7263,7 @@ return { media_type, data, url: src };
 lastAsk = { text: lastUser.text || '', images: [...imgs, ...restoredFiles(lastUser.files)], tabs: null };
 if (items[lastIndex].acted) { const step = document.createElement('div'); step.className = 'step done restored'; step.dataset.acts = '1'; step.hidden = true; lastReply.before(step); }
 lastReply.querySelector('.reply-copy')?.remove();
-finishReply(lastReply, items[items.length - 1].text, { latest: true });
+{ const last = items[items.length - 1]; finishReply(lastReply, last.cards && last.tools?.length && window.runQuiet ? window.runQuiet.finalReply(last.text) : last.text, { latest: true }); }
 } else if (items[lastIndex]?.role === 'user' && (items[lastIndex].text || items[lastIndex].images?.length || items[lastIndex].files?.length)) {
 
 const lastBubble = [...messages.querySelectorAll('.msg.user')].pop();

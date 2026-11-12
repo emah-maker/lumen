@@ -17,6 +17,18 @@ check('an approval waiting: the words stay in the chat', Q.interim('Running the 
 check('nothing said: nothing to fold', Q.interim('') === '' && Q.interim('   \n ') === '' && Q.interim(null) === '');
 check('asks() reads the end only', Q.asks('Done. Anything else?') && !Q.asks('Done.') && Q.asks('Ready? (y/n)?'));
 
+// ---- the final answer drops its status filler (the card said it)
+const shot = 'Four agents are running. Three are building the 4.4, 4.6 and 6.1 decks, and one is doing the first review round on the existing 4.3 deck. I\'m waiting on their results before the next review rounds.\n\nStatus: the 4.4, 4.6 and 6.1 decks are being built and the 4.3 deck is in its first review. I\'ll start a fresh reviewer for each deck as it finishes.';
+check('the screenshot\'s two paragraphs are all filler', Q.filler(shot) && Q.finalReply(shot) === shot, Q.finalReply(shot));
+check('an answer with a "Status:" paragraph keeps only the answer', Q.finalReply('All four decks pass the bar: 4.3 10, 4.4 10, 4.6 10, 6.1 10.\n\nStatus: done.') === 'All four decks pass the bar: 4.3 10, 4.4 10, 4.6 10, 6.1 10.');
+check('...and "**Status:**" too', Q.finalReply('The fix is in.\n\n**Status:** all agents finished.') === 'The fix is in.');
+check('a closing "I\'ll … as it finishes" or "I\'m waiting on…" sentence goes, the rest of its paragraph stays', Q.finalReply('Here is the summary. I\'ll start a fresh reviewer for each deck as it finishes.') === 'Here is the summary.' && Q.finalReply('Deck 4.3 is at 9.6. I\'m waiting on the last reviewer.') === 'Deck 4.3 is at 9.6.');
+check('a paragraph about agents still running goes', Q.finalReply('Two decks are done.\n\nThe reviewers are still running on the rest.') === 'Two decks are done.');
+check('never empties a reply, never touches content', Q.finalReply('Status: done.') === 'Status: done.' && Q.finalReply('The status of the build is green.') === 'The status of the build is green.' && Q.finalReply('I\'ll explain how it works.') === 'I\'ll explain how it works.' && Q.finalReply('Done.\n\nUpdate: the API changed in v3.') === 'Done.\n\nUpdate: the API changed in v3.');
+check('lists, code, headings and questions are content', Q.finalReply('Done.\n\n- Status: ok\n- Waiting on: none') === 'Done.\n\n- Status: ok\n- Waiting on: none' && Q.finalReply('Done.\n\n```\nStatus: x\n```') === 'Done.\n\n```\nStatus: x\n```' && Q.finalReply('Done.\n\n## Status: shipped') === 'Done.\n\n## Status: shipped' && Q.finalReply('Done.\n\nStatus: should I push it?') === 'Done.\n\nStatus: should I push it?');
+check('bold in a kept sentence stays', Q.finalReply('**4.3** scores 10. I\'m waiting on nothing.') === '**4.3** scores 10.');
+check('filler() is true only when everything is filler', Q.filler('Status: building.') && !Q.filler('Done.') && !Q.filler('') && !Q.filler('Done.\n\nStatus: x'));
+
 // ---- file card dedupe
 check('one key per path, whatever the slashes and case', Q.fileKey({ path: 'C:\\Decks\\4.2.pptx' }) === Q.fileKey({ path: 'c:/decks//4.2.PPTX' }));
 check('different files, different keys', Q.fileKey({ path: 'C:/a/one.md' }) !== Q.fileKey({ path: 'C:/a/two.md' }));
@@ -45,6 +57,17 @@ check('finishTurn asks the card whether the run goes on', /const goesOn = [^\n]*
 check('...folds what the turn said into the card, its bubble out of sight', /runQuiet\.interim\(turn\.textSource, \{ waiting: approvals\.size > 0 \}\)/.test(finish) && /window\.stepUI\.fold\(turn, folded\); foldBubble\(turn\);/.test(finish) && /\.msg\.run-folded \{ display: none; \}/.test(read('src/renderer/styles.css')));
 check('...no Try again row and no reply suggestions for a turn inside the run', /if \(!goesOn && !turn\.failed/.test(finish) && /const clean = !goesOn &&/.test(finish));
 check('...a turn that ends the run drops the folded words before it, and its skill offer shows', /if \(!goesOn\) \{ dropFolded\(turn\); if \(!early\) releaseOffer\(turn\); \}/.test(finish));
+check('...every block it said since its last step folds, not just the last one', /if \(folded\) for \(const el of blocksBefore\) el\.remove\(\);/.test(finish));
+check('...words streamed into the card come back as the answer when the run is over (or they ask)', /if \(!folded && turn\.text\?\.dataset\.liveFold\) \{ turn\.text\.hidden = false;/.test(finish));
+check('...the final answer of a run with a card drops its status filler', /if \(!goesOn && !turn\.failed && turn\.cards\?\.length && window\.runQuiet && turn\.text\)/.test(finish) && /window\.runQuiet\.finalReply\(turn\.textSource\)/.test(finish) && /window\.runQuiet\.filler\(el\.source/.test(finish));
+const textCase = core.slice(core.indexOf("    case 'text': {"), core.indexOf("    case 'retry':"));
+check('words that stream while the run goes on are the card\'s live line, never a bubble', /approvals\.size === 0 && window\.stepUI\?\.runGoesOn\?\.\(turn\)\) \{ turn\.text\.hidden = true; turn\.text\.classList\.add\('run-folded'\)/.test(textCase) && /window\.stepUI\?\.narrate\(turn, paras\[paras\.length - 1\]/.test(textCase));
+const toolCase = core.slice(core.indexOf("    case 'tool': {"), core.indexOf("    case 'desktop_card':"));
+check('all the blocks said before a step move into the card (any engine)', /const said = \[\.\.\.\(turn\.saidBlocks \|\| \[\]\)/.test(toolCase) && /for \(const el of said\) el\.remove\(\);/.test(toolCase) && /\(turn\.saidBlocks \|\|= \[\]\)\.push\(turn\.text\)/.test(core));
+const draw = core.slice(core.indexOf('function drawItems('), core.indexOf('function renderLatest('));
+check('a chat drawn again shows no bubble for an interim turn (unless it asks), and the answer without filler', /if \(item\.interim && !window\.runQuiet\?\.asks\(item\.text\)/.test(draw) && /window\.runQuiet\.finalReply\(item\.text\)/.test(draw) && /!items\[lastIndex\]\.interim\)/.test(core));
+const main = read('src/main.js');
+check('main marks a turn interim when its run goes on (helpers, agents), and the turn before a follow-up', /function runGoesOnAfter\(run\)/.test(main) && /if \(done\) info\.interim = !run\.error && !run\.stopped && runGoesOnAfter\(run\);/.test(main) && /agent\.stampMessages\(run\.messages, run\.startLen, \{ interim: true \}\)/.test(main) && /\(run\.liveHelpers \|\|= new Set\(\)\)\.add\(msg\.id\)/.test(main));
 const over = core.slice(core.indexOf('function runOver('), core.indexOf('function releaseOffer('));
 check('a run that ends on its last agent: its newest folded words are the answer (shown, with suggestions), then its offer', /bubble\.hidden = false;/.test(over) && /lumen:reply-done/.test(over) && /releaseOffer\(t\);/.test(over));
 check('a skill offer goes through the gate', /if \(event\.type === 'skill_offer'\) \{[^\n]*offerSkill\(event\)/.test(core) && /skillOffers\.hold\(runOf\(t\), event\)/.test(core));

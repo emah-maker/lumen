@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Progress goes in the card, the chat gets the answer.** While a run's helpers, agents or reviewers still work, what the AI says ("Four agents are running…", "Status: the decks are being built…") now streams into the card's status line instead of appearing as chat text first. A chat drawn again (switching tabs, or when a helper finishes) no longer brings those in-between turns back as bubbles: each is saved as in-between. Every text block said before a step moves into the card, not just the last one (any engine). The final answer of a run with a card drops paragraphs that only report status ("Status: …", "I'm waiting on…", "The reviewers are still running…") and closing lines like "I'll start a fresh reviewer for each deck as it finishes."; a reply that is only that is kept as it is, and words that ask you something always stay in the chat. Tests: `test/units/run-quiet-units.js`, `test/units/chat-versions-units.js`.
+
 ## 0.5.98 (2026-11-10)
 
 - **Dark mode for all websites works.** The experimental setting (Settings → Experimental) did nothing: it turned on Chromium's `WebContentsForceDark` feature, which only Chrome's own browser layer reads, and Electron doesn't have that layer. Lumen now turns Chromium's auto dark mode on itself, in every page and frame, so a site with no dark theme of its own is drawn dark. It still takes effect after a restart. Tests: `test/e2e/force-dark.js`.
