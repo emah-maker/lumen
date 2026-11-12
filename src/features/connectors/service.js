@@ -9,11 +9,12 @@
 //    with no redirect followed. A 'session' connector sends the user's signed-in Lumen cookies there and nowhere else; the
 //    others send their token there. Tests point a connector at 127.0.0.1 through `endpoints` (main.js allows that only in test mode).
 //  - Disconnecting forgets the entry and the sealed secret and drops cached answers.
-//  - Gmail's drafts need Google's gmail.compose permission on the shared Google sign-in: allowDrafts() asks for it, only when the
-//    user presses Allow drafts on the card (google.allowDrafts, widgets.js gmailAllowDrafts).
-//  - Gmail sending is a second, separate switch (setSending, Settings → Gmail → Allow sending), off by default and only with drafts allowed:
-//    gmail.compose already covers it, so no new Google permission is ever asked for. The agent decides how each send is allowed
-//    (card or the user's typed permission, features/gmail-send.js); call() refuses a send nobody allowed, over 10 an hour, and logs each.
+//  - Gmail's drafts and sends need Google's gmail.compose permission on the shared Google sign-in: allowDrafts() asks for it, when the
+//    user presses Allow drafts on the card (google.allowDrafts, widgets.js gmailAllowDrafts) or, from a chat, right after the user approved
+//    a draft or a send on its card (call(): Google's own consent page opens and the run waits for it). The AI can't start it on its own.
+//  - Gmail sending: every send needs the user's Send on its card. The Settings switch (setSending, Gmail → Allow sending, off by default)
+//    adds the one way around the card: the user's typed permission in that chat (features/gmail-send.js). call() refuses a send nobody
+//    allowed, over 10 an hour, and logs each.
 //  - Google Drive and Google Sheets (kind 'google') share ONE Google sign-in (google-auth.js): its refresh token is sealed into
 //    connectors.json like any other secret ('google'), asked for in the user's own browser only when Connect is pressed, with each
 //    connector's own scopes (incremental). Every request gets a fresh access token; the last Google connector to be disconnected
@@ -95,14 +96,19 @@ function create({
     writeJsonAtomic(file, { version: 1, connected, ...(googleSealed ? { google: { secret: googleSealed } } : {}), ...(microsoftSealed ? { microsoft: { secret: microsoftSealed } } : {}) }, 2, 0o600); // (tmp + rename: never a half-written file)
     unreadable = false; // (a copy of the old file was set aside when it failed)
   }
-  // Gmail sending: the switch is on, with the full sign-in and drafts still allowed (take the permission back at Google and it is off).
+  // Gmail sending without the card (the user's typed permission): the switch is on, with the full sign-in and drafts still allowed
+  // (take the permission back at Google and it is off).
   function sendingOn() {
     try { return Boolean(connected.gmail?.config?.sending && connected.gmail.config.mode === 'oauth' && google?.drafts?.() && google?.send); } catch { return false; }
   }
   let sendLogStore = null;
   const sendLog = () => (sendLogStore ||= require('../gmail-send').createLog({ file: path.join(userData, 'gmail-send-log.json'), now, secrets })); // (loaded on the first send)
+  // Gmail's send is offered with the full sign-in (a card asks for each one; Google's permission is asked for after that card when missing).
+  function sendOffered() {
+    try { return Boolean(connected.gmail && connected.gmail.config?.mode === 'oauth' && google?.send); } catch { return false; }
+  }
   function changed() {
-    registry.setUnlocked(sendingOn() ? ['gmail.send'] : []);
+    registry.setUnlocked(sendOffered() ? ['gmail.send'] : []);
     registry.setConnected(Object.keys(connected).filter((id) => registry.get(id).kind !== 'mcp' && !connected[id].config?.paused)); // (paused: signed in, but the AI is not offered it)
     try { onChange(); } catch { /* the page looks again next time */ }
   }
@@ -287,14 +293,15 @@ function create({
     // Gmail with the full sign-in: whether drafts are allowed ('on'), or the card offers Allow drafts ('off'). null elsewhere.
     let drafts = null;
     if (def.id === 'gmail' && status === 'connected' && e?.config?.mode === 'oauth' && google?.drafts) { try { drafts = google.drafts() ? 'on' : 'off'; } catch { drafts = 'off'; } }
-    const sending = drafts === 'on' && google?.send ? (sendingOn() ? 'on' : 'off') : null; // Allow sending, under Allow drafts
+    const sending = drafts === 'on' && google?.send ? (sendingOn() ? 'on' : 'off') : null; // the "send without the card" switch, under Allow drafts
+    const sends = def.id === 'gmail' && status === 'connected' && sendOffered(); // (each send on its card; Google's permission asked for after it when missing)
     return {
       id: def.id, name: def.name, category: def.category, icon: def.icon, summary: def.summary, kind: def.kind, note: def.sessionNote || '',
       status, paused: Boolean(e?.config?.paused), statusText: upgrade ? `Reconnect to let the AI change all your files${account ? ` · ${account}` : ''}` : status === 'connected' ? `Connected${account ? ` · ${account}` : ''}${e?.config?.mode === 'session' ? ' (unread only)' : ''}${e?.config?.shared ? ' (signed in)' : ''}` : STATUS_TEXT[status],
       fields: def.fields.map(({ id, label, placeholder, secret, help }) => ({ id, label, placeholder, secret: Boolean(secret), help: help || '' })),
       config: def.id === 'canvas' ? { domain: e?.config?.domain || '' } : {},
-      reads: def.reads, does: def.id === 'gmail' && sending === 'on' ? [...def.does, 'Send an email from your Gmail, only after you press Send on a card that shows all of it (or you said in this chat that it may send)'] : def.does, drafts, sending,
-      actions: Object.entries(def.actions).filter(([, a]) => !a.gated || sending === 'on').map(([name, a]) => ({ name, label: a.label, write: Boolean(a.write) })),
+      reads: def.reads, does: sends ? [...def.does, `Send an email from your Gmail, with files attached, only after you press Send on a card that shows all of it${sending === 'on' ? ' (or you said in this chat that it may send)' : ''}`] : def.does, drafts, sending,
+      actions: Object.entries(def.actions).filter(([, a]) => !a.gated || sends).map(([name, a]) => ({ name, label: a.label, write: Boolean(a.write) })),
       always: Object.entries(def.actions).filter(([name, a]) => a.adds && !a.gated && alwaysList().includes(`${def.id}:${name}`)).map(([name, a]) => ({ key: `${def.id}:${name}`, label: a.label })), // [connectors] the adds the user chose Always allow for (Settings shows each with Ask again)
     };
   }
@@ -457,8 +464,8 @@ function create({
     return list();
   }
 
-  // Settings' Allow drafts on the Gmail card: the Google sign-in again, asking Google to add gmail.compose (to make drafts; Lumen never
-  // sends). Only for a Gmail connected with the full sign-in; never started by the AI.
+  // Allow drafts: the Google sign-in again, asking Google to add gmail.compose (drafts, and sends the user approves on a card). Only for a
+  // Gmail connected with the full sign-in. Started by Settings' button, or by call() after the user approved a draft or send on its card.
   async function allowDrafts(id) {
     const entry = connected[id];
     if (id !== 'gmail' || !entry) throw new Error('Connect Gmail first.');
@@ -566,6 +573,7 @@ function create({
     let names = {};
     if (entry && p.cardNames) { try { names = (await p.cardNames(cardCtx, input.action, args)) || {}; } catch { names = {}; } }
     if (file && !Array.isArray(file)) names = { ...names, file: { name: flat(file.name, 200), size: Number(file.size) || 0, type: flat(file.type, 100) } };
+    if (def.id === 'gmail' && Array.isArray(file)) names = { ...names, attachments: file.map((f) => ({ name: flat(f.name, 200), size: Number(f.size) || 0 })) }; // (the files an email carries, on its card)
     if (input.action === 'send') { try { sendLog().room(); } catch (err) { const e = new Error(err.message); e.kind = 'other'; throw e; } } // (a send that can't go gets no card)
     const text = p.describeWrite?.(input.action, args, names);
     const fields = registry.editable(input);
@@ -598,10 +606,19 @@ function create({
     const write = def.actions[input.action].write === true;
     if (write && readOnly) throw new Error(`Background tasks and routines can only read from ${def.name}. Tell the user what you would have changed.`);
     const sending = def.id === 'gmail' && input.action === 'send';
-    if (sending) { // allowed by a card click or the user's typed permission (agent.js passes how), the switch is on, under 10 an hour
+    if (sending) { // allowed by a card click (or Bypass permissions), or the user's typed permission with the switch on; under 10 an hour
       if (!sendVia) throw new Error('A send needs the user’s approval first. Nothing was sent.');
-      if (!sendingOn()) throw new Error('Sending is off (Settings → Apps and connections → Gmail → Let the AI send email). Nothing was sent.');
+      if (!sendOffered()) throw new Error('Sending needs the full Google sign-in. Nothing was sent.');
+      if (sendVia !== 'card' && sendVia !== 'bypass' && !sendingOn()) throw new Error('This send was not approved on its card. Nothing was sent.');
       try { sendLog().room(); } catch (err) { throw new Error(err.message); }
+    }
+    // Gmail without Google's drafts permission yet: the user just approved this draft or send on its card, so Google's own consent page
+    // opens now (the user's browser) and the run waits for it. Declined or closed: nothing is made, and the AI is told so.
+    if (def.id === 'gmail' && write && entry.config?.mode === 'oauth' && google?.allowDrafts && !google.drafts?.()) {
+      try { await allowDrafts('gmail'); } catch (err) {
+        throw new Error(`Google’s permission for Gmail drafts and sending wasn’t given (${flat(String(err?.message || err), 160)}). Nothing was ${sending ? 'sent' : 'made'}. Tell the user, and offer to try again (Google asks once more).`);
+      }
+      if (!google.drafts?.()) throw new Error(`Google didn’t give Lumen permission to make Gmail drafts or send, so nothing was ${sending ? 'sent' : 'made'}. Tell the user, and offer to try again.`);
     }
     const hit = !write && cache.get(key);
     if (hit && now() - hit.at < CACHE_MS) return hit.text;
@@ -673,7 +690,7 @@ function create({
 
   const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
   const googleHolds = (clientId, email) => { try { return Boolean(googleSealed) && googleAuth().holds?.(clientId, email) === true; } catch { return true; } }; // (unknown: kept, never revoked)
-  return { googleHolds, setPaused, setSending, sendingOn, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, driveRequest, forgetAll: () => { cache.clear(); } };
+  return { googleHolds, setPaused, setSending, sendingOn, sendOffered, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, driveRequest, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

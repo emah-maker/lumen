@@ -233,15 +233,15 @@ async function buildApps(card) {
     if (svc.connector && c0()) { const aboutRow = row(tr('settings.apps.about', 'What the AI can do'), connAbout(c0())); aboutRow.id = id('about'); options.push(aboutRow); }
     let gmailRows = [];
     if (svc.id === 'gmail') {
-      const draftsSw = sw('drafts', tr('settings.apps.drafts', 'Let the AI write drafts'), 'Asks Google for permission to save drafts in your Gmail. The AI never sends them.', async () => {
+      const draftsSw = sw('drafts', tr('settings.apps.drafts', 'Let the AI write drafts'), 'Asks Google for permission to save drafts and send email from your Gmail. A chat asks for it too, the first time you approve an email there. Nothing is sent until you press Send on its card.', async () => {
         data = await C.allowDrafts('gmail');
-        say('Drafts allowed. The AI can put emails in your Gmail Drafts, after you allow each one. It never sends.', 'ok');
+        say('Drafts allowed. The AI can put emails in your Gmail Drafts, and send one when you press Send on its card.', 'ok');
       });
       draftsSw.input.id = 'conn-gmail-drafts';
-      const sendSw = sw('sending', tr('settings.apps.sending', 'Let the AI send email'), 'Each email shows on a card first and goes only when you press Send. At most 10 an hour, never from background tasks, and every send is listed below.', async (on) => {
-        if (on && !confirm('Let the AI send email from your Gmail? It still shows you each email and waits for you to press Send, unless you tell it in a chat that it may send without asking. It sends at most 10 an hour, never from background tasks or routines, and every send is listed here.')) throw new Error('Kept off.');
+      const sendSw = sw('sending', tr('settings.apps.sendingTyped', 'Send without the card when I say so in a chat'), 'Each email the AI sends shows on a card first and goes only when you press Send. With this on, you can also tell it in a chat that it may send without asking. At most 10 an hour, never from background tasks, and every send is listed below.', async (on) => {
+        if (on && !confirm('Let the AI send email without its card when you tell it so in a chat? Otherwise it still shows you each email and waits for you to press Send. It sends at most 10 an hour, never from background tasks or routines, and every send is listed here.')) throw new Error('Kept off.');
         data = await C.setSending('gmail', on);
-        say(on ? 'Sending allowed. The AI asks you before each send.' : 'Sending turned off.', 'ok');
+        say(on ? 'On. The AI still asks before each send unless you tell it in a chat that it may send without asking.' : 'Off. Each email waits for you to press Send on its card.', 'ok');
       });
       sendSw.input.id = 'conn-gmail-sending';
       const log = connSendLogView({ id: 'gmail' }, C);
@@ -369,7 +369,7 @@ async function buildApps(card) {
         draftsSw.input.disabled = cc?.drafts === 'on';
         sendSw.row.hidden = !(on && cc.sending);
         sendSw.input.checked = cc?.sending === 'on';
-        logRow.hidden = cc?.sending !== 'on';
+        logRow.hidden = !(on && cc?.sending); // (sends go out on a card even with the switch off: the list shows them)
       }
       if (alwaysHost) { alwaysHost.hidden = !cc?.always?.length; alwaysHost.replaceChildren(...(cc?.always?.length ? [connAlwaysView(cc, { C, say, after: (d) => { data = d; sync(); } })] : [])); }
       if (toolsHost) toolsHost.replaceChildren(...(cc?.mcp?.tools?.length ? [connToolsView(cc, { M: S.ai.mcpServers, C, say, after: (d) => { data = d; sync(); } })] : []));

@@ -53,6 +53,9 @@ const NOTION_ID = /^(?:https:\/\/(?:www\.)?notion\.so\/[^\s?#]{0,300}?)?[0-9a-f]
 const GOOGLE_API = 'https://www.googleapis.com/auth';
 const DRIVE_ID = /^[A-Za-z0-9_-]{1,100}$/; // a Drive file id (or "root"): plain characters, never a path or query
 const FILE_REF = /^f_[0-9a-f]{24}$/; // a chat attachment's opaque ref (features/upload-files.js)
+// [gmail] Files in an email: refs or paths, one per line (agent.js connectorAttachFiles checks each and the card lists them).
+const ATTACH = { type: 'string', max: 6000, multiline: true, doc: 'files to put in the email, one per line: refs (f_…) of files the user attached, or full paths of files you made or the user named' };
+const GMAIL_DOC = 'attach puts the file itself in the email (a PDF you made, a file the user attached or named): never a Drive link instead. Without Google’s drafts permission yet, Lumen asks Google for it right after the user approves; nothing to set up first.';
 // A spreadsheet id, or the address of one (docs.google.com/spreadsheets/d/<id>/...); the provider takes the id out of it.
 const SHEET_ID = /^(?:https:\/\/docs\.google\.com\/spreadsheets\/d\/)?[A-Za-z0-9_-]{10,100}(?:[/?#]\S{0,200})?$/;
 // A Google Doc's id, or the address of one.
@@ -106,12 +109,13 @@ const CONNECTORS = [
   {
     id: 'gmail', name: 'Gmail', category: 'mail', kind: 'oauth', icon: { text: 'M', color: '#d93025' },
     summary: 'Summarize unread mail, search your inbox and read a message.',
-    // create_draft needs Google's gmail.compose permission, which Lumen asks for only when the user presses Allow drafts on this
-    // card (an incremental sign-in: widgets.js gmailAllowDrafts). It makes a draft and nothing else; Lumen never sends.
-    sessionNote: 'Signs in with Google in your own browser, read-only. Without that, it can list unread mail through the Google sign-in already in Lumen. Making drafts needs one more step: Allow drafts, which asks Google for permission to make drafts. Lumen never sends email unless you also turn on Allow sending.',
+    // create_draft and send need Google's gmail.compose permission, which Lumen asks for when the user presses Allow drafts on this card,
+    // or right after the user approved a draft or send on its card in a chat (an incremental sign-in: widgets.js gmailAllowDrafts).
+    // Each send needs Send on its card; files (a chat attachment or a local file, checked by the agent) go in the email itself.
+    sessionNote: 'Signs in with Google in your own browser, read-only. Without that, it can list unread mail through the Google sign-in already in Lumen. Making drafts and sending need one more permission from Google, asked for the first time you approve an email (or with Allow drafts here). Nothing is sent until you press Send on its card.',
     fields: [],
     reads: ['Your unread mail (sender, subject, a short start)', 'Messages you search for or open'],
-    does: ['Make a draft in your Gmail Drafts, after you press Allow drafts (asks you first; it never sends)'],
+    does: ['Make a draft in your Gmail Drafts, with files attached (asks you first; it never sends a draft)'],
     actions: {
       unread: { label: 'Unread mail', args: { max: int('how many, default 10', 1, 20) }, doc: 'Newest unread messages.' },
       search: { label: 'Search mail', args: { query: str('Gmail search, e.g. from:prof newer_than:7d', { required: true, max: 300 }), max: int('how many, default 10', 1, 20) }, doc: 'Search your mail. Needs the full Google sign-in.' },
@@ -124,11 +128,12 @@ const CONNECTORS = [
           subject: str('the subject; for a reply, Re: and the original subject', { required: true, max: 250, label: 'Subject' }),
           body: text('the text, plain', 20000, { required: true, label: 'Text' }),
           reply_to_message_id: str('message id to reply to, from search or unread', { max: 40, pattern: /^[0-9a-f]{6,32}$/i }),
+          attach: ATTACH,
         },
-        doc: 'Puts an email in the user’s Gmail Drafts; it is never sent (the user sends it from Gmail). The user confirms first. Needs the full Google sign-in and Allow drafts in Settings.',
+        doc: `Puts an email in the user’s Gmail Drafts; a draft is never sent. The user confirms first. ${GMAIL_DOC}`,
       },
-      // Only offered once the user turned on Allow sending (service.js setSending -> setUnlocked). A card shows the whole email; Lumen sends
-      // without it only when the user typed permission in this chat (features/gmail-send.js). Never in background tasks or routines.
+      // Offered with the full sign-in (service.js sendOffered -> setUnlocked). A card shows the whole email; Lumen sends without it only when
+      // the Settings switch is on and the user typed permission in this chat (features/gmail-send.js). Never in background tasks or routines.
       send: {
         label: 'Send an email', write: true, gated: true, edit: ['to', 'cc', 'bcc', 'subject', 'body'],
         args: {
@@ -138,8 +143,9 @@ const CONNECTORS = [
           subject: str('the subject; for a reply, Re: and the original subject', { required: true, max: 250, label: 'Subject' }),
           body: text('the text, plain', 20000, { required: true, label: 'Text' }),
           reply_to_message_id: str('message id to reply to, from search or unread', { max: 40, pattern: /^[0-9a-f]{6,32}$/i }),
+          attach: ATTACH,
         },
-        doc: 'Sends an email from the user’s Gmail, only after the user clicks Send on a card showing all of it (or typed in this chat that sends are fine). Only the addresses the user gave. Needs Allow sending in Settings.',
+        doc: `Sends an email from the user’s Gmail (to them too, if they ask), only after the user clicks Send on a card showing all of it, files included. Only the addresses the user gave. When the user asks to email something, call this: never say you can’t send or attach. ${GMAIL_DOC}`,
       },
     },
   },
@@ -415,7 +421,7 @@ function setConnected(ids) {
   connected.clear();
   for (const id of ids) if (get(id)?.actions && Object.keys(get(id).actions).length) connected.add(id);
 }
-// A gated action (Gmail's send) is not in the tool, its help or the cards until the user turned it on in Settings ('gmail.send').
+// A gated action (Gmail's send) is not in the tool, its help or the cards until service.js unlocks it ('gmail.send': the full Google sign-in).
 const unlocked = new Set();
 function setUnlocked(keys) { unlocked.clear(); for (const k of keys) unlocked.add(k); }
 const offered = (c, [name, a]) => !a.gated || unlocked.has(`${c.id}.${name}`);
@@ -460,7 +466,7 @@ function validate(input) {
   if (action === 'help') return null;
   const a = c.actions[action];
   if (!a) return `Unknown action “${action.slice(0, 40)}” for ${c.id}. Actions: ${Object.keys(offeredActions(c)).join(', ')}`;
-  if (!offered(c, [action, a])) return 'Sending is off. Tell the user they can turn on Allow sending on the Gmail card in Settings → Apps and connections. Nothing was sent. You can still make a draft.';
+  if (!offered(c, [action, a])) return 'Sending needs Gmail’s full Google sign-in, which this connection doesn’t have yet. Nothing was sent. Tell the user to press Connect on Gmail in Settings → Apps and connections and finish the Google sign-in.';
   if (input.args === undefined || input.args === null) input.args = {};
   if (typeof input.args !== 'object' || Array.isArray(input.args)) return 'args must be an object';
   for (const [key, spec] of Object.entries(a.args)) {
