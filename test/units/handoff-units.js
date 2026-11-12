@@ -144,7 +144,7 @@ try {
   const asleep = tabsAsk.renderTabs([{ id: 31, title: 'Dashboard', url: 'https://northeastern.instructure.com/', asleep: true }]).text;
   check('sleeping tab: the model is told how to read it itself (switch_tab, then read_page), not to open it in the tab strip', /switch_tab to it/.test(asleep) && /read_page/.test(asleep) && !/tab strip/.test(asleep), asleep);
   const sys = systemFor({ model: 'codex:gpt-6-luna' });
-  check('system prompt: a link that is listed but not open is followed, and a Canvas course is opened, not only the open tab read', /listed but not open: follow it/.test(sys) && /Canvas: open the course, its Modules/.test(sys) && !/read that tab/.test(sys) && !/open_tab only to show/.test(sys));
+  check('system prompt: a link that is listed but not open is followed, and a Canvas course is opened, not only the open tab read', /follow a listed link you need/.test(sys) && /Canvas: open the course\)/.test(sys) && !/read that tab/.test(sys) && !/open_tab only to show/.test(sys));
 }
 
 // Settings: the switch ships on and has its docs row.
