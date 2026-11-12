@@ -3285,7 +3285,13 @@ function drawItems(items, userEntries, replyEntries) {
       else before = [];
     }
   }
-  for (const item of items) {
+  const oneRun = window.runQuiet?.oneCardPerRun && window.stepUI ? window.runQuiet.oneCardPerRun(items) : { merged: new Map(), earlier: new Set() }; // [quiet run] one run, one card (run-quiet.js)
+  for (const raw of items) {
+    if (oneRun.earlier.has(raw)) { // (a turn of a run that went on: its steps are in the run's one card, drawn with its last turn; its words were that card's line)
+      if (raw.text && window.runQuiet.asks(raw.text)) drawItems([{ role: 'assistant', text: raw.text, at: raw.at, model: raw.model }], userEntries, replyEntries);
+      continue;
+    }
+    const item = oneRun.merged.get(raw) || raw;
     if (item.plan && window.planModeUI) { // [plan mode] a proposed plan: its card again, after any words that came with it
       if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
       append(window.planModeUI.card(item.plan));

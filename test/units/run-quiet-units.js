@@ -29,6 +29,26 @@ check('lists, code, headings and questions are content', Q.finalReply('Done.\n\n
 check('bold in a kept sentence stays', Q.finalReply('**4.3** scores 10. I\'m waiting on nothing.') === '**4.3** scores 10.');
 check('filler() is true only when everything is filler', Q.filler('Status: building.') && !Q.filler('Done.') && !Q.filler('') && !Q.filler('Done.\n\nStatus: x'));
 
+// ---- one run, one card, also when the chat is drawn again (the user's duplicate: "Files changed" card, a chat paragraph, then a "Computer" card
+// repeating the skill chip, "4 things at once" and the review bar)
+{
+  const review = { bar: 10, title: 'Review', rounds: [{ round: 1, score: 8.3, met: false }] };
+  const ask = { role: 'user', text: 'review the decks until they are good' };
+  const t1 = { role: 'assistant', cards: true, tools: [{ name: 'Skill', label: 'Using review' }, { name: 'Agent', label: 'Build 4.6' }], text: 'Four agents are running.', interim: true, skills: [{ name: 'review', title: 'Review until it\'s good' }], review, agents: [{ id: 'a1', state: 'working' }], touched: [3], thinking: 'plan', thinkingMs: 1000 };
+  const t2 = { role: 'assistant', cards: true, tools: [{ name: 'Agent', label: 'Fix 4.6' }], text: '4.6 scored 8.3/10 in round 1, and a fixer is working on it.', interim: true, skills: t1.skills, review, agents: [{ id: 'a1', state: 'done' }, { id: 'a2', state: 'working' }], touched: [3, 4] };
+  const t3 = { role: 'assistant', cards: true, tools: [{ name: 'Bash', label: 'Creating pg' }], text: 'All four decks pass: 10/10.', skills: t1.skills, review: { ...review, rounds: [...review.rounds, { round: 2, score: 10, met: true }] }, agents: [{ id: 'a1', state: 'done' }, { id: 'a2', state: 'done' }], touched: [4, 5] };
+  const items = [ask, t1, t2, t3];
+  const { merged, earlier } = Q.oneCardPerRun(items);
+  const one = merged.get(t3);
+  check('a run with in-between text between its helper turns draws exactly one card', merged.size === 1 && earlier.size === 2 && earlier.has(t1) && earlier.has(t2) && !merged.has(t1) && !merged.has(t2), `${merged.size} ${earlier.size}`);
+  check('...with every turn\'s steps, in order', JSON.stringify(one.tools.map((x) => x.label)) === JSON.stringify(['Using review', 'Build 4.6', 'Fix 4.6', 'Creating pg']), JSON.stringify(one.tools));
+  check('...the last turn\'s agents, skill and review (once, not per turn)', one.agents.length === 2 && one.agents.every((a) => a.state === 'done') && one.review.rounds.length === 2 && one.skills[0].name === 'review');
+  check('...the tabs it touched once each, its thinking together, the answer\'s text', JSON.stringify(one.touched) === '[3,4,5]' && one.thinking === 'plan' && one.thinkingMs === 1000 && one.text === 'All four decks pass: 10/10.');
+  check('a message of the user\'s between two cards: two exchanges, two cards', Q.oneCardPerRun([ask, t1, { role: 'user', text: 'next' }, t3]).merged.size === 0);
+  check('a message sent mid-run does not split the run\'s card', Q.oneCardPerRun([ask, t1, { role: 'user', text: 'also 6.2', steered: true }, t3]).merged.size === 1);
+  check('one card turn: nothing to merge; text-only turns are not cards', Q.oneCardPerRun([ask, { role: 'assistant', text: 'hi' }, t3]).merged.size === 0 && Q.oneCardPerRun([]).merged.size === 0 && Q.oneCardPerRun(null).merged.size === 0);
+}
+
 // ---- file card dedupe
 check('one key per path, whatever the slashes and case', Q.fileKey({ path: 'C:\\Decks\\4.2.pptx' }) === Q.fileKey({ path: 'c:/decks//4.2.PPTX' }));
 check('different files, different keys', Q.fileKey({ path: 'C:/a/one.md' }) !== Q.fileKey({ path: 'C:/a/two.md' }));
@@ -66,6 +86,11 @@ const toolCase = core.slice(core.indexOf("    case 'tool': {"), core.indexOf("  
 check('all the blocks said before a step move into the card (any engine)', /const said = \[\.\.\.\(turn\.saidBlocks \|\| \[\]\)/.test(toolCase) && /for \(const el of said\) el\.remove\(\);/.test(toolCase) && /\(turn\.saidBlocks \|\|= \[\]\)\.push\(turn\.text\)/.test(core));
 const draw = core.slice(core.indexOf('function drawItems('), core.indexOf('function renderLatest('));
 check('a chat drawn again shows no bubble for an interim turn (unless it asks), and the answer without filler', /if \(item\.interim && !window\.runQuiet\?\.asks\(item\.text\)/.test(draw) && /window\.runQuiet\.finalReply\(item\.text\)/.test(draw) && /!items\[lastIndex\]\.interim\)/.test(core));
+check('a chat drawn again draws one card per run: the earlier turns draw nothing (a question still shows), the last the merged card', /const oneRun = window\.runQuiet\?\.oneCardPerRun/.test(draw) && /if \(oneRun\.earlier\.has\(raw\)\) \{\s*\/\/[^\n]*\n\s*if \(raw\.text && window\.runQuiet\.asks\(raw\.text\)\)[^\n]*\n\s*continue;/.test(draw) && /const item = oneRun\.merged\.get\(raw\) \|\| raw;/.test(draw));
+// ---- the card holds its height while it works: its lines are clamped, and the agents list scrolls inside a set height
+const css = read('src/renderer/step-ui.css');
+check('the card\'s say line is two lines, filled or not; its live lines one line each with an ellipsis', /\.act-say \{[^}]*-webkit-line-clamp: 2;/.test(css) && /\.card-steady \.act-say \{ min-height: 2lh; \}/.test(css) && /\.card-steady :is\(\.act-sub, \.act-status-text[^)]*\)[^{]*\{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/.test(css));
+check('the agents (and a tabbed card\'s items) are at most four rows tall while it works: more scroll inside, the card does not grow', /\.card-steady :is\(\.ag-list, \.ag-items\) \{ max-height: calc\(4 \* var\(--ag-row-h\) \+ 3 \* var\(--sp-3\)\); overflow-y: auto;/.test(css) && /\.card-steady \{ --ag-row-h: calc\(/.test(css));
 const main = read('src/main.js');
 check('main marks a turn interim when its run goes on (helpers, agents), and the turn before a follow-up', /function runGoesOnAfter\(run\)/.test(main) && /if \(done\) info\.interim = !run\.error && !run\.stopped && runGoesOnAfter\(run\);/.test(main) && /agent\.stampMessages\(run\.messages, run\.startLen, \{ interim: true \}\)/.test(main) && /\(run\.liveHelpers \|\|= new Set\(\)\)\.add\(msg\.id\)/.test(main));
 const over = core.slice(core.indexOf('function runOver('), core.indexOf('function releaseOffer('));

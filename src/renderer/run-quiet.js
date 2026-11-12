@@ -63,6 +63,46 @@
   }
   const filler = (text) => { const { kept, cut } = tidy(text); return cut && !kept.length; };
 
+  // One run is one card, also when a chat is drawn again. A run that went on (Claude Code's own turns after its background helpers) saved a turn
+  // each, each with its steps and the card's agents, skills and review as they stood then: drawn as they are, that is a card per turn, each
+  // repeating the review bar and the agents. The card turns of one exchange (no message of the user's between them; one sent mid-run does not
+  // count) are one card: every turn's steps, the last turn's state, where the last turn is. Returns { merged: Map(last item -> the one card's
+  // item), earlier: Set(the turns before it: no card, and no bubble unless they asked something) }.
+  const isCardTurn = (it) => it && it.role === 'assistant' && it.cards === true && Array.isArray(it.tools) && it.tools.length > 0 && !it.generated?.length && !it.outFiles?.length;
+  const union = (lists) => { const seen = new Set(); const out = []; for (const x of lists.flat()) { const k = JSON.stringify(x); if (!seen.has(k)) { seen.add(k); out.push(x); } } return out; };
+  function oneCardPerRun(items) {
+    const merged = new Map();
+    const earlier = new Set();
+    let group = [];
+    const close = () => {
+      if (group.length > 1) {
+        const last = group[group.length - 1];
+        const thinking = group.map((x) => x.thinking).filter(Boolean).join('\n\n');
+        const thinkingMs = group.reduce((n, x) => n + (Number(x.thinkingMs) || 0), 0);
+        const touched = union(group.map((x) => x.touched || []));
+        const written = union(group.map((x) => x.written || []));
+        merged.set(last, {
+          ...last,
+          tools: group.flatMap((x) => x.tools).slice(-60),
+          ...(thinking ? { thinking } : {}), ...(thinkingMs ? { thinkingMs } : {}),
+          ...(touched.length ? { touched } : {}), ...(written.length ? { written } : {}),
+          thumb: last.thumb || [...group].reverse().find((x) => x.thumb)?.thumb,
+          agents: last.agents || [...group].reverse().find((x) => x.agents)?.agents,
+          skills: last.skills || group.find((x) => x.skills)?.skills,
+          review: last.review || [...group].reverse().find((x) => x.review)?.review,
+        });
+        for (const g of group.slice(0, -1)) earlier.add(g);
+      }
+      group = [];
+    };
+    for (const it of Array.isArray(items) ? items : []) {
+      if (it?.role === 'user' && !it.steered) close();
+      else if (isCardTurn(it)) group.push(it);
+    }
+    close();
+    return { merged, earlier };
+  }
+
   function fileKey(file) {
     const p = String(file?.path || file?.name || '').trim().replace(/\\/g, '/').replace(/\/+/g, '/');
     return p.toLowerCase();
@@ -91,7 +131,7 @@
     };
   }
 
-  const api = { asks, interim, finalReply, filler, fileKey, offerGate };
+  const api = { asks, interim, finalReply, filler, oneCardPerRun, fileKey, offerGate };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.runQuiet = api;
 })(this);

@@ -261,6 +261,10 @@
 .card-steady :is(.ag-time, .ag-tools, .ag-score, .rv-score, .rv-latest), .card-steady .act-steps > summary { font-variant-numeric: tabular-nums; }
 .card-steady .ag-meta { min-width: 11ch; line-height: var(--steady-lh); } /* ("12 tool calls", "1m 05s": a count that grows does not push the row's text) */
 .card-steady .ag-time { min-width: 5ch; text-align: end; }
+/* (the agents, and a tabbed card's item rows, are at most four rows tall while the run works: a fifth agent scrolls inside the list, the card does not
+   grow; the list never shrinks either, a finished agent keeping its row. Its whole length shows once the run ends.) */
+.card-steady { --ag-row-h: calc(2 * var(--steady-lh) + var(--sp-1) + 2 * var(--sp-4)); }
+.card-steady :is(.ag-list, .ag-items) { max-height: calc(4 * var(--ag-row-h) + 3 * var(--sp-3)); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
 .act-card.card-steady > .act-many[hidden][data-seen] { display: flex !important; visibility: hidden; }
 .act-card.card-steady > .act-say[hidden][data-seen] { display: -webkit-box !important; visibility: hidden; }
 .act-card.card-steady > :is(.act-review, .act-files)[hidden][data-seen] { display: flex !important; visibility: hidden; }

@@ -3480,6 +3480,46 @@ return cut && kept.length ? kept.join('\n\n') : String(text || '');
 }
 const filler = (text) => { const { kept, cut } = tidy(text); return cut && !kept.length; };
 
+
+
+
+
+
+const isCardTurn = (it) => it && it.role === 'assistant' && it.cards === true && Array.isArray(it.tools) && it.tools.length > 0 && !it.generated?.length && !it.outFiles?.length;
+const union = (lists) => { const seen = new Set(); const out = []; for (const x of lists.flat()) { const k = JSON.stringify(x); if (!seen.has(k)) { seen.add(k); out.push(x); } } return out; };
+function oneCardPerRun(items) {
+const merged = new Map();
+const earlier = new Set();
+let group = [];
+const close = () => {
+if (group.length > 1) {
+const last = group[group.length - 1];
+const thinking = group.map((x) => x.thinking).filter(Boolean).join('\n\n');
+const thinkingMs = group.reduce((n, x) => n + (Number(x.thinkingMs) || 0), 0);
+const touched = union(group.map((x) => x.touched || []));
+const written = union(group.map((x) => x.written || []));
+merged.set(last, {
+...last,
+tools: group.flatMap((x) => x.tools).slice(-60),
+...(thinking ? { thinking } : {}), ...(thinkingMs ? { thinkingMs } : {}),
+...(touched.length ? { touched } : {}), ...(written.length ? { written } : {}),
+thumb: last.thumb || [...group].reverse().find((x) => x.thumb)?.thumb,
+agents: last.agents || [...group].reverse().find((x) => x.agents)?.agents,
+skills: last.skills || group.find((x) => x.skills)?.skills,
+review: last.review || [...group].reverse().find((x) => x.review)?.review,
+});
+for (const g of group.slice(0, -1)) earlier.add(g);
+}
+group = [];
+};
+for (const it of Array.isArray(items) ? items : []) {
+if (it?.role === 'user' && !it.steered) close();
+else if (isCardTurn(it)) group.push(it);
+}
+close();
+return { merged, earlier };
+}
+
 function fileKey(file) {
 const p = String(file?.path || file?.name || '').trim().replace(/\\/g, '/').replace(/\/+/g, '/');
 return p.toLowerCase();
@@ -3508,7 +3548,7 @@ shown: (run) => Boolean(run) && shown.has(run),
 };
 }
 
-const api = { asks, interim, finalReply, filler, fileKey, offerGate };
+const api = { asks, interim, finalReply, filler, oneCardPerRun, fileKey, offerGate };
 if (typeof module === 'object' && module.exports) module.exports = api;
 else root.runQuiet = api;
 })(this);
@@ -7166,7 +7206,13 @@ else if (it.text && !it.tools?.length && !it.generated?.length && !it.outFiles?.
 else before = [];
 }
 }
-for (const item of items) {
+const oneRun = window.runQuiet?.oneCardPerRun && window.stepUI ? window.runQuiet.oneCardPerRun(items) : { merged: new Map(), earlier: new Set() };
+for (const raw of items) {
+if (oneRun.earlier.has(raw)) {
+if (raw.text && window.runQuiet.asks(raw.text)) drawItems([{ role: 'assistant', text: raw.text, at: raw.at, model: raw.model }], userEntries, replyEntries);
+continue;
+}
+const item = oneRun.merged.get(raw) || raw;
 if (item.plan && window.planModeUI) {
 if (item.text && !narration.has(item)) drawItems([{ ...item, plan: null }], userEntries, replyEntries);
 append(window.planModeUI.card(item.plan));
