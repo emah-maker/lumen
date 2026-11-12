@@ -317,4 +317,4 @@ function describeWrite(action, args, names = {}) {
   return where;
 }
 
-module.exports = { verify, actions, beforeCard, cardNames, describeWrite, describeWhere, UPDATE_MAX };
+module.exports = { verify, actions, beforeCard, cardNames, describeWrite, describeWhere, UPDATE_MAX, readLocal };

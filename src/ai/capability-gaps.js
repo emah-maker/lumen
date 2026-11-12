@@ -16,6 +16,7 @@ const MISSING = {
   'user-step': 'asked you to do a step',
   'open-elsewhere': 'asked you to open something in another app',
   cannot: 'said it could not do it',
+  unfinished: 'stopped before it was done',
 };
 
 const oneLine = (s, n) => String(s ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);

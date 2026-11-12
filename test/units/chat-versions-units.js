@@ -124,6 +124,22 @@ const chatOf = (...turns) => { const a = newAgent(); a.restore({ settings: { mod
   check('save: the user messages got their time too', items[0].at === 1700000000000 && typeof items[0].id === 'string', J(items[0]));
 }
 
+// ---- [quiet run] a turn that ended while its run went on is marked interim (its words were the card's line), across a save and a load
+{
+  const agent = chatOf(user('review the decks'), reply('Four agents are running.'));
+  agent.stampMessages(agent.messages, 0, { interim: true });
+  check('interim: the turn is marked', agent.transcript()[1].interim === true, J(agent.transcript()[1]));
+  agent.stampMessages(agent.messages, 0, { at: 1700000000000 });
+  check('interim: a stamp that does not say keeps it', agent.transcript()[1].interim === true);
+  check('interim: a user message is never marked', !('interim' in agent.transcript()[0]));
+  store.save(ID, agent.snapshot());
+  const reopened = newAgent();
+  reopened.restore(store.load(ID));
+  check('interim: it survives a save and a load', reopened.transcript()[1].interim === true, J(reopened.transcript()[1]));
+  reopened.stampMessages(reopened.messages, 0, { interim: false });
+  check('interim: false clears it (the run was over after all)', !('interim' in reopened.transcript()[1]), J(reopened.transcript()[1]));
+}
+
 // ---- the thumb
 {
   const agent = chatOf(user('q1'), reply('a1'), user('q2'), reply('mid'), { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'r' }] }, reply('final'));

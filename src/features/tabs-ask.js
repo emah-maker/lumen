@@ -65,7 +65,7 @@ function renderTabs(entries, { perTab = PER_TAB_CHARS, total = TOTAL_CHARS } = {
     }
     if (e.asleep) {
       tabs.push({ id: e.id, title: clean(e.title, MAX_TITLE), host: hostOf(e.url), status: 'asleep' });
-      return `${label}\n(This tab is asleep, so its text was not read. Its address is ${e.url}. Opening it in the tab strip wakes it.)`;
+      return `${label}\n(This tab is asleep, so its text was not read. Its address is ${e.url}. To read it, switch_tab to it (that wakes it, signed in), then read_page; read_urls has none of its sign-ins.)`;
     }
     const text = String(e.text ?? '');
     const size = e.totalChars ?? text.length;
