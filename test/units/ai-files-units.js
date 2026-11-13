@@ -209,6 +209,23 @@ const has = (list, p) => list.some((x) => same(x, p));
     check('open_tab says it takes a file the AI wrote', /you wrote/.test(require('../../src/ai/agent').EXTERNAL_TOOLS.find((t) => t.name === 'open_tab').description));
   }
 
+  { // written under one spelling of its folder, resolved under another (macOS /var -> /private/var, Windows 8.3 names on CI runners)
+    const realDir = path.join(root, 'real-folder');
+    const alias = path.join(root, 'alias-folder');
+    fs.mkdirSync(realDir);
+    let linked = false;
+    try { fs.symlinkSync(realDir, alias, process.platform === 'win32' ? 'junction' : 'dir'); linked = true; } catch { /* no links here */ }
+    if (linked) {
+      const chat = [];
+      const viaAlias = path.join(alias, 'Study guide.pdf');
+      aiFiles.noteWritten(chat, viaAlias); // (noted as the CLI starts writing it, before it exists)
+      fs.writeFileSync(path.join(realDir, 'Study guide.pdf'), '%PDF-1.4\n');
+      const [made] = aiFiles.resolveFiles([viaAlias]);
+      check('written: a file noted under a linked folder still counts once resolveFiles gives its real path', Boolean(made) && made.path !== viaAlias && aiFiles.wasWritten(chat, made), JSON.stringify(made && made.path));
+      check('written: a different file in that real folder does not', (() => { const other = path.join(realDir, 'other.pdf'); fs.writeFileSync(other, 'x'); const [o] = aiFiles.resolveFiles([other]); return !aiFiles.wasWritten(chat, o); })());
+    } else check('written: linked folders (skipped: no symlink permission here)', true);
+  }
+
   fs.rmSync(root, { recursive: true, force: true });
   console.log(failed ? `\n${failed} failed` : '\nall passed');
   process.exit(failed ? 1 : 0);
