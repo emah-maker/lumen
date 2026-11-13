@@ -5954,16 +5954,16 @@ case 'tabs_attached':
 window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
 break;
 case 'helper':
-window.stepUI?.helper(turn, event);
+{ const t = turn; withStepUI(() => window.stepUI.helper(t, event)); }
 break;
 case 'agent':
 agentEvent(turn, event);
 break;
 case 'skill':
-window.stepUI?.skill(turn, event);
+{ const t = turn; withStepUI(() => window.stepUI.skill(t, event)); }
 break;
 case 'review':
-window.stepUI?.review(turn, event);
+{ const t = turn; withStepUI(() => window.stepUI.review(t, event)); }
 break;
 case 'helper_card':
 showHelperCard(event);
@@ -6100,6 +6100,9 @@ break;
 
 
 
+
+
+function withStepUI(fn) { if (window.stepUI) fn(); else loadStepUI().then(() => { if (window.stepUI) fn(); }); }
 function agentEvent(t, event) {
 window.stepUI?.liveCard?.(t);
 const place = (node) => {
@@ -6117,10 +6120,10 @@ function lateCardEvent(t, event) {
 switch (event.type) {
 case 'card_files': window.stepUI?.filesMade(t, event.files); break;
 case 'thumb': window.stepUI?.thumb(t, event); break;
-case 'helper': window.stepUI?.helper(t, event); runOver(t); break;
+case 'helper': withStepUI(() => { window.stepUI.helper(t, event); runOver(t); }); break;
 case 'agent': agentEvent(t, event); break;
-case 'skill': window.stepUI?.skill(t, event); break;
-case 'review': window.stepUI?.review(t, event); break;
+case 'skill': withStepUI(() => window.stepUI.skill(t, event)); break;
+case 'review': withStepUI(() => window.stepUI.review(t, event)); break;
 case 'tool': {
 const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
 const step = window.stepUI ? window.stepUI.add(t, { ...event, label: event.label || fallback }, { messages, append: (el) => append(el), task: lastAsk?.text, runId: event.runId, late: true }) : null;
@@ -7261,8 +7264,6 @@ fileCards();
 continue;
 }
 if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); }
-
-if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
 else if (item.steps) {
 const summary = document.createElement('div');
 summary.className = 'step done restored';
@@ -7270,6 +7271,8 @@ summary.innerHTML = '<span class="step-detail"></span>';
 summary.firstChild.textContent = t(item.steps === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count: item.steps });
 append(summary);
 }
+
+if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
 bubble.className = 'msg assistant';
 const said = item.cards && item.tools?.length && window.runQuiet ? window.runQuiet.finalReply(item.text) : item.text;
 bubble.innerHTML = window.renderMarkdown(said);

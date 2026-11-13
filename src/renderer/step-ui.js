@@ -197,6 +197,14 @@
     host.append(el0);
     turn.cards ||= [];
     turn.cards.push(card);
+    // [agents card] An agent that started before the turn's first step got a card of its own (agents-card.js update): one card per message, so the
+    // new card takes it in, and a reviewer at work in it is its round's pending chip.
+    const early = turn.agents?.card?.el;
+    if (early?.isConnected && !early.classList.contains('in-card') && window.agentsCard) {
+      window.agentsCard.into(el0, early);
+      for (const row of early.querySelectorAll('.ag-row')) { const e = row._a && window.reviewTrack?.fromAgent(row._a); if (e && !e.clear) card.review = window.reviewTrack.merge(card.review, e); }
+      if (card.review) paintReview(card);
+    }
     refreshCard(turn, card);
     takePending(turn, card); // ([skills] [review loop] what came before the card)
     return card;

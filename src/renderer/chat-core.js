@@ -2026,16 +2026,16 @@ window.assistant.onEvent((event) => {
       window.tabsAsk?.describeSent([...messages.querySelectorAll('.msg.user')].pop(), event.tabs || [], { final: true });
       break;
     case 'helper': // [background helpers] a helper Claude Code runs in the background starts, progresses or ends (step-ui.js helper)
-      window.stepUI?.helper(turn, event);
+      { const t = turn; withStepUI(() => window.stepUI.helper(t, event)); } // (before the card code is in: it waits for it, never dropped)
       break;
     case 'agent': // [agents card] a subagent the reply started: its row on the reply's Agents card (agents-card.js)
       agentEvent(turn, event);
       break;
     case 'skill': // [skills] the AI loaded a skill: the card says which (step-ui.js skill)
-      window.stepUI?.skill(turn, event);
+      { const t = turn; withStepUI(() => window.stepUI.skill(t, event)); }
       break;
     case 'review': // [review loop] a reviewer's score: the card's score track (step-ui.js review)
-      window.stepUI?.review(turn, event);
+      { const t = turn; withStepUI(() => window.stepUI.review(t, event)); }
       break;
     case 'helper_card': // [acting helpers] one compact card per helper that acts in a tab of its own (agent.js parallelTasks)
       showHelperCard(event);
@@ -2172,6 +2172,9 @@ window.assistant.onEvent((event) => {
 
 // [agents card] An agent's state, on the card of the reply that started it. One card per message: the agents are a part of that reply's activity
 // card (under its status line); only a reply with no card at all gets them as a card of their own, above the working line while it runs.
+// The card code (step-ui.js and the rest, loadStepUI) comes in with a reply's first step: a skill, a reviewer's round or a helper's state that arrives
+// before it is in waits for it, in order, instead of being dropped (a slow start lost the review loop's pending round: test/e2e/review-loop-card.js).
+function withStepUI(fn) { if (window.stepUI) fn(); else loadStepUI().then(() => { if (window.stepUI) fn(); }); }
 function agentEvent(t, event) {
   window.stepUI?.liveCard?.(t); // (a carried reply drawn again: its card as it is on screen now)
   const place = (node) => {
@@ -2189,10 +2192,10 @@ function lateCardEvent(t, event) {
   switch (event.type) {
     case 'card_files': window.stepUI?.filesMade(t, event.files); break;
     case 'thumb': window.stepUI?.thumb(t, event); break;
-    case 'helper': window.stepUI?.helper(t, event); runOver(t); break;
+    case 'helper': withStepUI(() => { window.stepUI.helper(t, event); runOver(t); }); break;
     case 'agent': agentEvent(t, event); break;
-    case 'skill': window.stepUI?.skill(t, event); break;
-    case 'review': window.stepUI?.review(t, event); break;
+    case 'skill': withStepUI(() => window.stepUI.skill(t, event)); break;
+    case 'review': withStepUI(() => window.stepUI.review(t, event)); break;
     case 'tool': {
       const fallback = (TOOL_LABELS[event.name] || (() => unknownLabel(event)))(event.input || {});
       const step = window.stepUI ? window.stepUI.add(t, { ...event, label: event.label || fallback }, { messages, append: (el) => append(el), task: lastAsk?.text, runId: event.runId, late: true }) : null;
@@ -3333,8 +3336,6 @@ function drawItems(items, userEntries, replyEntries) {
         continue;
       }
       if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); } // its thinking (collapsed) and the steps it took
-      // [quiet run] A turn that ended while its run went on: what it said was the card's line then, so no bubble now (unless it asked something).
-      if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
       else if (item.steps) {
         const summary = document.createElement('div');
         summary.className = 'step done restored';
@@ -3342,6 +3343,8 @@ function drawItems(items, userEntries, replyEntries) {
         summary.firstChild.textContent = t(item.steps === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count: item.steps });
         append(summary);
       }
+      // [quiet run] A turn that ended while its run went on: what it said was the card's line then, so no bubble now (unless it asked something).
+      if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
       bubble.className = 'msg assistant';
       const said = item.cards && item.tools?.length && window.runQuiet ? window.runQuiet.finalReply(item.text) : item.text; // [quiet run] the answer without its status filler, as when it ended
       bubble.innerHTML = window.renderMarkdown(said);

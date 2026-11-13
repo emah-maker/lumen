@@ -91,12 +91,22 @@ check('a chat drawn again draws one card per run: the earlier turns draw nothing
 const css = read('src/renderer/step-ui.css');
 check('the card\'s say line is two lines, filled or not; its live lines one line each with an ellipsis', /\.act-say \{[^}]*-webkit-line-clamp: 2;/.test(css) && /\.card-steady \.act-say \{ min-height: 2lh; \}/.test(css) && /\.card-steady :is\(\.act-sub, \.act-status-text[^)]*\)[^{]*\{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis;/.test(css));
 check('the agents (and a tabbed card\'s items) are at most four rows tall while it works: more scroll inside, the card does not grow', /\.card-steady :is\(\.ag-list, \.ag-items\) \{ max-height: calc\(4 \* var\(--ag-row-h\) \+ 3 \* var\(--sp-3\)\); overflow-y: auto;/.test(css) && /\.card-steady \{ --ag-row-h: calc\(/.test(css));
+{
+  const chain = draw.indexOf('if (window.chatActions) { for (const node of window.chatActions.details(item)) append(node); }');
+  const next = draw.slice(chain, draw.indexOf('\n', draw.indexOf('\n', chain) + 1));
+  check('a chat drawn again: the "Used N actions" line is only for a chat with no step details (no extra row under a card: test/e2e/sidebar-tab-state.js scroll)', chain > -1 && /\n\s*else if \(item\.steps\) \{$/.test(next), next);
+}
+check('a skill, a reviewer\'s round or a helper\'s state before the card code is in waits for it (live and late), never dropped',
+  core.includes('function withStepUI(fn) { if (window.stepUI) fn(); else loadStepUI().then(')
+  && ['helper', 'skill', 'review'].every((k) => core.includes(`withStepUI(() => window.stepUI.${k}(t, event))`) || core.includes(`withStepUI(() => { window.stepUI.${k}(t, event);`))
+  && !/window\.stepUI\?\.(?:skill|review|helper)\((?:turn|t), event\)/.test(core));
+check('a card made after an agent started takes that agent\'s list in (one card per message), its reviewer a pending chip', read('src/renderer/step-ui.js').includes("if (early?.isConnected && !early.classList.contains('in-card') && window.agentsCard) {\n      window.agentsCard.into(el0, early);"));
 const main = read('src/main.js');
 check('main marks a turn interim when its run goes on (helpers, agents), and the turn before a follow-up', /function runGoesOnAfter\(run\)/.test(main) && /if \(done\) info\.interim = !run\.error && !run\.stopped && runGoesOnAfter\(run\);/.test(main) && /agent\.stampMessages\(run\.messages, run\.startLen, \{ interim: true \}\)/.test(main) && /\(run\.liveHelpers \|\|= new Set\(\)\)\.add\(msg\.id\)/.test(main));
 const over = core.slice(core.indexOf('function runOver('), core.indexOf('function releaseOffer('));
 check('a run that ends on its last agent: its newest folded words are the answer (shown, with suggestions), then its offer', /bubble\.hidden = false;/.test(over) && /lumen:reply-done/.test(over) && /releaseOffer\(t\);/.test(over));
 check('a skill offer goes through the gate', /if \(event\.type === 'skill_offer'\) \{[^\n]*offerSkill\(event\)/.test(core) && /skillOffers\.hold\(runOf\(t\), event\)/.test(core));
-check('the last agent or helper of a run that ended ends it', /if \(t !== turn\) runOver\(t\)/.test(core) && /case 'helper': window\.stepUI\?\.helper\(t, event\); runOver\(t\);/.test(core));
+check('the last agent or helper of a run that ended ends it', /if \(t !== turn\) runOver\(t\)/.test(core) && /case 'helper': withStepUI\(\(\) => \{ window\.stepUI\.helper\(t, event\); runOver\(t\); \}\);/.test(core));
 check('a file written again updates its card (live and late)', (core.match(/if \(fileAgain\(event\.file, cardEl\)\)/g) || []).length === 2 && (core.match(/fileShown\(event\.file, bubble\)/g) || []).length === 2);
 const step = read('src/renderer/step-ui.js');
 check('step-ui says whether a run goes on, and shows the folded line while it does', /function runGoesOn\(turn\)/.test(step) && /function fold\(turn, text\)/.test(step) && /const saying = \(state === 'working' \|\| state === 'helper'\)/.test(step) && /runGoesOn, fold \};/.test(step));
