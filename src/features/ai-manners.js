@@ -252,12 +252,13 @@ function showsTab({ show = false, asked = false, runTabId = null, activeId = nul
 // the user's own text counts (never a page's or the model's).
 const SHOW_ASK = /\b(go to|switch (me )?to|take me to|bring (it |that |the \w+ )?(up|to the front)|show me|pull up|open (it |that |this |them |the \w+ )?(up )?(for me|in front|so i can see)|let me see|jump to)\b/i;
 function userAskedToSee(text) { return typeof text === 'string' && text.length < 4000 && SHOW_ASK.test(text); }
-// Did the user ask for the tab itself: "open the quiz notes in Lumen", "open them in tabs", "pull up my syllabus", "can you open the Canvas
-// page" (and everything SHOW_ASK counts)? A tab opened for that is the user's, not the AI's: it is not folded into the AI tabs group, hidden
-// or closed when the run ends (main.js handToUserIfAsked). `texts`: the user's messages, newest first. A short follow-up ("for diff eq",
-// "the second one") answers the request before it, so that one is read too. A question or a task ("find me...") is not an ask to open.
-const OPEN_ASK = /^\W*(?:(?:please|pls|can you|could you|would you|now|ok(?:ay)?|and|also|then|just)[\s,]+)*(?:open|re-?open|pull up|bring up)\b|\b(?:open|pull up|bring up)\b[^.?!\n]{0,120}?\b(?:in lumen|in (?:a |new |separate |their own |its own )*tabs?|for me)\b/i;
-const asksOpen = (text) => typeof text === 'string' && text.length < 4000 && (OPEN_ASK.test(text) || SHOW_ASK.test(text));
+// Did the user ask for the tab itself: "open the quiz notes in Lumen", "pull up my syllabus for me", "open them so I can read them"?
+// A tab opened for that is marked forUser (main.js handToUserIfAsked): shown with the user's tabs, not folded into the AI tabs group or
+// hidden, and kept when the run ends. Not an ask: "show me that page" (it comes forward and hides again when the user leaves it), the AI
+// told to open pages for its work ("open five, each in a new tab"), a question or a task ("find me..."). `texts`: the user's messages,
+// newest first. A short follow-up ("for diff eq", "the second one") answers the request before it, so that one is read too.
+const OPEN_ASK = /\b(?:open|re-?open|pull up|bring up|load)\b[^.?!\n]{0,120}?\b(?:in lumen|for me|so i can (?:see|read|look at|use) (?:it|them|that|those))\b/i; // (not "open five pages, each in a new tab": that is the AI's own work)
+const asksOpen = (text) => typeof text === 'string' && text.length < 4000 && OPEN_ASK.test(text); // (not SHOW_ASK alone: "show me that page" brings it forward for now, it does not keep it)
 // The user asked for this AI tab (switch_tab to it, or open_tab reusing it): kept and shown with their tabs. False if it is not the AI's.
 function markForUser(tab) {
   if (!tab?.openedBy) return false;

@@ -193,7 +193,7 @@ const BEFORE_0_5_65 = new Set([
     c = make({ lastSeenVersion: '0.5.19', featureOffersSeen: ALL_SEEN.filter((k) => !SIX.includes(k)), aiMemory: true, planModeDefault: true }); c.fo.prepare();
     check('a feature already on by hand is not listed (and is recorded)', J(ids(c.fo.list())) === '["helpers","skills","telegram","voice"]' && c.file().featureOffersSeen.includes('aiMemory'), J(c.fo.list()));
     c = make({ lastSeenVersion: '0.5.19', featureOffersSeen: ALL_SEEN.filter((k) => k !== 'dictation') }, { voiceReady: true }); c.fo.prepare();
-    check('voice input is not offered when it already works (a key is set)', c.fo.list() === null, J(c.fo.list()));
+    check('voice input is not offered when it already works (on this device, or a key is set)', c.fo.list() === null, J(c.fo.list()));
     {
       const fo = FO.createFeatureOffers({ readSettings: () => ({ lastSeenVersion: '0.5.19', featureOffersSeen: ['automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace'] }), writeSettings: () => {}, setSetting: async () => { throw new Error('nope'); }, defaults: DEFAULTS, test: false });
       fo.prepare();
