@@ -2,7 +2,8 @@
 // shows the settings it brought on the empty chat, grouped by release, newest first, capped with "More in Settings"; they
 // are recorded as shown once on screen; a switch and a choice change the setting right on the card, through the settings
 // backend (no restart), and the line stays; uBlock Origin Lite asks on the card first; "Set up…" opens the feature's
-// Settings section and switches nothing on (Telegram and voice input send data, so they keep their own setup); it never
+// Settings section and switches nothing on (Telegram and voice input send data, so they keep their own setup; voice input
+// is not offered where it already works, as on Windows with no key); it never
 // shows over a conversation; "Not now" and "Don't show again" stick across launches; a fresh profile is never asked.
 // The rules are test/units/feature-offers-units.js.
 require('../helpers/_tmp-cleanup');
@@ -127,7 +128,8 @@ const sorted = (a) => JSON.stringify([...(a || [])].sort());
     } finally { await app.close().catch(() => {}); }
   }
 
-  // The first batch, for a profile that had seen everything newer: Telegram and voice input are set up in Settings.
+  // The first batch, for a profile that had seen everything newer: Telegram and voice input are set up in Settings
+  // (voice input only where it doesn't already work: on Windows it runs on the device with no key, so it isn't offered).
   const firstBatch = makeProfile({ lastSeenVersion: '0.5.19', featureOffersSeen: ALL.filter((k) => !SIX.includes(k)) });
   {
     const { app, ui, open, card, urls, press } = await launch(firstBatch);
@@ -142,8 +144,12 @@ const sorted = (a) => JSON.stringify([...(a || [])].sort());
       const opened = await waitFor(async () => (await urls()).some((u) => /settings\.html#telegram$/.test(u)));
       check('Set up… opens the Telegram section of Settings', Boolean(opened), JSON.stringify(await urls()));
       check('and turns nothing on by itself', settingsOf(firstBatch).telegramChannel !== true, JSON.stringify(settingsOf(firstBatch)));
-      await press('.offer-row[data-offer="voice"] .offer-go');
-      check('voice input is set up in Settings too', Boolean(await waitFor(async () => (await urls()).some((u) => /settings\.html#voice-input$/.test(u)))), JSON.stringify(await urls()));
+      if (process.platform === 'win32') { // voice input runs on the device here, with no key: nothing to set up
+        check('voice input is not offered where it already works', !c.rows.some((r) => r.id === 'voice'), JSON.stringify(c));
+      } else {
+        await press('.offer-row[data-offer="voice"] .offer-go');
+        check('voice input is set up in Settings too', Boolean(await waitFor(async () => (await urls()).some((u) => /settings\.html#voice-input$/.test(u)))), JSON.stringify(await urls()));
+      }
     } finally { await app.close().catch(() => {}); }
   }
 

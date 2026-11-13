@@ -799,7 +799,7 @@ if (TEST) global.__whatsNew = whatsNew;
 const featureOffers = lazy(() => require('./features/feature-offers').createFeatureOffers({
   readSettings, writeSettings, t, test: TEST, defaults: settingsPage.DEFAULTS,
   setSetting: (key, value) => settingsBackend.set(key, value),
-  ready: () => ({ dictation: Boolean(dictationState().provider) }), // voice input already works (a key is set): nothing to offer
+  ready: () => ({ dictation: Boolean(dictationState().provider) }), // voice input already works (on this device, or a key is set): nothing to offer
 }));
 // The card asks, and answers one click at a time: 'set' changes a switch or a choice; 'act' on a "set up" line only opens its Settings section.
 ipcMain.handle('offers:get', () => featureOffers.get());
