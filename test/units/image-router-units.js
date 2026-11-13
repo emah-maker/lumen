@@ -237,6 +237,31 @@ const classify = (e) => fallback.classify(e);
     const chatOf = (model) => { const m = []; m.settings = { model }; return m; };
     const inChat = (agent, messages, fn, meta = {}) => agent.inTask(null, new AbortController().signal, fn, messages, null, { chatId: CHAT, ...meta });
 
+    // A CLI chat's picture shows the moment its generate_image call is done (above the words written after it), and a restored chat keeps it there
+    {
+      const agent = make();
+      agent.imageBackendOverrides = { openai: async () => ({ images: [{ data: png, alt: '' }], model: 'gpt-image-1', said: '' }) };
+      const messages = chatOf('claudecode:default');
+      events.length = 0;
+      let shownBeforeEnd = false;
+      let blocks = null;
+      await inChat(agent, messages, async () => {
+        await agent.ensureAllowed('generate_image', emit, new AbortController().signal, { input: { prompt: 'atoms in a crystal' }, run: messages }); // (sets the run's gate, as an MCP call does)
+        await agent.execute('generate_image', { prompt: 'atoms in a crystal' });
+        shownBeforeEnd = events.some((e) => e.type === 'image');
+        blocks = await agent.enginePictures('The diagram is above.', { imageRoots: () => [] }, emit);
+      });
+      check('a CLI chat picture is in the chat as soon as the tool is done, not after the reply', shownBeforeEnd && events.filter((e) => e.type === 'image').length === 1, J(events));
+      check('it is still kept on the turn, marked as made before any words', blocks.length === 1 && blocks[0].first === true, J(blocks));
+      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8');
+      check('the CLI turns save such a picture before the reply text', src.split('content: cliTurnContent(out, pics, files)').length === 5);
+      const first = transcriptFor([{ role: 'assistant', content: [blocks[0], { type: 'text', text: 'The diagram is above.' }] }], { model: 'claudecode:default' });
+      const after = transcriptFor([{ role: 'assistant', content: [{ type: 'text', text: 'Here it is.' }, { ...blocks[0], first: undefined }] }], { model: 'claudecode:default' });
+      check('the restored chat draws a picture made first above the words, and others under them', first.at(-1)?.picsFirst === true && !after.at(-1)?.picsFirst, J({ first, after }));
+      const core = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'chat-core.js'), 'utf8');
+      check('chat-core puts the pictures before the bubble for picsFirst', core.includes('if (item.picsFirst) { append(pics); append(bubble); }'));
+    }
+
     // Claude Code asks (an MCP call arrives as execute): the picture is queued on the run's scope and shown with its credit
     {
       const agent = make();

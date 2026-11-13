@@ -3352,12 +3352,11 @@ function drawItems(items, userEntries, replyEntries) {
       decorateCode(bubble);
       finishReply(bubble, said);
       if ('steps' in item) replyEntries.push({ bubble, item }); // (the reply that closes its exchange; a text before a step has none)
-      if (item.generated?.length) { // the words, then the pictures under them
+      if (item.generated?.length) { // the words, then the pictures under them (or above, when they were made before any words)
         bubble.classList.add('restored');
-        append(bubble);
         const pics = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics restored' });
         for (const pic of item.generated) pics.append(window.genImages.figure(pic));
-        append(pics);
+        if (item.picsFirst) { append(pics); append(bubble); } else { append(bubble); append(pics); }
         fileCards();
         continue;
       }

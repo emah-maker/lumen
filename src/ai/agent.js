@@ -1803,6 +1803,7 @@ function transcriptFor(chatMessages, settings = chatMessages.settings, track = n
       const generated = blocks.filter((b) => b.type === 'generated_image' && b.id).map((b) => ({ id: b.id, mime: b.mime, alt: b.alt || '', ...(b.credit ? { credit: b.credit } : {}), ...(b.caption ? { caption: b.caption } : {}) }));
       const outFiles = blocks.filter((b) => b.type === 'ai_file' && b.path).map((b) => aiFiles.restore(b)).filter(Boolean); // [ai files]
       const pictures = { ...(generated.length ? { generated } : {}), ...(outFiles.length ? { outFiles } : {}) };
+      if (generated.length && blocks.findIndex((b) => b.type === 'generated_image') < blocks.findIndex((b) => b.type === 'text')) pictures.picsFirst = true; // (cliTurnContent: drawn above the words)
       const name = authorName(producedBy.get(m));
       if (name) pictures.by = name;
       const proposed = blocks.find((b) => b.type === 'tool_use' && b.name === 'propose_plan'); // [plan mode] the plan card, drawn again
@@ -2754,9 +2755,10 @@ class Agent {
       this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
       const held = { error: null, shown: false };
+      const runScope = taskScope.getStore();
       const gate = (event) => {
         if (event.type === 'error') { held.error = event; return; }
-        if (event.type === 'text' && event.text) held.shown = true;
+        if (event.type === 'text' && event.text) { held.shown = true; if (runScope) runScope.saidText = true; } // (showPicturesNow: words before a picture)
         emit(event);
       };
       try {
@@ -3353,7 +3355,7 @@ class Agent {
     const pics = await this.enginePictures(out.text || '', engine, emit, { ...(spawn.fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
     const files = await this.engineFiles(out.text || '', engine, emit, { ...(spawn.fullAccess ? { since: startedAt } : {}), written: out.writtenPaths, pictures: pics }); // [ai files]
     if (out.text || pics.length || files.length) {
-      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics, ...files] };
+      const turn = { role: 'assistant', content: cliTurnContent(out, pics, files) };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -3528,7 +3530,7 @@ class Agent {
     const pics = await this.enginePictures(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
     const files = await this.engineFiles(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), written: out.writtenPaths, pictures: pics }); // [ai files]
     if (out.text || pics.length || files.length) {
-      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics, ...files] };
+      const turn = { role: 'assistant', content: cliTurnContent(out, pics, files) };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -3599,7 +3601,7 @@ class Agent {
     const pics = await this.enginePictures(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
     const files = await this.engineFiles(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), written: out.writtenPaths, pictures: pics }); // [ai files]
     if (out.text || pics.length || files.length) {
-      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics, ...files] };
+      const turn = { role: 'assistant', content: cliTurnContent(out, pics, files) };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -3707,7 +3709,7 @@ ${prompt}` : prompt), historyImages: [] };
     const pics = await this.enginePictures(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), paths: out.imagePaths });
     const files = await this.engineFiles(out.text || '', engine, emit, { ...(fullAccess ? { since: startedAt } : {}), written: out.writtenPaths, pictures: pics }); // [ai files]
     if (out.text || pics.length || files.length) {
-      const turn = { role: 'assistant', content: [...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics, ...files] };
+      const turn = { role: 'assistant', content: cliTurnContent(out, pics, files) };
       producedBy.set(turn, settings.model);
       messages.push(turn);
     }
@@ -3749,13 +3751,27 @@ ${prompt}` : prompt), historyImages: [] };
     if (blocks.length) turn.content = [...turn.content, ...blocks];
   }
 
+  // [image routing] A CLI chat's picture is shown as soon as its generate_image call is done, where the model made it: above the words it
+  // writes next ("the diagram is above"), not under the whole reply. Kept on the run's scope for enginePictures, which saves it on the turn;
+  // one made before any words is marked first, so the restored chat draws it above the reply too. API chats show theirs at the step's end.
+  async showPicturesNow() {
+    const scope = taskScope.getStore();
+    const emit = scope?.gate?.emit;
+    if (!scope?.toolImages?.length || typeof emit !== 'function' || !CLI_CHAT.test(String(scope.chat?.settings?.model || ''))) return;
+    const blocks = await this.scopeImages(emit);
+    (scope.shownPictures ||= []).push(...blocks.map((b) => (scope.saidText ? b : { ...b, first: true })));
+  }
+
   // Pictures a CLI engine's reply names by path ("Saved to C:\...\cat.png"), only from the engine's own folders.
   // since: [full access] the CLI ran with its own tools (Bash, file writes) from the user's home folder, so a picture it
   // made may lie anywhere there (or in a folder its shell command was pointed at, engine.freshRoots()): shown only when the
   // file was written after `since` (the start of this message's run). Older files, and files elsewhere, are never shown.
   // paths: files the engine's own picture tools reported (Grok's image_gen result, a tool result naming a file): taken under the same rules.
   async enginePictures(text, engine, emit, { since = null, paths = [] } = {}) {
-    const viaTool = await this.scopeImages(emit); // [image routing] pictures the CLI's generate_image calls made during this message
+    const scope = taskScope.getStore();
+    const shown = scope?.shownPictures || []; // (showPicturesNow: already in the chat, where they were made)
+    if (scope) { scope.shownPictures = []; scope.saidText = false; }
+    const viaTool = [...shown, ...(await this.scopeImages(emit))]; // [image routing] pictures the CLI's generate_image calls made during this message
     if (!this.imageStore) return viaTool;
     let found = [];
     const home = require('os').homedir();
@@ -7864,7 +7880,7 @@ ${same}
         if (!results.length) return 'No results.';
         return `<untrusted_page_content>\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join('\n')}\n</untrusted_page_content>`;
       }
-      case 'generate_image': return this.generateImageTool(input); // [image routing]
+      case 'generate_image': return this.generateImageTool(input).then(async (result) => { await this.showPicturesNow(); return result; }); // [image routing]
       case 'annotate': return this.annotateTool(input); // [annotate]
       case 'read_pdf': return this.readPdf(input);
       case 'video_overview':
@@ -8340,6 +8356,9 @@ function interruptedNote(messages) {
   return `<interrupted_reply>\nThe user stopped your previous reply partway and sent the message below instead. ${before}What you had said so far:\n${said}\n</interrupted_reply>\n\n`;
 }
 // A CLI engine's reply as the history keeps it: one cut off by Stop (or Send now) carries the same marker.
+const CLI_CHAT = /^(?:claudecode|codex|antigravity|grokbuild):/; // a chat that runs on a CLI engine (its model setting)
+// A CLI message's turn: a picture made before any words first (showPicturesNow), then the reply, the other pictures and the files.
+const cliTurnContent = (out, pics, files) => [...pics.filter((p) => p.first), ...(out.text ? [{ type: 'text', text: cliReplyText(out) }] : []), ...pics.filter((p) => !p.first), ...files];
 const cliReplyText = (out) => (out.stopped ? interrupted(out.text) : out.text);
 
 const isJsonError = (err) => !(err instanceof sdk().APIError) && (err instanceof SyntaxError || /\bJSON\b/.test(String(err?.message || '')));

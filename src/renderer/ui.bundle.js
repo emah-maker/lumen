@@ -7282,10 +7282,9 @@ finishReply(bubble, said);
 if ('steps' in item) replyEntries.push({ bubble, item });
 if (item.generated?.length) {
 bubble.classList.add('restored');
-append(bubble);
 const pics = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics restored' });
 for (const pic of item.generated) pics.append(window.genImages.figure(pic));
-append(pics);
+if (item.picsFirst) { append(pics); append(bubble); } else { append(bubble); append(pics); }
 fileCards();
 continue;
 }

@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Fixed: a diagram the AI drew showed under its reply, though the reply said "the diagram is above".** In a Claude Code, Codex, Grok Build or Antigravity chat, a picture from generate_image was held until the whole reply was written. Now it shows the moment it is made, above the words written after it, and a reopened chat keeps it there. Tests: `test/units/image-router-units.js`.
+
 ## 0.5.99 (2026-11-12)
 
 - **Fixed: on macOS and some Windows setups the AI could not attach a file it had just made to an email.** It said the file was not one it made: the folder had two spellings (macOS /var and /private/var, Windows short 8.3 names), and Lumen compared them as text.
