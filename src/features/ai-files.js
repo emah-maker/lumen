@@ -219,9 +219,17 @@ function noteWritten(chat, file) {
   if (!set) writtenBy.set(chat, (set = new Set()));
   if (set.size < 200) set.add(normal(path.resolve(file)));
 }
+// A file is noted as the CLI starts writing it (it may not exist yet), under the path the CLI used. resolveFiles gives its real path, which can be
+// spelled otherwise: macOS /var is /private/var, Windows temp folders have 8.3 short names (RUNNER~1). So a noted path that no longer matches as
+// written is compared again by its own real path.
+const realOf = (p) => { try { return normal(fs.realpathSync.native ? fs.realpathSync.native(p) : fs.realpathSync(p)); } catch { return null; } };
 function wasWritten(chat, file) {
   const set = chat && typeof chat === 'object' ? writtenBy.get(chat) : null;
-  return Boolean(set && (set.has(normal(path.resolve(file.path))) || set.has(normal(file.path))));
+  if (!set || !file?.path) return false;
+  if (set.has(normal(path.resolve(file.path))) || set.has(normal(file.path))) return true;
+  const want = realOf(file.path) || normal(path.resolve(file.path));
+  for (const noted of set) if (realOf(noted) === want) return true;
+  return false;
 }
 
 module.exports = { noteWritten, wasWritten, findPaths, resolveFiles, cardOf, createRegistry, previewOf, isOfficeCard, pickMain, kindOf, extOf, canOpenInTab, canOpenInSystem, fileUrlOf, idOf, shared, restore, restoreWritten, isFresh, normal, MAX_FILES, PREVIEW_MAX };
