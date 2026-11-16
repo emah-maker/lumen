@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Fixed: a diagram in an AI reply showed as code.** A ```mermaid block in a reply that streamed in stayed as its source text (a "mermaid" code block) until the chat was reloaded: the reply's last redraw ran before it was marked finished, so the diagram was never drawn. It's drawn when the reply ends now. Test: `test/units/mermaid-stream-units.js`.
+
 ## 0.5.99 (2026-11-12)
 
 - **Fixed: on macOS and some Windows setups the AI could not attach a file it had just made to an email.** It said the file was not one it made: the folder had two spellings (macOS /var and /private/var, Windows short 8.3 names), and Lumen compared them as text.
