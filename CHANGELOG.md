@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Math shows as math in the preview of a page the AI made.** An HTML file the AI wrote (a worked solution, notes) showed its formulas as raw LaTeX ($$\boxed{R_D=\frac{…}}$$) in the chat's file preview and the canvas. The preview allows no network, so the page's MathJax or KaTeX script never loaded. A "<" inside a formula ("0<x<a" in a cases block) also hid the text after it, up to the next heading. Lumen now typesets the page's $$…$$, \[…\], \(…\) and $…$ itself as MathML, with the same typesetter as the chat, before showing it. Brackets and braces stretch, and code, scripts and prices like "$5 and $10" are left alone.
+
 ## 0.5.99 (2026-11-12)
 
 - **Fixed: on macOS and some Windows setups the AI could not attach a file it had just made to an email.** It said the file was not one it made: the folder had two spellings (macOS /var and /private/var, Windows short 8.3 names), and Lumen compared them as text.
