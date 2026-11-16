@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Clicking the Context bar shows your usage instead of running /context.** The "Context 19k / 475k" bar above the message box sent /context into the chat. Now it opens the usage popover, with this chat's context on top and your plan limits under it. Nothing is sent. Type /context yourself for Claude Code's own breakdown.
+- **Your AI's own slash commands work in Lumen.** In a chat on Claude Code, Codex, Grok Build or Antigravity, a /command that isn't Lumen's (/review, /init, /security-review, a skill such as /graphify, plugin:skill) goes to that AI as you typed it. Claude Code runs it in the chat's session, and the answer stays in the chat. The other three get the command as the whole message, with nothing put before it. The / menu shows a "Send /review to Claude Code" row, so Enter no longer picks a Lumen command with a similar name.
+
 ## 0.5.99 (2026-11-12)
 
 - **Fixed: on macOS and some Windows setups the AI could not attach a file it had just made to an email.** It said the file was not one it made: the folder had two spellings (macOS /var and /private/var, Windows short 8.3 names), and Lumen compared them as text.

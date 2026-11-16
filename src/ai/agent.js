@@ -2562,6 +2562,19 @@ class Agent {
     // [context] "/compact …" and "/context" are commands for this chat, not a message to it.
     const command = images.length || extra.tabs?.length ? null : compactLib.chatCommand(userText);
     if (command) return this.commandTurn(messages, command, controller, emit);
+    // [cli commands] Any other "/name args" in a CLI engine's chat is that CLI's own slash command (/review, /init, a skill or custom command):
+    // Claude Code runs it in the chat's session as it runs /compact; Codex, Grok Build and Antigravity get it as the whole prompt, first thing.
+    const cliSlash = images.length || extra.tabs?.length ? null : compactLib.cliCommand(userText);
+    if (cliSlash && String(messages.settings.model).startsWith('claudecode:') && this.engines?.claudecode) {
+      // (Unlike /compact and /context, the command and its answer are part of the chat: kept in its history, shown again on reload.)
+      let said = '';
+      const keep = (event) => { if (event.type === 'text' && event.text) said += event.text; emit(event); };
+      messages.push({ role: 'user', content: [{ type: 'text', text: userText.trim() }] });
+      await this.claudeCodeCommand(messages, cliSlash, controller.signal, keep);
+      if (said.trim()) messages.push({ role: 'assistant', content: [{ type: 'text', text: said }] });
+      else messages.pop(); // (nothing came back: the notice said why, and the chat is as it was)
+      return;
+    }
     // [generated images] Claude Code with full access: "/image a cat" is not one of its slash commands, so it goes in as words.
     if (!images.length && String(messages.settings.model).startsWith('claudecode:') && this.browser.claudeCodeFullAccess?.() === true) {
       const ask = genImages.imageRequest(userText);
@@ -2749,7 +2762,7 @@ class Agent {
       if (toAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) { delete messages.settings.agySession; delete messages.settings.agyModel; }
       if (toCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) { delete messages.settings.cxSession; delete messages.settings.cxModel; }
       const turnImages = retryText ? [] : screen.image ? [...images, screen.image] : images; // [screen context] the CLI engines take it as an attached picture
-      const turnPrompt = retryText ?? (state + page + attached.block + note + this.cliWordNote(messages)); // [no handoff] the second try is the follow-up alone
+      const turnPrompt = retryText ?? (cliSlash && !toClaudeCode ? userText.trim() : state + page + attached.block + note + this.cliWordNote(messages)); // ([cli commands] a slash command goes in bare, so the CLI sees it first) // [no handoff] the second try is the follow-up alone
       await this.cliExternalReady(emit); // [engine parity] the user's MCP servers are up when the run lists its tools
       this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
