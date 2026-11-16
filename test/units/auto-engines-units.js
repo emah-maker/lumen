@@ -27,7 +27,9 @@ const ccArgs = (id) => claude.buildArgs({ mcpConfig: 'm', sessionId: 's', resume
 let pick = route(cc, FAST);
 check('Claude Code, quick: haiku, as `--model haiku`', pick.id === 'claudecode:haiku' && after(ccArgs(pick.id), '--model') === 'haiku', JSON.stringify([pick.id, ccArgs(pick.id)]));
 pick = route(cc, { prompt: 'find the cheapest flight from Boston to Denver next month on this site' });
-check('Claude Code, an everyday browsing task: haiku (Haiku 5.5 is capable enough)', pick.id === 'claudecode:haiku', pick.id);
+check('Claude Code, an everyday task: sonnet (Haiku read as too dumb there, 2026-11-16)', pick.id === 'claudecode:sonnet', pick.id);
+pick = route(cc, { prompt: 'open youtube' });
+check('Claude Code, one-step browsing: still haiku', pick.id === 'claudecode:haiku', pick.id);
 pick = route(cc, { prompt: 'fix the login bug on this page' });
 check('Claude Code, code: sonnet', pick.id === 'claudecode:sonnet' && after(ccArgs(pick.id), '--model') === 'sonnet', pick.id);
 pick = route(cc, { prompt: HEAVY });

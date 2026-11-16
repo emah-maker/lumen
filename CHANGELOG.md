@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Auto picks a smarter model for everyday questions.** Auto sent most ordinary messages (open questions, questions about the page, short emails and posts, "what's in this screenshot") to the smallest model (Haiku, GPT-6 Luna, Flash-Lite), and the answers read as dumb. Now the smallest model only takes greetings, sign-offs, quick lookups, one-step browsing ("open youtube"), "summarize this" and translations; everything else starts on the mid-size model (Sonnet, Sol, Flash), and hard briefs still go to the strongest.
+- **The AI stops refusing your own requests.** It's told that this is your browser and your accounts: homework, answers, scraping, automating a site or an opinion get done, with no lecture. A reply that declines anyway ("I can't help with that", "academic integrity", "against their terms") gets one automatic second try, on a stronger model when Auto chose the first one. The real stops stay: sign-ins, purchases, sending, CAPTCHAs and deletes still wait for you.
+
 ## 0.5.99 (2026-11-12)
 
 - **Fixed: on macOS and some Windows setups the AI could not attach a file it had just made to an email.** It said the file was not one it made: the folder had two spellings (macOS /var and /private/var, Windows short 8.3 names), and Lumen compared them as text.
