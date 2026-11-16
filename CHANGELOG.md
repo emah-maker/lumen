@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI can read PDFs whose fonts it couldn't before.** On some PDFs (a course homework sheet exported from Word or LaTeX, say), the AI's PDF reader got "•" or nothing from every page, so the AI said the file was a scan. It then tried to draw the pages itself, and every letter came out as a box. When that reader finds next to no text now, Lumen reads the file again with pdf.js, the library the PDF viewer already uses, which decodes those fonts. This applies to PDFs in a tab, PDF links and project files. A real scan still says it has no text.
+
 ## 0.5.99 (2026-11-12)
 
 - **Fixed: on macOS and some Windows setups the AI could not attach a file it had just made to an email.** It said the file was not one it made: the folder had two spellings (macOS /var and /private/var, Windows short 8.3 names), and Lumen compared them as text.

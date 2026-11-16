@@ -451,6 +451,16 @@ function continuation(out, { cut = false } = {}) {
   return `Pages ${first === last ? first : `${first}-${last}`} of ${out.numPages} shown${cut ? ` (cut off at ${MAX_CHARS} characters)` : ''}. Call read_pdf again with from:${next} for the rest, or use query to find a page.`;
 }
 
+// [pdf text] Every page's text, from the small reader above, or from pdf.js (features/pdfjs-text.js, loaded only then) when the small one
+// found next to nothing: fonts without a ToUnicode map read as "•" or empty, and the file looked like a scan.
+async function readPages(buf) {
+  let first = null;
+  let error = null;
+  try { first = extractPages(buf); } catch (err) { error = err; }
+  if (first && first.some((p) => (String(p).match(/[\p{L}\p{N}]/gu) || []).length >= 40)) return first; // (the quick test: no module to load)
+  return require('./pdfjs-text').betterPages(buf, first, error);
+}
+
 function extractPdfText(buf, opts = {}) {
   return formatPages(extractPages(buf), opts);
 }
@@ -477,7 +487,7 @@ async function loadPdfPages(session, url) {
   const key = pdfKey(url) + (await fileStamp(url));
   const cached = cacheGet(key);
   if (cached) return cached;
-  const texts = extractPages(await loadPdfBytes(session, url));
+  const texts = await readPages(await loadPdfBytes(session, url));
   cachePut(key, texts);
   return texts;
 }
@@ -535,4 +545,4 @@ async function loadPdfBytes(session, url) {
   return Buffer.concat(chunks);
 }
 
-module.exports = { pagesArg, continuation, READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, formatPages, windowAround, pageFromAddress, wantsWholeDocument, WINDOW_CHARS, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };
+module.exports = { pagesArg, continuation, READ_PDF_DESCRIPTION, READ_PDF_PROPERTIES, extractPdfText, extractPages, readPages, formatPages, windowAround, pageFromAddress, wantsWholeDocument, WINDOW_CHARS, findInPage, loadPdfPages, pageBlock, PAGE_CACHE, loadPdfBytes, parsePageRange, pdfName, pdfKey, requirePdfPermission, PdfError, MAX_BYTES, MAX_CHARS };
