@@ -95,8 +95,20 @@
     else promptEl.removeAttribute('aria-activedescendant');
   }
 
+  // [cli commands] A chat on a CLI engine (Claude Code, Codex, Grok Build, Antigravity) can send that CLI's own slash commands
+  // (/review, /init, a skill): a typed name that is not one of Lumen's gets a "Send /x to <engine>" row, first when no Lumen command
+  // starts with it (so Enter sends it), else last. agent.js runTaskOnce hands it to the CLI as typed.
+  const CLI_NAMES = { claudecode: 'Claude Code', codex: 'Codex', grokbuild: 'Grok Build', antigravity: 'Antigravity' };
+  const cliEngine = () => CLI_NAMES[(/^([a-z]+):/.exec(document.getElementById('model')?.value || '') || [])[1]] || null;
+  function passThrough(query) {
+    const engine = cliEngine();
+    if (!engine || !query) return null;
+    return { name: query, label: query, passThrough: true, description: tr('slash.passThrough', 'Send /{name} to {engine}', { name: query, engine }), takesInput: false, run({ ask }) { ask(`/${query}`); return { ok: true }; } };
+  }
   function openMenu(query) {
     shown = window.slashMatch.rank([...commands.values()], query);
+    const extra = commands.has(query) ? null : passThrough(query);
+    if (extra) shown = shown.some((c) => String(c.name).startsWith(query)) ? [...shown, extra] : [extra, ...shown];
     index = 0;
     open = shown.length > 0;
     menu.hidden = !open;
