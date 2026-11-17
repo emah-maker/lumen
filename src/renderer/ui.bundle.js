@@ -5655,7 +5655,7 @@ for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { proje
 
 
 
-const replay = !live.queued && Array.isArray(live.events) ? live.events.filter((ev) => ev && ev.runId === live.runId && ev.type !== 'text' && ev.type !== 'text_block' && ev.type !== 'turn_start' && ev.type !== 'thumb') : [];
+const replay = !live.queued && Array.isArray(live.events) ? live.events.filter((ev) => ev && ev.runId === live.runId && ev.type !== 'text' && ev.type !== 'text_block' && ev.type !== 'turn_start') : [];
 const replayAll = (list) => { for (const ev of list) { try { onAgentEvent(ev); } catch (err) { console.error('[run replay]', err); } } };
 if (replay.length && !window.stepUI) {
 const t0 = turn;
