@@ -4111,7 +4111,9 @@ if (!r.signedIn) { setupError(t('setup.codex.signedOut')); return; }
 if (await window.assistant.setModel('codex:default')) await loadModels();
 refreshSetup();
 };
-optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('antigravity');
+
+optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('cli-setup');
+optional('setup-claude-code-get').addEventListener('click', (e) => { if (!window.lumenPrefs?.openSettingsPage) return; e.preventDefault(); window.lumenPrefs.openSettingsPage('cli-setup'); });
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys');
 
 let openRouterPending = false;

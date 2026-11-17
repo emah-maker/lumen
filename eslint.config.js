@@ -33,7 +33,7 @@ module.exports = [
   { files: ['src/renderer/pdfviewer.js'], languageOptions: { sourceType: 'module', globals: { ...globals.browser, isImeEnter: 'readonly' } } },
   // settings-updates.js is loaded after settings.js and uses its helpers, and the other way round.
   { files: ['src/renderer/settings-updates.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', row: 'readonly', toggle: 'readonly', visibleNow: 'readonly' } } },
-  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildApps: 'readonly', SERVICE_TYPES: 'readonly', APP_OF_TYPE: 'readonly', APP_CARD_ONLY: 'readonly', buildExternalApps: 'readonly', buildFocus: 'readonly', buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', buildSync: 'readonly', providerUsageRows: 'readonly' } } },
+  { files: ['src/renderer/settings.js'], languageOptions: { globals: { buildUnloading: 'readonly', buildUpdates: 'readonly', buildMcpServers: 'readonly', buildApps: 'readonly', SERVICE_TYPES: 'readonly', APP_OF_TYPE: 'readonly', APP_CARD_ONLY: 'readonly', buildExternalApps: 'readonly', buildFocus: 'readonly', buildCliSetup: 'readonly',buildSkills: 'readonly', buildMacros: 'readonly', buildRoutines: 'readonly', buildProviders: 'readonly', buildSync: 'readonly', providerUsageRows: 'readonly' } } },
   // settings-sync.js is loaded before settings.js and uses its helpers (called later, from its builder).
   { files: ['src/renderer/settings-sync.js'], languageOptions: { globals: { S: 'readonly', h: 'readonly', tr: 'readonly', row: 'readonly', status: 'readonly', flash: 'readonly', armedButton: 'readonly', withKeywords: 'readonly' } } },
   // settings-skills.js is loaded before settings.js and uses its helpers.
@@ -49,6 +49,8 @@ module.exports = [
   // settings-mcp-servers.js is loaded after settings.js and uses its helpers.
   // settings-focus.js (Settings → General → Focus mode): loaded before settings.js; it also assigns the page's `st` after a change.
   { files: ['src/renderer/settings-focus.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', withKeywords: 'readonly', S: 'readonly', st: 'writable' } } },
+  // settings-cli-setup.js (Settings → AI → Set up a coding agent): loaded before settings.js and uses its helpers; also a Node module for its unit test.
+  { files: ['src/renderer/settings-cli-setup.js'], languageOptions: { globals: { module: 'writable', h: 'readonly', tr: 'readonly', stackRow: 'readonly', status: 'readonly', later: 'readonly', withKeywords: 'readonly', S: 'readonly' } } },
   { files: ['src/renderer/settings-external-apps.js'], languageOptions: { globals: { h: 'readonly', tr: 'readonly', row: 'readonly', stackRow: 'readonly', flash: 'readonly', armedButton: 'readonly', $: 'readonly' } } },
   { files: ['src/renderer/settings-mcp-servers.js'], languageOptions: { globals: { h: 'readonly', flash: 'readonly', stackRow: 'readonly' } } },
   { files: ['src/renderer/settings-connectors.js'], languageOptions: { globals: { h: 'readonly' } } },

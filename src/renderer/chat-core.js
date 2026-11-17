@@ -183,7 +183,9 @@ optional('setup-codex').onclick = async () => {
   if (await window.assistant.setModel('codex:default')) await loadModels();
   refreshSetup();
 };
-optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('antigravity'); // (Settings → AI → Agents: where each one's install command and Download are)
+// [cli setup] Settings → AI → Set up a coding agent (settings-cli-setup.js): each CLI's install command, docs and a short animation.
+optional('setup-more-link').onclick = () => window.lumenPrefs?.openSettingsPage('cli-setup');
+optional('setup-claude-code-get').addEventListener('click', (e) => { if (!window.lumenPrefs?.openSettingsPage) return; e.preventDefault(); window.lumenPrefs.openSettingsPage('cli-setup'); }); // (the link to claude.com stays as the fallback)
 $('setup-keys').onclick = () => window.lumenPrefs?.openSettingsPage('ai-keys'); // (straight to the keys, first Add focused)
 // While the sign-in tab is open the button becomes Cancel (closing that tab cancels too).
 let openRouterPending = false;

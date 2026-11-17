@@ -323,6 +323,7 @@ const CATEGORIES = [
   { id: 'ai', title: 'AI', slots: [['ai-model', ''], ['ai-links', 'Settings for the AI'], ['ai-tools', 'Tools and agents'],
     ['ai-answers', 'Models and answers', { page: 'ai-links', more: 'answers fractions auto model image generation fallback limits steps compact grok codex claude code' }],
     ['ai-keys-page', 'API keys and sign-ins', { page: 'ai-links', more: 'api key anthropic claude openai grok xai gemini google openrouter sign in console cli account' }],
+    ['ai-setup', 'Set up a coding agent', { page: 'ai-links', desc: 'Install Claude Code, Codex, Grok Build or Antigravity, step by step.', more: 'install setup how to claude code codex grok build antigravity agy gemini cli terminal command sign in login docs guide' }],
     ['ai-providers', 'AI providers', { page: 'ai-links', more: 'provider effort reasoning thinking claude code grok codex antigravity openai gemini openrouter version path menu offer' }],
     ['ai-memory', 'Instructions and memory', { page: 'ai-links', more: 'custom instructions memory remember projects folder about me' }],
     ['ai-approvals', 'Asking before it acts', { page: 'ai-links', more: 'approvals permission ask bypass auto-allow hands off act pages' }],
@@ -385,7 +386,7 @@ const CATEGORY_ICONS = {
 // Old section ids (lumen://settings/<id>, and links from elsewhere in Lumen) -> where they live now.
 // A category id opens that topic; `sub` opens that page; `focus` scrolls to a list inside it; `focusEl` focuses a control.
 const ALIASES = {
-  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', sub: 'ai-approvals', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', sub: 'ai-memory', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', sub: 'ai-chat', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', sub: 'ai-approvals', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', sub: 'ai-agents' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
+  'you-and-ai': { cat: 'ai' }, providers: { cat: 'ai', sub: 'ai-providers' }, 'hands-off': { cat: 'ai', sub: 'ai-approvals', focusEl: '#pref-aiHandsOff' }, memory: { cat: 'ai', sub: 'ai-memory', focusEl: '#pref-aiMemory' }, 'voice-input': { cat: 'ai', sub: 'ai-chat', focusEl: '#pref-dictationProvider' }, 'ask-before-acting': { cat: 'ai', sub: 'ai-approvals', focusEl: '#pref-aiPermissionMode' }, antigravity: { cat: 'ai', sub: 'ai-agents' }, 'cli-setup': { cat: 'ai', sub: 'ai-setup' }, 'ai-keys': { cat: 'ai', sub: 'ai-keys-page', focusEl: '#ai-keys button' },
   'default-browser': { cat: 'general', focus: 'default-browser', focusEl: '#default-browser-button' }, startup: { cat: 'general', focus: 'quick', focusEl: '#startup-select' }, languages: { cat: 'general', sub: 'languages' },
   'visual-effects': { cat: 'advanced', sub: 'system', focusEl: '#pref-graphicsMode' },
   reset: { cat: 'advanced', focus: 'reset' }, about: { cat: 'updates' },
@@ -4003,7 +4004,7 @@ async function init() {
   }
   for (const [slot, opts] of pages) slots.get(opts.page).attachPage(slot, slot.title, opts.desc, opts.more);
   const BUILDS = [
-    ['ai-model', buildAi], ['quick', buildQuick], ['default-browser', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome], ['apps', buildApps], ['widgets', buildWidgets],
+    ['ai-model', buildAi], ['quick', buildQuick], ['default-browser', buildImport], ['focus', buildFocus], ['sync', buildSync], ['ai-providers', buildProviders], ['ai-setup', buildCliSetup], ['skills', buildSkills], ['macros', buildMacros], ['routines', buildRoutines], ['usage', buildUsage], ['appearance', buildAppearance], ['home', buildHome], ['apps', buildApps], ['widgets', buildWidgets],
     ['privacy', buildPrivacy], ['downloads', buildDownloads], ['files', buildFiles], ['languages', buildLanguages],
     ['accessibility', buildAccessibility], ['system', buildSystem], ['extensions-page', buildExtensions], ['reset', buildReset], ['about', buildAbout],
     ['internals', buildInternals],
@@ -4011,11 +4012,11 @@ async function init() {
   // Only the page being shown is built before it is shown: the rest is built one section at a time while the page is idle (and at
   // once when a link, the sidebar or a search needs it). FOOT says which topics a builder puts rows in; SUBS are builders of one page each.
   const FOOT = {
-    'ai-model': ['ai', 'tabs', 'advanced'], quick: ['general'], 'default-browser': ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'], apps: ['apps'], widgets: ['home'],
+    'ai-model': ['ai', 'tabs', 'advanced'], quick: ['general'], 'default-browser': ['general'], focus: ['general'], sync: ['general'], 'ai-providers': ['ai'], 'ai-setup': ['ai'], skills: ['ai'], macros: ['ai'], routines: ['ai'], usage: ['ai'], appearance: ['appearance', 'tabs', 'advanced'], home: ['home'], apps: ['apps'], widgets: ['home'],
     privacy: ['privacy'], downloads: ['downloads'], files: ['downloads'], languages: ['general'], accessibility: ['accessibility'], system: st.platform === 'darwin' ? ['advanced', 'tabs', 'general'] : ['advanced', 'tabs'], // (General has one row of it, on a Mac)
     'extensions-page': ['privacy'], reset: ['advanced'], about: ['updates', 'advanced'], internals: ['advanced'],
   };
-  const SUBS = new Set(['ai-providers', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals', 'languages', 'sync', 'focus', 'widgets']);
+  const SUBS = new Set(['ai-providers', 'ai-setup', 'skills', 'macros', 'routines', 'usage', 'extensions-page', 'internals', 'languages', 'sync', 'focus', 'widgets']);
   const SUB_BUILDER = { 'task-manager': 'about' }; // (the Task manager is made by the About builder)
   const started = new Map(); // builder id -> promise
   const finished = new Set();
