@@ -182,6 +182,7 @@
   meter.setAttribute('aria-controls', 'usage-popover');
   strip.append(pop);
   let popTimer = null;
+  let lastContext = null; // [context] the open chat's context view (renderContext), shown on top of the popover
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   // One row: a label and value, a thin bar (through the CSSOM: a page's CSP may drop inline style attributes), a line of detail.
   function barRow(label, percent, level, detail, valueText) {
@@ -204,15 +205,25 @@
   }
   function renderPopover() {
     const key = engineKey();
-    const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
-    if (!v) { closePopover(false); return; }
+    const known = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
+    const ctx = lastContext && lastContext.window > 0 && lastContext.tokens > 0 ? lastContext : null;
+    if (!known && !ctx) { closePopover(false); return; }
+    // (A chat with only a context figure, an API model with no plan numbers: the popover is that one row.)
+    const v = known || { name: '', plan: '', message: '', windows: [], rates: [], note: '', counted: [], updated: '', none: true };
     pop.replaceChildren();
-    const label = window.t('usage.bar.labelFor', { name: v.name });
+    const label = known ? window.t('usage.bar.labelFor', { name: v.name }) : window.t('context.pop.title');
     pop.setAttribute('aria-label', label);
     const head = el('div', 'up-head');
     head.append(el('span', 'up-title', label));
     if (v.plan) head.append(el('span', 'up-plan', v.plan));
     pop.append(head);
+    // [context] the open chat's context window, read from what is already loaded: nothing is sent (it used to run /context in the chat).
+    if (ctx) {
+      const percent = Math.round(ctx.percent);
+      const detail = [ctx.model ? window.t('context.model', { model: ctx.model }) : '', window.t(ctx.auto ? 'context.pop.auto' : 'context.pop.compact')].filter(Boolean).join(' ');
+      pop.append(barRow(window.t(ctx.estimated ? 'context.pop.label.estimated' : 'context.pop.label'), percent, percent >= 90 ? 'high' : percent >= 75 ? 'warn' : 'ok', detail, `${short(ctx.tokens)} / ${short(ctx.window)}`));
+      if (v.none) return;
+    }
     if (v.message) pop.append(el('p', 'up-note', v.message));
     for (const w of v.windows) pop.append(barRow(w.label, w.percent, w.level, w.text, w.key === 'limit' ? '' : window.t('usage.bar.used', { percent: Math.round(w.percent) })));
     if (v.rates.length) {
@@ -236,7 +247,7 @@
     pop.append(foot);
   }
   function openPopover() {
-    if (!pop.hidden || !usage) return;
+    if (!pop.hidden || (!usage && !lastContext)) return;
     renderPopover();
     if (!pop.childNodes.length) return;
     pop.hidden = false;
@@ -254,7 +265,7 @@
     document.removeEventListener('pointerdown', onOutside, true);
     if (refocus) meter.focus({ preventScroll: true });
   }
-  function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target)) closePopover(false); }
+  function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target) && !ring?.contains(e.target)) closePopover(false); }
   meter.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
   const escape = (e) => { if (e.key === 'Escape' && !pop.hidden) { e.stopPropagation(); closePopover(true); } };
   pop.addEventListener('keydown', escape);
@@ -278,7 +289,7 @@
   // ---------- [context] how full the open chat's context window is ----------
   // The strip's second part, for every AI (features/chat-usage.js contextView: the last request's whole input against
   // the model's window, kept per chat and saved with it): "Context 68k / 1M" and a thin bar. Its tooltip has the
-  // numbers; a click runs /context. Main pushes it after each request (chats:context); it is read again when another
+  // numbers; a click opens the usage popover with it on top (nothing is sent). Main pushes it after each request (chats:context); it is read again when another
   // chat opens.
   const chatsApi = window.assistant?.chats;
   const ring = Object.assign(document.createElement('button'), { type: 'button', id: 'context-meter', className: 'usage-meter context-meter', hidden: true });
@@ -294,6 +305,8 @@
   // "68k", "1M", "200k", "1.5k": whole thousands from 10k up, one decimal below, no trailing ".0".
   const short = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
   function renderContext(view) {
+    lastContext = view || null;
+    if (!pop.hidden) renderPopover(); // (open: its Context row follows)
     const show = Boolean(view && view.window > 0 && view.tokens > 0);
     ring.hidden = !show;
     syncStrip();
@@ -316,7 +329,10 @@
     try { renderContext((await chatsApi.list())?.currentContext || null); } catch { /* the chat list is busy: the next push or reply redraws it */ }
   }
   chatsApi?.onContext?.(renderContext);
-  ring.addEventListener('click', () => window.ask?.('/context'));
+  // A click shows the usage popover with this chat's context on top: nothing is sent to the chat (type /context for Claude Code's breakdown).
+  ring.setAttribute('aria-controls', 'usage-popover');
+  ring.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
+  ring.addEventListener('keydown', escape);
   $('new-chat')?.addEventListener('click', () => { renderContext(null); setTimeout(refreshContext, 50); });
   window.assistant?.onEvent?.((event) => { if (event.type === 'done') setTimeout(refreshContext, 300); });
   // Another chat is shown (opened from the list, the other view switched, a tab with its own chat): chats.js and

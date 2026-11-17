@@ -42,6 +42,10 @@ const J = (v) => JSON.stringify(v);
   check('parseContextReport: anything else is null', CU.parseContextReport('no numbers here') === null && CU.parseContextReport('') === null);
 }
 
+// ---- [cli commands] a CLI's own slash commands go through as typed (chat-compact.js cliCommand)
+check('cliCommand: /review, /init, a skill, plugin:skill and arguments', J(CC.cliCommand('/review')) === J({ name: 'review', args: '' }) && CC.cliCommand('/init').name === 'init' && CC.cliCommand('/graphify ./src').args === './src' && CC.cliCommand('/fraim:fraim do the job').name === 'fraim:fraim', J(CC.cliCommand('/fraim:fraim do the job')));
+check('cliCommand: not /compact or /context (main answers those), not Lumen words, not a path or plain text', ['/compact', '/context', '/image a cat', '/think hard', '/etc/hosts is wrong', 'review this', '/ space', ''].every((t) => CC.cliCommand(t) === null));
+
 // ---- the command parser and the cut (chat-compact.js)
 const user = (text) => ({ role: 'user', content: [{ type: 'text', text }] });
 const reply = (text) => ({ role: 'assistant', content: [{ type: 'text', text }] });

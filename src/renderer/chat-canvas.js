@@ -38,7 +38,9 @@
     const meta = `<meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">`;
     const text = String(code || '').slice(0, PREVIEW_MAX);
     if (kind === 'svg') return `<!doctype html>${meta}<meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#fff}svg{max-width:100%;max-height:100%}</style>${text.replace(/^\s*<\?xml[^>]*>/, '')}`;
-    return `${meta}${text}`;
+    // [page math] the page's formulas as MathML: its MathJax/KaTeX script can't load here (no network), and a raw "<" in one broke the page.
+    const pageMath = root.pageMath || (typeof require === 'function' ? require('./page-math') : null);
+    return `${meta}${pageMath ? pageMath.mathify(text, root.temml || globalThis.temml) : text}`;
   }
   const fileName = (lang, kind) => `canvas.${kind === 'html' ? 'html' : kind === 'svg' ? 'svg' : EXT[String(lang || '').toLowerCase()] || 'txt'}`;
 
@@ -125,8 +127,13 @@
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.setAttribute('allow', '');
     frame.setAttribute('referrerpolicy', 'no-referrer');
-    const html = frameDocument(state.kind, state.code);
-    frame.addEventListener('load', () => { try { frame.contentWindow.postMessage({ lumenCanvas: html }, '*'); } catch { /* frame gone */ } });
+    const { kind, code } = state;
+    const math = root.pageMath?.ready(code); // [page math] Temml, when the page has formulas
+    frame.addEventListener('load', async () => {
+      await math;
+      const html = frameDocument(kind, code);
+      try { frame.contentWindow.postMessage({ lumenCanvas: html }, '*'); } catch { /* frame gone */ }
+    });
     frame.src = 'canvas-frame.html';
     panel.previewBox.replaceChildren(frame);
   }
