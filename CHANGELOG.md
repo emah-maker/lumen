@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Fixed: clicking the context bar above the chat box opened its popup and closed it again at once.** With Auto, or an API model, there is no plan bar, and the usage refresh the click starts closed the popup whenever the plan bar was hidden. It now stays open until you click it again, click outside or press Esc. Test: `test/e2e/chats.js`.
+
 ## 0.5.100 (2026-11-17)
 
 - **Fixed: with uBlock Origin installed, Lumen could start crashing a minute after every launch.** uBlock Origin saves a copy of its admin settings at each start, and Lumen handed it all of uBlock's own storage as those settings. The copy included the previous copy, so uBlock's storage doubled at every start until it reached about 1 GB and Lumen ran out of memory loading it. Admin settings are now empty, as in Chrome, and a copy left over from before is removed. To recover now, rename the folder `fkgkibajhfbepljeaefdnfnegdcjomkh` in `%APPDATA%\Lumen\Local Extension Settings` (or remove uBlock Origin) and restart Lumen.

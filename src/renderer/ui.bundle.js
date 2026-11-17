@@ -14073,7 +14073,8 @@ const off = usage?.showBars === false;
 const hint = !bar && key === 'grokbuild' && Boolean(usage) && !off;
 meter.hidden = off || (!bar && !hint);
 syncStrip();
-if (meter.hidden) closePopover(false); else if (!pop.hidden) renderPopover();
+
+if (!pop.hidden) renderPopover();
 meter.classList.toggle('hint', hint);
 if (hint) {
 meterBar.hidden = true;

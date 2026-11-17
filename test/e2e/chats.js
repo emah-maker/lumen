@@ -94,6 +94,17 @@ const fakeClient = (app) => app.evaluate(() => {
   check('context strip: above the textbox, reads "Context 1k / 1M" with a bar', await ui.evaluate(() => { const el = document.getElementById('context-meter'); const strip = document.getElementById('meter-strip'); return el.textContent === 'Context 1k / 1M' && el.querySelector('[role=progressbar]') && !strip.hidden && strip.parentElement === document.getElementById('composer-status') && document.getElementById('composer-status').parentElement === document.getElementById('composer') &&Boolean(strip.compareDocumentPosition(document.getElementById('prompt')) & Node.DOCUMENT_POSITION_FOLLOWING); }), await ui.evaluate(() => `${document.getElementById('context-meter').textContent} | next=${document.getElementById('meter-strip').nextElementSibling?.id}`));
   // [usage bars] A chat on a Claude API key has the context ring and the tokens line but no plan bar: there are no plan numbers to show. (The meter may show today's tokens and cost, which arrive a moment after the reply: only a plan percentage is wrong.)
   check('usage bars: an API-key chat shows its context ring and tokens, and no made-up plan bar', await ui.evaluate(() => { const m = document.getElementById('usage-meter'); return (!m || m.hidden || !/plan|d+%/i.test(m.textContent)) && [...document.querySelectorAll('.model-picker .ubar, #composer .ubar')].filter((b) => !b.closest('.picker-group')).length === 0; }), 'a plan bar is showing'); // (a provider's heading in the model list carries its own plan bar: on a machine with Claude Code or Codex signed in, those headings have one)
+  // [context] A click on the context bar opens the popover and it stays open: with no plan meter (this API-key chat), the usage
+  // refresh the click starts used to close it again at once. Plain Auto has no plan meter.
+  const before = await ui.evaluate(() => { const s = document.getElementById('model'); const was = s.value; if ([...s.options].some((o) => o.value === 'auto')) { s.value = 'auto'; s.dispatchEvent(new Event('change')); } return was; });
+  check('context bar: Auto is in the picker and leaves no plan meter', await waitFor(() => ui.evaluate(() => document.getElementById('model').value === 'auto' && document.getElementById('usage-meter').hidden && !document.getElementById('context-meter').hidden)), await ui.evaluate(() => `${document.getElementById('model').value} meter.hidden=${document.getElementById('usage-meter').hidden}`));
+  await ui.click('#context-meter');
+  await sleep(1500);
+  const pop = await ui.evaluate(() => { const p = document.getElementById('usage-popover'); return { open: Boolean(p && !p.hidden), text: p?.textContent || '', meter: document.getElementById('usage-meter')?.hidden }; });
+  check('context bar: a click opens the popover and it stays open', pop.open && /1k \/ 1M/.test(pop.text), JSON.stringify(pop));
+  await ui.click('#context-meter');
+  check('context bar: a second click closes it', await waitFor(() => ui.evaluate(() => document.getElementById('usage-popover').hidden)), 'still open');
+  await ui.evaluate((was) => { const s = document.getElementById('model'); if (s.value !== was) { s.value = was; s.dispatchEvent(new Event('change')); } }, before);
   const saved = await app.evaluate((_e, id) => global.__chats.store().load(id)?.settings?.usage, legacyId);
   check('usage is saved with the chat', saved?.input === 2000 && saved?.output === 400 && saved?.turns === 2, JSON.stringify(saved));
 
