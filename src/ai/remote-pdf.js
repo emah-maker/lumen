@@ -54,7 +54,7 @@ async function readRemotePdf(url, { fetch, onHop = null, maxChars, offset = 0, t
   if (buf.subarray(0, 1024).indexOf('%PDF-') < 0) return null; // an HTML error page at a .pdf address, say
   const name = pdfText.pdfName(finalUrl);
   let texts;
-  try { texts = pdfText.extractPages(buf); } catch (err) { return { url: finalUrl, title: name, text: `Could not read this PDF: ${err.message}` }; }
+  try { texts = await pdfText.readPages(buf); } catch (err) { return { url: finalUrl, title: name, text: `Could not read this PDF: ${err.message}` }; }
   const out = pdfText.formatPages(texts, { maxChars: Number.MAX_SAFE_INTEGER, noun: 'PDF' });
   const slice = health.slicePage(out.text, { maxChars, offset });
   const empty = !out.text.replace(/--- Page \d+ of \d+ ---|\(no text[^)]*\)/g, '').trim();

@@ -50,7 +50,7 @@ async function extract(name, bytes) {
   if (kind === 'pdf') {
     const pdf = require('./pdf-text');
     let pages;
-    try { pages = pdf.extractPages(buf); } catch (err) { throw new Error(String(err?.message || 'This PDF could not be read.').slice(0, 200)); }
+    try { pages = await pdf.readPages(buf); } catch (err) { throw new Error(String(err?.message || 'This PDF could not be read.').slice(0, 200)); }
     const text = pages.map((p, i) => `--- Page ${i + 1} of ${pages.length} ---\n${p}`).join('\n\n');
     if (!pages.some((p) => p.trim())) throw new Error('This PDF has no text Lumen can read (a scan or pictures only).');
     return { kind, text: cutText(text) };
