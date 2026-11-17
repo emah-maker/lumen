@@ -41,6 +41,8 @@ const makeAgent = (extra = {}) => {
   agent.closeSignedInTabs = () => {};
   return { agent, browser };
 };
+const taskScopeOf = (agent) => agent.currentScope(); // the scope of the tool call running now
+const taskScopeHelper = (agent) => taskScopeOf(agent)?.actingHelper ?? null; // which helper made the call (null: Lumen opening a shared tab)
 const chatOf = () => { const m = []; m.settings = { model: 'claude-opus-5-5' }; return m; };
 // Runs fn inside a sidebar chat's tool call, as runTask would: the chat's gate is set by ensureAllowed('parallel_tasks').
 const inChat = (agent, chat, fn, { signal = new AbortController().signal, hosts = new Set() } = {}) => agent.inTask(1, signal, async () => {
@@ -258,6 +260,221 @@ const mockExecute = (agent, browser, ran) => {
     });
     const tabOf = (n) => r.events.filter((e) => e.type === 'helper_card' && e.n === n && Number.isInteger(e.tabId)).pop()?.tabId;
     check('tabs: a stopped or failed helper\'s tab is closed, a finished one\'s is kept', browser.closed.includes(tabOf(1)) && browser.closed.includes(tabOf(2)) && !browser.closed.includes(tabOf(3)) && /Helper 1 \[stopped\]/.test(r.value) && /Helper 2 \[FAILED/.test(r.value), J([browser.closed, [1, 2, 3].map(tabOf), String(r.value).slice(0, 200)]));
+  }
+
+  // ---- [shared tabs] helpers working on one page together
+  {
+    const c = A.cleanTasks({ tasks: [{ task: 'a', share: 'Doc', section: 'Intro' }, { task: 'b', share: 'doc', url: 'https://doc.test/1' }, { task: 'c', share: 'solo', url: 'https://s.test' }] });
+    const [a, b, s] = c.tasks;
+    check('shared: tasks with one share name (any case) form a group, its tab opens at the url one of them gave', a.tabKey === b.tabKey && a.shared && b.shared && a.fixed && J(a.urls) === '["https://doc.test/1"]' && J(b.urls) === J(a.urls) && a.section === 'Intro', J(c.tasks));
+    check('shared: a share name used once is a tab of its own (navigates as before)', s.tabKey === null && !s.shared && !s.fixed && J(s.urls) === '["https://s.test"]', J(s));
+    const t = A.cleanTasks({ tasks: [{ task: 'a', tab_id: 4, share: 'x', url: 'https://ignored.test' }, { task: 'b', tab_id: 4 }, { task: 'c', tab_id: 5 }] }).tasks;
+    check('tab_id: tasks naming one open tab share it; tab_id wins over share; the tab stays on its page (no url)', t[0].tabKey === 'tab:4' && t[0].tabKey === t[1].tabKey && t[0].shared && t[0].share === '' && J(t[0].urls) === '[]' && t[2].fixed && !t[2].shared, J(t));
+    let msg = '';
+    try { A.cleanTasks({ tasks: [{ task: 'a', share: 'x' }, { task: 'b', share: 'x' }] }); } catch (e) { msg = e.message; }
+    check('shared: a group with no url at all is refused with what to send', /need a url/.test(msg), msg);
+    check('shared: bad tab_id and long fields are cleaned', A.cleanTasks({ tasks: [{ task: 'a', tab_id: -1 }, { task: 'b', tab_id: '3' }] }).tasks.every((x) => x.tabId === null) && A.cleanTasks({ tasks: [{ task: 'a', section: 'x'.repeat(900) }] }).tasks[0].section.length === 300);
+  }
+  {
+    check('prompt: a helper in its own tab gets the task and where to start, as before', A.promptFor('do x', ['https://a.test'], {}) === 'Task: do x\nStart at: https://a.test');
+    const p = A.promptFor('fill rows', ['https://doc.test'], { fixed: true, shared: true, section: 'rows 1-20' });
+    check('prompt: a shared helper is told its part, to stay on the page, that its ids are its own and to use type_text over press_key', /Your tab opens at: https:\/\/doc\.test/.test(p) && /Your part of the page: rows 1-20/.test(p) && p.includes(A.FIXED_NOTE) && p.includes(A.SHARED_NOTE), p);
+    check('prompt: a helper on an open tab is told which one', /Your tab: tab 7, already open/.test(A.promptFor('x', [], { fixed: true, tabId: 7 })));
+    const refused = (name, task) => { try { A.prepareInput(name, name === 'navigate' ? { url: 'https://b.test' } : { key: 'Enter' }, task); return ''; } catch (e) { return e.message; } };
+    const shared = { fixed: true, shared: true };
+    check('shared: navigate and go_back are refused on a shared or open tab', /stay on this page/.test(refused('navigate', shared)) && /stay on this page/.test(refused('go_back', shared)) && /already open/.test(refused('navigate', { fixed: true })));
+    check('shared: press_key is refused in a shared tab only (focus may be another helper\'s)', /type_text/.test(refused('press_key', shared)) && refused('press_key', { fixed: true }) === '' && refused('press_key', null) === '' && refused('navigate', { fixed: false }) === '');
+  }
+  {
+    // The lock: writes alone and in order, reads together, a waiting write holds back later reads, errors pass through.
+    const lock = A.createTabLock();
+    const log = [];
+    let live = 0;
+    let peakWrite = 0;
+    let peakRead = 0;
+    const job = (kind, id, ms) => lock.run(kind, async () => {
+      live++;
+      if (kind === 'write') peakWrite = Math.max(peakWrite, live); else peakRead = Math.max(peakRead, live);
+      log.push(`+${id}`);
+      await sleep(ms);
+      log.push(`-${id}`);
+      live--;
+      return id;
+    });
+    const out = await Promise.all([job('write', 'w1', 15), job('read', 'r1', 15), job('read', 'r2', 15), job('write', 'w2', 10), job('read', 'r3', 5)]);
+    check('lock: results come back to each caller', J(out) === '["w1","r1","r2","w2","r3"]', J(out));
+    check('lock: a write runs alone; reads run side by side', peakWrite === 1 && peakRead === 2, J([peakWrite, peakRead, log]));
+    check('lock: first come first served, a waiting write holds back the read after it', log.indexOf('-w1') < log.indexOf('+r1') && log.indexOf('-r1') < log.indexOf('+w2') && log.indexOf('-r2') < log.indexOf('+w2') && log.indexOf('-w2') < log.indexOf('+r3'), J(log));
+    const err = await lock.run('write', async () => { throw new Error('boom'); }).catch((e) => e.message);
+    const after = await lock.run('write', async () => 'next');
+    check('lock: a failed call passes its error and frees the lock', err === 'boom' && after === 'next' && J(lock.state()) === J({ readers: 0, writing: false, waiting: 0 }));
+    const { AsyncLocalStorage } = require('async_hooks');
+    const als = new AsyncLocalStorage();
+    const ctxLock = A.createTabLock();
+    const who = [];
+    await Promise.all([1, 2, 3].map((n) => als.run(n, () => ctxLock.run('write', async () => { who.push(als.getStore()); await sleep(5); }))));
+    check('lock: a queued call runs in its own caller\'s context, not in the one of the call that freed the lock', J(who) === '[1,2,3]', J(who));
+    check('lock: screenshots share the tab, wait_for takes no lock, every other call takes it alone', A.lockKind('screenshot') === 'read' && A.lockKind('wait_for') === 'none' && ['click', 'type_text', 'fill_form', 'read_page', 'find', 'scroll', 'press_key'].every((n) => A.lockKind(n) === 'write'));
+    check('ids: element ids are read from element_id and fill_form fields; frame ids are stale after another helper read', J(A.refIds({ element_id: 3, fields: [{ element_id: 200004 }, { label: 'x' }] })) === '[3,200004]' && A.frameRefsStale({ element_id: 200004 }, 1, 2) && !A.frameRefsStale({ element_id: 4 }, 1, 2) && !A.frameRefsStale({ element_id: 200004 }, 2, 2));
+  }
+  // An agent whose tool layer is slow enough to overlap: every call is logged with its tab, and writes that overlap in one tab are counted.
+  const sharedRig = (extra = {}) => {
+    const { agent, browser } = makeAgent({ autoApprove: () => true, listTabs: () => [{ id: 1, url: 'https://home.test/' }], ...extra });
+    const ran = [];
+    const regs = [];
+    const live = new Map();
+    const peak = { write: 0, read: 0 };
+    agent.helperRegistry = async (tabId, key, op) => { regs.push({ tabId, key, op }); };
+    agent.execute = async (name, args) => {
+      const tab = agent.taskTab();
+      const kind = A.lockKind(name);
+      const k = `${tab.id}:${kind}`;
+      live.set(k, (live.get(k) || 0) + 1);
+      const writes = live.get(`${tab.id}:write`) || 0;
+      const reads = live.get(`${tab.id}:read`) || 0;
+      if (kind === 'write') peak.write = Math.max(peak.write, writes + reads); else peak.read = Math.max(peak.read, reads + (writes ? 100 : 0));
+      ran.push({ name, args, tab: tab.id, helper: taskScopeHelper(agent) });
+      if (name === 'navigate') browser.setUrl(tab.id, args.url);
+      await sleep(15);
+      live.set(k, live.get(k) - 1);
+      return `<untrusted_page_content>${name} ok</untrusted_page_content>`;
+    };
+    return { agent, browser, ran, regs, peak };
+  };
+  {
+    const { agent, browser, ran, regs, peak } = sharedRig();
+    let thinking = 0;
+    let thinkPeak = 0;
+    agent.helperCall = async (model, { messages }) => {
+      const n = /job (\d)/.exec(messages[0].content)[1];
+      thinking++;
+      thinkPeak = Math.max(thinkPeak, thinking);
+      await sleep(20);
+      thinking--;
+      if (messages.length === 1) return reply([use('read_page', {}), use('screenshot', {})]);
+      if (messages.length === 3) return reply([use('click', { element_id: Number(n) }), use('navigate', { url: 'https://elsewhere.test/' })]);
+      return reply([text(`part ${n} done`)]);
+    };
+    const r = await inChat(agent, chatOf(), () => agent.parallelTasks({ tasks: [{ task: 'job 1', share: 'doc', url: 'https://doc.test/', section: 'Part A' }, { task: 'job 2', share: 'doc', section: 'Part B' }, { task: 'job 3', url: 'https://own.test/' }] }));
+    const docTab = ran.find((x) => x.name === 'navigate' && x.args.url === 'https://doc.test/')?.tab;
+    check('shared: two helpers with one share name get one new tab, opened at the url once', !r.error && browser.opened.length === 2 && ran.filter((x) => x.args?.url === 'https://doc.test/').length === 1 && Number.isInteger(docTab), J([String(r.error), browser.opened, ran.map((x) => [x.name, x.tab])]));
+    const inDoc = ran.filter((x) => x.tab === docTab && x.name !== 'navigate');
+    check('shared: both helpers\' calls act in that tab; the third helper works in its own', [1, 2].every((n) => inDoc.some((x) => x.helper === n && x.name === 'click')) && ran.some((x) => x.helper === 3 && x.tab !== docTab), J(ran.map((x) => [x.helper, x.name, x.tab])));
+    check('shared: a helper in the shared tab may not navigate it away; the helper in its own tab may', !ran.some((x) => x.name === 'navigate' && x.args.url === 'https://elsewhere.test/' && x.tab === docTab) && ran.some((x) => x.name === 'navigate' && x.args.url === 'https://elsewhere.test/' && x.helper === 3));
+    check('shared: calls that act or re-read never overlap in the shared tab', peak.write === 1, J(peak));
+    check('shared: the helpers\' model turns run side by side', thinkPeak >= 2, String(thinkPeak));
+    const keys = new Set(regs.map((x) => x.key));
+    check('shared: each helper\'s own element ids are put back before and kept after each of its calls in the shared tab', keys.size === 2 && regs.every((x) => x.tabId === docTab) && [...keys].every((k) => { const ops = regs.filter((x) => x.key === k).map((x) => x.op); return ops.length >= 4 && ops.every((op, i) => op === (i % 2 ? 'save' : 'load')); }) && !regs.some((x) => x.key.endsWith(':3')), J(regs));
+    const cards = r.events.filter((e) => e.type === 'helper_card' && Number.isInteger(e.tabId));
+    check('shared: both shared helpers\' cards show the same tab', cards.some((e) => e.n === 1 && e.tabId === docTab) && cards.some((e) => e.n === 2 && e.tabId === docTab));
+    check('shared: the result marks the shared tab and each helper\'s part', /tab \d+ \(shared\) job 1 \(part: Part A\)/.test(r.value) && /\(part: Part B\)/.test(r.value) && /shared or existing tab/.test(r.value), String(r.value).slice(0, 600));
+  }
+  {
+    // An open tab named by tab_id: the helpers work in it, nothing new opens, and it is never closed, even when a helper fails.
+    const { agent, browser, ran } = sharedRig();
+    agent.helperCall = async (model, { messages }) => {
+      const n = /job (\d)/.exec(messages[0].content)[1];
+      if (messages.length === 1) return reply([use('find', { query: 'x' })]);
+      if (n === '2') throw new Error('provider exploded');
+      return reply([text('ok')]);
+    };
+    const chat = chatOf();
+    let scopeAfter = null;
+    const r = await inChat(agent, chat, async () => { taskScopeOf(agent).idsFresh = true; const v = await agent.parallelTasks({ tasks: [{ task: 'job 1', tab_id: 1 }, { task: 'job 2', tab_id: 1 }] }); scopeAfter = taskScopeOf(agent); return v; });
+    check('tab_id: helpers act in the named tab and open none', !r.error && browser.opened.length === 0 && ran.length === 2 && ran.every((x) => x.tab === 1), J([String(r.error), ran]));
+    check('tab_id: a named tab is never closed, even after a helper failed', !browser.closed.includes(1) && /Helper 2 \[FAILED/.test(r.value), J(browser.closed));
+    check('tab_id: helpers that read the chat\'s own tab leave the chat to read it again before using ids', scopeAfter && scopeAfter.idsFresh === false);
+    const bad = await inChat(agent, chatOf(), () => agent.parallelTasks({ tasks: [{ task: 'job 1', tab_id: 99 }] }));
+    check('tab_id: a tab the chat cannot see is refused before any helper runs', /No tab with id 99/.test(String(bad.error?.message)) && ran.length === 2, String(bad.error));
+  }
+  {
+    // A shared tab stays open while one of its helpers still works, and closes when all ended and one did not finish.
+    const { agent, browser } = sharedRig();
+    let closedWhileWorking = null;
+    agent.helperCall = async (model, { messages }) => {
+      const n = /job (\d)/.exec(messages[0].content)[1];
+      if (messages.length === 1) return reply([use('read_page', {})]);
+      if (n === '1') throw new Error('provider exploded');
+      await sleep(60);
+      closedWhileWorking = browser.closed.length > 0;
+      return reply([text('fine')]);
+    };
+    const r = await inChat(agent, chatOf(), () => agent.parallelTasks({ tasks: [{ task: 'job 1', share: 's', url: 'https://doc.test/' }, { task: 'job 2', share: 's' }] }));
+    check('shared: a failed helper does not close the tab another helper still works in; it closes once both ended', closedWhileWorking === false && browser.closed.length === 1 && browser.closed[0] === browser.opened[0].id && /Helper 2 \[done/.test(r.value), J([closedWhileWorking, browser.closed, String(r.value).slice(0, 200)]));
+  }
+  {
+    // A page that moved to another site while a helper waited for the lock is not acted on; frame ids after another helper's read are refused.
+    const { agent, browser, ran } = sharedRig();
+    agent.helperCall = async (model, { messages }) => {
+      const n = /job (\d)/.exec(messages[0].content)[1];
+      if (messages.length === 1) return n === '1' ? reply([use('read_page', {})]) : (await sleep(5), reply([use('read_page', {})]));
+      if (messages.length === 3) {
+        if (n === '1') { await sleep(5); return reply([use('click', { element_id: 300001 })]); }
+        await sleep(40);
+        return reply([use('click', { element_id: 2 })]);
+      }
+      return reply([text(`helper ${n}: ${String(messages[messages.length - 1].content[0].content).slice(0, 120)}`)]);
+    };
+    const realExecute = agent.execute;
+    agent.execute = async (name, args) => { const out = await realExecute(name, args); if (name === 'click' && args.element_id === 2) browser.setUrl(agent.taskTab().id, 'https://other.test/'); return out; };
+    const r = await inChat(agent, chatOf(), () => agent.parallelTasks({ tasks: [{ task: 'job 1', share: 's', url: 'https://doc.test/' }, { task: 'job 2', share: 's' }] }));
+    check('shared: frame ids named after another helper re-read the page are refused with "read again"', /helper 1: Another helper read this page/.test(r.value) && !ran.some((x) => x.args?.element_id === 300001), String(r.value).slice(0, 700));
+    void r;
+  }
+  {
+    const { agent, browser, ran } = sharedRig();
+    let release;
+    const gateOpen = new Promise((res) => { release = res; });
+    agent.helperCall = async (model, { messages }) => {
+      const n = /job (\d)/.exec(messages[0].content)[1];
+      if (messages.length === 1) return n === '1' ? reply([use('read_page', {})]) : (await sleep(5), reply([use('read_page', {})]));
+      if (messages.length === 3) return n === '1' ? reply([use('screenshot', {})]) : (await sleep(5), reply([use('click', { element_id: 2 })]));
+      return reply([text(`helper ${n}: ${String(messages[messages.length - 1].content[0].content).slice(0, 160)}`)]);
+    };
+    const realExecute = agent.execute;
+    agent.execute = async (name, args) => {
+      if (name === 'screenshot') { const id = agent.taskTab().id; await sleep(30); browser.setUrl(id, 'https://moved.test/'); await gateOpen; }
+      return realExecute(name, args);
+    };
+    setTimeout(() => release(), 60);
+    const r = await inChat(agent, chatOf(), () => agent.parallelTasks({ tasks: [{ task: 'job 1', share: 's', url: 'https://doc.test/' }, { task: 'job 2', share: 's' }] }));
+    check('shared: a page that moved to another site while a helper waited is not acted on', /helper 2: The shared page moved to moved\.test/.test(r.value) && !ran.some((x) => x.name === 'click'), String(r.value).slice(0, 700));
+  }
+  {
+    // The shared tab is opened through the same checks as a helper's own navigate (ensureAllowed, as one of its helpers); a refusal there
+    // fails every helper of that tab, with why.
+    const { agent, ran } = sharedRig();
+    const checked = [];
+    const realEnsure = agent.ensureAllowed.bind(agent);
+    agent.ensureAllowed = async (name, emit, signal, opts) => {
+      checked.push({ name, url: opts?.input?.url, helper: taskScopeHelper(agent) });
+      if (name === 'navigate') throw new Error('The user did not allow doc.test.');
+      return realEnsure(name, emit, signal, opts);
+    };
+    agent.helperCall = async (model, { messages }) => (messages.length === 1 ? reply([use('read_page', {})]) : reply([text(`said: ${String(messages[2].content[0].content).slice(0, 160)}`)]));
+    const r = await inChat(agent, chatOf(), () => agent.parallelTasks({ tasks: [{ task: 'job 1', share: 's', url: 'https://doc.test/' }, { task: 'job 2', share: 's' }] }));
+    const opens = checked.filter((c) => c.name === 'navigate');
+    check('shared: the tab is opened once, through the site checks as one of its helpers; a refusal stops both helpers there', opens.length === 1 && opens[0].url === 'https://doc.test/' && Number.isInteger(opens[0].helper) && !ran.length && (String(r.value).match(/The shared tab could not open doc\.test: The user did not allow/g) || []).length === 2, J([opens, ran, String(r.value).slice(0, 500)]));
+  }
+  {
+    // A helper waiting for what another helper's click will bring does not hold the tab: the click runs while it waits.
+    const { agent, ran } = sharedRig();
+    let clicked;
+    const click = new Promise((res) => { clicked = res; });
+    agent.helperCall = async (model, { messages }) => {
+      const n = /job (\d)/.exec(messages[0].content)[1];
+      if (messages.length === 1) return n === '1' ? reply([use('wait_for', { text: 'Saved' })]) : (await sleep(10), reply([use('click', { element_id: 2 })]));
+      return reply([text(`helper ${n} ok`)]);
+    };
+    const realExecute = agent.execute;
+    agent.execute = async (name, args) => {
+      if (name === 'wait_for') { const late = await Promise.race([click.then(() => 'seen'), sleep(500).then(() => 'timed out')]); return realExecute(name, { ...args, late }); }
+      const out = await realExecute(name, args);
+      if (name === 'click') clicked();
+      return out;
+    };
+    await inChat(agent, chatOf(), () => agent.parallelTasks({ tasks: [{ task: 'job 1', share: 's', url: 'https://doc.test/' }, { task: 'job 2', share: 's' }] }));
+    check('shared: wait_for takes no lock, so another helper\'s click runs while it waits', ran.find((x) => x.name === 'wait_for')?.args.late === 'seen', J(ran.map((x) => [x.name, x.args.late])));
   }
 
   // ---- the setting and the tool

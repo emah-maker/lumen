@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Acting helpers can work on the same page together.** With Settings → AI → "Let helpers act in tabs" on, the API models' `parallel_tasks` gave each helper a background tab of its own. Now tasks with the same `share` name work in one new tab (opened at their url once), tasks with a `tab_id` work in that open tab, and a `section` gives each helper its part, so two or three helpers can split one long form, table or document and finish sooner. In a shared tab, clicks, typing and page reads go one at a time through a per-tab lock while screenshots and waits run together, and the helpers think side by side. Each helper keeps its own element ids, so one helper's read never renumbers another's. Helpers in a shared or named tab can't navigate it away or press keys (focus may be another helper's), a page that moved to another site while a helper waited is not acted on, and a tab named by `tab_id` is never closed. Site approvals, the no-buy/no-send/no-submit rule and the helpers' tool list are unchanged. Test: `test/units/acting-helpers-units.js`.
+
 ## 0.5.102 (2026-11-17)
 
 - **Fixed: a chat you left while its reply was running came back without its card.** Switching to another tab or chat and back used to show only your message and the working line, so the reply looked lost. Its steps, its card (Browser, Files, rating, agents), pictures and files now come back as they were, and the reply carries on in them.
