@@ -5843,6 +5843,9 @@ if (code && window.highlightCode && (colour || !root.classList?.contains('stream
 }
 
 if (window.highlightCode && !root?.classList?.contains('streaming')) for (const code of root?.querySelectorAll?.('.code-block pre:not(.math-src) > code:not([data-hl])') || []) window.highlightCode(code, code.parentElement.dataset.lang);
+
+
+if (window.codeExtras && root?.classList && !root.classList.contains('streaming')) for (const pre of root.querySelectorAll?.('.code-block > pre[data-lang="mermaid"]') || []) if (!pre.parentElement.dataset.diagram) window.codeExtras.decorate(pre.parentElement, pre, { finished: true });
 }
 
 function endStream() {
@@ -14136,6 +14139,7 @@ pop.setAttribute('role', 'dialog');
 meter.setAttribute('aria-controls', 'usage-popover');
 strip.append(pop);
 let popTimer = null;
+let lastContext = null;
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 function barRow(label, percent, level, detail, valueText) {
@@ -14158,15 +14162,25 @@ return row;
 }
 function renderPopover() {
 const key = engineKey();
-const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
-if (!v) { closePopover(false); return; }
+const known = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
+const ctx = lastContext && lastContext.window > 0 && lastContext.tokens > 0 ? lastContext : null;
+if (!known && !ctx) { closePopover(false); return; }
+
+const v = known || { name: '', plan: '', message: '', windows: [], rates: [], note: '', counted: [], updated: '', none: true };
 pop.replaceChildren();
-const label = window.t('usage.bar.labelFor', { name: v.name });
+const label = known ? window.t('usage.bar.labelFor', { name: v.name }) : window.t('context.pop.title');
 pop.setAttribute('aria-label', label);
 const head = el('div', 'up-head');
 head.append(el('span', 'up-title', label));
 if (v.plan) head.append(el('span', 'up-plan', v.plan));
 pop.append(head);
+
+if (ctx) {
+const percent = Math.round(ctx.percent);
+const detail = [ctx.model ? window.t('context.model', { model: ctx.model }) : '', window.t(ctx.auto ? 'context.pop.auto' : 'context.pop.compact')].filter(Boolean).join(' ');
+pop.append(barRow(window.t(ctx.estimated ? 'context.pop.label.estimated' : 'context.pop.label'), percent, percent >= 90 ? 'high' : percent >= 75 ? 'warn' : 'ok', detail, `${short(ctx.tokens)} / ${short(ctx.window)}`));
+if (v.none) return;
+}
 if (v.message) pop.append(el('p', 'up-note', v.message));
 for (const w of v.windows) pop.append(barRow(w.label, w.percent, w.level, w.text, w.key === 'limit' ? '' : window.t('usage.bar.used', { percent: Math.round(w.percent) })));
 if (v.rates.length) {
@@ -14190,7 +14204,7 @@ foot.append(link);
 pop.append(foot);
 }
 function openPopover() {
-if (!pop.hidden || !usage) return;
+if (!pop.hidden || (!usage && !lastContext)) return;
 renderPopover();
 if (!pop.childNodes.length) return;
 pop.hidden = false;
@@ -14208,7 +14222,7 @@ clearInterval(popTimer);
 document.removeEventListener('pointerdown', onOutside, true);
 if (refocus) meter.focus({ preventScroll: true });
 }
-function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target)) closePopover(false); }
+function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target) && !ring?.contains(e.target)) closePopover(false); }
 meter.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
 const escape = (e) => { if (e.key === 'Escape' && !pop.hidden) { e.stopPropagation(); closePopover(true); } };
 pop.addEventListener('keydown', escape);
@@ -14248,6 +14262,8 @@ strip.append(ring);
 
 const short = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
 function renderContext(view) {
+lastContext = view || null;
+if (!pop.hidden) renderPopover();
 const show = Boolean(view && view.window > 0 && view.tokens > 0);
 ring.hidden = !show;
 syncStrip();
@@ -14270,7 +14286,10 @@ if (!chatsApi?.list) return;
 try { renderContext((await chatsApi.list())?.currentContext || null); } catch {  }
 }
 chatsApi?.onContext?.(renderContext);
-ring.addEventListener('click', () => window.ask?.('/context'));
+
+ring.setAttribute('aria-controls', 'usage-popover');
+ring.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
+ring.addEventListener('keydown', escape);
 $('new-chat')?.addEventListener('click', () => { renderContext(null); setTimeout(refreshContext, 50); });
 window.assistant?.onEvent?.((event) => { if (event.type === 'done') setTimeout(refreshContext, 300); });
 
@@ -14745,8 +14764,20 @@ if (current) { promptEl.setAttribute('aria-activedescendant', current.id); curre
 else promptEl.removeAttribute('aria-activedescendant');
 }
 
+
+
+
+const CLI_NAMES = { claudecode: 'Claude Code', codex: 'Codex', grokbuild: 'Grok Build', antigravity: 'Antigravity' };
+const cliEngine = () => CLI_NAMES[(/^([a-z]+):/.exec(document.getElementById('model')?.value || '') || [])[1]] || null;
+function passThrough(query) {
+const engine = cliEngine();
+if (!engine || !query) return null;
+return { name: query, label: query, passThrough: true, description: tr('slash.passThrough', 'Send /{name} to {engine}', { name: query, engine }), takesInput: false, run({ ask }) { ask(`/${query}`); return { ok: true }; } };
+}
 function openMenu(query) {
 shown = window.slashMatch.rank([...commands.values()], query);
+const extra = commands.has(query) ? null : passThrough(query);
+if (extra) shown = shown.some((c) => String(c.name).startsWith(query)) ? [...shown, extra] : [extra, ...shown];
 index = 0;
 open = shown.length > 0;
 menu.hidden = !open;

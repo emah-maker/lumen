@@ -24,6 +24,18 @@ function chatCommand(text) {
   return { name: m[1].toLowerCase(), args: (m[2] || '').trim().slice(0, 2000) };
 }
 
+// [cli commands] Any other "/name args" (/review, /init, /security-review, a skill such as /graphify or plugin:skill): a CLI engine's own
+// slash command, sent to it as typed. -> { name, args } | null. Not a path ("/etc/hosts" has a "/" after the name), not Lumen's own words
+// ("/image a cat" is a picture request; /think /deep /fast /plan /btw never reach main as text).
+const NOT_CLI = new Set(['image', 'think', 'deep', 'fast', 'plan', 'btw']);
+function cliCommand(text) {
+  const m = /^\/([a-z][\w:.-]{0,63})(?:\s+([\s\S]*))?$/i.exec(String(text ?? '').trim());
+  if (!m) return null;
+  const name = m[1].toLowerCase();
+  if (COMMANDS.includes(name) || NOT_CLI.has(name)) return null;
+  return { name: m[1], args: (m[2] || '').trim().slice(0, 20000) };
+}
+
 const blocksOf = (m) => (Array.isArray(m?.content) ? m.content : [{ type: 'text', text: String(m?.content ?? '') }]);
 
 // Where an exchange starts: a user message with something the user sent (text or an image) and no tool results,
@@ -101,4 +113,4 @@ const estimateTokens = (chars) => Math.ceil(Math.max(0, chars) / 4);
 // (agent.js contextBudget, in characters), where the oldest turns would otherwise be left out.
 const shouldAutoCompact = (historyChars, budgetChars) => budgetChars > 0 && historyChars > budgetChars * AUTO_AT;
 
-module.exports = { COMMANDS, SUMMARY_TAG, SUMMARY_BLOCK, AUTO_AT, chatCommand, turnStarts, compactPlan, summaryBlockOf, summaryOf, summaryRequest, applySummary, estimateTokens, shouldAutoCompact };
+module.exports = { COMMANDS, SUMMARY_TAG, SUMMARY_BLOCK, AUTO_AT, chatCommand, cliCommand, turnStarts, compactPlan, summaryBlockOf, summaryOf, summaryRequest, applySummary, estimateTokens, shouldAutoCompact };

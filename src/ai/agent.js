@@ -126,7 +126,7 @@ const SYSTEM = `You are Claude, the assistant built into a web browser. You sit 
 
 How to work:
 - No tools when neither page nor web is needed. Current facts: web_search, read_urls.
-- Finish the task yourself. Never say you can't or hand a step back (paste, open, give me access): if a route fails, try another.
+- Finish the task yourself, no lectures. Never refuse or hand a step back (paste, open, give me access): if a route fails, try another.
 - Don't ask what you can decide: pick a default, say so.
 - Finding sources is your job: a table, a value to check, a book or course site they name (zyBooks, Canvas: open the course). Web pages and PDF links: read_urls (read_pdf for an open PDF); never download and run local programs. If one fails, try other results, sites or tabs; never ask the user to paste what you can read, or answer a value they asked to check from memory without saying which sources failed.
 - Current page: attached text if enough, else read_page mode:"compact" or find.
@@ -2562,6 +2562,19 @@ class Agent {
     // [context] "/compact …" and "/context" are commands for this chat, not a message to it.
     const command = images.length || extra.tabs?.length ? null : compactLib.chatCommand(userText);
     if (command) return this.commandTurn(messages, command, controller, emit);
+    // [cli commands] Any other "/name args" in a CLI engine's chat is that CLI's own slash command (/review, /init, a skill or custom command):
+    // Claude Code runs it in the chat's session as it runs /compact; Codex, Grok Build and Antigravity get it as the whole prompt, first thing.
+    const cliSlash = images.length || extra.tabs?.length ? null : compactLib.cliCommand(userText);
+    if (cliSlash && String(messages.settings.model).startsWith('claudecode:') && this.engines?.claudecode) {
+      // (Unlike /compact and /context, the command and its answer are part of the chat: kept in its history, shown again on reload.)
+      let said = '';
+      const keep = (event) => { if (event.type === 'text' && event.text) said += event.text; emit(event); };
+      messages.push({ role: 'user', content: [{ type: 'text', text: userText.trim() }] });
+      await this.claudeCodeCommand(messages, cliSlash, controller.signal, keep);
+      if (said.trim()) messages.push({ role: 'assistant', content: [{ type: 'text', text: said }] });
+      else messages.pop(); // (nothing came back: the notice said why, and the chat is as it was)
+      return;
+    }
     // [generated images] Claude Code with full access: "/image a cat" is not one of its slash commands, so it goes in as words.
     if (!images.length && String(messages.settings.model).startsWith('claudecode:') && this.browser.claudeCodeFullAccess?.() === true) {
       const ask = genImages.imageRequest(userText);
@@ -2749,7 +2762,7 @@ class Agent {
       if (toAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) { delete messages.settings.agySession; delete messages.settings.agyModel; }
       if (toCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) { delete messages.settings.cxSession; delete messages.settings.cxModel; }
       const turnImages = retryText ? [] : screen.image ? [...images, screen.image] : images; // [screen context] the CLI engines take it as an attached picture
-      const turnPrompt = retryText ?? (state + page + attached.block + note + this.cliWordNote(messages)); // [no handoff] the second try is the follow-up alone
+      const turnPrompt = retryText ?? (cliSlash && !toClaudeCode ? userText.trim() : state + page + attached.block + note + this.cliWordNote(messages)); // ([cli commands] a slash command goes in bare, so the CLI sees it first) // [no handoff] the second try is the follow-up alone
       await this.cliExternalReady(emit); // [engine parity] the user's MCP servers are up when the run lists its tools
       this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
@@ -2783,7 +2796,9 @@ class Agent {
     const again = outcome === 'ok' && !controller.signal.aborted && !watch.sent ? this.handoffRetry(messages, userText, watch) : null;
     if (again) {
       emit({ type: 'retry' }); // the handoff text goes from the screen; it stays in the history, for the model
-      emit({ type: 'tool', name: 'retry', label: again.kind === 'unfinished' ? 'Carrying on…' : 'Trying another way…' });
+      // A refusal from a model Auto chose: the second try goes to a stronger one (it declines less), when there is one.
+      if (again.kind === 'refusal') this.escalateFor(messages, null, emit, { tried: fb.tried, allowEngines: true, failure: { kind: 'refused' } });
+      emit({ type: 'tool', name: 'retry', label: again.kind === 'unfinished' ? 'Carrying on…' : again.kind === 'refusal' ? 'Asking again…' : 'Trying another way…' });
       const followup = handoff.followupFor(again.kind); // (a reply that stopped on "I'm checking ..." is told to carry on)
       messages.push({ role: 'user', content: [{ type: 'text', text: followup }] });
       messages.unanswered = [];
