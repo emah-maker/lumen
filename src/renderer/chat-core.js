@@ -1641,6 +1641,16 @@ function resumeLive(live) {
   if (live.followUp) { const cards = [...messages.querySelectorAll(':scope > .act-card')]; const last = cards[cards.length - 1]?._card; if (last) window.stepUI?.carryOn({ cards: [last] }, turn); } // [background helpers] a follow-up drawn again: it goes on in the card of the reply before it (step-ui.js carryOn)
   if (live.target) { agentTarget = live.target; renderWorkingIn(); } // "Working in: <site>" at once
   for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { project: a.project, action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
+  // [run replay] Everything the reply had shown before the chat was left (features/run-replay.js): its activity card and steps, the
+  // review and agents cards, pictures and files, drawn again through the same handler that drew them the first time. Not its words: the
+  // ones before its last step are in the saved chat already (drawn above), the ones after it are live.partial (below).
+  const replay = !live.queued && Array.isArray(live.events) ? live.events.filter((ev) => ev && ev.runId === live.runId && ev.type !== 'text' && ev.type !== 'text_block' && ev.type !== 'turn_start') : [];
+  const replayAll = (list) => { for (const ev of list) { try { onAgentEvent(ev); } catch (err) { console.error('[run replay]', err); } } };
+  if (replay.length && !window.stepUI) { // (the card code comes in with a reply's first step: wait for it, and hold what arrives meanwhile, so all stays in order)
+    const t0 = turn;
+    t0.held = [];
+    loadStepUI().catch(() => {}).then(() => { const held = t0.held || []; t0.held = null; if (turn !== t0) return; replayAll(replay); replayAll(held); moveWorkingToEnd(); syncWorking(); });
+  } else replayAll(replay);
   // What it has said since its last step, so a chat switched back to shows its words, not only a spinner.
   if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
   moveWorkingToEnd();
@@ -1850,7 +1860,9 @@ const finishedRuns = new Map(); // [background helpers] run id -> the turn that 
 const finishedTurn = (id) => (id != null && finishedRun && finishedRun.runId === id ? finishedRun.turn : finishedRuns.get(id) || null);
 let earlyEnded = null; // { runId, bubble }: the run whose reply ended on reply_complete, until its 'done' (lateDone)
 let aiTabsRunId = null; // the run whose "tabs the AI opened" row may still arrive after its 'done'
-window.assistant.onEvent((event) => {
+window.assistant.onEvent((event) => onAgentEvent(event));
+function onAgentEvent(event) {
+  if (turn?.held && event.runId === runId) { turn.held.push(event); return; } // [run replay] drawn once the run's earlier events are
   // An approval card answered or cancelled from an older run (after Stop or New chat) still has to
   // clear, or the toolbar's "waiting for approval" badge stayed on.
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
@@ -2173,7 +2185,7 @@ window.assistant.onEvent((event) => {
       finishTurn(event, { early: false });
       break;
   }
-});
+}
 
 // [agents card] An agent's state, on the card of the reply that started it. One card per message: the agents are a part of that reply's activity
 // card (under its status line); only a reply with no card at all gets them as a card of their own, above the working line while it runs.

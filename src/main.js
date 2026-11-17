@@ -6588,7 +6588,7 @@ function projectChipFor(id) {
 function chatView() {
   const run = chatRuns.get(chatId);
   const live = run && run.queued ? { runId: run.runId, approvals: [], queued: { text: run.text, status: waitingText(run), runNow: true } }
-    : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply, ...(run.followUp ? { followUp: true } : {}) } : null;
+    : run && agent.runningFor(run.messages) ? { runId: run.runId, approvals: [...run.pending.values()], target: agentTargetInfo(), partial: run.reply, ...(run.log ? { events: run.log.events() } : {}), ...(run.followUp ? { followUp: true } : {}) } : null;
   return { id: chatId, ...(temporaryChats.has(chatId) ? { temporary: true } : {}), items: agent.transcript(), usage: describeUsage(agent.messages.settings?.usage), context: contextView(agent.messages.settings?.context), workFolder: workFolderInfo(), effort: agent.openEffort(), ...projectChipFor(chatId), ...(live ? { live } : {}) };
 }
 
@@ -12005,7 +12005,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const ownTab = steered ? (chatBind.tabsHomeFirst(runChat).find((id) => tabAnywhere(id)) ?? (tabAnywhere(chatWorkTab.get(runChat)) ? chatWorkTab.get(runChat) : null)) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : steered ? ownTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [] } };
+  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), log: require('./features/run-replay').createRunLog(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [] } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   bumpChat(runChat); // sending is activity: the chat moves to the top of every list now
@@ -12035,6 +12035,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   };
   // Streamed text/thinking chunks are joined (event-coalesce.js); every other event goes out at once, after any held text.
   const sendOut = (msg) => {
+    if (!run.deleted) run.log.push({ ...msg, runId, chatId: runChat }); // [run replay] a chat opened again mid-run draws all of it again (features/run-replay.js)
     chatPageRt.emit(to(), 'agent:event', { ...msg, runId, chatId: runChat }); // (the chat id lets a view that has moved on to another chat ignore it) whoever asked, and the other view when a chat page is open (a chat left running is ignored there by its run id)
     mirrorToViews(runChat, [to(), ...chatPageRt.surfaces()], 'agent:event', { ...msg, runId, chatId: runChat }); // and another window's sidebar that shows this chat too
   };
@@ -12058,6 +12059,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       run.stopped = false;
       run.doneMsg = null;
       run.followUp = true;
+      run.log.reset(); // [run replay] the turn before is saved with the chat now
       if (!run.deleted && !chatRuns.has(runChat)) { chatRuns.set(runChat, run); unreadChats.delete(runChat); pushAttention(); }
     }
     if (run.doneMsg && msg.type === 'tool' && run.thumbs) { run.thumbs = null; run.thumbTarget = null; } // (see below: a helper's step after 'done')
