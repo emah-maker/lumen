@@ -24,6 +24,20 @@ const HANDOFFS = [
 ];
 for (const reply of HANDOFFS) check(`handoff: ${reply.slice(0, 60)}`, verdict(reply).handoff === true, JSON.stringify(verdict(reply)));
 
+// Refusals of the request itself: their own kind and follow-up (agent.js also tries a stronger model when Auto chose this one).
+const DECLINES = [
+  'I can\'t help with that. Giving you the answers to a graded quiz would undermine academic integrity.',
+  'I\'m not comfortable writing that review for you.',
+  'I won\'t provide the answers, but I can explain the concepts behind each question.',
+  'Scraping that site would violate their terms of service, so I must decline.',
+  'I’d rather not do this one.',
+];
+for (const reply of DECLINES) { const v = verdict(reply); check(`refusal: ${reply.slice(0, 55)}`, v.handoff === true && v.kind === 'refusal', JSON.stringify(v)); }
+check('refusal follow-up says to do it, with the real stops', /declined/.test(handoff.followupFor('refusal')) && /sign-in/.test(handoff.followupFor('refusal')) && handoff.isRetryText(handoff.followupFor('refusal')));
+check('a refusal that needs a sign-in is still a legit stop', verdict('I can\'t help with that until you sign in to Canvas.').legit === 'sign-in');
+check('a long answer that only mentions "academic integrity" later is not a refusal', verdict(`${'The policy covers citations, group work and exams in detail. '.repeat(40)}It also has a section on academic integrity.`).kind !== 'refusal');
+check('the system prompt tells the AI not to refuse the user\'s own requests', ['anthropic:claude-sonnet-5-5', 'claudecode:default', 'codex:gpt-6-luna', 'grokbuild:default'].every((model) => /no lectures\. Never refuse/.test(systemFor({ model }))));
+
 // Stops that need the user: never a handoff.
 const LEGIT = [
   ['The page asks for a CAPTCHA, which only you can solve. Tell me when it is done and I will carry on.', 'captcha'],
