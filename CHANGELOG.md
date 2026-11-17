@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.101 (2026-11-17)
+
 - **Fixed: clicking the context bar above the chat box opened its popup and closed it again at once.** With Auto, or an API model, there is no plan bar, and the usage refresh the click starts closed the popup whenever the plan bar was hidden. It now stays open until you click it again, click outside or press Esc. Test: `test/e2e/chats.js`.
 
 ## 0.5.100 (2026-11-17)
