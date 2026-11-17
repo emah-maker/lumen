@@ -276,7 +276,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       p.dir = fs.mkdtempSync(path.join(engine.tmp, 'lumen-cx-')); // the working folder: empty
       engine.workDirs.add(p.dir);
       // No `model` line: the model is chosen per turn (turn/start), so a process serves any of the chat's messages.
-      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun, fullAccess }), { mode: 0o600 });
+      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun, fullAccess, contextWindow: cx.maxWindowIn(engine.userHome()) }), { mode: 0o600 });
       const inv = locate.buildInvocation(spec, ['app-server']);
       const env = cx.buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {}, fullAccess });
       p.child = engine.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: p.dir, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });

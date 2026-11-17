@@ -195,12 +195,33 @@ const FULL_ON = ['shell_tool', 'unified_exec', 'view_image']; // [full access] t
 // app-server (skills/list, a throwaway signed-out CODEX_HOME, no model call): these five listed, and each listed enabled: false with the entry.
 const BUNDLED_SKILLS = ['imagegen', 'openai-docs', 'review-agent', 'skill-creator', 'skill-installer'];
 const FULL_WATCHDOG_MS = 15 * 60 * 1000; // a silent shell command is not a hang
+// [context] The context window Lumen asks Codex for: the largest the model takes (models_cache.json's max_context_window), not its smaller
+// default (context_window). Codex keeps 95% of what it is given, so gpt-6-astra went from 258.4k to 828.4k (checked with codex-cli 0.167.2
+// and a Plus account, 2026-11-17: `-c model_context_window=872000` made the turn's token_count report 828400). The user asked for it,
+// knowing a fuller context makes each call count for more of the plan's limit. `model`: the one the run asks for; 'default' or one the cache
+// doesn't list (a kept process serves every model of the chat) takes the smallest max of all the listed models, so no model is asked for more
+// than it takes. 0 (no line written: Codex's default) when the cache has none.
+function maxWindowFromCache(text, model = 'default') {
+  let json;
+  try { json = JSON.parse(String(text)); } catch { return 0; }
+  const rows = (Array.isArray(json) ? json : Array.isArray(json?.models) ? json.models : []).filter((r) => r && typeof r === 'object');
+  const maxOf = (r) => { const n = Number(r.max_context_window); return Number.isFinite(n) && n > 0 ? Math.round(n) : 0; };
+  const own = rows.find((r) => (r.slug || r.id) === model);
+  if (own && maxOf(own)) return maxOf(own);
+  const all = rows.map(maxOf).filter(Boolean);
+  return all.length ? Math.min(...all) : 0;
+}
+function maxWindowIn(userHome, model) {
+  try { return maxWindowFromCache(fs.readFileSync(path.join(userHome, 'models_cache.json'), 'utf8'), model); } catch { return 0; }
+}
+
 // config.toml of a run's Codex home (see ISOLATION and WHAT THE MODEL MAY DO above). run: { mcpUrl } from Lumen's HTTP MCP server;
 // bridge: { command, args, env } + tag, for the stdio form (LUMEN_CODEX_MCP=stdio). Nothing secret is in the file.
-function configFor({ model = 'default', run = null, bridge = null, userData = null, tag = null, fullAccess = false } = {}) {
+function configFor({ model = 'default', run = null, bridge = null, userData = null, tag = null, fullAccess = false, contextWindow = 0 } = {}) {
   const lines = [
     '# Written by Lumen before every message: a Codex home of Lumen\'s own. Edits are overwritten.',
     ...(model !== 'default' && validModel(model) ? [`model = ${q(model)}`] : []),
+    ...(Number.isInteger(contextWindow) && contextWindow > 0 ? [`model_context_window = ${contextWindow}`] : []), // [context] see maxWindowFromCache
     `sandbox_mode = "${fullAccess ? 'danger-full-access' : 'read-only'}"`,
     'approval_policy = "never"',
     'check_for_update_on_startup = false',
@@ -446,7 +467,7 @@ class CodexEngine {
     try {
       const stdio = process.env.LUMEN_CODEX_MCP === 'stdio' && this.bridge;
       if (stdio) this.ensureServer?.();
-      await fs.promises.writeFile(path.join(home, 'config.toml'), configFor({ model, run: gateRun, fullAccess, ...(stdio ? { bridge: this.bridge(), userData: this.userData, tag } : {}) }), { mode: 0o600 });
+      await fs.promises.writeFile(path.join(home, 'config.toml'), configFor({ model, run: gateRun, fullAccess, contextWindow: maxWindowIn(userHome, model), ...(stdio ? { bridge: this.bridge(), userData: this.userData, tag } : {}) }), { mode: 0o600 });
       const imageFiles = [];
       for (const [i, img] of images.slice(0, 8).entries()) {
         const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[img.media_type];
@@ -658,4 +679,4 @@ class CodexEngine {
 // A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
 CodexEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
 
-module.exports = { BUNDLED_SKILLS, itemImagePaths, CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
+module.exports = { maxWindowFromCache, maxWindowIn, BUNDLED_SKILLS, itemImagePaths, CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
