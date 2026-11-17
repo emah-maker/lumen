@@ -2719,6 +2719,78 @@ zoomable(img);
 window.genImages = { figure, decorate, load, zoomable, enlarge, closeAll };
 })();
 ;
+// ---- page-math.js
+
+
+
+
+
+
+
+(function (root) {
+const SKIP = /<(script|style|pre|code|textarea)\b[\s\S]*?<\/\1\s*>/gi;
+const TAG = /<\/?(?:p|div|span|br|hr|h[1-6]|li|ul|ol|dl|dt|dd|table|thead|tbody|tr|td|th|section|article|header|footer|main|nav|aside|strong|em|b|i|u|code|pre|a|img|body|html|head|button|input|label|figure|figcaption|blockquote|details|summary|svg|math)\b[^<>]*>/i;
+const DECODE = { lt: '<', gt: '>', amp: '&', nbsp: ' ', quot: '"', '#39': "'", apos: "'" };
+const decode = (s) => s.replace(/&(lt|gt|amp|nbsp|quot|#39|apos);/g, (_m, k) => DECODE[k]);
+
+const MATH = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<![\\$\w])\$(?=[^\s$\d])([^$\n]{1,400}?)(?<=[^\s\\$])\$(?![\d$])/g;
+
+const hasMath = (html) => /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$[^\s$\d][^$\n]*\$/.test(String(html || ''));
+
+function typeset(temml, tex, display) {
+try {
+const src = decode(tex).replace(/\\label\{[^}]*\}/g, '').replace(/(?<!\\)((?:\\\\)*)%/g, '$1\\%');
+const out = temml.renderToString(src.trim(), { displayMode: display || /^\s*\\begin\{/.test(src), throwOnError: true, trust: false, maxSize: 20, maxExpand: 500 });
+return display ? `<div style="overflow-x:auto;overflow-y:hidden;margin:.6em 0;text-align:center">${out}</div>` : out;
+} catch { return null; }
+}
+
+
+
+
+function mathify(html, temml = root.temml, css = cssText) {
+const text = String(html || '');
+if (!temml?.renderToString || !hasMath(text)) return text;
+const parts = [];
+let at = 0;
+let typeset1 = 0;
+for (const m of text.matchAll(SKIP)) { parts.push([text.slice(at, m.index), true], [m[0], false]); at = m.index + m[0].length; }
+parts.push([text.slice(at), true]);
+const out = parts.map(([chunk, open]) => (!open ? chunk : chunk.replace(MATH, (whole, dd, br, pa, dl) => {
+const tex = dd ?? br ?? pa ?? dl;
+if (!tex || TAG.test(tex)) return whole;
+const done = typeset(temml, tex, dd !== undefined || br !== undefined);
+if (done) typeset1++;
+return done ?? whole;
+}))).join('');
+return typeset1 && css ? `<style>${css}</style>${out}` : out;
+}
+
+
+let cssText = 'math{font-family:"Cambria Math","STIX Two Math","STIXTwoMath-Regular","NotoSansMath-Regular",math;font-style:normal;font-weight:normal;line-height:normal;font-size-adjust:none;text-indent:0;text-transform:none;letter-spacing:normal;word-spacing:normal;direction:ltr}math *{border-color:currentColor}menclose.tml-box,.tml-box{padding:.15em}';
+const setCss = (css) => { cssText = String(css || '').replace(/@font-face\s*\{[^}]*\}/g, '').replace(/<\/style/gi, ''); };
+
+
+const here = typeof document !== 'undefined' ? document.currentScript?.src : '';
+let loading = null;
+function ready(html) {
+if (root.temml || !hasMath(html) || typeof document === 'undefined' || !here) return Promise.resolve();
+loading ||= Promise.all([
+root.temml ? null : new Promise((resolve) => {
+const js = Object.assign(document.createElement('script'), { src: new URL('vendor/temml.min.js', here).href, async: true });
+js.onload = () => resolve();
+js.onerror = () => { loading = null; resolve(); };
+document.head.append(js);
+}),
+]).then(() => {});
+return loading;
+}
+
+const api = { mathify, hasMath, ready, setCss };
+if (typeof module === 'object' && module.exports) module.exports = api;
+else root.pageMath = api;
+})(typeof window !== 'undefined' ? window : globalThis);
+;
 // ---- chat-canvas.js
 
 
@@ -2760,7 +2832,9 @@ function frameDocument(kind, code) {
 const meta = `<meta http-equiv="Content-Security-Policy" content="${FRAME_CSP}">`;
 const text = String(code || '').slice(0, PREVIEW_MAX);
 if (kind === 'svg') return `<!doctype html>${meta}<meta charset="utf-8"><style>html,body{margin:0;height:100%;background:#fff}svg{max-width:100%;max-height:100%}</style>${text.replace(/^\s*<\?xml[^>]*>/, '')}`;
-return `${meta}${text}`;
+
+const pageMath = root.pageMath || (typeof require === 'function' ? require('./page-math') : null);
+return `${meta}${pageMath ? pageMath.mathify(text, root.temml || globalThis.temml) : text}`;
 }
 const fileName = (lang, kind) => `canvas.${kind === 'html' ? 'html' : kind === 'svg' ? 'svg' : EXT[String(lang || '').toLowerCase()] || 'txt'}`;
 
@@ -2847,8 +2921,13 @@ const frame = el('iframe', { className: 'cv-frame', title: say('canvas.previewTi
 frame.setAttribute('sandbox', 'allow-scripts');
 frame.setAttribute('allow', '');
 frame.setAttribute('referrerpolicy', 'no-referrer');
-const html = frameDocument(state.kind, state.code);
-frame.addEventListener('load', () => { try { frame.contentWindow.postMessage({ lumenCanvas: html }, '*'); } catch {  } });
+const { kind, code } = state;
+const math = root.pageMath?.ready(code);
+frame.addEventListener('load', async () => {
+await math;
+const html = frameDocument(kind, code);
+try { frame.contentWindow.postMessage({ lumenCanvas: html }, '*'); } catch {  }
+});
 frame.src = 'canvas-frame.html';
 panel.previewBox.replaceChildren(frame);
 }
@@ -2943,8 +3022,12 @@ const frame = el('iframe', { className: 'ai-file-frame', title: tr('aifile.previ
 frame.setAttribute('sandbox', 'allow-scripts');
 frame.setAttribute('allow', '');
 frame.setAttribute('referrerpolicy', 'no-referrer');
+const math = window.pageMath?.ready(text);
+frame.addEventListener('load', async () => {
+await math;
 const html = window.chatCanvas.frameDocument(file.kind, text);
-frame.addEventListener('load', () => { try { frame.contentWindow.postMessage({ lumenCanvas: html }, '*'); } catch {  } });
+try { frame.contentWindow.postMessage({ lumenCanvas: html }, '*'); } catch {  }
+});
 frame.src = 'canvas-frame.html';
 return frame;
 }
@@ -14058,6 +14141,7 @@ pop.setAttribute('role', 'dialog');
 meter.setAttribute('aria-controls', 'usage-popover');
 strip.append(pop);
 let popTimer = null;
+let lastContext = null;
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
 function barRow(label, percent, level, detail, valueText) {
@@ -14080,15 +14164,25 @@ return row;
 }
 function renderPopover() {
 const key = engineKey();
-const v = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
-if (!v) { closePopover(false); return; }
+const known = key && usage ? window.usagePopover?.view(key, usage, { name: ENGINE_NAMES[key], model: select?.value }) : null;
+const ctx = lastContext && lastContext.window > 0 && lastContext.tokens > 0 ? lastContext : null;
+if (!known && !ctx) { closePopover(false); return; }
+
+const v = known || { name: '', plan: '', message: '', windows: [], rates: [], note: '', counted: [], updated: '', none: true };
 pop.replaceChildren();
-const label = window.t('usage.bar.labelFor', { name: v.name });
+const label = known ? window.t('usage.bar.labelFor', { name: v.name }) : window.t('context.pop.title');
 pop.setAttribute('aria-label', label);
 const head = el('div', 'up-head');
 head.append(el('span', 'up-title', label));
 if (v.plan) head.append(el('span', 'up-plan', v.plan));
 pop.append(head);
+
+if (ctx) {
+const percent = Math.round(ctx.percent);
+const detail = [ctx.model ? window.t('context.model', { model: ctx.model }) : '', window.t(ctx.auto ? 'context.pop.auto' : 'context.pop.compact')].filter(Boolean).join(' ');
+pop.append(barRow(window.t(ctx.estimated ? 'context.pop.label.estimated' : 'context.pop.label'), percent, percent >= 90 ? 'high' : percent >= 75 ? 'warn' : 'ok', detail, `${short(ctx.tokens)} / ${short(ctx.window)}`));
+if (v.none) return;
+}
 if (v.message) pop.append(el('p', 'up-note', v.message));
 for (const w of v.windows) pop.append(barRow(w.label, w.percent, w.level, w.text, w.key === 'limit' ? '' : window.t('usage.bar.used', { percent: Math.round(w.percent) })));
 if (v.rates.length) {
@@ -14112,7 +14206,7 @@ foot.append(link);
 pop.append(foot);
 }
 function openPopover() {
-if (!pop.hidden || !usage) return;
+if (!pop.hidden || (!usage && !lastContext)) return;
 renderPopover();
 if (!pop.childNodes.length) return;
 pop.hidden = false;
@@ -14130,7 +14224,7 @@ clearInterval(popTimer);
 document.removeEventListener('pointerdown', onOutside, true);
 if (refocus) meter.focus({ preventScroll: true });
 }
-function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target)) closePopover(false); }
+function onOutside(e) { if (!pop.contains(e.target) && !meter.contains(e.target) && !ring?.contains(e.target)) closePopover(false); }
 meter.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
 const escape = (e) => { if (e.key === 'Escape' && !pop.hidden) { e.stopPropagation(); closePopover(true); } };
 pop.addEventListener('keydown', escape);
@@ -14170,6 +14264,8 @@ strip.append(ring);
 
 const short = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
 function renderContext(view) {
+lastContext = view || null;
+if (!pop.hidden) renderPopover();
 const show = Boolean(view && view.window > 0 && view.tokens > 0);
 ring.hidden = !show;
 syncStrip();
@@ -14192,7 +14288,10 @@ if (!chatsApi?.list) return;
 try { renderContext((await chatsApi.list())?.currentContext || null); } catch {  }
 }
 chatsApi?.onContext?.(renderContext);
-ring.addEventListener('click', () => window.ask?.('/context'));
+
+ring.setAttribute('aria-controls', 'usage-popover');
+ring.addEventListener('click', () => { if (pop.hidden) { openPopover(); refreshUsage(false); } else closePopover(true); });
+ring.addEventListener('keydown', escape);
 $('new-chat')?.addEventListener('click', () => { renderContext(null); setTimeout(refreshContext, 50); });
 window.assistant?.onEvent?.((event) => { if (event.type === 'done') setTimeout(refreshContext, 300); });
 
@@ -14667,8 +14766,20 @@ if (current) { promptEl.setAttribute('aria-activedescendant', current.id); curre
 else promptEl.removeAttribute('aria-activedescendant');
 }
 
+
+
+
+const CLI_NAMES = { claudecode: 'Claude Code', codex: 'Codex', grokbuild: 'Grok Build', antigravity: 'Antigravity' };
+const cliEngine = () => CLI_NAMES[(/^([a-z]+):/.exec(document.getElementById('model')?.value || '') || [])[1]] || null;
+function passThrough(query) {
+const engine = cliEngine();
+if (!engine || !query) return null;
+return { name: query, label: query, passThrough: true, description: tr('slash.passThrough', 'Send /{name} to {engine}', { name: query, engine }), takesInput: false, run({ ask }) { ask(`/${query}`); return { ok: true }; } };
+}
 function openMenu(query) {
 shown = window.slashMatch.rank([...commands.values()], query);
+const extra = commands.has(query) ? null : passThrough(query);
+if (extra) shown = shown.some((c) => String(c.name).startsWith(query)) ? [...shown, extra] : [extra, ...shown];
 index = 0;
 open = shown.length > 0;
 menu.hidden = !open;
