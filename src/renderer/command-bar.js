@@ -35,6 +35,7 @@ const commandBar = (() => {
     ['focus', 'Focus mode', 'focus block sites schedule distraction study'],
     ['ai-answers', 'Models and answers', 'answers fractions auto model image generation fallback'],
     ['ai-keys-page', 'API keys and sign-ins', 'api key anthropic claude openai grok xai'],
+    ['ai-setup', 'Set up a coding agent', 'install setup claude code codex grok build antigravity agy cli terminal sign in docs'],
     ['ai-providers', 'AI providers', 'provider effort reasoning thinking claude code grok'],
     ['ai-memory', 'Instructions and memory', 'custom instructions memory remember projects folder about'],
     ['ai-approvals', 'Asking before it acts', 'approvals permission ask bypass auto-allow hands off'],
