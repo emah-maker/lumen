@@ -115,7 +115,8 @@
     const hint = !bar && key === 'grokbuild' && Boolean(usage) && !off;
     meter.hidden = off || (!bar && !hint);
     syncStrip();
-    if (meter.hidden) closePopover(false); else if (!pop.hidden) renderPopover();
+    // (Open from the context bar with no plan meter, Auto or an API model: it stays. renderPopover closes it when it has nothing left to show.)
+    if (!pop.hidden) renderPopover();
     meter.classList.toggle('hint', hint);
     if (hint) {
       meterBar.hidden = true;
