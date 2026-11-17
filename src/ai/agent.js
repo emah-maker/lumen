@@ -126,7 +126,7 @@ const SYSTEM = `You are Claude, the assistant built into a web browser. You sit 
 
 How to work:
 - No tools when neither page nor web is needed. Current facts: web_search, read_urls.
-- Finish the task yourself. Never say you can't or hand a step back (paste, open, give me access): if a route fails, try another.
+- Finish the task yourself, no lectures. Never refuse or hand a step back (paste, open, give me access): if a route fails, try another.
 - Don't ask what you can decide: pick a default, say so.
 - Finding sources is your job: a table, a value to check, a book or course site they name (zyBooks, Canvas: open the course). Web pages and PDF links: read_urls (read_pdf for an open PDF); never download and run local programs. If one fails, try other results, sites or tabs; never ask the user to paste what you can read, or answer a value they asked to check from memory without saying which sources failed.
 - Current page: attached text if enough, else read_page mode:"compact" or find.
@@ -2796,7 +2796,9 @@ class Agent {
     const again = outcome === 'ok' && !controller.signal.aborted && !watch.sent ? this.handoffRetry(messages, userText, watch) : null;
     if (again) {
       emit({ type: 'retry' }); // the handoff text goes from the screen; it stays in the history, for the model
-      emit({ type: 'tool', name: 'retry', label: again.kind === 'unfinished' ? 'Carrying on…' : 'Trying another way…' });
+      // A refusal from a model Auto chose: the second try goes to a stronger one (it declines less), when there is one.
+      if (again.kind === 'refusal') this.escalateFor(messages, null, emit, { tried: fb.tried, allowEngines: true, failure: { kind: 'refused' } });
+      emit({ type: 'tool', name: 'retry', label: again.kind === 'unfinished' ? 'Carrying on…' : again.kind === 'refusal' ? 'Asking again…' : 'Trying another way…' });
       const followup = handoff.followupFor(again.kind); // (a reply that stopped on "I'm checking ..." is told to carry on)
       messages.push({ role: 'user', content: [{ type: 'text', text: followup }] });
       messages.unanswered = [];

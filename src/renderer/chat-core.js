@@ -1832,6 +1832,9 @@ function decorateCode(root, { colour = false } = {}) {
   }
   // A finished reply's blocks, decorated while they streamed, get their colours now.
   if (window.highlightCode && !root?.classList?.contains('streaming')) for (const code of root?.querySelectorAll?.('.code-block pre:not(.math-src) > code:not([data-hl])') || []) window.highlightCode(code, code.parentElement.dataset.lang);
+  // ...and a ```mermaid block decorated while the reply streamed (endStream's last draw runs before 'streaming' is taken off) is drawn
+  // now. Without this a streamed reply's diagram stayed code until the chat was reloaded. (diagram() itself skips a box already tried.)
+  if (window.codeExtras && root?.classList && !root.classList.contains('streaming')) for (const pre of root.querySelectorAll?.('.code-block > pre[data-lang="mermaid"]') || []) if (!pre.parentElement.dataset.diagram) window.codeExtras.decorate(pre.parentElement, pre, { finished: true });
 }
 
 function endStream() {

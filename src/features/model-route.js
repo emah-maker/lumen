@@ -50,9 +50,10 @@ function score(prompt, { imageCount = 0, tabCount = 0 } = {}) {
   return s;
 }
 
-// Haiku 5.5 handles ordinary chat, page questions, summaries and plain browsing well, so 'light' (Haiku) reaches up to a score of 1,
-// unless the message is about code (CODE_WORDS): that stays on Sonnet. Only a clearly hard brief (6+) goes to Opus.
-const LIGHT_MAX = 1;
+// 'light' (Haiku) is only for what clearly needs no thought: a greeting, a quick lookup or small chore (LIGHT_WORDS pull the score
+// down), a sign-off. Everyday chat, open questions, page questions and short writing go to Sonnet: on Haiku they read as "too dumb"
+// (user report 2026-11-16), and a wrong cheap answer costs more than the price gap. Code stays on Sonnet unless trivial. A hard brief (6+) goes to Opus.
+const LIGHT_MAX = -2;
 const HEAVY_MIN = 6;
 const tierOf = (s, coding = false) => (s >= HEAVY_MIN ? 'heavy' : s <= (coding ? -2 : LIGHT_MAX) ? 'light' : 'standard');
 
@@ -141,7 +142,7 @@ function applySituation(tier, sit, { prompt = '' } = {}) {
     case 'rewrite': return len > 1500 ? atLeast(tier === 'heavy' ? 'standard' : tier, 'standard') : 'light';
     case 'browse': return sit.multi ? atLeast(tier, 'standard') : tier;
     case 'research': case 'compare': return atLeast(tier, 'standard');
-    case 'writing': return sit.deep ? 'heavy' : sit.long ? atLeast(tier, 'standard') : (tier === 'heavy' ? 'standard' : 'light');
+    case 'writing': return sit.deep ? 'heavy' : sit.long ? atLeast(tier, 'standard') : 'standard'; // (short pieces too: Haiku's drafts read flat)
     case 'reasoning': return atLeast(tier, MATH_HARD.test(prompt) ? 'heavy' : 'standard');
     case 'vision': return VISUAL_HARD.test(prompt) ? atLeast(tier, 'standard') : tier;
     default: return tier;
@@ -149,7 +150,7 @@ function applySituation(tier, sit, { prompt = '' } = {}) {
 }
 
 // A short reason for the picker's tooltip ("Auto: Sonnet for a browsing task"). The tier says how much, the situation what.
-function whyOf(kind, tier, { tools = true, multi = false } = {}) {
+function whyOf(kind, tier, { tools = true, multi = false, long = false } = {}) {
   switch (kind) {
     case 'quick': return 'a quick reply';
     case 'imagegen': return 'a picture request';
@@ -158,7 +159,7 @@ function whyOf(kind, tier, { tools = true, multi = false } = {}) {
     case 'browse': return multi ? 'a multi-step browsing task' : 'a browsing task';
     case 'research': return tier === 'heavy' ? 'deep research' : 'research across sources';
     case 'compare': return 'a comparison';
-    case 'writing': return tier === 'light' ? 'a short piece of writing' : tier === 'heavy' ? 'a demanding piece of writing' : 'a long piece of writing';
+    case 'writing': return tier === 'heavy' ? 'a demanding piece of writing' : long ? 'a long piece of writing' : 'a short piece of writing';
     case 'code': return tier === 'heavy' ? 'a hard coding task' : 'a coding task';
     case 'reasoning': return tier === 'heavy' ? 'a hard proof' : 'a reasoning problem';
     case 'vision': return 'an image';
@@ -184,7 +185,7 @@ function tierFor(prompt, { imageCount = 0, tabCount = 0, previous = null, pinned
   let tier = applySituation(tierOf(s, CODE_WORDS.test(t)), sit, { prompt: t });
   if (unattended) tier = atLeast(tier, 'standard');
   if ((followUp || (pinned && prev)) && TIERS.indexOf(prev) > TIERS.indexOf(tier)) tier = prev;
-  return { tier, score: s, followUp, kind: sit.kind, multi: sit.multi, why: whyOf(sit.kind, tier, { multi: sit.multi, tools }) };
+  return { tier, score: s, followUp, kind: sit.kind, multi: sit.multi, why: whyOf(sit.kind, tier, { multi: sit.multi, tools, long: Boolean(sit.long) }) };
 }
 
 // The engine's model for a tier, or null when the engine has no tiers.

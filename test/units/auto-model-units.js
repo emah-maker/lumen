@@ -36,7 +36,8 @@ check('quick kinds are fast', ['quick', 'lookup', 'translation', 'classification
 check('a summary of a long page is balanced', need({ kind: 'summary', attachmentChars: 90_000 }).tier === 'balanced');
 check('reasoning is strong, code is balanced', need({ kind: 'reasoning' }).tier === 'strong' && need({ kind: 'code' }).tier === 'balanced');
 check('a greeting is fast', need({ prompt: 'hi' }).tier === 'fast');
-check('an everyday request is fast (Haiku 5.5 takes ordinary chat, page questions and browsing)', ['find the cheapest flight from Boston to Denver next month on this site', 'what does this page say about refunds?', 'write a short email declining the invite'].every((p) => need({ prompt: p }).tier === 'fast'));
+check('an everyday request is balanced, not the smallest model (2026-11-16)', ['find the cheapest flight from Boston to Denver next month on this site', 'what does this page say about refunds?', 'write a short email declining the invite', 'explain how photosynthesis works'].every((p) => need({ prompt: p }).tier === 'balanced'));
+check('greetings, lookups and one-step browsing stay fast', ['hi', 'what time is it in Tokyo', 'open youtube', 'summarize this article'].every((p) => need({ prompt: p }).tier === 'fast'));
 check('a request about code is balanced', ['fix the login bug on this page', 'Write a function that parses CSV'].every((p) => need({ prompt: p }).tier === 'balanced'));
 check('a multi-step debugging brief is strong', need({ prompt: heavyBrief }).tier === 'strong');
 check('/think asks for the strongest', need({ prompt: 'hi', hint: 'think' }).tier === 'strong');
