@@ -9972,7 +9972,19 @@ if (TEST) global.__chatPage = { rt: chatPageRt, open: () => chatPageRt.open(), b
 // Tests never run the real `claude -p /usage` either (it starts the user's own MCP servers): only a stand-in (LUMEN_CLAUDE_BIN, test/e2e/usage.js).
 const usage = createUsage({ app, showBars: () => readSettings().usageBars !== false, cooling: (now) => aiFallback.shared.snapshot(now), claudeBin: () => (TEST && !process.env.LUMEN_CLAUDE_BIN ? null : require('./ai/claude-code').resolveClaude(agent.engines?.claudecode)), grokSession: () => agent.messages?.settings?.gbSession || null,
   // [usage] Codex's own session logs (numbers only: ai/codex-usage.js); tests never read the real ~/.codex.
-  codexScan: async (now) => (TEST ? global.__codexScan?.(now) ?? null : require('./ai/codex-usage').scanSessions({ home: require('./ai/codex-config').codexHome(), now })),
+  // Lumen's own Codex homes too (each chat's codex-chats/<id>): Lumen's chats never write to ~/.codex. And the live reading from a Codex chat's
+  // kept process when one is up (account/rateLimits/read), which wins over any log.
+  codexScan: async (now) => {
+    if (TEST) return global.__codexScan?.(now) ?? null;
+    const cu = require('./ai/codex-usage');
+    const chats = require('./ai/codex').chatsDirFor(app.getPath('userData'));
+    let chatHomes = [];
+    try { chatHomes = fs.readdirSync(chats, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(chats, d.name)); } catch { /* none yet */ }
+    const scan = cu.scanHomes({ homes: [require('./ai/codex-config').codexHome(), path.join(app.getPath('userData'), 'codex-home'), ...chatHomes], now });
+    let live = null;
+    try { live = (await agent.engines?.codex?.keepWarm?.rateLimits?.()) || null; } catch { /* none up */ }
+    return live ? { ...scan, limits: live } : scan;
+  },
   codexInstalled: () => { try { return aiAgents.cliStatus().codex.installed; } catch { return null; } },
   // [usage] Antigravity's plan quota, from agy's own status line (ai/agy-quota.js); tests only ever reach a fake agy (LUMEN_AGY_BIN).
   agyQuota: async () => (TEST && !process.env.LUMEN_AGY_BIN ? null : require('./ai/agy-quota').readQuota({ bin: await require('./ai/antigravity').findAgy() })),

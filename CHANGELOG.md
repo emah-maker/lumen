@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Codex can use its own sub-agents, and each one shows on the reply's Agents card.** Lumen used to stop Codex with an error when it started a sub-agent. Now the card shows what each sub-agent is doing, live, the way Claude Code's subagents show: its task, a clock, its tool calls, its current step and its summary. Sub-agents get only Lumen's tools, work on the same Lumen tabs as the chat, and a shell command or another server's tool from one still stops the reply.
+- **Fixed: Codex usage in Settings and the plan bar showed an old reading.** It came from Codex's own folder (~/.codex), which Lumen's Codex chats never write to. It now reads Lumen's Codex chats too, and asks Codex for the live numbers while a Codex chat is connected.
+
 ## 0.5.101 (2026-11-17)
 
 - **Fixed: clicking the context bar above the chat box opened its popup and closed it again at once.** With Auto, or an API model, there is no plan bar, and the usage refresh the click starts closed the popup whenever the plan bar was hidden. It now stays open until you click it again, click outside or press Esc. Test: `test/e2e/chats.js`.

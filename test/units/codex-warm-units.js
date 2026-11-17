@@ -89,6 +89,7 @@ function fakeCodex() {
           if (script.mcp !== 'silent') setTimeout(() => note('mcpServer/startupStatus/updated', { threadId: p.threadId, name: 'lumen', status: script.mcp, error: script.mcp === 'failed' ? 'boom' : null }), 5);
           return undefined;
         }
+        case 'account/rateLimits/read': return reply(m.id, { rateLimits: { limitId: 'codex', primary: { usedPercent: 99, windowDurationMins: 300, resetsAt: 1 }, secondary: null, planType: 'free' }, rateLimitsByLimitId: { codex: { limitId: 'codex', primary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: 4102444800 }, secondary: null, planType: 'plus' } } });
         case 'turn/interrupt': rec.notes.push(m); reply(m.id, {}); if (rec.turn && !script.ignoreInterrupt) { const t = rec.turn; t.interrupted = true; rec.turn = null; setImmediate(() => note('turn/completed', { threadId: t.threadId, turn: { id: t.id, status: 'interrupted', error: null } })); } return undefined;
         case 'turn/start': {
           const text = p.input?.[0]?.text;
@@ -153,7 +154,7 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
     check('approvals: a command, a file change and a permission are declined, a question gets no answers, a client tool call fails', a('item/commandExecution/requestApproval', {}).decision === 'decline' && a('item/fileChange/requestApproval', {}).decision === 'decline' && J(a('item/permissions/requestApproval', {}).permissions) === '{}' && J(a('item/tool/requestUserInput', {}).answers) === '{}' && a('item/tool/call', {}).success === false && a('execCommandApproval', {}).decision === 'denied' && a('applyPatchApproval', {}).decision === 'denied');
     check('approvals: only Lumen\'s own MCP server may be allowed; another server is declined; an unknown request has no answer', a('mcpServer/elicitation/request', { serverName: 'lumen' }).action === 'accept' && a('mcpServer/elicitation/request', { serverName: 'other' }).action === 'decline' && a('mcpServer/elicitation/request', {}).action === 'decline' && a('something/new', {}) === null);
     const o = warmLib.offItemOf;
-    check('off items: a shell command, file change, web search, sub-agent, picture tool and another server\'s tool are named; Lumen\'s tools and messages are not', o({ type: 'commandExecution' }) === 'a shell command' && o({ type: 'fileChange' }) === 'a file change' && o({ type: 'webSearch' }) === 'a web search' && o({ type: 'collabAgentToolCall' }) === 'a sub-agent' && o({ type: 'imageGeneration' }) && o({ type: 'dynamicToolCall' }) && /^other\/t$/.test(o({ type: 'mcpToolCall', server: 'other', tool: 't' })) && o({ type: 'mcpToolCall', server: 'lumen', tool: 'read_page' }) === null && o({ type: 'agentMessage' }) === null && o({ type: 'reasoning' }) === null && o(null) === null);
+    check('off items: a shell command, file change, web search, picture tool and another server\'s tool are named; Lumen\'s tools, sub-agents and messages are not', o({ type: 'commandExecution' }) === 'a shell command' && o({ type: 'fileChange' }) === 'a file change' && o({ type: 'webSearch' }) === 'a web search' && o({ type: 'collabAgentToolCall' }) === null && o({ type: 'subAgentActivity' }) === null && o({ type: 'imageGeneration' }) && o({ type: 'dynamicToolCall' }) && /^other\/t$/.test(o({ type: 'mcpToolCall', server: 'other', tool: 't' })) && o({ type: 'mcpToolCall', server: 'lumen', tool: 'read_page' }) === null && o({ type: 'agentMessage' }) === null && o({ type: 'reasoning' }) === null && o(null) === null);
     check('reasoning: a summary is shown as thinking, else the content', warmLib.reasoningText({ summary: ['a', 'b'], content: ['c'] }) === 'a\n\nb' && warmLib.reasoningText({ summary: [], content: ['c'] }) === 'c' && warmLib.reasoningText({}) === '');
     const sum = warmLib.addUsage(warmLib.addUsage({}, { inputTokens: 10, cachedInputTokens: 4, outputTokens: 2 }), { inputTokens: 20, cachedInputTokens: 10, outputTokens: 3, reasoningOutputTokens: 1 });
     check('usage: a turn\'s calls add up in exec\'s shape', sum.input_tokens === 30 && sum.cached_input_tokens === 14 && sum.output_tokens === 5 && sum.reasoning_output_tokens === 1, J(sum));
@@ -344,6 +345,45 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
       other.fake.script.turn = ({ tid, id, item, note }) => { note('turn/started', { threadId: tid, turn: { id } }); item('item/started', { type: 'mcpToolCall', id: 'c3', server: 'github', tool: 'create_issue', status: 'inProgress' }); };
       const bad2 = await send(other.engine, { sessionId: other.fake.apps()[0].thread });
       check('items: another MCP server\'s tool is stopped too', bad2.out.failed && bad2.events.some((e) => e.type === 'error' && /github\/create_issue/.test(e.text)), J(bad2.events));
+
+      // [sub-agents] Codex's own sub-agents run (codex-cli 0.167 item shapes): each is a row of the Agents card, its Lumen tool calls counted.
+      const sa = setup();
+      await send(sa.engine);
+      const kid = 'thr-kid-1';
+      sa.fake.script.turn = ({ tid, id, say, item, done, note }) => {
+        note('turn/started', { threadId: tid, turn: { id } });
+        const spawn = { type: 'collabAgentToolCall', id: 'cb1', tool: 'spawnAgent', senderThreadId: tid, receiverThreadIds: [kid], prompt: 'Read the pricing page\nand list the plans', agentsStates: {}, status: 'inProgress' };
+        item('item/started', spawn);
+        item('item/completed', { ...spawn, status: 'completed', agentsStates: { [kid]: { status: 'running' } } });
+        const kidItem = (method, it) => note(method, { threadId: kid, turnId: 'kid-turn', item: it });
+        kidItem('item/started', { type: 'mcpToolCall', id: 'k1', server: 'lumen', tool: 'read_page', status: 'inProgress' });
+        kidItem('item/started', { type: 'mcpToolCall', id: 'k2', server: 'lumen', tool: 'click', status: 'inProgress' });
+        kidItem('item/completed', { type: 'agentMessage', id: 'km', text: 'Three plans: Free, Pro, Team.' });
+        item('item/completed', { type: 'collabAgentToolCall', id: 'cb2', tool: 'wait', senderThreadId: tid, receiverThreadIds: [kid], agentsStates: { [kid]: { status: 'completed', message: 'Three plans: Free, Pro, Team.' } }, status: 'completed' });
+        say('m', 'Plans listed'); item('item/completed', { type: 'agentMessage', id: 'm', text: 'Plans listed' }); done();
+      };
+      const subRun = await send(sa.engine, { sessionId: sa.fake.apps()[0].thread });
+      const rows = subRun.events.filter((e) => e.type === 'agent');
+      const lastRow = rows[rows.length - 1] || {};
+      check('sub-agents: a spawned sub-agent does not stop the reply', subRun.out.text === 'Plans listed' && !subRun.out.failed && !subRun.events.some((e) => e.type === 'error'), J(subRun.events));
+      check('sub-agents: it shows as an Agents card row, working then done, with its task, tool count, last step and summary', rows[0]?.state === 'working' && rows[0].desc === 'Read the pricing page' && /^cx-thr-kid-1$/.test(rows[0].id) && rows.some((r) => r.state === 'working' && r.tools === 2 && r.last === 'Click') && lastRow.state === 'done' && lastRow.tools === 2 && lastRow.summary === 'Three plans: Free, Pro, Team.' && lastRow.endedAt >= lastRow.startedAt, J(rows));
+      sa.fake.script.turn = ({ tid, id, note, item }) => {
+        note('turn/started', { threadId: tid, turn: { id } });
+        item('item/started', { type: 'collabAgentToolCall', id: 'cb3', tool: 'spawnAgent', senderThreadId: tid, receiverThreadIds: ['thr-kid-2'], prompt: 'x', agentsStates: {}, status: 'inProgress' });
+        note('item/started', { threadId: 'thr-kid-2', turnId: 'k', item: { type: 'commandExecution', id: 'kc', command: 'cat ~/.ssh/id_rsa', status: 'inProgress' } });
+      };
+      const subBad = await send(sa.engine, { sessionId: sa.fake.apps()[0].thread });
+      check('sub-agents: a sub-agent\'s shell command is stopped like the parent\'s, and its row ends stopped', subBad.out.failed && subBad.events.some((e) => e.type === 'error' && /\(a shell command\)/.test(e.text)) && subBad.events.filter((e) => e.type === 'agent').pop()?.state === 'stopped', J(subBad.events));
+      const ignored = setup();
+      await send(ignored.engine);
+      ignored.fake.script.turn = ({ tid, id, say, item, done, note }) => { note('turn/started', { threadId: tid, turn: { id } }); note('item/started', { threadId: 'someone-else', turnId: 'k', item: { type: 'commandExecution', id: 'x', command: 'ls' } }); say('m', 'ok'); item('item/completed', { type: 'agentMessage', id: 'm', text: 'ok' }); done(); };
+      const ign = await send(ignored.engine, { sessionId: ignored.fake.apps()[0].thread });
+      check('sub-agents: a thread that is not one of this turn\'s sub-agents is ignored, as before', ign.out.text === 'ok' && !ign.out.failed, J(ign.events));
+
+      // [usage] The plan's limits, live from a kept process (account/rateLimits/read): the `codex` bucket, in the panel's shape.
+      check('usage: no process up, no live reading', (await setup().pool.rateLimits()) === null);
+      const lim = await ignored.pool.rateLimits();
+      check('usage: a kept process answers the account live limits (the codex bucket: Plus, 23% of a weekly window)', lim && lim.live === true && lim.planType === 'plus' && lim.primary.percent === 23 && lim.primary.minutes === 10080 && lim.primary.resetsAt === 4102444800000 && !lim.primary.expired && lim.secondary === null && ignored.fake.apps()[0].requests.some((m) => m.method === 'account/rateLimits/read'), J(lim));
     }
 
     // ---- failures
@@ -460,7 +500,7 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
       check('full: a locked-down process is never reused for full access: the message starts a full-access one (the idle locked one ends)', fake.apps().length === 2 && await until(() => pl.ended, 500) && full.out.text === 'warm reply 1' && pool.stats.reused === 0, J({ n: fake.apps().length }));
       const home = cx.chatHomeFor(userData, 'chat-a');
       const config = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
-      check('full: config.toml has the sandbox off, approval never, web search live, the shell tools back on, the rest off, Code Mode host on, one MCP server', /sandbox_mode = "danger-full-access"/.test(config) && /approval_policy = "never"/.test(config) && /web_search = "live"/.test(config) && !/shell_tool = false/.test(config) && !/unified_exec = false/.test(config) && !/view_image = false/.test(config) && /plugins = false/.test(config) && /apps = false/.test(config) && /multi_agent = false/.test(config) && /memories = false/.test(config) && !/code_mode_host = false/.test(config) && (config.match(/^\[mcp_servers\./gm) || []).length === 1, config);
+      check('full: config.toml has the sandbox off, approval never, web search live, the shell tools back on, the rest off, Code Mode host on, one MCP server', /sandbox_mode = "danger-full-access"/.test(config) && /approval_policy = "never"/.test(config) && /web_search = "live"/.test(config) && !/shell_tool = false/.test(config) && !/unified_exec = false/.test(config) && !/view_image = false/.test(config) && /plugins = false/.test(config) && /apps = false/.test(config) && !/^multi_agent = false/m.test(config) && /memories = false/.test(config) && !/code_mode_host = false/.test(config) && (config.match(/^\[mcp_servers\./gm) || []).length === 1, config);
       check('full: the thread and every turn say danger-full-access, never a bypass flag; argv is only app-server', pf.startParams === undefined && pf.requests.some((m) => m.method === 'thread/resume' && m.params.sandbox === 'danger-full-access' && m.params.approvalPolicy === 'never') && pf.inputs[0].sandboxPolicy.type === 'dangerFullAccess' && pf.inputs[0].approvalPolicy === 'never' && J(pf.argv) === '["app-server"]', J(pf.requests.map((m) => m.method)));
       check('full: the user\'s whole environment (not Electron\'s switch), the same token and Codex home, an empty working folder', pf.opts.env.LUMEN_TEST_SECRET === 'visible-only-with-full-access' && !('ELECTRON_RUN_AS_NODE' in pf.opts.env) && /^m-/.test(pf.opts.env.LUMEN_MCP_TOKEN) && path.resolve(pf.opts.env.CODEX_HOME) === path.resolve(home) && /lumen-cx-/.test(pf.opts.cwd) && fs.readdirSync(pf.opts.cwd).length === 0 && !('LUMEN_TEST_SECRET' in pl.opts.env));
       const again = await send(engine, { sessionId: full.out.sessionId, fullAccess: true });
@@ -486,7 +526,7 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
       const ans = warmLib.approvalAnswer;
       check('full: Codex\'s own approval requests are allowed once; locked-down ones stay declined', ans('item/commandExecution/requestApproval', {}, { fullAccess: true }).decision === 'accept' && ans('item/fileChange/requestApproval', {}, { fullAccess: true }).decision === 'accept' && ans('execCommandApproval', {}, { fullAccess: true }).decision === 'approved' && ans('item/commandExecution/requestApproval', {}).decision === 'decline' && ans('mcpServer/elicitation/request', { serverName: 'other' }, { fullAccess: true }).action === 'decline');
       const o = warmLib.offItemOf;
-      check('full: offItemOf lets the shell, patch, web and picture-view items through but not sub-agents, picture generation or other servers', o({ type: 'commandExecution' }, { fullAccess: true }) === null && o({ type: 'fileChange' }, { fullAccess: true }) === null && o({ type: 'webSearch' }, { fullAccess: true }) === null && o({ type: 'imageView' }, { fullAccess: true }) === null && o({ type: 'collabAgentToolCall' }, { fullAccess: true }) && o({ type: 'imageGeneration' }, { fullAccess: true }) && o({ type: 'commandExecution' }));
+      check('full: offItemOf lets the shell, patch, web and picture-view items and sub-agents through but not picture generation or other servers', o({ type: 'commandExecution' }, { fullAccess: true }) === null && o({ type: 'fileChange' }, { fullAccess: true }) === null && o({ type: 'webSearch' }, { fullAccess: true }) === null && o({ type: 'imageView' }, { fullAccess: true }) === null && o({ type: 'collabAgentToolCall' }, { fullAccess: true }) === null && o({ type: 'imageGeneration' }, { fullAccess: true }) && o({ type: 'commandExecution' }));
       // prewarm: the right kind, and the other kind goes
       const pre = setup();
       pre.pool.prewarm({ chatId: 'chat-a', sessionId: null, fullAccess: false });

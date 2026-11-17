@@ -250,6 +250,18 @@ const winEnv = (PATH = 'C:\\Windows\\System32') => ({ PATH, LOCALAPPDATA: W, APP
   fs.writeFileSync(path.join(day(old), 'rollout-old.jsonl'), `${JSON.stringify(tc({}, '2026-09-13T10:00:00.000Z'))}\n`);
   check('sessions older than the 7 days are not counted', cu.scanSessions({ home: ch, now: NOWMS }).sessions === 1, '');
 
+  // [usage] Lumen's own Codex homes (each chat's codex-chats/<id>) beside ~/.codex: sessions add up, the newest limits win.
+  const lumenChat = path.join(tmp, 'lumen-chat-home');
+  const lumenDay = path.join(lumenChat, 'sessions', String(nowDate.getFullYear()), String(nowDate.getMonth() + 1).padStart(2, '0'), String(nowDate.getDate()).padStart(2, '0'));
+  fs.mkdirSync(lumenDay, { recursive: true });
+  const AT2 = new Date(Date.parse(AT) + 30e3).toISOString();
+  fs.writeFileSync(path.join(lumenDay, 'rollout-lumen.jsonl'), `${JSON.stringify(tc({ rate_limits: { limit_id: 'codex', primary: { used_percent: 23, window_minutes: 10080, resets_at: resetW }, secondary: null, plan_type: 'plus' } }, AT2))}\n`);
+  const both = cu.scanHomes({ homes: [ch, lumenChat, path.join(tmp, 'none'), ch], now: NOWMS });
+  check('several homes: sessions add up (each home once, a missing one skipped), the newest limits reading wins', both.sessions === 2 && both.week.sessions === 2 && both.limits.primary.percent === 23 && both.limits.primary.minutes === 10080 && both.limits.planType === 'plus' && both.limits.at === Date.parse(AT2), JSON.stringify(both));
+  check('only ~/.codex: what scanSessions alone says', cu.scanHomes({ homes: [ch], now: NOWMS }).limits.primary.percent === 41.6, '');
+  const liveL = cu.limitsFromAppServer({ rateLimits: { primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: reset5 } }, rateLimitsByLimitId: { codex: { primary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: resetW }, secondary: null, planType: 'plus' } } }, NOWMS);
+  check('the live reading (account/rateLimits/read): the codex bucket in the panel shape', liveL.live && liveL.primary.percent === 23 && liveL.primary.minutes === 10080 && liveL.primary.resetsAt === resetW * 1000 && liveL.planType === 'plus' && liveL.at === NOWMS && cu.limitsFromAppServer({ rateLimits: { primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: reset5 } } }, NOWMS).primary.percent === 7 && cu.limitsFromAppServer(null) === null && cu.limitsFromAppServer({ rateLimits: {} }) === null, JSON.stringify(liveL));
+
   // sign-in
   fs.writeFileSync(path.join(ch, 'auth.json'), '{"tokens":{"access_token":"SECRET-TOKEN-VALUE"}}');
   const ran = [];

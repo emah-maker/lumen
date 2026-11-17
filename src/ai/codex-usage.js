@@ -171,6 +171,36 @@ function scanSessions({ home, now = Date.now(), days = 7, maxFiles = 200, io = {
   };
 }
 
+// [usage] scanSessions over several Codex homes: the user's own (~/.codex) AND Lumen's (each chat's codex-chats/<id>, and codex-home).
+// Lumen's Codex chats never write to ~/.codex, so a panel that read only that one showed a reading from whenever the user last ran Codex
+// in a terminal (2026-11-17: a 30-day window from October, when the plan had become Plus with a weekly one). Sessions and tokens add up;
+// the limits are the newest reading of any home. A home that isn't there is skipped.
+function scanHomes({ homes = [], now = Date.now(), days = 7, maxFiles = 200, io = {} } = {}) {
+  const empty = () => ({ sessions: 0, tokens: 0, input: 0, output: 0, cached: 0, reasoning: 0 });
+  const out = { sessions: 0, today: empty(), week: empty(), latestAt: null, limits: null };
+  for (const home of [...new Set(homes.filter(Boolean))]) {
+    let s;
+    try { s = scanSessions({ home, now, days, maxFiles, io }); } catch { continue; }
+    out.sessions += s.sessions;
+    for (const k of ['today', 'week']) for (const f of Object.keys(out[k])) out[k][f] += s[k]?.[f] || 0;
+    if (s.latestAt && s.latestAt > (out.latestAt || 0)) out.latestAt = s.latestAt;
+    if (s.limits && (!out.limits || s.limits.at >= out.limits.at)) out.limits = s.limits;
+  }
+  return out;
+}
+
+// [usage] Codex app-server's account/rateLimits/read answer (camelCase, the account's live reading) -> limitsOf()'s shape with `at`, or null.
+// The `codex` bucket when the answer has buckets by limit id, else its single-bucket view.
+function limitsFromAppServer(res, at = Date.now()) {
+  const snap = res?.rateLimitsByLimitId?.codex || res?.rateLimits;
+  if (!snap || typeof snap !== 'object') return null;
+  const w = (x) => (x && typeof x === 'object' ? { used_percent: x.usedPercent, window_minutes: x.windowDurationMins, resets_at: x.resetsAt } : null);
+  const limits = limitsOf({ primary: w(snap.primary), secondary: w(snap.secondary), plan_type: snap.planType, rate_limit_reached_type: snap.rateLimitReachedType }, at);
+  if (!limits) return null;
+  const mark = (x) => (x ? { ...x, expired: x.resetsAt != null && x.resetsAt <= at } : null);
+  return { ...limits, at, live: true, primary: mark(limits.primary), secondary: mark(limits.secondary) };
+}
+
 // ---------- the chat's context window: how full it is, and what a turn really used ----------
 // Codex counts two ways, and Lumen needs both kept apart:
 //  - total_token_usage is CUMULATIVE for the whole thread (every model call since it began, resumed turns included: a tool loop's
@@ -319,4 +349,4 @@ async function loginState({ home, run, io = {} } = {}) {
   return { signedIn: hasAuthFile ? true : null, method: 'unknown', fromFile: true };
 }
 
-module.exports = { contextOf, contextFill, fromAppServerUsage, turnDelta, findRollout, threadStats, tokensOf, limitsOf, fromRolloutLine, fromExecEvent, limitMessage, lastTokenCount, recentRollouts, scanSessions, windowsOf, limitReached, loginState };
+module.exports = { scanHomes, limitsFromAppServer, contextOf, contextFill, fromAppServerUsage, turnDelta, findRollout, threadStats, tokensOf, limitsOf, fromRolloutLine, fromExecEvent, limitMessage, lastTokenCount, recentRollouts, scanSessions, windowsOf, limitReached, loginState };
