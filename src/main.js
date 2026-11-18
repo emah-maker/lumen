@@ -14329,6 +14329,7 @@ const aiAgents = setupAiAgents({
   tools: EXTERNAL_TOOLS,
   connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
   projectTools: (chat) => (chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), // [project workspace] project_files, to a run in a project chat that has files or pinned pages
+  desktopTools: (chat) => agent.cliDesktopToolDefs(chat), // [desktop apps] the desktop tool, to a run whose chat may use other apps (agent.js cliDesktopNote)
   wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)
   skillTools: (chat) => agent.cliSkillToolDefs(chat), // [engine parity] use_skill, to a run whose chat lists the user's skills

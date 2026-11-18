@@ -97,7 +97,9 @@ public static class LumenNative {
       res.W = nw; res.H = nh; res.Ms = sw.ElapsedMilliseconds; return res;
     }
   }
-  public static string Capture(long hwnd, int maxW, long quality) {
+  // A picture of the window: the JPEG, its size, and the window's size when it was taken (click_at maps the picture's pixels back onto the window with them).
+  public class Shot { public string Image; public int W, H, RW, RH; }
+  public static Shot Capture(long hwnd, int maxW, long quality) {
     IntPtr h = new IntPtr(hwnd); RECT r;
     if (!GetWindowRect(h, out r)) return null;
     int w = r.R - r.L, ht = r.B - r.T;
@@ -109,10 +111,28 @@ public static class LumenNative {
         using (Graphics g2 = Graphics.FromImage(small)) { g2.InterpolationMode = InterpolationMode.Bilinear; g2.DrawImage(full, 0, 0, nw, nh); }
         ImageCodecInfo jpg = ImageCodecInfo.GetImageEncoders().First(c => c.MimeType == "image/jpeg");
         EncoderParameters ep = new EncoderParameters(1); ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
-        using (MemoryStream ms = new MemoryStream()) { small.Save(ms, jpg, ep); return Convert.ToBase64String(ms.ToArray()); }
+        using (MemoryStream ms = new MemoryStream()) { small.Save(ms, jpg, ep); return new Shot { Image = Convert.ToBase64String(ms.ToArray()), W = nw, H = nh, RW = w, RH = ht }; }
       }
     }
   }
+  // ---- the mouse (the "mouse" command): where a window is, which program owns the window at a screen point, and SendInput
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy; public uint data, flags, time; public IntPtr extra; }
+  [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public MOUSEINPUT mi; } // (MOUSEINPUT is the union's largest member, so the size is right on x86 and x64)
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  [DllImport("user32.dll")] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  public static int[] Rect(long hwnd) { IntPtr h = new IntPtr(hwnd); RECT r; if (!IsWindow(h) || IsIconic(h) || !GetWindowRect(h, out r)) return null; return new int[] { r.L, r.T, r.R, r.B }; }
+  // The program whose top-level window is at this screen point (GA_ROOT), so a click is only sent where the approved program would get it.
+  public static long PidAt(int x, int y) { POINT p; p.X = x; p.Y = y; IntPtr w = WindowFromPoint(p); if (w == IntPtr.Zero) return 0; IntPtr root = GetAncestor(w, 2); uint pid; GetWindowThreadProcessId(root == IntPtr.Zero ? w : root, out pid); return pid; }
+  static void Send(uint flags, int dx, int dy, uint data) { INPUT[] i = new INPUT[1]; i[0].type = 0; i[0].mi.dx = dx; i[0].mi.dy = dy; i[0].mi.flags = flags; i[0].mi.data = data; SendInput(1, i, Marshal.SizeOf(typeof(INPUT))); }
+  public static void Move(int x, int y) { // absolute, over the whole virtual desktop (every monitor)
+    int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77), vw = Math.Max(2, GetSystemMetrics(78)), vh = Math.Max(2, GetSystemMetrics(79));
+    Send(0x0001 | 0x8000 | 0x4000, (int)Math.Round((x - vx) * 65535.0 / (vw - 1)), (int)Math.Round((y - vy) * 65535.0 / (vh - 1)), 0);
+  }
+  public static void Button(string b, bool down) { uint f = b == "right" ? (down ? 0x0008u : 0x0010u) : b == "middle" ? (down ? 0x0020u : 0x0040u) : (down ? 0x0002u : 0x0004u); Send(f, 0, 0, 0); }
+  public static void Wheel(int delta, bool horizontal) { Send(horizontal ? 0x01000u : 0x0800u, 0, 0, unchecked((uint)delta)); }
 }
 '@
   [LumenNative]::Init()
@@ -440,9 +460,77 @@ function Cmd-Keys($req) {
 function Cmd-Shot($req) {
   $null = Get-Target $req
   Ensure-Native
-  $b64 = [LumenNative]::Capture([int64]$req['hwnd'], [int]$req['w'], [int64]$req['q'])
-  if (-not $b64) { return @{ image = $null } }
-  return @{ image = $b64 }
+  $s = [LumenNative]::Capture([int64]$req['hwnd'], [int]$req['w'], [int64]$req['q'])
+  if ($s -eq $null) { return @{ image = $null } }
+  return @{ image = $s.Image; w = $s.W; h = $s.H; rw = $s.RW; rh = $s.RH }
+}
+
+# Typing into whatever has the keyboard focus in the approved program (a field the AI clicked with click_at, which UI Automation may not list).
+# The same guard as every other key: before each piece the foreground and the focus must be the approved program's, and never a password field.
+function Cmd-TypeFocus($req) {
+  $t = Get-Target $req
+  $text = [string]$req['text']
+  if ($text.Length -gt 500) { throw 'Typing without an item id is limited to 500 characters a call. Type it in smaller parts.' }
+  $r = Send-Guarded (Split-Text $text) $t.pids $req
+  Refuse-Partial $r
+  if ($req['submit']) { $r2 = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req; Refuse-Partial $r2 }
+  return @{ method = 'keys'; sink = $r.sink }
+}
+
+# click_at, drag and scroll. The points are in the pixels of the last screenshot_app picture (pw x ph) of a window that was rw x rh then;
+# they are mapped onto the window where it is now. Nothing is sent unless every point is inside the window AND the window at that screen
+# point belongs to the approved program (so a click can never land in another app, a blocked one, or Lumen's banner). If another window
+# covers a point, the app is raised once and checked again.
+function Cmd-Mouse($req) {
+  $t = Get-Target $req
+  Ensure-Native
+  $hwnd = [int64]$req['hwnd']
+  $r = [LumenNative]::Rect($hwnd)
+  if ($r -eq $null) { throw 'That window is minimized or hidden. Use focus_app, then screenshot_app.' }
+  $w = $r[2] - $r[0]; $h = $r[3] - $r[1]
+  if ($w -le 0 -or $h -le 0) { throw 'That window is minimized or hidden. Use focus_app, then screenshot_app.' }
+  if ([Math]::Abs($w - [int]$req['rw']) -gt 2 -or [Math]::Abs($h - [int]$req['rh']) -gt 2) { throw 'The window changed size since the last screenshot_app, so the point would be wrong. Take a new screenshot first.' }
+  $pw = [double]$req['pw']; $ph = [double]$req['ph']
+  if ($pw -le 0 -or $ph -le 0) { throw 'Take a screenshot_app first.' }
+  $pts = New-Object System.Collections.ArrayList
+  foreach ($p in $req['points']) {
+    $sx = $r[0] + [int][Math]::Floor(([double]$p[0] + 0.5) * $w / $pw)
+    $sy = $r[1] + [int][Math]::Floor(([double]$p[1] + 0.5) * $h / $ph)
+    $sx = [Math]::Min([Math]::Max($sx, $r[0]), $r[2] - 1); $sy = [Math]::Min([Math]::Max($sy, $r[1]), $r[3] - 1)
+    [void]$pts.Add(@($sx, $sy))
+  }
+  $covered = { foreach ($q in $pts) { if ($t.pids -notcontains [int][LumenNative]::PidAt($q[0], $q[1])) { return $true } }; return $false }
+  if (& $covered) { [void][LumenNative]::Raise($hwnd); Start-Sleep -Milliseconds 150 }
+  if (& $covered) { throw 'Another window covers that point, so nothing was clicked. Use focus_app to bring the app forward, then take a new screenshot.' }
+  $button = [string]$req['button']; if (@('left', 'right', 'middle') -notcontains $button) { $button = 'left' }
+  $sink = New-Object System.Collections.ArrayList
+  $sinking = ($TEST -and $req['test'] -and $req['test']['sink'])
+  $do = { param($op, $a, $b) if ($sinking) { [void]$sink.Add("$op $a $b") } else { switch ($op) { 'move' { [LumenNative]::Move($a, $b) } 'down' { [LumenNative]::Button($a, $true) } 'up' { [LumenNative]::Button($a, $false) } 'wheel' { [LumenNative]::Wheel($a, $b) } } } }
+  $p0 = $pts[0]
+  switch ([string]$req['op']) {
+    'click' {
+      & $do 'move' $p0[0] $p0[1]; Start-Sleep -Milliseconds 40
+      $n = 1; if ($req['double']) { $n = 2 }
+      for ($i = 0; $i -lt $n; $i++) { & $do 'down' $button 0; & $do 'up' $button 0; Start-Sleep -Milliseconds 40 }
+    }
+    'drag' {
+      $p1 = $pts[1]
+      & $do 'move' $p0[0] $p0[1]; Start-Sleep -Milliseconds 40
+      & $do 'down' $button 0; Start-Sleep -Milliseconds 80
+      for ($i = 1; $i -le 12; $i++) { & $do 'move' ([int]($p0[0] + ($p1[0] - $p0[0]) * $i / 12)) ([int]($p0[1] + ($p1[1] - $p0[1]) * $i / 12)); Start-Sleep -Milliseconds 16 }
+      Start-Sleep -Milliseconds 60
+      & $do 'up' $button 0
+    }
+    'scroll' {
+      & $do 'move' $p0[0] $p0[1]; Start-Sleep -Milliseconds 40
+      $dy = [int]$req['dy']; $dx = [int]$req['dx']
+      if ($dy) { & $do 'wheel' (-120 * $dy) $false }
+      if ($dx) { & $do 'wheel' (120 * $dx) $true }
+    }
+    default { throw "Unknown mouse action $($req['op'])" }
+  }
+  Start-Sleep -Milliseconds 120
+  return @{ at = $pts.ToArray(); sink = $sink.ToArray() }
 }
 
 # The card's live picture. The caller names the window, the program it was approved for and the title it was approved with. Every call checks
@@ -518,6 +606,8 @@ function Handle($req) {
     'settext' { return Cmd-SetText $req }
     'keys' { return Cmd-Keys $req }
     'shot' { return Cmd-Shot $req }
+    'mouse' { return Cmd-Mouse $req }
+    'typefocus' { return Cmd-TypeFocus $req }
     'frame' { return Cmd-Frame $req }
     'resolve' { return Cmd-Resolve $req }
     'launch' { return Cmd-Launch $req }

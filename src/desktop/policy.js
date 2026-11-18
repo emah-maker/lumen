@@ -172,6 +172,9 @@ function stepLabel(action, args = {}, name = '') {
     case 'press_keys': return `Pressing ${String(args.keys || 'keys').slice(0, 40)}${app}`;
     case 'screenshot_app': return `Looking at ${name || 'the app'}`;
     case 'open_app': return `Opening ${args.name || 'an app'}`;
+    case 'click_at': return `Clicking${Number.isFinite(args.x) && Number.isFinite(args.y) ? ` at ${args.x}, ${args.y}` : ''}${app}`;
+    case 'drag': return `Dragging${app}`;
+    case 'scroll': return `Scrolling${app}`;
     default: return 'Using another app';
   }
 }
