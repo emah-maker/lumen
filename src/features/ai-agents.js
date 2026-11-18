@@ -484,6 +484,7 @@ function setupAiAgents(deps) {
     // uses the chat's approvals; anything else is an external agent.
     const owner = engineForSession(session);
     const engineRun = owner ? (owner.activeOf ? owner.activeOf(session.engine) : owner.active) : null; // (a Claude Code process kept for its helpers: the message that started them)
+    const agentTag = engineRun ? require('./agent-tags').take(name, args) : null; // [agent cursors] a Claude Code or Codex sub-agent's call (its engine noted it), before args are trimmed below
     // A kept Claude Code process between messages owns its session, but no message is running to act for.
     if (owner && !engineRun) return { content: [{ type: 'text', text: 'No message is in progress in Lumen for this call.' }], isError: true };
     // Claude Code may already show this call's row, from while its input was still streaming (claude-code.js claimStep).
@@ -578,7 +579,7 @@ function setupAiAgents(deps) {
       }
       await runAgent.ensureAllowed(name, emit, signal, allow);
       acting = true;
-      return abortable(runAgent.execute(name, args), signal);
+      return abortable(require('./agent-tags').run(agentTag, () => runAgent.execute(name, args)), signal);
     };
     // The engine counts this call (a message that ran a tool is never re-sent silently) and pauses its
     // inactivity watchdog while it runs, approval card included (claude-code.js callBegin).

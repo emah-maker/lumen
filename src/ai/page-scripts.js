@@ -10,6 +10,7 @@ const { resolveUploadTarget } = require('../features/upload-files');
 
 const TEXT_CHUNK = 12000;
 const ELEMENT_PAGE = 150;
+const STABLE_MAX = 3000; // [stable ids] slots a page keeps before its ids start over at 1
 
 // The page's visible text. document.body.innerText leaves out open shadow roots (web components), so
 // on a page that has them the text is put together from the rendered tree: the components' text
@@ -130,12 +131,31 @@ function readPage(textOffset, elementOffset, { frames = true, list = true } = {}
       }
     };
     walk(document, []);
+    // [stable ids] A read of the same page keeps the ids it gave before: an element still listed keeps its id, one that went keeps
+    // its slot (marked gone, so an action on it fails as gone), and new elements get new ids after the last one. Several agents
+    // (Claude Code or Codex sub-agents, acting helpers) can work on one tab, and one agent's read never renumbers the ids another
+    // is about to use. A page that has piled up STABLE_MAX slots starts over at 1. A new document starts over (its window is new).
+    const kept = window.__claudeEls;
+    if (Array.isArray(kept) && kept.length && kept.length + registry.length <= ${STABLE_MAX}) {
+      const fresh = new Map(registry.map((e) => [e.el, e]));
+      const goneEl = window.__lumenGoneEl || (window.__lumenGoneEl = document.createElement('span'));
+      const merged = kept.map((e) => {
+        const now = e && !e.gone ? fresh.get(e.el) : null;
+        if (now) { fresh.delete(e.el); return now; }
+        return { el: goneEl, chain: [], label: '', gone: true };
+      });
+      for (const e of fresh.values()) merged.push(e);
+      registry.length = 0;
+      registry.push(...merged);
+    }
     window.__claudeEls = registry;
 
     const listing = ${list ? 'true' : 'false'};
-    const elements = registry.slice(${elementOffset}, ${elementOffset + ELEMENT_PAGE}).map((entry, i) => {
+    const page = registry.slice(${elementOffset}, ${elementOffset + ELEMENT_PAGE});
+    const elements = page.map((entry, i) => {
       const { el, chain } = entry;
       const id = ${elementOffset} + i + 1;
+      if (entry.gone) return null;
       const label = accessibleName(el).slice(0, 80);
       entry.label = label;
       if (!listing) return null;
@@ -181,8 +201,8 @@ function readPage(textOffset, elementOffset, { frames = true, list = true } = {}
       totalTextChars: text.length,
       moreTextAvailable: text.length > end,
       scroll: { y: Math.round(scrollY), pageHeight: document.documentElement.scrollHeight, viewportHeight: innerHeight },
-      elements,
-      elementRange: [${elementOffset + 1}, ${elementOffset} + elements.length],
+      elements: elements.filter(Boolean),
+      elementRange: [${elementOffset + 1}, ${elementOffset} + page.length],
       totalElements: registry.length,
       moreElementsAvailable: registry.length > ${elementOffset + ELEMENT_PAGE},
       crossOriginFrames,
@@ -217,6 +237,51 @@ function locate(id) {
     if (!still) requestAnimationFrame(() => { ring.style.opacity = '0'; });
     setTimeout(() => ring.remove(), still ? 600 : 900);
     return { x: Math.round(x), y: Math.round(y), covered, tag: el.tagName.toLowerCase(), label: entry.label || accessibleName(el) };
+  })()`;
+}
+
+// [agent cursors] A helper's or sub-agent's cursor: an arrow in its color with its name, moved to the middle of element `id`, so the
+// user can see which agent works on which part of a page several agents share. One cursor per agent (by tag.key), in a shadow root
+// so the page's CSS can't restyle it, never taking clicks; it fades out after CURSOR_IDLE_MS without a move. tag: agent-tags.js.
+const CURSOR_IDLE_MS = 8000;
+function agentCursor(id, tag) {
+  const key = String(tag?.key || '').slice(0, 80);
+  const color = /^#[0-9a-f]{6}$/i.test(String(tag?.color || '')) ? tag.color : '#ff375f';
+  const label = String(tag?.label || 'Helper').slice(0, 40);
+  return `(() => {
+    ${HELPERS}
+    const entry = entryFor(${Number(id)});
+    if (!entry || entry.chain.length) return false;
+    const r = entry.el.getBoundingClientRect();
+    if (!r.width && !r.height) return false;
+    const x = Math.round(r.left + Math.min(r.width / 2, 40)), y = Math.round(r.top + r.height / 2);
+    let host = document.getElementById('__lumen-agent-cursors');
+    if (!host || !host.shadowRoot) {
+      host = document.createElement('div');
+      host.id = '__lumen-agent-cursors';
+      host.style.cssText = 'position:fixed;inset:0;z-index:2147483647;pointer-events:none;contain:strict;';
+      host.attachShadow({ mode: 'open' }).innerHTML = '<style>.c{position:fixed;left:0;top:0;transition:transform .35s cubic-bezier(.2,.8,.2,1),opacity .4s;will-change:transform;font:600 11px/1.3 system-ui,sans-serif}.c svg{display:block;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.35))}.c span{position:absolute;left:14px;top:16px;padding:2px 7px;border-radius:9px;color:#fff;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.3)}@media (prefers-reduced-motion:reduce){.c{transition:none}}</style>';
+      document.documentElement.appendChild(host);
+    }
+    const root = host.shadowRoot;
+    const key = ${JSON.stringify(key)};
+    let c = [...root.querySelectorAll('.c')].find((n) => n.dataset.key === key);
+    if (!c) {
+      c = document.createElement('div');
+      c.className = 'c';
+      c.dataset.key = key;
+      c.innerHTML = '<svg width="18" height="22" viewBox="0 0 18 22"><path d="M1 1v17l4.6-4.3 3.1 7 3-1.3-3-6.9H15z" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg><span></span>';
+      root.appendChild(c);
+    }
+    c.querySelector('path').setAttribute('fill', ${JSON.stringify(color)});
+    const tagEl = c.querySelector('span');
+    tagEl.textContent = ${JSON.stringify(label)};
+    tagEl.style.background = ${JSON.stringify(color)};
+    c.style.opacity = '1';
+    c.style.transform = 'translate(' + x + 'px,' + y + 'px)';
+    clearTimeout(c.__lumenFade);
+    c.__lumenFade = setTimeout(() => { c.style.opacity = '0'; setTimeout(() => { if (c.style.opacity === '0') c.remove(); }, 500); }, ${CURSOR_IDLE_MS});
+    return true;
   })()`;
 }
 
@@ -776,4 +841,4 @@ const glance = `(() => {
   return { title: document.title, focus };
 })()`;
 
-module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup, domPress, fileHookInstall, fileHookRead, fileHookInput, fileHookRemove, dropProbeArm, dropProbeRead, dropProbeDisarm, dropFilesReset, dropTargets, dropFilesAdd, dropFilesSend };
+module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, agentCursor, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup, domPress, fileHookInstall, fileHookRead, fileHookInput, fileHookRemove, dropProbeArm, dropProbeRead, dropProbeDisarm, dropFilesReset, dropTargets, dropFilesAdd, dropFilesSend };

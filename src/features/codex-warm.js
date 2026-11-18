@@ -438,6 +438,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
           const item = params.item || {};
           const bad = offItemOf(item, { fullAccess: p.full });
           if (bad) { offItem = bad; kill(); finish('off'); return; }
+          if (method === 'item/started' && isLumenTool(item)) require('./agent-tags').note(item.tool, item.arguments || {}, `cx:${params.threadId}`); // [agent cursors] its cursor on the page
           if (method === 'item/started' || item.type === 'agentMessage') sayAgents(subs.feed(params.threadId, item));
         }
         return;

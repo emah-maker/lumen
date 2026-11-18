@@ -136,7 +136,8 @@ const sorted = (a) => JSON.stringify([...(a || [])].sort());
     try {
       await open();
       const c = await waitFor(card);
-      check('a feature that ships off is a switch that shows off', ['memory', 'plan', 'skills', 'helpers'].every((id) => JSON.stringify(c?.rows.find((r) => r.id === id)?.control) === '{"type":"switch","on":false}'), JSON.stringify(c));
+      check('a feature that ships off is a switch that shows off', ['memory', 'plan', 'skills'].every((id) => JSON.stringify(c?.rows.find((r) => r.id === id)?.control) === '{"type":"switch","on":false}'), JSON.stringify(c));
+      check('acting helpers ship on (0.5.103): their switch shows on', JSON.stringify(c?.rows.find((r) => r.id === 'helpers')?.control) === '{"type":"switch","on":true}', JSON.stringify(c));
       await ui.click('.offer-row[data-offer="memory"] input[role=switch]');
       await waitFor(() => settingsOf(firstBatch).aiMemory === true, 4000);
       check('switching it on saves the setting', settingsOf(firstBatch).aiMemory === true, JSON.stringify(settingsOf(firstBatch)));
