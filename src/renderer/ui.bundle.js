@@ -5653,6 +5653,16 @@ if (live.followUp) { const cards = [...messages.querySelectorAll(':scope > .act-
 if (live.target) { agentTarget = live.target; renderWorkingIn(); }
 for (const a of live.approvals || []) showApproval(a.approvalId, a.host, { project: a.project, action: a.action, title: a.title, query: a.query, args: a.args, tainted: a.tainted, noAlways: a.noAlways, note: a.note, fields: a.fields, upload: a.upload, detail: a.detail, allowLabel: a.allowLabel, alwaysLabel: a.alwaysLabel, alwaysTitle: a.alwaysTitle, helper: a.helper });
 
+
+
+const replay = !live.queued && Array.isArray(live.events) ? live.events.filter((ev) => ev && ev.runId === live.runId && ev.type !== 'text' && ev.type !== 'text_block' && ev.type !== 'turn_start') : [];
+const replayAll = (list) => { for (const ev of list) { try { onAgentEvent(ev); } catch (err) { console.error('[run replay]', err); } } };
+if (replay.length && !window.stepUI) {
+const t0 = turn;
+t0.held = [];
+loadStepUI().catch(() => {}).then(() => { const held = t0.held || []; t0.held = null; if (turn !== t0) return; replayAll(replay); replayAll(held); moveWorkingToEnd(); syncWorking(); });
+} else replayAll(replay);
+
 if (live.partial && !live.queued) { turn.text = appendToTurn(Object.assign(document.createElement('div'), { className: 'msg assistant streaming' })); turn.textSource = live.partial; renderStreaming(turn.text, live.partial); }
 moveWorkingToEnd();
 syncWorking();
@@ -5861,7 +5871,9 @@ const finishedRuns = new Map();
 const finishedTurn = (id) => (id != null && finishedRun && finishedRun.runId === id ? finishedRun.turn : finishedRuns.get(id) || null);
 let earlyEnded = null;
 let aiTabsRunId = null;
-window.assistant.onEvent((event) => {
+window.assistant.onEvent((event) => onAgentEvent(event));
+function onAgentEvent(event) {
+if (turn?.held && event.runId === runId) { turn.held.push(event); return; }
 
 
 if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
@@ -6184,7 +6196,7 @@ case 'done':
 finishTurn(event, { early: false });
 break;
 }
-});
+}
 
 
 
