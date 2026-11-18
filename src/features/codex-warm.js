@@ -28,8 +28,11 @@
 //  - thread/start, thread/resume and turn/start repeat approvalPolicy "never" and the read-only sandbox.
 //  - Codex's own approval requests: Lumen answers them itself and allows only Lumen's tools (approvalAnswer): a command, a
 //    file change, a permission, a question or another server's tool is declined.
-//  - Lumen's stream check (offItemOf): a shell command, file change, web search, sub-agent, picture tool or another
-//    server's tool reported in an item kills the process and fails the message, as it does a headless run.
+//  - Lumen's stream check (offItemOf): a shell command, file change, web search, picture tool or another
+//    server's tool reported in an item kills the process and fails the message, as it does a headless run. Its sub-agents' items too.
+// [sub-agents] Codex's own sub-agents (multi_agent, codex.js) are threads of the same process: same config, same tools, same MCP token,
+// so they act on the same Lumen tabs. Each shows as a row of the reply's Agents card (agents-card.js, { type: 'agent' } as Claude Code's
+// subagents do): started by a spawnAgent call, its Lumen tool calls counted as it works, done / failed / stopped from Codex's own states.
 //  - Never for the stdio bridge (LUMEN_CODEX_MCP=stdio) and never with a bypass, full-auto or writable sandbox.
 // Anything that goes wrong before a message is sent (no app-server in this Codex, the MCP server not ready, a thread Codex
 // no longer has) makes run() return null, and the message goes through a headless run instead.
@@ -95,10 +98,64 @@ function offItemOf(item, { fullAccess = false } = {}) {
     if (type === 'imageView') return 'a picture tool';
   }
   if (type === 'dynamicToolCall') return 'a tool Lumen did not give it';
-  if (type === 'collabAgentToolCall' || type === 'subAgentActivity') return 'a sub-agent';
   if (type === 'imageGeneration') return 'a picture tool';
   if (type === 'mcpToolCall' && String(item.server || '') !== 'lumen') return `${String(item.server || 'another server').slice(0, 40)}/${String(item.tool || '').slice(0, 40)}`;
   return null;
+}
+
+// [sub-agents] Codex's sub-agents, for the Agents card. feed(threadId, item) takes an item of the parent's thread or of a sub-agent's and
+// returns the snapshots that changed ({ id, desc, background, state, startedAt, endedAt, tools, tokens, last, summary }); owns(threadId)
+// says whether a thread is one of this turn's sub-agents. Pure, so tests feed it recorded items.
+const AGENT_STATE = { completed: 'done', errored: 'failed', notFound: 'failed', interrupted: 'stopped', shutdown: 'stopped' };
+const clip = (v, n) => { const t = String(v || '').replace(/\s+/g, ' ').trim(); return t.length > n ? `${t.slice(0, n - 1)}…` : t; };
+const toolStep = (tool) => { const t = String(tool || '').replace(/_/g, ' ').trim(); return t ? t[0].toUpperCase() + t.slice(1) : ''; };
+const isLumenTool = (item) => item?.type === 'mcpToolCall' && String(item.server || '') === 'lumen';
+function createSubAgents({ now = Date.now } = {}) {
+  const agents = new Map(); // sub-agent thread id -> { id, desc, startedAt, tools, last, state, summary, endedAt }
+  const snap = (a) => ({ id: a.id, desc: a.desc, background: false, state: a.state, startedAt: a.startedAt, tools: a.tools, tokens: 0, last: a.last, ...(a.summary ? { summary: a.summary } : {}), ...(a.state !== 'working' ? { endedAt: a.endedAt } : {}) });
+  const get = (tid, desc = '') => {
+    let a = agents.get(tid);
+    if (!a) { a = { id: `cx-${String(tid).replace(/[^\w-]/g, '').slice(0, 56)}`, desc: desc || 'Sub-agent', startedAt: now(), tools: 0, last: '', state: 'working' }; agents.set(tid, a); }
+    else if (desc && a.desc === 'Sub-agent') a.desc = desc;
+    return a;
+  };
+  const end = (a, state, summary) => {
+    if (a.state !== 'working' && !summary) return false;
+    if (a.state === 'working') { a.state = state; a.endedAt = now(); }
+    if (summary) a.summary = clip(summary, 600);
+    return true;
+  };
+  return {
+    owns: (tid) => agents.has(tid),
+    list: () => [...agents.values()].map(snap),
+    feed(tid, item) {
+      const out = new Set();
+      const type = String(item?.type || '');
+      if (type === 'collabAgentToolCall') {
+        const desc = clip(String(item.prompt || '').split('\n')[0], 70);
+        if (item.tool === 'spawnAgent') for (const r of item.receiverThreadIds || []) out.add(get(r, desc));
+        for (const [r, st] of Object.entries(item.agentsStates || {})) {
+          const a = agents.get(r);
+          const state = a && AGENT_STATE[st?.status];
+          if (state && end(a, state, st.message)) out.add(a);
+        }
+      } else if (type === 'subAgentActivity' && item.agentThreadId) {
+        const a = get(item.agentThreadId, clip(String(item.agentPath || '').split('/').pop(), 70));
+        if (item.kind === 'completed') end(a, 'done'); else if (item.kind === 'interrupted') end(a, 'stopped');
+        out.add(a);
+      } else if (agents.has(tid) && isLumenTool(item)) {
+        const a = agents.get(tid);
+        if (a.state === 'working') { a.tools++; a.last = toolStep(item.tool); out.add(a); }
+      } else if (agents.has(tid) && type === 'agentMessage' && typeof item.text === 'string' && item.text.trim()) {
+        const a = agents.get(tid);
+        a.summary = clip(item.text, 600);
+        out.add(a);
+      }
+      return [...out].map(snap);
+    },
+    // The turn ended: an agent still shown working is done with it (or stopped, when the turn was).
+    finish(state = 'done') { const out = []; for (const a of agents.values()) if (a.state === 'working') { end(a, state); out.push(snap(a)); } return out; },
+  };
 }
 
 // A reasoning item's text for the thinking line.
@@ -219,7 +276,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       p.dir = fs.mkdtempSync(path.join(engine.tmp, 'lumen-cx-')); // the working folder: empty
       engine.workDirs.add(p.dir);
       // No `model` line: the model is chosen per turn (turn/start), so a process serves any of the chat's messages.
-      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun, fullAccess }), { mode: 0o600 });
+      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun, fullAccess, contextWindow: cx.maxWindowIn(engine.userHome()) }), { mode: 0o600 });
       const inv = locate.buildInvocation(spec, ['app-server']);
       const env = cx.buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {}, fullAccess });
       p.child = engine.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: p.dir, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
@@ -350,6 +407,8 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     let lastId = null;
     const shown = new Map(); // agentMessage id -> how much of its text is on screen
     const shownText = new Map(); // agentMessage id -> its text so far, from the deltas
+    const subs = createSubAgents(); // [sub-agents] this turn's Codex sub-agents, for the Agents card
+    const sayAgents = (list) => { for (const a of list) emit({ type: 'agent', ...a }); };
     const watchdogMs = p.full && engine.watchdogMs ? Math.max(engine.watchdogMs, cx.FULL_WATCHDOG_MS) : engine.watchdogMs; // [full access] a silent shell command is not a hang
     const kill = () => { engine.kill(p.child); };
     let finish;
@@ -372,7 +431,17 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     };
     p.onNote = (method, params) => {
       if (over || offItem) return;
-      if (params.threadId !== threadId) return;
+      if (params.threadId !== threadId) { // [sub-agents] a sub-agent's own thread: checked like the parent's, its tool calls counted on its row
+        if (!subs.owns(params.threadId)) return;
+        active.arm();
+        if (method === 'item/started' || method === 'item/completed') {
+          const item = params.item || {};
+          const bad = offItemOf(item, { fullAccess: p.full });
+          if (bad) { offItem = bad; kill(); finish('off'); return; }
+          if (method === 'item/started' || item.type === 'agentMessage') sayAgents(subs.feed(params.threadId, item));
+        }
+        return;
+      }
       const pid = params.turnId ?? params.turn?.id ?? null;
       if (turnId && pid && pid !== turnId) return; // an earlier turn's late notification
       active.arm();
@@ -385,6 +454,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
         const item = params.item || {};
         const bad = offItemOf(item, { fullAccess: p.full });
         if (bad) { offItem = bad; kill(); finish('off'); return; }
+        if (item.type === 'collabAgentToolCall' || item.type === 'subAgentActivity') { sayAgents(subs.feed(threadId, item)); return; }
         if (method === 'item/completed' && /compaction|compacted/i.test(String(item.type || ''))) { compacted = true; emit({ type: 'codex_compacted' }); }
         if (item.type === 'agentMessage' && method === 'item/completed' && typeof item.text === 'string') { shownText.set(String(item.id), item.text); say(String(item.id), item.text); }
         else if (item.type === 'reasoning' && method === 'item/completed') { const t = reasoningText(item); if (t) emit({ type: 'thinking', text: t }); }
@@ -442,6 +512,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
         await ended; // turn/completed, the process ending, or the watchdog
       }
     } finally {
+      sayAgents(subs.finish(stopAsked || offItem || status === 'interrupted' ? 'stopped' : status === 'failed' ? 'failed' : 'done'));
       over = true;
       p.onNote = null;
       clearTimeout(active.dog);
@@ -530,7 +601,18 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     return null;
   };
 
-  return { run, prewarm, dropChat, disposeAll, count, settled, owner, stats };
+  // [usage] The account's plan limits, live from Codex (account/rateLimits/read) through a kept process that is up: no model call, no new
+  // process. null when none is up, or it doesn't answer within timeoutMs. features/usage.js prefers it to the newest session log reading.
+  async function rateLimits({ timeoutMs = 8000 } = {}) {
+    const p = [...procs].filter(live).sort((a, b) => (b.used || 0) - (a.used || 0))[0];
+    if (!p?.rpc) return null;
+    try {
+      const res = await p.rpc.request('account/rateLimits/read', undefined, timeoutMs);
+      return res?.error ? null : codexUsage.limitsFromAppServer(res?.result);
+    } catch { return null; }
+  }
+
+  return { run, prewarm, dropChat, disposeAll, count, settled, owner, stats, rateLimits };
 }
 
-module.exports = { createCodexWarm, modeOf, approvalAnswer, offItemOf, reasoningText, addUsage, OPT_OUT, IDLE_MS, MAX_PROCS };
+module.exports = { createSubAgents, createCodexWarm, modeOf, approvalAnswer, offItemOf, reasoningText, addUsage, OPT_OUT, IDLE_MS, MAX_PROCS };
