@@ -125,7 +125,9 @@ const PAGES = {
     // The run view: Submit on the review card (the page's button).
     await inPage(`location.hash = 'run/${started.runId}'`);
     await waitFor(() => inPage("document.querySelectorAll('.card.item').length === 3"));
-    check('the run view lists every item, the ones that need the user first', await inPage("[...document.querySelectorAll('.card.item')].map((c) => c.dataset.status).join(',') === 'review,needs-you,needs-you'"));
+    // (polled like the line above: one read right after the cards appear could come back empty, undefined, while the page was busy)
+    const order = await waitFor(async () => { const o = await inPage("[...document.querySelectorAll('.card.item')].map((c) => c.dataset.status).join(',')"); return o === 'review,needs-you,needs-you' ? o : null; }, 5000);
+    check('the run view lists every item, the ones that need the user first', order === 'review,needs-you,needs-you', await inPage("[...document.querySelectorAll('.card.item')].map((c) => c.dataset.status).join(',')").catch((e) => e.message));
     await inPage("[...document.querySelector('.card.item[data-status=\"review\"]').querySelectorAll('button')].find((b) => b.textContent === 'Submit').click()");
     const done1 = await waitFor(async () => ((await itemOf(started.runId, 1))?.status === 'done' ? itemOf(started.runId, 1) : null), 20000);
     check('Submit sends the form and the item is done when the page thanks', done1?.status === 'done' && done1.submittedAt > 0 && posts.length === 1 && /first=Sam/.test(posts[0].body), JSON.stringify({ done1, posts }));
