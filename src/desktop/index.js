@@ -23,6 +23,8 @@ const IDLE_END_MS = 90e3; // a session with no call for this long ends (a run th
 const PAUSE_WAIT_MS = 10 * 60e3;
 const MAX_TYPE = 8000;
 const LIST_CACHE_MS = 600;
+const SHOT_W = 1280; // screenshot_app's picture width (a smaller window is sent at its own size): wide enough that a pixel the AI picks lands on a toolbar button
+const MAX_WHEEL = 30; // scroll: wheel notches in one call
 
 // Everything an app told us (window titles, control names, values) goes to the AI inside this wrapper, with any literal wrapper tag in it defanged,
 // so app text can never end the block and pass as the user's or Lumen's own words.
@@ -259,6 +261,7 @@ function createDesktop(deps = {}) {
       if (s.paused || !s.target) return;
       const busy = s.busy || now() < s.busyUntil;
       const cur = w.cursor();
+      if (busy && s.pointing) { s.lastCursor = cur || s.lastCursor; return; } // click_at / drag / scroll move the pointer and press its buttons themselves: that is not the person taking over
       const over = [s.target.pid, s.target.hpid].includes(w.pidUnderCursor());
       if (cur && s.lastCursor && over && (Math.abs(cur.x - s.lastCursor.x) + Math.abs(cur.y - s.lastCursor.y) >= TAKEOVER_PX || w.mouseDown())) { pause(s, 'mouse'); }
       else if (!busy && [s.target.pid, s.target.hpid].includes(w.foregroundPid()) && w.typing()) pause(s, 'keys');
@@ -402,12 +405,64 @@ function createDesktop(deps = {}) {
     await authorize(win, ctx);
     noteRead(ctx, win);
     const s = await useWindow(win, ctx, policy.stepLabel('screenshot_app', {}, win.name));
-    const r = await act(s, () => getClient().call('shot', { ...targetOf(win), w: 1000, q: 70 }, { timeoutMs: 20000 }));
+    const r = await act(s, () => getClient().call('shot', { ...targetOf(win), w: SHOT_W, q: 70 }, { timeoutMs: 20000 }));
     if (!r.image) throw new Error(`${win.name} could not be captured (it may be minimized). Use focus_app first.`);
+    const sized = r.w > 0 && r.h > 0 && r.rw > 0 && r.rh > 0;
+    s.shot = sized ? { hwnd: win.hwnd, pid: win.pid, w: r.w, h: r.h, rw: r.rw, rh: r.rh } : null; // what click_at / drag / scroll map their x, y through
     return [
       { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: r.image } },
-      { type: 'text', text: unwrap(`Picture of ${win.name} ("${treeLib.clip(win.title, 80)}"). Use read_app for text and ids.`, win.name) },
+      { type: 'text', text: unwrap(`Picture of ${win.name} ("${treeLib.clip(win.title, 80)}")${sized && pointerOk() ? `, ${r.w}x${r.h} px. click_at, drag and scroll take x, y in this picture's pixels` : ''}. Use read_app for text and ids.`, win.name) },
     ];
+  }
+
+  // ---- by pixel: click_at, drag, scroll (Windows). For what UI Automation cannot name: a CAD canvas (SolidWorks), a game, a custom control.
+  // The x, y are pixels of the latest screenshot_app picture of this window; the helper maps them onto the window as it is now, refuses if
+  // it changed size, and sends nothing unless the window at every point belongs to the approved program (never another app or Lumen's banner).
+  const pointerOk = () => platform === 'win32';
+  const num = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+  async function pointer(action, args, ctx) {
+    if (!pointerOk()) throw new Error(`${action} works on Windows only for now. Use read_app and click with an item id.`);
+    if (!session?.shot || !session.target || session.shot.hwnd !== session.target.hwnd) throw new Error(`Take a screenshot_app of the app first: ${action} takes x, y in that picture's pixels.`);
+    const shot = session.shot;
+    const win = await windowFor({ id: idOf(session.target) });
+    if (win.pid !== shot.pid || win.app !== session.target.app) throw new Error('That window now belongs to a different program. Call list_apps and take a new screenshot.');
+    const pt = (x, y, what) => {
+      const px = num(x); const py = num(y);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) throw new Error(`Pass ${what} as numbers (pixels in the screenshot).`);
+      if (px < 0 || py < 0 || px >= shot.w || py >= shot.h) throw new Error(`${what} (${px}, ${py}) is outside the screenshot (${shot.w}x${shot.h}).`);
+      return [Math.round(px), Math.round(py)];
+    };
+    const points = [pt(args.x, args.y, 'x, y')];
+    const req = { op: action === 'click_at' ? 'click' : action, button: ['left', 'right', 'middle'].includes(args.button) ? args.button : 'left' };
+    let what;
+    if (action === 'click_at') { req.double = args.double === true; what = `${req.double ? 'double-' : ''}${req.button === 'left' ? '' : `${req.button}-`}click at ${points[0].join(', ')}`; }
+    else if (action === 'drag') { points.push(pt(args.to_x, args.to_y, 'to_x, to_y')); what = `drag from ${points[0].join(', ')} to ${points[1].join(', ')}`; }
+    else {
+      const dy = Math.trunc(num(args.dy ?? 0)); const dx = Math.trunc(num(args.dx ?? 0));
+      if (!Number.isFinite(dy) || !Number.isFinite(dx) || (!dy && !dx) || Math.abs(dy) > MAX_WHEEL || Math.abs(dx) > MAX_WHEEL) throw new Error(`Pass dy (wheel notches, positive scrolls down) or dx (positive scrolls right), at most ${MAX_WHEEL}.`);
+      Object.assign(req, { dy, dx }); what = `scroll at ${points[0].join(', ')}`;
+    }
+    await authorize(win, ctx, { acting: true, what });
+    const s = await useWindow(win, ctx, policy.stepLabel(action, { x: points[0][0], y: points[0][1] }, win.name));
+    try { getApi()?.allowForeground?.(); } catch { /* the helper raises the app itself if it can */ }
+    s.pointing = true;
+    try {
+      await act(s, () => getClient().call('mouse', { ...targetOf(win), ...req, points, pw: shot.w, ph: shot.h, rw: shot.rw, rh: shot.rh }, { timeoutMs: 15000 }));
+    } finally { setTimeout(() => { if (!s.busy) s.pointing = false; }, 300).unref?.(); } // (the pointer stays where the AI left it: the baseline follows it until busyUntil has passed)
+    list.at = 0;
+    return `Did: ${what} in ${win.name}. Take a screenshot_app to see the result (the same picture size keeps the coordinates).`;
+  }
+
+  // type with no element: into whatever has the keyboard focus in the app (a field click_at put the caret in). Guarded like every key (helper).
+  async function typeFocused(args, ctx) {
+    const text = String(args.text ?? '');
+    if (!text) throw new Error('Pass text to type.');
+    if (text.length > 500) throw new Error('Typing without an item id is limited to 500 characters a call. Type it in parts.');
+    const win = await windowFor(args.name || args.id ? args : {});
+    await authorize(win, ctx, { acting: true, what: `type ${text.length} character${text.length === 1 ? '' : 's'}` });
+    const s = await useWindow(win, ctx, policy.stepLabel('type', {}, win.name));
+    await act(s, () => getClient().call('typefocus', { ...targetOf(win), text, submit: args.submit === true }, { timeoutMs: 20000 }));
+    return `Typed ${text.length} character${text.length === 1 ? '' : 's'} where the keyboard focus is in ${win.name}.${args.submit ? ' Pressed Enter.' : ''}`;
   }
 
   async function openApp(args, ctx) {
@@ -456,11 +511,12 @@ function createDesktop(deps = {}) {
         case 'focus_app': return await focusApp(args, ctx);
         case 'read_app': return await readApp(args, ctx);
         case 'click': return await click(args, ctx);
-        case 'type': return await type(args, ctx);
+        case 'type': return await (args.element == null && args.text != null && pointerOk() ? typeFocused(args, ctx) : type(args, ctx));
         case 'press_keys': return await pressKeys(args, ctx);
         case 'screenshot_app': return await screenshot(args, ctx);
         case 'open_app': return await openApp(args, ctx);
-        default: throw new Error(`Unknown action "${action}". Use list_apps, focus_app, read_app, click, type, press_keys, screenshot_app or open_app.`);
+        case 'click_at': case 'drag': case 'scroll': return await pointer(action, args, ctx);
+        default: throw new Error(`Unknown action "${action}". Use list_apps, focus_app, read_app, click, type, press_keys, screenshot_app, open_app, click_at, drag or scroll.`);
       }
     } catch (err) {
       if (err?.permission && err.settingsUrl) await offerPermission(err, ctx);

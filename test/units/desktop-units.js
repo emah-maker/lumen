@@ -134,7 +134,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const def = on.tools.find((t) => t.name === 'desktop');
     check('tool: absent from the default request, so the tool budget (17.5k) is untouched', !off.tools.some((t) => t.name === 'desktop') && JSON.stringify(off.tools).length < 17500, String(JSON.stringify(off.tools).length));
     check('tool: one dispatcher, desktop(action, args), under 700 characters', def && Object.keys(def.input_schema.properties).join() === 'action,args' && def.input_schema.required.join() === 'action' && JSON.stringify(def).length < 700, String(JSON.stringify(def).length));
-    check('tool: the eight actions are in the enum, and in the description', J(def.input_schema.properties.action.enum) === J(['list_apps', 'focus_app', 'read_app', 'click', 'type', 'press_keys', 'screenshot_app', 'open_app']) && def.description.length < 420);
+    check('tool: the eleven actions are in the enum (by id, and by pixel: click_at, drag, scroll), and the description names the pixel args', J(def.input_schema.properties.action.enum) === J(['list_apps', 'focus_app', 'read_app', 'click', 'type', 'press_keys', 'screenshot_app', 'open_app', 'click_at', 'drag', 'scroll']) && def.description.length < 420 && /click_at\/drag\/scroll/.test(def.description) && /x, y, to_x, to_y, dy/.test(def.description), def.description);
     check('tool: with it on, the whole list is still a modest step up (one tool)', JSON.stringify(on.tools).length - JSON.stringify(off.tools).length < 700 && on.tools.filter((t) => t.cache_control).length === 1 && on.tools[on.tools.length - 1].cache_control, String(JSON.stringify(on.tools).length));
     check('tool: input is checked like any other tool', validateInput('desktop', { action: 'list_apps' }) === null && validateInput('desktop', {}) !== null && validateInput('desktop', { action: 5 }) !== null && validateInput('desktop', { action: 'read_app', args: 'x' }) !== null);
     check('tool: not listed to MCP clients or the CLI engines', !EXTERNAL_TOOLS.some((t) => t.name === 'desktop'));
@@ -165,7 +165,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         if (cmd === 'settext') return { ok: true, method: 'value' };
         if (cmd === 'keys') { if (store.hangKeys) return new Promise((resolve, reject) => { pending.add(reject); store.rejectKeys = reject; }); return { ok: true, sent: true }; }
         if (cmd === 'focus') return { ok: true, foreground: store.focusForeground !== false };
-        if (cmd === 'shot') return { ok: true, image: 'QUJD'.repeat(40) + Math.random().toString(36).slice(2) };
+        if (cmd === 'shot') return { ok: true, image: 'QUJD'.repeat(40) + Math.random().toString(36).slice(2), w: 1280, h: 720, rw: 1920, rh: 1080 };
+        if (cmd === 'mouse') { if (store.mouseHook) await store.mouseHook(args); return { ok: true, at: [] }; }
+        if (cmd === 'typefocus') return { ok: true, method: 'keys' };
         if (cmd === 'resolve') return { ok: true, found: store.found || [] };
         if (cmd === 'launch') { for (const w of store.launches || []) (Array.isArray(apps) ? apps : []).push(w); return { ok: true }; }
         return { ok: true };
@@ -625,6 +627,121 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const n = created.length;
     await quiet.show('Word');
     check('banner: in a test run it is never created on screen', created.length === n && quiet.visible() && /Word/.test(quiet.state().text));
+  }
+
+  // ---- by pixel: click_at, drag, scroll; type at the focus (Windows)
+  {
+    const rig = makeRig({ apps: [word], allowed: allowWord });
+    const none = await rejects(() => rig.d.run({ action: 'click_at', args: { x: 10, y: 10 } }, rig.ctx));
+    check('click_at: needs a screenshot_app first (its x, y are that picture\'s pixels); nothing is sent', /screenshot_app/.test(none) && !rig.calls.some(([c]) => c === 'mouse'), none);
+    const shot = await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    check('screenshot_app: asked at 1280 wide, and the caption gives the picture size for click_at', rig.calls.find(([c]) => c === 'shot')[1].w === 1280 && /1280x720 px\. click_at, drag and scroll take x, y in this picture's pixels/.test(shot[1].text), shot[1].text);
+    const out = await rig.d.run({ action: 'click_at', args: { x: 640.4, y: '100', button: 'right', double: true } }, rig.ctx);
+    const m = rig.calls.filter(([c]) => c === 'mouse').pop()?.[1];
+    check('click_at: the helper gets the approved target (pid, start time), the rounded point, the picture and window size it maps through, the button and double', m && m.hwnd === 100 && m.pid === 10 && m.start === 1010 && m.op === 'click' && J(m.points) === J([[640, 100]]) && m.pw === 1280 && m.ph === 720 && m.rw === 1920 && m.rh === 1080 && m.button === 'right' && m.double === true && /double-right-click at 640, 100 in Microsoft Word/.test(out), J([m, out]));
+    check('click_at: an Always app in a clean run needs no card', rig.asked.length === 0);
+    const outside = await rejects(() => rig.d.run({ action: 'click_at', args: { x: 1280, y: 5 } }, rig.ctx));
+    const nan = await rejects(() => rig.d.run({ action: 'click_at', args: { x: 'left', y: 5 } }, rig.ctx));
+    const neg = await rejects(() => rig.d.run({ action: 'click_at', args: { x: -1, y: 5 } }, rig.ctx));
+    check('click_at: a point outside the picture, or not a number, is refused before the helper', /outside the screenshot \(1280x720\)/.test(outside) && /numbers/.test(nan) && /outside/.test(neg) && rig.calls.filter(([c]) => c === 'mouse').length === 1, J([outside, nan, neg]));
+    rig.calls.length = 0;
+    await rig.d.run({ action: 'drag', args: { x: 10, y: 20, to_x: 300, to_y: 400 } }, rig.ctx);
+    const dr = rig.calls.find(([c]) => c === 'mouse')?.[1];
+    const noEnd = await rejects(() => rig.d.run({ action: 'drag', args: { x: 10, y: 20 } }, rig.ctx));
+    check('drag: both points go to the helper; a drag with no end point is refused', dr && dr.op === 'drag' && J(dr.points) === J([[10, 20], [300, 400]]) && dr.button === 'left' && /to_x, to_y/.test(noEnd), J([dr, noEnd]));
+    rig.calls.length = 0;
+    await rig.d.run({ action: 'scroll', args: { x: 50, y: 60, dy: 3 } }, rig.ctx);
+    const sc = rig.calls.find(([c]) => c === 'mouse')?.[1];
+    const noDy = await rejects(() => rig.d.run({ action: 'scroll', args: { x: 50, y: 60 } }, rig.ctx));
+    const huge = await rejects(() => rig.d.run({ action: 'scroll', args: { x: 50, y: 60, dy: 500 } }, rig.ctx));
+    check('scroll: notches go to the helper (dy down, dx right); none, or too many, is refused', sc && sc.op === 'scroll' && sc.dy === 3 && sc.dx === 0 && /dy/.test(noDy) && /at most 30/.test(huge) && rig.calls.filter(([c]) => c === 'mouse').length === 1, J([sc, noDy, huge]));
+    check('steps: the chat line says what it does by pixel', policy.stepLabel('click_at', { x: 5, y: 6 }, 'SolidWorks') === 'Clicking at 5, 6 in SolidWorks' && policy.stepLabel('drag', {}, 'SolidWorks') === 'Dragging in SolidWorks' && policy.stepLabel('scroll', {}, 'X') === 'Scrolling in X');
+    rig.calls.length = 0;
+    const typed = await rig.d.run({ action: 'type', args: { text: 'Sketch1', submit: true } }, rig.ctx);
+    const tf = rig.calls.find(([c]) => c === 'typefocus')?.[1];
+    const tooLong = await rejects(() => rig.d.run({ action: 'type', args: { text: 'x'.repeat(501) } }, rig.ctx));
+    check('type with no element: typed at the keyboard focus of the approved app (the helper guards every piece), capped at 500 characters', tf && tf.hwnd === 100 && tf.pid === 10 && tf.text === 'Sketch1' && tf.submit === true && /where the keyboard focus is in Microsoft Word\. Pressed Enter/.test(typed) && /500/.test(tooLong) && rig.calls.filter(([c]) => c === 'typefocus').length === 1, J([tf, typed, tooLong]));
+    const el = await rejects(() => rig.d.run({ action: 'type', args: { element: 'bad', text: 'x' } }, rig.ctx));
+    check('type with an element still goes by id (a bad id is refused as before)', /Pass element/.test(el));
+  }
+  {
+    // the taint rules cover pixel actions like every other acting call
+    const rig = makeRig({ apps: [word], allowed: allowWord, tainted: false });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    rig.store.tainted = true;
+    rig.setAnswer(false);
+    const m = await rejects(() => rig.d.run({ action: 'click_at', args: { x: 1, y: 2 } }, rig.ctx));
+    const d = await rejects(() => rig.d.run({ action: 'drag', args: { x: 1, y: 2, to_x: 3, to_y: 4 } }, rig.ctx));
+    const t = await rejects(() => rig.d.run({ action: 'type', args: { text: 'hi' } }, rig.ctx));
+    check('a tainted run: click_at, drag and type-at-focus each ask a card naming what they do, and No sends nothing', [m, d, t].every((x) => /did not allow this action/.test(x)) && rig.asked.length === 3 && /click at 1, 2/.test(rig.asked[0].title) && /drag from 1, 2 to 3, 4/.test(rig.asked[1].title) && /type 2 characters/.test(rig.asked[2].title) && !rig.calls.some(([c]) => c === 'mouse' || c === 'typefocus'), J(rig.asked.map((a) => a.title)));
+    const ask = makeRig({ apps: [word] });
+    ask.setAnswer(false);
+    await rejects(() => ask.d.run({ action: 'screenshot_app', args: { name: 'word' } }, ask.ctx));
+    const noShot = await rejects(() => ask.d.run({ action: 'click_at', args: { x: 1, y: 2 } }, ask.ctx));
+    check('an app the user did not allow: no picture, so no pixel action either', /screenshot_app/.test(noShot) && !ask.calls.some(([c]) => c === 'shot' || c === 'mouse'));
+  }
+  {
+    // a different window, or the same window now owned by another program, needs a new picture
+    const EXCEL = 'C:\\Office\\EXCEL.EXE';
+    const excel = mk(107, 16, 'EXCEL', 'Book1 - Excel', EXCEL, { description: 'Microsoft Excel' });
+    let list = [word, excel];
+    const rig = makeRig({ apps: () => list, allowed: [{ app: key(WORDX), name: 'Microsoft Word' }, { app: key(EXCEL), name: 'Microsoft Excel' }] });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    await rig.d.run({ action: 'focus_app', args: { name: 'excel' } }, rig.ctx);
+    const other = await rejects(() => rig.d.run({ action: 'click_at', args: { x: 1, y: 2 } }, rig.ctx));
+    check('click_at after moving to another app: the old picture does not count', /screenshot_app/.test(other) && !rig.calls.some(([c]) => c === 'mouse'), other);
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'excel' } }, rig.ctx);
+    list = [word, { ...excel, pid: 99, start: 5 }];
+    const swapped = await rejects(() => rig.d.run({ action: 'click_at', args: { x: 1, y: 2 } }, rig.ctx));
+    check('click_at when the window now belongs to another program: refused, nothing sent', /different program/.test(swapped) && !rig.calls.some(([c]) => c === 'mouse'), swapped);
+  }
+  {
+    const rig = makeRig({ apps: [word], allowed: allowWord, platform: 'darwin' });
+    const m = await rejects(() => rig.d.run({ action: 'click_at', args: { x: 1, y: 2 } }, rig.ctx));
+    check('macOS: the pixel actions say they are Windows only, and point to click by id', /Windows only/.test(m) && /click with an item id/.test(m) && !rig.calls.some(([c]) => c === 'mouse'), m);
+  }
+  {
+    // the AI moving the pointer and pressing its buttons is not "the person took over"; the person moving it afterwards still is
+    let cur = { x: 0, y: 0 }; let down = false;
+    const api = { ok: true, cursor: () => ({ ...cur }), pidUnderCursor: () => 10, foregroundPid: () => 10, escapeDown: () => false, mouseDown: () => down, typing: () => false };
+    const rig = makeRig({ apps: [word], allowed: allowWord, winapi: api });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    rig.store.mouseHook = async () => { cur = { x: 400, y: 300 }; down = true; rig.d._poll(); cur = { x: 900, y: 700 }; rig.d._poll(); down = false; };
+    await rig.d.run({ action: 'drag', args: { x: 1, y: 2, to_x: 600, to_y: 450 } }, rig.ctx);
+    rig.d._poll();
+    check('takeover: the AI\'s own drag (pointer moved, button down) does not pause the run', rig.d.paused() === false);
+    await sleep(350);
+    cur = { x: 960, y: 760 }; rig.d._poll();
+    check('takeover: the person moving the mouse over the app afterwards pauses it as before', rig.d.paused() === true);
+  }
+  {
+    const ag = read('src/ai/agent.js');
+    check('hands-off mode stops the pixel actions too (they are acting calls)', /DESKTOP_ACTING = new Set\(\[[^\]]*'click_at', 'drag', 'scroll'\]\)/.test(ag));
+    const helper = read('src/desktop/uia-helper.ps1');
+    check('helper: a pixel action is sent only where the approved program\'s window is (WindowFromPoint, GA_ROOT), after the window size is checked against the picture', /function Cmd-Mouse/.test(helper) && /PidAt\(\$q\[0\], \$q\[1\]\)/.test(helper) && /GetAncestor\(w, 2\)/.test(helper) && /The window changed size since the last screenshot_app/.test(helper) && /Another window covers that point, so nothing was clicked/.test(helper));
+    check('helper: typing at the focus uses the same guard as every key (foreground, focus, never a password field)', /function Cmd-TypeFocus[\s\S]*?Send-Guarded \(Split-Text \$text\) \$t\.pids \$req/.test(helper));
+  }
+  {
+    // the CLI engines (Claude Code, Codex...): the tool is an extra of the chat's run, on the API chats' terms
+    const chatOf = (text) => Object.assign([{ role: 'user', content: text }], { settings: {} });
+    const ag = new Agent({ desktopAccess: () => false, desktop: () => ({}) });
+    const sw = chatOf('open solidworks and start a new part');
+    const defs = ag.cliDesktopToolDefs(sw);
+    check('CLI: a chat that asks for an app (SolidWorks) gets the desktop tool as a run extra, switch off (so it can ask to turn it on)', defs.length === 1 && defs[0].name === 'desktop' && defs[0].input_schema.properties.action.enum.includes('click_at') && sw.cliDesktop === true, J(defs.map((x) => x.name)));
+    check('CLI: an ordinary chat does not get it', ag.cliDesktopToolDefs(chatOf('summarize this page')).length === 0);
+    const later = Object.assign([{ role: 'user', content: 'hello' }], { settings: {} });
+    later.cliDesktop = true;
+    check('CLI: once offered it stays for the chat (a warm process that listed it is not refused it later)', ag.cliDesktopToolDefs(later).length === 1);
+    check('CLI: on with the switch, for every chat; never where Lumen has no desktop module', new Agent({ desktopAccess: () => true, desktop: () => ({}) }).cliDesktopToolDefs(chatOf('hello')).length === 1 && new Agent({ desktopAccess: () => true }).cliDesktopToolDefs(chatOf('hello')).length === 0);
+    const note = ag.cliDesktopNote(chatOf('can you do solidworks for me'));
+    check('CLI: the message carries one line pointing at mcp__lumen__desktop (not shell scripts) while the tool is offered and unused', /mcp__lumen__desktop/.test(note) && /screenshot_app then click_at/.test(note) && /Never drive apps with shell scripts/.test(note) && ag.cliDesktopNote(chatOf('hi')) === '', note);
+    const used = Object.assign([{ role: 'user', content: 'open solidworks' }, { role: 'assistant', content: [{ type: 'tool_use', name: 'mcp__lumen__desktop', input: {} }] }], { settings: {} });
+    check('CLI: after the first desktop call the line is left out (the tool is known by then)', ag.cliDesktopNote(used) === '' && ag.toolUsed(used, 'desktop') === true);
+    const src = read('src/features/ai-agents.js');
+    check('CLI: the run tools and the warm-process check both include it (a chat that turns to an app gets a process that lists it)', (src.match(/\.\.\.\(deps\.desktopTools\?\.\(chat\) \|\| \[\]\)/g) || []).length === 2 && /desktopTools: \(chat\) => agent\.cliDesktopToolDefs\(chat\)/.test(read('src/main.js')));
+    check('CLI: an outside MCP client still never gets it (the call needs the user in a Lumen chat)', !EXTERNAL_TOOLS.some((t) => t.name === 'desktop') && /gate\.external \|\| gate\.noAsk\) throw new Error\('Using other apps needs the user in the chat/.test(read('src/ai/agent.js')));
+    const off = new Agent({ desktopAccess: () => false });
+    check('offer: CAD and "control my computer" requests offer it', ['open solidworks and make a part', 'use AutoCAD to draw a line', 'can you control my computer', 'in SolidWorks, extrude the sketch'].every((t) => off.desktopOffered([{ role: 'user', content: t }])));
   }
 
   // ---- settings, docs, the module stays out of startup

@@ -579,18 +579,18 @@ const PARALLEL_TASKS_TOOL = {
 };
 // [desktop apps] desktop operates other programs on this computer, Windows or macOS (src/desktop/, docs/desktop-apps.md). One dispatcher tool keeps the tool prompt small. Offered to the
 // sidebar's API chats only while Settings → AI → "Let the AI use other apps on this computer" is on, or once the conversation asks for an app (requestFor / otherTurn),
-// so the default request costs nothing. Not listed to MCP clients or the CLI engines.
+// so the default request costs nothing. Not listed to outside MCP clients; the CLI engines (Claude Code, Codex...) get it as an extra of a sidebar chat's run (cliDesktopToolDefs), on the same terms.
 const DESKTOP_TOOL = {
   name: 'desktop',
-  description: 'Operate other apps on this computer (Windows/macOS). action: list_apps | focus_app | read_app | click | type | press_keys | screenshot_app | open_app. args: {name|id, element (e3 from read_app), text, keys, path}. open_app path: open a document in its app (.xlsx Excel, .pptx PowerPoint...) and work on the file there. Prefer read_app to screenshot_app. Asks per app.',
-  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list_apps', 'focus_app', 'read_app', 'click', 'type', 'press_keys', 'screenshot_app', 'open_app'] }, args: { type: 'object' } }, required: ['action'] },
+  description: 'Operate other apps on this computer (Windows/macOS), by the action in the enum. args: name|id, element (e3 from read_app), text, keys, path; x, y, to_x, to_y, dy, button, double: pixels of the last screenshot_app. Prefer read_app to screenshot_app; a canvas (CAD): click_at/drag/scroll. type, no element: at the focus. open_app path: a file in its app. Asks per app.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list_apps', 'focus_app', 'read_app', 'click', 'type', 'press_keys', 'screenshot_app', 'open_app', 'click_at', 'drag', 'scroll'] }, args: { type: 'object' } }, required: ['action'] },
   eager_input_streaming: true,
 };
-const DESKTOP_ACTING = new Set(['focus_app', 'click', 'type', 'press_keys', 'open_app']); // (list_apps, read_app and screenshot_app only read)
+const DESKTOP_ACTING = new Set(['focus_app', 'click', 'type', 'press_keys', 'open_app', 'click_at', 'drag', 'scroll']); // (list_apps, read_app and screenshot_app only read)
 // What an app shows (titles, text, a picture) is untrusted content: after these actions web actions ask (the run is tainted, app-only), and src/desktop asks a card before acting in any OTHER app than the one that was read.
 const DESKTOP_READS = new Set(['list_apps', 'focus_app', 'read_app', 'screenshot_app', 'open_app']);
 // A conversation that asks for another app (not just the word "word") is offered the tool even while the switch is off, so the AI can ask to turn it on.
-const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify|finder|textedit|keynote)\b|file explorer|windows explorer|matlab|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
+const DESKTOP_INTENT = /\b(microsoft (word|excel|powerpoint|outlook)|ms (word|excel)|(in|on|with|using|open|use|operate|control|click in|type in|into) (the )?(word|excel|powerpoint|matlab|file explorer|windows explorer|notepad|outlook|photoshop|vs ?code|slack|spotify|finder|textedit|keynote)\b|file explorer|windows explorer|matlab|solid ?works|autocad|fusion ?360|blender|labview|kicad|(control|use) (my|the) (computer|pc|screen)\b|my (desktop |windows |other )?apps?\b|other apps?\b|desktop apps?\b|(on|in) my (pc|computer|laptop|desktop)\b)/i;
 // [word] word works with Microsoft Word documents directly (src/word/, docs/word.md): Word's own object model on Windows, and a .docx file read and added to without Word. The sidebar's API chats only, and only once the conversation
 // talks about a Word document (wordOffered): MCP clients and the CLI engines see a tool listing that is already at its budget, and the default request keeps its size. The text stays short on purpose.
 // (also a request to write a report, essay, letter or formatted document: made in Word with the tool, not pasted into the chat as Markdown)
@@ -711,6 +711,8 @@ const CLI_WORD_RULE = {
   auto: 'Word work (.docx, open Word file, report, essay, letter): use the word tool (mcp__lumen__word), not Markdown in chat: new or open; read only what the edit needs, edit in place, save; do not re-read. Never write scripts or new files unless asked.',
   file: 'Word work (.docx, report, essay, letter): use the word tool (mcp__lumen__word) with the file path (new for a new one), not Markdown in chat; read only what the edit needs, edit in place, do not re-read. Never write scripts or new files unless asked.',
 };
+// [desktop apps] The CLI engines' one line while the desktop tool is offered (cliDesktopNote).
+const CLI_DESKTOP_RULE = 'Apps on this computer (SolidWorks, Excel, any program): use the desktop tool (mcp__lumen__desktop), which asks the user per app: open_app, read_app and click by id, or screenshot_app then click_at / drag / scroll at x, y in that picture. Never drive apps with shell scripts, SendKeys or other automation.';
 const wordRule = (mode, name = 'mcp__lumen__word') => CLI_WORD_RULE[mode === 'file' ? 'file' : 'auto'].replace('mcp__lumen__word', name);
 // [word] [desktop apps] Settings → AI → "Work on files in their apps" (aiFilesInApps): app | file add one short sentence to the tool that is offered (nothing to the default, 'auto'; nothing when the tool is not offered).
 const FILES_IN_APPS_NOTE = {
@@ -2765,7 +2767,7 @@ class Agent {
       if (toAntigravity && messages.settings.agySession && (messages.settings.agyModel || 'antigravity:default') !== messages.settings.model) { delete messages.settings.agySession; delete messages.settings.agyModel; }
       if (toCodex && messages.settings.cxSession && (messages.settings.cxModel || 'codex:default') !== messages.settings.model) { delete messages.settings.cxSession; delete messages.settings.cxModel; }
       const turnImages = retryText ? [] : screen.image ? [...images, screen.image] : images; // [screen context] the CLI engines take it as an attached picture
-      const turnPrompt = retryText ?? (cliSlash && !toClaudeCode ? userText.trim() : state + page + attached.block + note + this.cliWordNote(messages)); // ([cli commands] a slash command goes in bare, so the CLI sees it first) // [no handoff] the second try is the follow-up alone
+      const turnPrompt = retryText ?? (cliSlash && !toClaudeCode ? userText.trim() : state + page + attached.block + note + this.cliWordNote(messages) + this.cliDesktopNote(messages)); // ([cli commands] a slash command goes in bare, so the CLI sees it first) // [no handoff] the second try is the follow-up alone
       await this.cliExternalReady(emit); // [engine parity] the user's MCP servers are up when the run lists its tools
       this.engineRuns = (this.engineRuns || 0) + 1; // (prewarm waits while any runs)
       // The engine reports a failure as an 'error' event, not a throw: held back until it is known whether another model takes over.
@@ -7033,6 +7035,39 @@ ${wordRule(this.filesInApps(), 'word')}`;
     // that listed the tool is not refused it mid-chat ("Unknown tool: word", and the model fell back to rewriting the .docx with a script))
     try { if (chat && chat.cliWord !== true && this.wordUsed(chat)) chat.cliWord = true; } catch { /* not offered */ }
     return chat?.cliWord === true ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : [];
+  }
+  // [desktop apps] The CLI engines (Claude Code, Codex, Grok Build, Antigravity): the desktop tool as an extra of a sidebar chat's run (features/ai-agents.js runTools),
+  // offered on the API chats' terms (desktopOffered: the switch is on, or the chat asks for an app) and kept for the chat once offered or used. Its calls take the
+  // same path as an API chat's (desktopTool: per-app cards, the never list, the banner, Stop); an outside MCP client never gets it (gate.external).
+  cliDesktopToolDefs(chat) {
+    try {
+      if (!chat || !this.browser.desktop) return [];
+      if (chat.cliDesktop !== true && (this.toolUsed(chat, 'desktop') || this.desktopOffered(chat))) chat.cliDesktop = true;
+      return chat.cliDesktop === true ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : [];
+    } catch { return []; }
+  }
+  // One line for a CLI chat's message while the tool is offered and not used yet: without it a model with a shell drives an app with scripts or keystroke tools.
+  cliDesktopNote(messages) {
+    try {
+      const chat = taskScope.getStore()?.chat;
+      if (!this.browser.desktop || !this.desktopOffered(messages) || this.toolUsed(messages, 'desktop')) return '';
+      if (chat) chat.cliDesktop = true;
+      return `
+
+${CLI_DESKTOP_RULE}`;
+    } catch { return ''; }
+  }
+  // A call to this Lumen tool in the chat's last 40 messages (an API chat's tool_use blocks, a CLI chat's saved steps, which can carry the MCP name).
+  toolUsed(messages, tool) {
+    const is = (n) => n === tool || n === `mcp__lumen__${tool}`;
+    for (let i = messages.length - 1; i >= 0 && i >= messages.length - 40; i--) {
+      const m = messages[i];
+      if (m?.role !== 'assistant') continue;
+      if (Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && is(b.name))) return true;
+      const tools = (branches.getMeta(m) || m.meta)?.tools;
+      if (Array.isArray(tools) && tools.some((t) => is(t?.name))) return true;
+    }
+    return false;
   }
   // [engine parity] Two more extras of a CLI chat's run, as the API chats have them: use_skill when the chat's system prompt lists the user's
   // skills (cliSystemFor), and the tools of the MCP servers the user added (Settings → AI → MCP servers) that are running, where the chat's
