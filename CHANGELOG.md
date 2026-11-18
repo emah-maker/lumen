@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The new-tab page no longer flickers its sections once a minute.** The clock's minute redraw made Favorites and Privacy play their fade-in again, which kept the GPU busy for about a second each minute on an idle new tab. Now only the first paint animates, so an idle new tab uses about 0.5% GPU instead of 2.5–3%. Test: `test/e2e/igpu-perf.js`.
+
 ## 0.5.103 (2026-11-18)
 
 - **The AI can work in any Windows app, including SolidWorks, AutoCAD and Fusion 360.** With Settings → AI → "Let the AI use other apps on this computer" on (still off by default, and each app asks Once/Always first), it can now click, drag and scroll by pixel on a screenshot of the app. That reaches canvases that Windows accessibility can't see into. A click is sent only if the point belongs to the approved app; otherwise it is refused. Claude Code, Codex, Grok Build and Antigravity chats now get this tool too, not just API chats. Windows only for pixel actions. Test: `test/units/desktop-units.js`.
