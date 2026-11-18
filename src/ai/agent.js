@@ -567,10 +567,10 @@ const CLI_DELEGATE_TOOL = {
 // "Let helpers act in tabs" (actingHelpers, off by default) is on. Not listed to MCP clients or the CLI engines (they have their own subagents).
 const PARALLEL_TASKS_TOOL = {
   name: 'parallel_tasks',
-  description: 'Run 1-3 independent browser jobs at once, each by a helper in its own background tab (navigate, click, type, fill forms; never buys, sends or submits). tasks:[{task,url?}], each self-contained. Returns each report.',
+  description: 'Run 1-3 browser jobs at once, each by a helper in its own background tab (navigate, click, type, fill forms; never buys, sends or submits). Same share name: one tab together (url once); tab_id: an open tab; section: each helper\'s part. Returns each report.',
   input_schema: {
     type: 'object',
-    properties: { tasks: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, url: { type: 'string' } }, required: ['task'] } } },
+    properties: { tasks: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, url: { type: 'string' }, share: { type: 'string' }, tab_id: { type: 'integer' }, section: { type: 'string' } }, required: ['task'] } } },
     required: ['tasks'],
   },
   eager_input_streaming: true,
@@ -5060,6 +5060,10 @@ ${prompt}` : prompt), historyImages: [] };
   // its own after that. Stopping the chat stops every helper; each helper's card has its own Stop (stopHelper). A helper that is
   // stopped, fails or runs out of time has its tab closed at once (it may hold a signed-in page half done); a finished helper's tab
   // is left to "When the AI finishes". Their reports come back as untrusted page content, and the chat counts as having read page content after.
+  // [shared tabs] Tasks with one `share` name work in one new tab, and tasks with a `tab_id` in that open tab (switch_tab's rules: a
+  // listed tab no other chat works in), so helpers can split one site or document between them (acting-helpers.js: the per-tab lock, the
+  // per-helper element ids, the page that stays put). A shared tab is closed only once all its helpers ended and one did not finish;
+  // a tab named by tab_id is never closed.
   actingHelpersOn() {
     try { return Boolean(this.browser.actingHelpers?.()); } catch { return false; }
   }
@@ -5078,10 +5082,19 @@ ${prompt}` : prompt), historyImages: [] };
     if (!scope?.chat || !gate) throw new Error('parallel_tasks belongs to a sidebar chat; it is not available here.');
     if (!this.actingHelpersOn()) throw new Error('Acting helpers are off (Settings → AI → "Let helpers act in tabs"). Do the steps yourself, one at a time.');
     if (typeof this.browser.openTab !== 'function' || this.browser.background === true) throw new Error('Acting helpers need tabs, and this run has none of its own. Do the steps yourself.');
+    const AH = actingHelpers();
     const emit = gate.emit || (() => {});
     const signal = gate.signal || scope.signal || new AbortController().signal;
     const chat = scope.chat;
-    const { tasks, dropped } = actingHelpers().cleanTasks(input);
+    const { tasks, dropped } = AH.cleanTasks(input);
+    // [shared tabs] An existing tab named by tab_id must be one the chat could switch to itself (switch_tab's rules): listed, and not
+    // worked in by another chat's run.
+    for (const id of new Set(tasks.filter((t) => t.tabId != null).map((t) => t.tabId))) {
+      this.foreignTabCheck([id]);
+      const listed = agentTabList(this.browser.listTabs?.() || []).some((t) => t.id === id) && this.browser.tabById?.(id);
+      if (!listed) throw new Error(`No tab with id ${id}. Call list_tabs for the ids, or leave tab_id out to give the helper a new tab.`);
+      if (this.tabBusyElsewhere(id)) throw new Error(TAB_BUSY);
+    }
     const own = chat.settings?.model || this.getOptions().model || DEFAULT_MODEL;
     const used = { model: subagents.helperModel(own, this.browser.subagentModel?.() === 'same' ? 'same' : 'auto') };
     const turn = this.helperTurn({ chat, emit, signal, own, used });
@@ -5095,6 +5108,17 @@ ${prompt}` : prompt), historyImages: [] };
       Object.assign(st, patch);
       try { emit({ type: 'helper_card', key: st.key, n, task: st.task.slice(0, 160), status: st.status, step: st.step, tabId: st.tabId }); } catch { /* a closed view: the helper carries on */ }
     };
+    // [shared tabs] The tab each helper works in: a group per tab (tasks with one tabKey share it; a task without one has a group of its own).
+    // lock: the tab's lock (acting-helpers.js createTabLock); reads: how many times a helper rebuilt the tab's element ids (frame ids' staleness).
+    const groups = new Map();
+    tasks.forEach((t, i) => {
+      const n = i + 1;
+      const key = t.tabKey || `own:${n}`;
+      if (!groups.has(key)) groups.set(key, { key, tabId: t.tabId, existing: t.tabId != null, shared: false, members: [], lock: AH.createTabLock(), reads: 0, opening: null, start: t.urls[0] || '' });
+      const g = groups.get(key);
+      g.members.push(n);
+      g.shared = g.members.length > 1;
+    });
     tasks.forEach((t, i) => {
       const n = i + 1;
       const ctl = new AbortController();
@@ -5103,42 +5127,102 @@ ${prompt}` : prompt), historyImages: [] };
       const key = `${call}:${n}`;
       this.helperStops.set(key, ctl);
       t.signal = ctl.signal;
-      states.set(n, { key, task: t.task, status: 'starting', step: '', tabId: null, scope: null, ctl, release: () => { signal.removeEventListener('abort', onStop); this.helperStops.delete(key); } });
+      states.set(n, { key, task: t.task, status: 'starting', step: '', tabId: null, scope: null, ctl, group: groups.get(t.tabKey || `own:${n}`), seen: 0, release: () => { signal.removeEventListener('abort', onStop); this.helperStops.delete(key); } });
     });
-    // The helper's own tab, opened on its first tool call: behind the user's tab, marked as the AI's (the run's), in the run's window.
-    // A tab this chat already opened on the helper's site and no longer works in (an earlier helper's, a step's) is used again instead.
+    const scopeOf = (n, tabId) => ({ ...scope, chat: null, helper: true, actingHelper: n, tabId, gate: null, hosts, tainted: chatTaint, appOnly: false, idsFresh: false, fullPage: false, aboutPage: false, skill: null });
+    const helperEmitOf = (n) => (e) => { const out = AH.labelEvent(e, n); if (out) emit(out); };
+    // A new tab, opened on the group's first tool call: behind the user's tab, marked as the AI's (the run's), in the run's window. A tab
+    // this chat already opened on the helper's site and no longer works in (an earlier helper's, a step's) is used again instead.
     const claimed = new Set();
-    const tabFor = (st, n) => {
-      if (st.scope) return st.scope;
-      const start = tasks[n - 1]?.urls?.[0] || '';
+    const openTabFor = (start) => {
       let tab = null;
       if (start) { try { tab = this.browser.idleAiTab?.(start, { chatId: scope.chatId, exclude: claimed }) || null; } catch { tab = null; } }
       if (!tab) tab = taskScope.run({ ...scope, gate: null, helper: true }, () => this.browser.openTab(undefined, { ai: true, show: false }));
-      if (tab?.id != null) claimed.add(tab.id);
       if (!tab || tab.id == null) throw new Error('Could not open a tab for this helper.');
-      st.scope = { ...scope, chat: null, helper: true, actingHelper: n, tabId: tab.id, gate: null, hosts, tainted: chatTaint, appOnly: false, idsFresh: false, fullPage: false, aboutPage: false, skill: null };
+      claimed.add(tab.id);
+      return tab.id;
+    };
+    // The group's tab, ready to work in. A shared new tab is opened at the group's url once, by the first helper that calls a tool, under
+    // that helper's site approval (its card is marked with its number); the group's other helpers wait for it.
+    const groupTab = (g, n, helperSignal) => {
+      if (g.opening) return g.opening;
+      if (g.tabId != null) return Promise.resolve(g.tabId);
+      if (!g.shared) { g.tabId = openTabFor(g.start); return Promise.resolve(g.tabId); }
+      g.opening = (async () => {
+        const id = openTabFor(g.start);
+        g.tabId = id;
+        const opener = scopeOf(n, id);
+        opener.signal = helperSignal;
+        this.scopes.add(opener);
+        try {
+          await taskScope.run(opener, async () => {
+            await this.ensureAllowed('navigate', helperEmitOf(n), helperSignal, { input: { url: g.start }, who, hosts, run: opener });
+            await this.execute('navigate', { url: g.start });
+          });
+        } finally { this.scopes.delete(opener); }
+        return id;
+      })().catch((err) => { throw new Error(`The shared tab could not open ${hostOf(g.start)}: ${String(err?.message || err).split('\n')[0]}`); });
+      g.opening.catch(() => {}); // (each helper's call awaits it and reports the error itself)
+      return g.opening;
+    };
+    const scopeFor = async (st, n, helperSignal) => {
+      if (st.scope) return st.scope;
+      const id = await groupTab(st.group, n, helperSignal);
+      if (st.scope) return st.scope;
+      st.scope = scopeOf(n, id);
       this.scopes.add(st.scope); // tab sleeping leaves it alone (usingTab), and a close keeps it while the helper works (runTabIds)
-      card(n, { tabId: tab.id });
+      card(n, { tabId: id });
       return st.scope;
     };
+    const tabHost = (id) => { try { return hostOf(this.browser.tabById?.(id)?.webContents.getURL() || ''); } catch { return ''; } };
+    // A shared tab's call: under the tab's lock, with this helper's own element ids swapped in (helperRegistry) for a call that may use or
+    // rebuild them. The site approval was asked before the lock; a page that moved to another site meanwhile is not acted on.
+    const sharedCall = (st, name, args, hostBefore) => (AH.lockKind(name) === 'none' ? this.execute(name, args) : st.group.lock.run(AH.lockKind(name), async () => {
+      const g = st.group;
+      if (st.ctl.signal.aborted) throw new (sdk().APIUserAbortError)();
+      const hostNow = tabHost(g.tabId);
+      if (hostBefore !== hostNow) throw new Error(`The shared page moved to ${hostNow || 'another page'} while you waited. Call read_page and try again.`);
+      if (AH.frameRefsStale(args, st.seen, g.reads)) throw new Error('Another helper read this page since your last read, and ids inside embedded frames are shared. Call find or read_page again.');
+      const swap = AH.lockKind(name) === 'write';
+      if (swap) {
+        try { await this.helperRegistry(g.tabId, st.key, 'load'); } catch { throw new Error('Could not load your element ids in the shared tab. Call read_page again.'); }
+      }
+      try {
+        return await this.execute(name, args);
+      } finally {
+        if (swap) await Promise.resolve().then(() => this.helperRegistry(g.tabId, st.key, 'save')).catch(() => {});
+        if (AH.REREADS.has(name)) { g.reads++; st.seen = g.reads; }
+      }
+    }));
     const exec = async (name, raw, { helper: n, signal: helperSignal }) => {
       const st = states.get(n);
-      const args = actingHelpers().prepareInput(name, raw);
+      const args = AH.prepareInput(name, raw, tasks[n - 1]);
       const problem = validateInput(name, args);
       if (problem) throw new Error(`INVALID_INPUT: ${problem}`);
-      const hs = tabFor(st, n);
+      const hs = await scopeFor(st, n, helperSignal);
       hs.signal = helperSignal;
-      const helperEmit = (e) => { const out = actingHelpers().labelEvent(e, n); if (out) emit(out); };
       return taskScope.run(hs, async () => {
         card(n, { status: 'working', step: await this.describeStep(name, args) });
         try {
-          await this.ensureAllowed(name, helperEmit, helperSignal, { input: args, who, hosts, run: hs });
-          return await this.execute(name, args);
+          const hostBefore = st.group.shared ? tabHost(st.group.tabId) : null;
+          await this.ensureAllowed(name, helperEmitOf(n), helperSignal, { input: args, who, hosts, run: hs });
+          return st.group.shared ? await sharedCall(st, name, args, hostBefore) : await this.execute(name, args);
         } catch (err) {
-          if (toolError(err) === TAB_CLOSED) st.ctl.abort(); // the user closed the helper's tab: that helper stops
+          if (toolError(err) === TAB_CLOSED) for (const m of st.group.members) states.get(m).ctl.abort(); // the user closed the helper's tab: its helpers stop
           throw err;
         }
       });
+    };
+    // A helper that did not finish gets its tab closed at once (it may hold a signed-in page half done); a finished one's tab is left to
+    // "When the AI finishes" (closeAiTabs). A shared tab waits for all of its helpers, and a tab the chat named by tab_id is never closed.
+    const closeTab = (st) => {
+      const g = st.group;
+      if (g.existing || g.tabId == null || g.closed) return;
+      const done = g.members.map((m) => states.get(m));
+      if (done.some((m) => !m.ended)) return;
+      if (done.every((m) => m.status === 'done')) return;
+      g.closed = true;
+      try { taskScope.run({ ...scope, gate: null, helper: true }, () => this.browser.closeTab?.(g.tabId)); } catch { /* already closed */ }
     };
     const onEvent = (e) => {
       const st = states.get(e.n);
@@ -5146,27 +5230,39 @@ ${prompt}` : prompt), historyImages: [] };
       if (e.type === 'start') card(e.n, { status: 'working' });
       else if (e.type === 'done') {
         card(e.n, { status: e.status, step: '' });
+        st.ended = true;
         st.release();
         if (st.scope) this.scopes.delete(st.scope);
-        if (e.status !== 'done') closeTab(st); // stopped, failed or out of time: its tab may hold a signed-in page half done
+        closeTab(st);
       }
-    };
-    // A helper that did not finish gets its tab closed at once; a finished one's tab is left to "When the AI finishes" (closeAiTabs).
-    const closeTab = (st) => {
-      if (st.tabId == null || st.closed) return;
-      st.closed = true;
-      try { taskScope.run({ ...scope, gate: null, helper: true }, () => this.browser.closeTab?.(st.tabId)); } catch { /* already closed */ }
     };
     const limits = this.browser.subagentLimits?.() || {};
     let results;
     try {
-      results = await actingHelpers().runAll({ tasks, turn, exec, signal, tools: actHelperToolDefs(), maxSteps: limits.maxSteps, timeMs: limits.timeMs, onEvent });
+      results = await AH.runAll({ tasks, turn, exec, signal, tools: actHelperToolDefs(), maxSteps: limits.maxSteps, timeMs: limits.timeMs, onEvent });
     } finally {
       for (const st of states.values()) { st.release(); if (st.scope) this.scopes.delete(st.scope); }
       if ([...states.values()].some((st) => st.scope)) this.markTainted(gate.run); // what the helpers saw on their pages is now in this chat
+      if ([...groups.values()].some((g) => g.tabId != null && g.tabId === scope.tabId)) scope.idsFresh = false; // helpers re-read the chat's own tab: its ids are theirs now
     }
     if (signal.aborted) throw new (sdk().APIUserAbortError)();
-    return actingHelpers().formatResults(results.map((r) => ({ ...r, tabId: states.get(r.n)?.tabId ?? null })), { dropped, model: used.model === own ? '' : authorName(used.model) });
+    return AH.formatResults(results.map((r) => {
+      const t = tasks[r.n - 1];
+      return { ...r, tabId: states.get(r.n)?.tabId ?? null, section: t.section, shared: t.shared, fixed: t.fixed };
+    }), { dropped, model: used.model === own ? '' : authorName(used.model) });
+  }
+
+  // [shared tabs] Each helper in a shared tab keeps its own element-id list: read_page and find rebuild the page's one list
+  // (window.__claudeEls, page-scripts.js), so before a helper's call its list is put back ('load') and after it the list is kept ('save').
+  // Runs in Claude's isolated world, where the list lives; a page that reloaded has none, so old ids fail as gone.
+  async helperRegistry(tabId, key, op) {
+    const wc = this.browser.tabById?.(tabId)?.webContents;
+    if (!wc || wc.isDestroyed?.()) throw new Error(TAB_CLOSED);
+    const k = JSON.stringify(String(key));
+    const code = op === 'load'
+      ? `(() => { const kept = window.__lumenHelperEls || {}; window.__claudeEls = kept[${k}] || []; return true; })()`
+      : `(() => { (window.__lumenHelperEls = window.__lumenHelperEls || {})[${k}] = window.__claudeEls || []; return true; })()`;
+    return runScript(wc, code, 3000);
   }
   // ---- [/acting helpers]
 

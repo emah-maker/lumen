@@ -100,7 +100,7 @@ function createLimiter(total) {
 // The acting helpers (ai/acting-helpers.js) use the same loop with their own `system`, `allowed` tools, `refusal` text and
 // `answerChars`; `sequential` runs one tool call at a time (they act in one tab), and `images` keeps a screenshot's picture
 // in the helper's history (only the newest one: older pictures are dropped to a line of text).
-async function runHelper({ n, task, urls = [], turn, exec, tools, signal, maxSteps = MAX_STEPS, timeMs = TIME_MS, now = Date.now, onStep = () => {}, onUsage = () => {}, limited = createLimiter(READ_SLOTS), system = SYSTEM, allowed = isHelperTool, refusal = REFUSAL, answerChars = ANSWER_CHARS, sequential = false, images = false, prompt = promptFor }) {
+async function runHelper({ n, task, urls = [], turn, exec, tools, signal, maxSteps = MAX_STEPS, timeMs = TIME_MS, now = Date.now, onStep = () => {}, onUsage = () => {}, limited = createLimiter(READ_SLOTS), system = SYSTEM, allowed = isHelperTool, refusal = REFUSAL, answerChars = ANSWER_CHARS, sequential = false, images = false, prompt = promptFor, meta = null }) {
   const ctrl = new AbortController();
   const outer = () => ctrl.abort();
   if (signal?.aborted) return { status: 'stopped', text: '', steps: 0, calls: 0 };
@@ -108,7 +108,7 @@ async function runHelper({ n, task, urls = [], turn, exec, tools, signal, maxSte
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeMs);
   const began = now();
-  const messages = [{ role: 'user', content: prompt(task, urls) }];
+  const messages = [{ role: 'user', content: prompt(task, urls, meta || {}) }]; // meta: the task as the caller cleaned it (acting-helpers.js promptFor: a shared tab, a section)
   const repeats = new RepeatDetector();
   let steps = 0;
   let calls = 0;
@@ -178,7 +178,7 @@ async function runHelpers({ tasks, turn, exec, signal, tools, maxSteps, timeMs, 
     const n = i + 1;
     onEvent({ type: 'start', n, task: t.task });
     const result = await runHelper({
-      ...options, n, task: t.task, urls: t.urls || [], turn, exec, tools, signal: t.signal || signal, maxSteps, timeMs, now, limited, onUsage,
+      ...options, n, task: t.task, urls: t.urls || [], meta: t, turn, exec, tools, signal: t.signal || signal, maxSteps, timeMs, now, limited, onUsage,
       onStep: (s) => onEvent({ type: 'step', ...s, task: t.task }),
     });
     onEvent({ type: 'done', n, task: t.task, ...result });
