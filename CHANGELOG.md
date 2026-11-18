@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.104 (2026-11-18)
+
 - **The new-tab page no longer flickers its sections once a minute.** The clock's minute redraw made Favorites and Privacy play their fade-in again, which kept the GPU busy for about a second each minute on an idle new tab. Now only the first paint animates, so an idle new tab uses about 0.5% GPU instead of 2.5–3%. Test: `test/e2e/igpu-perf.js`.
 
 ## 0.5.103 (2026-11-18)
