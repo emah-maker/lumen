@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.102 (2026-11-17)
+
 - **Fixed: a chat you left while its reply was running came back without its card.** Switching to another tab or chat and back used to show only your message and the working line, so the reply looked lost. Its steps, its card (Browser, Files, rating, agents), pictures and files now come back as they were, and the reply carries on in them.
 - **Codex can use its own sub-agents, and each one shows on the reply's Agents card.** Lumen used to stop Codex with an error when it started a sub-agent. Now the card shows what each sub-agent is doing, live, the way Claude Code's subagents show: its task, a clock, its tool calls, its current step and its summary. Sub-agents get only Lumen's tools, work on the same Lumen tabs as the chat, and a shell command or another server's tool from one still stops the reply.
 - **Codex gets each model's full context window: 828k on gpt-6-astra instead of 258k.** Lumen now asks Codex for the largest window the model supports, not its smaller default. A fuller conversation counts for more of your plan's limit per message.
