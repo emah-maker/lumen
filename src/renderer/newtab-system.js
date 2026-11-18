@@ -26,6 +26,7 @@
   let parts = {};
   let opts = { header: true };
   let raw = [];
+  let placed = false; // (the first place() is the page's first paint: only its sections play the entrance)
   let lastStacked = null;
 
   const stackedNow = () => WL.metrics(document.documentElement.clientWidth).cols === 1;
@@ -110,6 +111,11 @@
         docked.push(part.section);
       }
     }
+    // Every render builds the sections anew (newtab.js section()); a new <section> would play the page's entrance (newtab.html: rise) again, so
+    // after the first paint they come in still. (The widgets' minute tick redraws the page: it made Favorites and Privacy fade in from nothing once a
+    // minute, a second of full-window frames at the display's rate on a page that is otherwise at rest: test/e2e/igpu-perf.js.)
+    if (placed) for (const s of docked) s.style.animation = 'none';
+    placed = true;
     sectionsEl.replaceChildren(...docked);
     // Cards that are no longer free (or shown) go.
     for (const [id, card] of wrappers) {
