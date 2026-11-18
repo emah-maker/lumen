@@ -58,6 +58,8 @@ const helpersAuto = lazy(() => require('./helpers-auto')); // delegate in Auto m
 const subagents = require('./subagents'); // delegate: read-only helpers that work side by side on a cheaper model
 let actingLib = null; // [acting helpers] parallel_tasks: helpers that act side by side, each in a background tab of its own (ai/acting-helpers.js, loaded on first use)
 const actingHelpers = () => (actingLib ||= require('./acting-helpers'));
+const agentTags = () => require('../features/agent-tags'); // [agent cursors] which helper or sub-agent a call is from
+const CURSOR_TOOLS = new Set(['click', 'type_text', 'fill_form', 'hover', 'scroll', 'drag']); // calls that show the agent's cursor where they acted
 const research = require('./research-tools'); // [research] find_sources (scholarly APIs) and research_board (the chat's source list)
 const memoryLib = require('./memory'); // [memory] saved memory across chats: the system prompt's block and the memory tool
 const postAnalysis = { run: (input) => require('./post-analysis').run(input) }; // [research pack] analyze_posts: outliers vs each account's median, local math (loaded with the first call)
@@ -564,7 +566,7 @@ const CLI_DELEGATE_TOOL = {
   input_schema: DELEGATE_TOOL.input_schema,
 };
 // [acting helpers] parallel_tasks (ai/acting-helpers.js) is for the sidebar's API chats only, like delegate, and only while Settings → AI →
-// "Let helpers act in tabs" (actingHelpers, off by default) is on. Not listed to MCP clients or the CLI engines (they have their own subagents).
+// "Let helpers act in tabs" (actingHelpers, on by default) is on. Not listed to MCP clients or the CLI engines (they have their own subagents).
 const PARALLEL_TASKS_TOOL = {
   name: 'parallel_tasks',
   description: 'Run 1-3 browser jobs at once, each by a helper in its own background tab (navigate, click, type, fill forms; never buys, sends or submits). Same share name: one tab together (url once); tab_id: an open tab; section: each helper\'s part. Returns each report.',
@@ -5201,7 +5203,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (problem) throw new Error(`INVALID_INPUT: ${problem}`);
       const hs = await scopeFor(st, n, helperSignal);
       hs.signal = helperSignal;
-      return taskScope.run(hs, async () => {
+      return agentTags().run(agentTags().tagOf(st.key, n), () => taskScope.run(hs, async () => {
         card(n, { status: 'working', step: await this.describeStep(name, args) });
         try {
           const hostBefore = st.group.shared ? tabHost(st.group.tabId) : null;
@@ -5211,7 +5213,7 @@ ${prompt}` : prompt), historyImages: [] };
           if (toolError(err) === TAB_CLOSED) for (const m of st.group.members) states.get(m).ctl.abort(); // the user closed the helper's tab: its helpers stop
           throw err;
         }
-      });
+      }));
     };
     // A helper that did not finish gets its tab closed at once (it may hold a signed-in page half done); a finished one's tab is left to
     // "When the AI finishes" (closeAiTabs). A shared tab waits for all of its helpers, and a tab the chat named by tab_id is never closed.
@@ -7409,7 +7411,23 @@ ${wordRule(this.filesInApps(), 'word')}`;
   // [ai controls] Also checks the per-site AI switch before and after the tool (the page may have
   // moved to such a site), and records what the outermost call changed in a sidebar run's log.
   async execute(name, input) {
-    return tabMarker.neutralize(await this.executeRaw(name, input)); // [tab chips] page text (a title, a quote) can never read as a [[tab:ID]] marker
+    const out = await this.executeRaw(name, input);
+    const tag = agentTags().current();
+    if (tag && CURSOR_TOOLS.has(name)) this.agentCursor(tag, input); // [agent cursors] (not awaited: a cursor never slows the call)
+    return tabMarker.neutralize(out); // [tab chips] page text (a title, a quote) can never read as a [[tab:ID]] marker
+  }
+
+  // [agent cursors] A helper's or sub-agent's cursor, in its own color with its name, moved to the element it just acted on
+  // (page-scripts.js agentCursor). Ids inside embedded frames are skipped: the cursor is drawn in the top page only.
+  agentCursor(tag, input) {
+    try {
+      const ids = actingHelpers().refIds(input);
+      const id = ids[ids.length - 1];
+      if (!id || id >= actingHelpers().FRAME_ID_BASE) return;
+      const wc = this.taskTab()?.webContents;
+      if (!wc || wc.isDestroyed?.()) return;
+      runScript(wc, scripts.agentCursor(id, tag), 2000).catch(() => {});
+    } catch { /* no tab: no cursor */ }
   }
 
   async executeRaw(name, input) {

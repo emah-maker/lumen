@@ -9847,7 +9847,7 @@ const agent = new Agent({
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI → helpers: the delegate tool is offered; which model they use (agent.js delegate)
-  actingHelpers: () => readSettings().actingHelpers === true, // [acting helpers] Settings → AI → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
+  actingHelpers: () => readSettings().actingHelpers !== false, // [acting helpers] Settings → AI → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
   idleAiTab: inRun((url, { chatId = null, exclude = new Set() } = {}) => { // [ai tabs] a helper's site already open in a tab this chat opened and no longer works in: the helper uses that one (agent.js parallelTasks)
     const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
     const want = hostOf(url);

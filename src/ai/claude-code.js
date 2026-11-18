@@ -1062,6 +1062,7 @@ class ClaudeCodeEngine {
         if (msg.message?.usage && !msg.parent_tool_use_id && msg.message.model !== '<synthetic>') lastCall = msg.message.usage;
         for (const b of msg.message?.content || []) {
           if (b.type === 'tool_use' && b.id && !msg.parent_tool_use_id) pending.set(b.id, String(b.name || '').replace(/^mcp__lumen__/, ''));
+          if (b.type === 'tool_use' && msg.parent_tool_use_id && isLumenTool(b.name)) require('../features/agent-tags').note(b.name, b.input || {}, `cc:${msg.parent_tool_use_id}`); // [agent cursors] a subagent's call: its cursor on the page
           // [helpers] With full access Claude Code keeps its own Agent tool; what its subagent does shows as helper rows, like Lumen's own helpers.
           if (!proc.fullAccess || b.type !== 'tool_use' || isLumenTool(b.name) || !b.id || active.builtin.has(b.id)) continue;
           active.builtin.add(b.id);

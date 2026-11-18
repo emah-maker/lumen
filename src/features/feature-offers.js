@@ -72,8 +72,8 @@ const OFFERS = [
   // [extensions] which extension buttons the toolbar shows
   { id: 'extensionsToolbar', key: 'extensionsToolbar', since: '0.5.65', kind: 'choice', choices: ['pinned', 'all', 'none'], section: 'extensions-page' },
   // ---- 0.5.60
-  // [acting helpers] ai/acting-helpers.js: helpers that click and type side by side, each in a background tab
-  { id: 'helpers', key: 'actingHelpers', since: '0.5.60', value: true, kind: 'toggle', section: 'ai-helpers' },
+  // [acting helpers] ai/acting-helpers.js: helpers that click and type side by side, each in a background tab (a switch that ships on since 0.5.103)
+  { id: 'helpers', key: 'actingHelpers', since: '0.5.60', kind: 'toggle', section: 'ai-helpers' },
   // ---- 0.5.55
   // [memory] ai/memory.js: the sidebar AI keeps short notes about you between chats
   { id: 'memory', key: 'aiMemory', since: '0.5.55', value: true, kind: 'toggle', section: 'memory' },
