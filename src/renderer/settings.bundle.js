@@ -4117,11 +4117,55 @@ const note = h('span', { class: 'note', id: 'local-status', role: 'status' });
 const ask = h('span', { id: 'local-confirm-box' });
 const list = h('div', { class: 'list', id: 'local-models' });
 const toolsText = (m) => (m.tools === true ? tr('settings.local.tools', 'Can use tools') : m.tools === false ? tr('settings.local.chatOnly', 'Chat only') : tr('settings.local.toolsUnknown', 'Tools not known yet'));
+
+
+let lms = null;
+const bench = new Map();
+const busy = new Set();
+const kTokens = (n) => (n >= 1024 ? `${Math.round(n / 1024)}K` : String(n));
+const infoText = (m) => [m.loaded ? tr('settings.local.loaded', 'Loaded') : tr('settings.local.notLoaded', 'Not loaded'), m.arch, m.quant, m.format, m.context ? tr('settings.local.context', '{n} context', { n: kTokens(m.context) }) : null].filter(Boolean).join(' · ');
+const statsText = (s) => [
+s.tokensPerSecond != null ? tr('settings.local.tps', '{n} tokens/s', { n: s.tokensPerSecond.toFixed(1) }) : null,
+s.firstTokenSeconds != null ? tr('settings.local.ttft', 'first token in {n} s', { n: s.firstTokenSeconds.toFixed(2) }) : null,
+s.completionTokens != null && s.generationSeconds != null ? tr('settings.local.gen', '{n} tokens in {s} s', { n: s.completionTokens, s: s.generationSeconds.toFixed(2) }) : null,
+s.runtime ? `${s.runtime}${s.runtimeVersion ? ` ${s.runtimeVersion}` : ''}` : null,
+].filter(Boolean).join(' · ');
+const lmsRefresh = async () => {
+if (state.flavor !== 'lmstudio') { lms = null; return; }
+const r = await L.lmsStatus().catch(() => null);
+lms = r?.ok ? r.models.filter((m) => !/embed/i.test(m.type || '')) : null;
+};
+const lmsAct = async (kind, id) => {
+busy.add(id);
+draw();
+flash(note, kind === 'load' ? tr('settings.local.loading', 'Loading {model}…', { model: id }) : kind === 'unload' ? tr('settings.local.unloading', 'Unloading {model}…', { model: id }) : tr('settings.local.testing', 'Testing {model}…', { model: id }), '');
+let r;
+try { r = await L[{ load: 'lmsLoad', unload: 'lmsUnload', bench: 'lmsBench' }[kind]](id); } catch (err) { r = { ok: false, error: String(err.message) }; }
+busy.delete(id);
+if (!r.ok) flash(note, r.error, 'err');
+else if (kind === 'bench') { bench.set(id, r.stats); flash(note, tr('settings.local.tested', '{model}: {stats}', { model: id, stats: statsText(r.stats) }), 'ok'); }
+else if (kind === 'load') flash(note, r.seconds != null ? tr('settings.local.loadedIn', 'Loaded {model} in {s} s.', { model: id, s: r.seconds.toFixed(1) }) : tr('settings.local.loadedDone', 'Loaded {model}.', { model: id }), 'ok');
+else flash(note, tr('settings.local.unloaded', 'Unloaded {model}.', { model: id }), 'ok');
+await lmsRefresh();
+draw();
+};
+const lmsItem = (m) => {
+const saved = state.models.find((x) => x.id === m.id);
+const tools = saved ? saved.tools : m.tools;
+const stats = bench.get(m.id);
+const wait = busy.has(m.id);
+return h('div', { class: 'item', 'data-model': m.id, 'data-loaded': String(m.loaded) },
+h('div', { class: 'grow' }, h('span', { text: m.id }), h('div', { class: 'note lms-info', text: infoText(m) }), ...(stats ? [h('div', { class: 'note lms-stats', text: statsText(stats) })] : [])),
+h('span', { class: 'note', text: toolsText({ tools }) }),
+h('button', { class: 'lms-load', text: m.loaded ? tr('settings.local.unload', 'Unload') : tr('settings.local.load', 'Load'), disabled: wait, onclick: () => lmsAct(m.loaded ? 'unload' : 'load', m.id) }),
+h('button', { class: 'lms-bench', text: tr('settings.local.test', 'Test speed'), title: tr('settings.local.testDesc', 'A short reply, to see how fast this model runs here. LM Studio loads it first if it isn’t loaded.'), disabled: wait, onclick: () => lmsAct('bench', m.id) }));
+};
 const draw = () => {
 flavor.value = state.flavor;
 url.value = state.url;
 url.placeholder = state.defaults[state.flavor];
 sw.checked = state.enabled;
+if (state.flavor === 'lmstudio' && lms && lms.length) { list.replaceChildren(...lms.map(lmsItem)); return; }
 list.replaceChildren(...(state.models.length
 ? state.models.map((m) => h('div', { class: 'item', 'data-model': m.id }, h('span', { class: 'grow', text: m.id }), h('span', { class: 'note', text: toolsText(m) })))
 : [h('span', { class: 'note', text: tr('settings.local.none', 'No models yet. Start the server, then press Detect.') })]));
@@ -4140,6 +4184,7 @@ return;
 if (!r.ok) { flash(note, r.error, 'err'); return; }
 state = { ...state, enabled: r.enabled, flavor: r.flavor, url: r.url, confirmedHost: r.confirmedHost, models: r.models };
 draw();
+lmsRefresh().then(draw);
 flash(note, kind === 'detect' ? (r.note || tr('settings.local.found', 'Found {n} on {server}.', { n: r.models.length === 1 ? tr('settings.local.one', '1 model') : tr('settings.local.many', '{n} models', { n: r.models.length }), server: state.names[state.flavor] })) : tr('settings.local.saved', 'Saved.'), 'ok');
 };
 sw.addEventListener('change', () => run('save'));
@@ -4152,6 +4197,20 @@ state = { ...state, flavor: flavor.value };
 run('save');
 });
 draw();
+
+
+(async () => {
+if (!state.models.length) {
+flash(note, tr('settings.local.autoLooking', 'Looking for LM Studio or Ollama on this computer…'), '');
+const r = await L.auto().catch(() => null);
+if (r?.ok && !r.skipped) {
+state = { ...state, flavor: r.flavor, url: r.url, confirmedHost: r.confirmedHost, models: r.models };
+flash(note, r.note || tr('settings.local.autoFound', 'Found {server} with {n}. Turn on Use local models to chat with them.', { server: state.names[r.flavor], n: r.models.length === 1 ? tr('settings.local.one', '1 model') : tr('settings.local.many', '{n} models', { n: r.models.length }) }), 'ok');
+} else flash(note, '', '');
+}
+await lmsRefresh();
+draw();
+})();
 const detect = h('button', { id: 'local-detect', text: tr('settings.local.detect', 'Detect'), onclick: () => run('detect') });
 return [
 row(tr('settings.local.use', 'Use local models'), tr('settings.local.useDesc', 'Chat with models that run on this computer through Ollama or LM Studio. No key, and nothing leaves this computer.'), sw),

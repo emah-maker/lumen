@@ -139,4 +139,116 @@ function isNoToolsError(err) {
   return /tool|function.?call/i.test(String(err.message || err.error?.message || '')) && /(support|capab|not (available|allowed|enabled)|invalid|unknown|unsupported)/i.test(String(err.message || err.error?.message || ''));
 }
 
-module.exports = { FLAVORS, DEFAULT_URLS, LABELS, isLoopbackHost, normalizeUrl, clean, allowed, baseURL, rootOf, detect, isNoToolsError };
+// ---- Auto-detect: which server is running on this computer at its usual address ----
+// Both default addresses are tried at once (loopback only, short timeout). The one with models wins; LM Studio before
+// Ollama when both answer, unless `prefer` names the other. { ok: true, flavor, url, models } | { ok: false, error }.
+const AUTO_TIMEOUT_MS = 1500;
+async function autoDetect({ prefer = 'lmstudio', fetchImpl = globalThis.fetch } = {}) {
+  const quick = (url, init = {}) => fetchImpl(url, { ...init, signal: AbortSignal.timeout(AUTO_TIMEOUT_MS) });
+  const order = prefer === 'ollama' ? ['ollama', 'lmstudio'] : ['lmstudio', 'ollama'];
+  const results = await Promise.all(order.map((flavor) => detect({ flavor, url: DEFAULT_URLS[flavor] }, { fetchImpl: quick }).then((r) => ({ flavor, ...r }))));
+  const running = results.filter((r) => r.ok);
+  const pick = running.find((r) => r.models.length) || running[0];
+  if (!pick) return { ok: false, error: 'Neither LM Studio nor Ollama is running at its usual address. Start one (in LM Studio, turn on its local server), then press Detect.' };
+  return { ok: true, flavor: pick.flavor, url: DEFAULT_URLS[pick.flavor], models: pick.models, ...(pick.note ? { note: pick.note } : {}) };
+}
+
+// ---- LM Studio: model loader and the stats it reports ----
+// /api/v0/models has every downloaded model with its state; /api/v1/models/load and /unload (LM Studio 0.4+) load and
+// free one; a short /api/v0/chat/completions returns LM Studio's own speed stats. Only for an allowed LM Studio address.
+const LOAD_TIMEOUT_MS = 180000;
+const BENCH_TIMEOUT_MS = 120000;
+const MODEL_ID = /^[^\s\u0000-\u001f]{1,200}$/;
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const str = (v) => (typeof v === 'string' && v ? v.slice(0, 200) : null);
+function lmGuard(cfg) {
+  const c = clean(cfg);
+  if (c.flavor !== 'lmstudio') return { error: 'This works with LM Studio only.' };
+  if (!allowed(c)) return { error: 'That address isn’t on this computer. Confirm it first if you mean to use it.' };
+  return { c, root: rootOf(c) };
+}
+const lmError = (err, what) => {
+  if (err?.status === 404 || err?.status === 405) return `This LM Studio can’t ${what} from other apps. Update LM Studio to 0.4 or newer, or do it in LM Studio.`;
+  if (err?.status) return `LM Studio answered with an error (${err.status}) when asked to ${what}.`;
+  if (err?.name === 'TimeoutError') return `LM Studio took too long to ${what}.`;
+  return 'Couldn’t reach LM Studio. Is its local server on?';
+};
+const post = (fetchImpl, url, body, timeoutMs) => getJson(fetchImpl, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, timeoutMs);
+
+// Every downloaded model and what LM Studio says about it.
+// { ok: true, models: [{ id, type, state, loaded, arch, quant, format, publisher, context, tools }] } | { ok: false, error }
+async function lmStudioStatus(cfg, { fetchImpl = globalThis.fetch } = {}) {
+  const g = lmGuard(cfg);
+  if (g.error) return { ok: false, error: g.error };
+  try {
+    const v0 = await getJson(fetchImpl, `${g.root}/api/v0/models`);
+    const models = (v0?.data || []).filter((m) => typeof m?.id === 'string' && MODEL_ID.test(m.id)).slice(0, MAX_MODELS).map((m) => ({
+      id: m.id,
+      type: str(m.type),
+      state: str(m.state),
+      loaded: m.state === 'loaded',
+      arch: str(m.arch),
+      quant: str(m.quantization),
+      format: str(m.compatibility_type),
+      publisher: str(m.publisher),
+      context: num(m.max_context_length),
+      tools: Array.isArray(m.capabilities) ? m.capabilities.includes('tool_use') : null,
+    }));
+    return { ok: true, models };
+  } catch (err) { return { ok: false, error: lmError(err, 'list its models') }; }
+}
+
+// Load one model into memory. contextLength is optional (LM Studio's own default otherwise).
+async function lmStudioLoad(cfg, model, { contextLength, fetchImpl = globalThis.fetch } = {}) {
+  const g = lmGuard(cfg);
+  if (g.error) return { ok: false, error: g.error };
+  if (typeof model !== 'string' || !MODEL_ID.test(model)) return { ok: false, error: 'Pick a model to load.' };
+  const body = { model, echo_load_config: true };
+  if (Number.isInteger(contextLength) && contextLength >= 512 && contextLength <= 4194304) body.context_length = contextLength;
+  try {
+    const r = await post(fetchImpl, `${g.root}/api/v1/models/load`, body, LOAD_TIMEOUT_MS);
+    return { ok: true, instanceId: str(r?.instance_id) || model, seconds: num(r?.load_time_seconds), context: num(r?.load_config?.context_length) };
+  } catch (err) { return { ok: false, error: lmError(err, 'load models') }; }
+}
+
+// Free one loaded model (its instance id is the model id unless it was loaded twice).
+async function lmStudioUnload(cfg, instanceId, { fetchImpl = globalThis.fetch } = {}) {
+  const g = lmGuard(cfg);
+  if (g.error) return { ok: false, error: g.error };
+  if (typeof instanceId !== 'string' || !MODEL_ID.test(instanceId)) return { ok: false, error: 'Pick a model to unload.' };
+  try {
+    await post(fetchImpl, `${g.root}/api/v1/models/unload`, { instance_id: instanceId }, 30000);
+    return { ok: true };
+  } catch (err) { return { ok: false, error: lmError(err, 'unload models') }; }
+}
+
+// A short reply, for the stats LM Studio reports with it: speed, time to first token, and the runtime it used.
+// (LM Studio loads a model that isn't loaded yet first, so a test right after can be slow.)
+async function lmStudioBenchmark(cfg, model, { fetchImpl = globalThis.fetch } = {}) {
+  const g = lmGuard(cfg);
+  if (g.error) return { ok: false, error: g.error };
+  if (typeof model !== 'string' || !MODEL_ID.test(model)) return { ok: false, error: 'Pick a model to test.' };
+  try {
+    const r = await post(fetchImpl, `${g.root}/api/v0/chat/completions`, { model, messages: [{ role: 'user', content: 'Count from 1 to 20, separated by spaces.' }], max_tokens: 64, temperature: 0, stream: false }, BENCH_TIMEOUT_MS);
+    const s = r?.stats || {};
+    return {
+      ok: true,
+      stats: {
+        tokensPerSecond: num(s.tokens_per_second),
+        firstTokenSeconds: num(s.time_to_first_token),
+        generationSeconds: num(s.generation_time),
+        stopReason: str(s.stop_reason),
+        promptTokens: num(r?.usage?.prompt_tokens),
+        completionTokens: num(r?.usage?.completion_tokens),
+        arch: str(r?.model_info?.arch),
+        quant: str(r?.model_info?.quant),
+        format: str(r?.model_info?.format),
+        context: num(r?.model_info?.context_length),
+        runtime: str(r?.runtime?.name),
+        runtimeVersion: str(r?.runtime?.version),
+      },
+    };
+  } catch (err) { return { ok: false, error: lmError(err, 'run a test reply') }; }
+}
+
+module.exports = { FLAVORS, DEFAULT_URLS, LABELS, isLoopbackHost, normalizeUrl, clean, allowed, baseURL, rootOf, detect, isNoToolsError, autoDetect, lmStudioStatus, lmStudioLoad, lmStudioUnload, lmStudioBenchmark };

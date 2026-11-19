@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Lumen finds LM Studio by itself, loads and unloads its models, and shows its speed stats.** Open Settings → AI → AI providers → Local with nothing set up, and Lumen looks for LM Studio or Ollama at their usual addresses and lists the running one's models (the Use local models switch stays as it was). With LM Studio, the list shows every downloaded model with its state, architecture, quantization, format and context size, a **Load** / **Unload** button (LM Studio 0.4 or newer), and **Test speed**, which shows tokens per second, time to first token and the runtime from a short reply. See [Local models](docs/local-models.md). Tests: `test/units/local-models-units.js`, `test/e2e/local-models.js`.
+
 ## 0.5.104 (2026-11-18)
 
 - **The new-tab page no longer flickers its sections once a minute.** The clock's minute redraw made Favorites and Privacy play their fade-in again, which kept the GPU busy for about a second each minute on an idle new tab. Now only the first paint animates, so an idle new tab uses about 0.5% GPU instead of 2.5–3%. Test: `test/e2e/igpu-perf.js`.
