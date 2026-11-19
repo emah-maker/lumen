@@ -11,11 +11,22 @@ Lumen can chat with AI models that run on your own computer, through **Ollama** 
 
 The address box starts with each server's usual address. Change it if your server listens somewhere else.
 
+**Found by itself.** The first time you open the Local section with no models listed, Lumen looks for LM Studio and Ollama at their usual addresses on this computer. If one is running, it picks that server and lists its models (LM Studio first when both run). The **Use local models** switch stays as it was, so the models join the model menu only when you turn it on. Nothing running is not an error: press **Detect** once you start a server.
+
+## LM Studio: load models and see their stats
+
+With **LM Studio** as the server, the list shows every model you have downloaded, not just the loaded ones. Each row says what LM Studio reports about it: **Loaded** or **Not loaded**, the architecture, the quantization (such as Q4_K_M), the format (GGUF or MLX) and the most context it takes.
+
+- **Load** puts the model in memory, and **Unload** frees it. Lumen says how long the load took. Loading needs LM Studio 0.4 or newer (`/api/v1/models/load` and `/unload`); with an older one, load models in LM Studio itself.
+- **Test speed** asks for a short reply and shows the stats LM Studio returns with it: tokens per second, time to the first token, how long the reply took, and the runtime it used (such as llama.cpp with Vulkan or CUDA). LM Studio loads the model first if it isn't loaded, so that first test can be slow.
+
+These only talk to the LM Studio address you saved, under the same rules as chat.
+
 ## Where messages go
 
 - Only `localhost`, `127.0.0.1` and `::1` addresses work. Type another address (a server on your network, say) and Lumen asks first: **Use this address anyway**. Once confirmed, your messages and the page text you share go to that host, so use it only for a server you run yourself. Lumen remembers that one host; any other address asks again.
 - Chat uses the OpenAI-compatible chat completions endpoint both servers offer (`/v1/chat/completions`, streamed).
-- **Detect** reads the server's own list: `/api/tags` (and `/api/show` for what each model can do) for Ollama, `/v1/models` (and `/api/v0/models`) for LM Studio. Lumen does not ask the server for anything at startup; the list is the one Detect last saved.
+- **Detect** reads the server's own list: `/api/tags` (and `/api/show` for what each model can do) for Ollama, `/v1/models` (and `/api/v0/models`) for LM Studio. Lumen does not ask the server for anything at startup; the list is the one Detect last saved. Opening the Local section with no models saved tries both usual addresses once (see **Found by itself**).
 
 ## Tools and plain chat
 

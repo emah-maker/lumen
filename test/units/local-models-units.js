@@ -53,9 +53,17 @@ const chat = (req, res, body) => {
     if (req.url === '/v1/chat/completions') return chat(req, res, body);
     json(res, { error: 'not found' }, 404);
   });
+  const lmLoaded = new Set();
   const lmstudio = await serve((req, res, body) => {
     if (req.url === '/v1/models') return json(res, { data: [{ id: 'qwen2.5-7b-instruct' }, { id: 'text-embedding-nomic' }, { id: 'old-model' }] });
-    if (req.url === '/api/v0/models') return json(res, { data: [{ id: 'qwen2.5-7b-instruct', type: 'llm', capabilities: ['tool_use'] }, { id: 'text-embedding-nomic', type: 'embeddings' }, { id: 'old-model', type: 'llm', capabilities: [] }] });
+    if (req.url === '/api/v0/models') return json(res, { data: [{ id: 'qwen2.5-7b-instruct', type: 'llm', capabilities: ['tool_use'], arch: 'qwen2', quantization: 'Q4_K_M', compatibility_type: 'gguf', publisher: 'lmstudio-community', state: lmLoaded.has('qwen2.5-7b-instruct') ? 'loaded' : 'not-loaded', max_context_length: 32768 }, { id: 'text-embedding-nomic', type: 'embeddings' }, { id: 'old-model', type: 'llm', capabilities: [] }] });
+    if (req.url === '/api/v1/models/load') {
+      if (body.model === 'too-big') return json(res, { error: { message: 'not enough memory' } }, 500);
+      lmLoaded.add(body.model);
+      return json(res, { type: 'llm', instance_id: body.model, load_time_seconds: 2.5, status: 'loaded', load_config: { context_length: body.context_length || 4096 } });
+    }
+    if (req.url === '/api/v1/models/unload') { lmLoaded.delete(body.instance_id); return json(res, { instance_id: body.instance_id }); }
+    if (req.url === '/api/v0/chat/completions') return json(res, { model: body.model, choices: [{ message: { role: 'assistant', content: '1 2 3' } }], usage: { prompt_tokens: 14, completion_tokens: 40 }, stats: { tokens_per_second: 51.4, time_to_first_token: 0.11, generation_time: 0.78, stop_reason: 'eosFound' }, model_info: { arch: 'qwen2', quant: 'Q4_K_M', format: 'gguf', context_length: 32768 }, runtime: { name: 'llama.cpp-win-x86_64-vulkan', version: '1.50.0' } });
     if (req.url === '/v1/chat/completions') return chat(req, res, body);
     json(res, {}, 404);
   });
@@ -94,6 +102,45 @@ const chat = (req, res, body) => {
   const none = await lm.detect({ flavor: 'ollama', url: `http://127.0.0.1:${empty.port}` });
   check('a server with no models says what to do', none.ok && none.models.length === 0 && /ollama pull/.test(none.note), JSON.stringify(none));
   empty.server.close();
+
+  // ---- Auto-detect: the usual addresses, sent to the fake servers (or to the closed port, for "not running") ----
+  const sendTo = (map) => (url, init) => {
+    let u = String(url);
+    for (const [from, to] of Object.entries(map)) if (u.startsWith(from)) u = to + u.slice(from.length);
+    return fetch(u, init);
+  };
+  const deadRoot = `http://127.0.0.1:${deadPort}`;
+  const both = await lm.autoDetect({ fetchImpl: sendTo({ 'http://127.0.0.1:1234': `http://127.0.0.1:${lmstudio.port}`, 'http://127.0.0.1:11434': ollamaUrl }) });
+  check('auto-detect picks LM Studio when both are running, at its usual address', both.ok && both.flavor === 'lmstudio' && both.url === lm.DEFAULT_URLS.lmstudio && both.models.length === 2, JSON.stringify(both));
+  const preferOllama = await lm.autoDetect({ prefer: 'ollama', fetchImpl: sendTo({ 'http://127.0.0.1:1234': `http://127.0.0.1:${lmstudio.port}`, 'http://127.0.0.1:11434': ollamaUrl }) });
+  check('auto-detect keeps Ollama when it was the choice and both run', preferOllama.ok && preferOllama.flavor === 'ollama' && preferOllama.url === lm.DEFAULT_URLS.ollama, JSON.stringify(preferOllama));
+  const onlyOllama = await lm.autoDetect({ fetchImpl: sendTo({ 'http://127.0.0.1:1234': deadRoot, 'http://127.0.0.1:11434': ollamaUrl }) });
+  check('auto-detect falls back to Ollama when LM Studio is off', onlyOllama.ok && onlyOllama.flavor === 'ollama' && onlyOllama.models.length === 3, JSON.stringify(onlyOllama));
+  const neither = await lm.autoDetect({ fetchImpl: sendTo({ 'http://127.0.0.1:1234': deadRoot, 'http://127.0.0.1:11434': deadRoot }) });
+  check('auto-detect with nothing running says so plainly', neither.ok === false && /Neither LM Studio nor Ollama/.test(neither.error), JSON.stringify(neither));
+
+  // ---- LM Studio: model loader and stats ----
+  const lmCfg = { flavor: 'lmstudio', url: lmUrl };
+  const st = await lm.lmStudioStatus(lmCfg);
+  const qwen = st.ok && st.models.find((m) => m.id === 'qwen2.5-7b-instruct');
+  check('LM Studio status lists every model with its state, architecture, quantization and context', qwen && qwen.loaded === false && qwen.arch === 'qwen2' && qwen.quant === 'Q4_K_M' && qwen.format === 'gguf' && qwen.context === 32768 && qwen.tools === true && st.models.length === 3, JSON.stringify(st));
+  const loaded = await lm.lmStudioLoad(lmCfg, 'qwen2.5-7b-instruct', { contextLength: 8192 });
+  const loadReq = seen.filter((r) => r.url === '/api/v1/models/load').pop();
+  check('Load asks /api/v1/models/load and reports the time and context', loaded.ok && loaded.seconds === 2.5 && loaded.context === 8192 && loadReq.body.model === 'qwen2.5-7b-instruct' && loadReq.body.context_length === 8192, JSON.stringify(loaded));
+  check('a loaded model shows as loaded', (await lm.lmStudioStatus(lmCfg)).models.find((m) => m.id === 'qwen2.5-7b-instruct').loaded === true);
+  const unloaded = await lm.lmStudioUnload(lmCfg, 'qwen2.5-7b-instruct');
+  check('Unload frees it', unloaded.ok && (await lm.lmStudioStatus(lmCfg)).models.find((m) => m.id === 'qwen2.5-7b-instruct').loaded === false, JSON.stringify(unloaded));
+  const failed = await lm.lmStudioLoad(lmCfg, 'too-big');
+  check('a failed load says so in plain words', failed.ok === false && /error \(500\)/.test(failed.error), JSON.stringify(failed));
+  const b = await lm.lmStudioBenchmark(lmCfg, 'qwen2.5-7b-instruct');
+  check('Test speed returns LM Studio\'s stats', b.ok && b.stats.tokensPerSecond === 51.4 && b.stats.firstTokenSeconds === 0.11 && b.stats.completionTokens === 40 && b.stats.runtime === 'llama.cpp-win-x86_64-vulkan' && b.stats.quant === 'Q4_K_M', JSON.stringify(b));
+  const old = await serve((req, res) => json(res, {}, 404));
+  const noLoader = await lm.lmStudioLoad({ flavor: 'lmstudio', url: `http://127.0.0.1:${old.port}/v1` }, 'x');
+  check('an LM Studio without the load endpoint asks for an update', noLoader.ok === false && /0\.4 or newer/.test(noLoader.error), JSON.stringify(noLoader));
+  old.server.close();
+  const before3 = seen.length;
+  const guarded = [await lm.lmStudioStatus({ flavor: 'ollama', url: ollamaUrl }), await lm.lmStudioLoad({ flavor: 'lmstudio', url: 'http://192.168.1.20:1234/v1' }, 'x'), await lm.lmStudioBenchmark(lmCfg, 'bad id'), await lm.lmStudioUnload(lmCfg, '')];
+  check('the loader refuses Ollama, an unconfirmed remote address and bad model ids, without a request', guarded.every((r) => r.ok === false) && seen.length === before3, JSON.stringify(guarded));
 
   // ---- the provider ----
   let cfg = { enabled: true, flavor: 'ollama', url: ollamaUrl, confirmedHost: '', models: found.models };

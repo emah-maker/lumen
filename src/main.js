@@ -14079,6 +14079,36 @@ ipcMain.handle('settings:local-detect', async (_e, input) => {
   await refreshModels('local');
   return { ...found, ...localState() };
 });
+// Auto-detect: when Local has no models yet, look for LM Studio or Ollama at their usual addresses and fill in the one that
+// answers. The switch is left as it was: finding a server doesn't put its models in every picker.
+ipcMain.handle('settings:local-auto', async () => {
+  const lm = require('./ai/local-models');
+  const cur = lm.clean(readSettings().localAI);
+  if (cur.models.length) return { ok: true, skipped: true, ...localState() };
+  if (TEST && !process.env.LUMEN_TEST_LOCAL_AUTODETECT) return { ok: false, skipped: true }; // a test run never finds the tester's own LM Studio
+  const found = await lm.autoDetect({ prefer: cur.flavor === 'ollama' && cur.url !== lm.DEFAULT_URLS.ollama ? 'ollama' : 'lmstudio', fetchImpl: require('./browser/net-fetch').netFetch() });
+  if (!found.ok) return found;
+  writeSettings({ ...readSettings(), localAI: { ...cur, flavor: found.flavor, url: found.url, confirmedHost: '', models: found.models } });
+  await refreshModels('local');
+  return { ...found, ...localState() };
+});
+// LM Studio's model loader and stats, against the saved address (never one the page passes in).
+ipcMain.handle('settings:local-lms-status', async () => {
+  const lm = require('./ai/local-models');
+  return lm.lmStudioStatus(readSettings().localAI, { fetchImpl: require('./browser/net-fetch').netFetch() });
+});
+ipcMain.handle('settings:local-lms-load', async (_e, model) => {
+  const lm = require('./ai/local-models');
+  return lm.lmStudioLoad(readSettings().localAI, model, { fetchImpl: require('./browser/net-fetch').netFetch() });
+});
+ipcMain.handle('settings:local-lms-unload', async (_e, id) => {
+  const lm = require('./ai/local-models');
+  return lm.lmStudioUnload(readSettings().localAI, id, { fetchImpl: require('./browser/net-fetch').netFetch() });
+});
+ipcMain.handle('settings:local-lms-bench', async (_e, model) => {
+  const lm = require('./ai/local-models');
+  return lm.lmStudioBenchmark(readSettings().localAI, model, { fetchImpl: require('./browser/net-fetch').netFetch() });
+});
 ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
   if (!providers.PROVIDERS[provider]) return false;
   let unverified = false;
