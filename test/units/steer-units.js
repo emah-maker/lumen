@@ -148,7 +148,13 @@ const toolModel = (rounds, during = () => {}) => {
     const m = [];
     m.settings = { model: 'codex:default' };
     agent.runs.set(m, { controller: new AbortController(), steers: steer.createBox() });
-    check('steer: Codex takes nothing mid-run (it waits for the reply to end, and the view says so)', J(agent.steer(m, { uid: 'x', text: 'hi' })) === J({ ok: false, why: 'engine' }));
+    check('steer: Codex takes it for its next step (its kept app-server sends it with turn/steer: codex-warm-units.js)', J(agent.steer(m, { uid: 'x', text: 'hi' })) === J({ ok: true, state: 'waiting' }));
+    for (const model of ['grokbuild:default', 'antigravity:default']) {
+      const g = [];
+      g.settings = { model };
+      agent.runs.set(g, { controller: new AbortController(), steers: steer.createBox() });
+      check(`steer: ${model.split(':')[0]} takes nothing mid-run (it waits for the reply to end, and the view says so)`, J(agent.steer(g, { uid: 'x', text: 'hi' })) === J({ ok: false, why: 'engine' }));
+    }
     m.settings.model = 'claudecode:default';
     agent.runs.get(m).noSteer = true; // (Auto sent this message to Grok Build, Antigravity or Codex)
     check('steer: nor does a run that went to one of them', agent.steer(m, { uid: 'x', text: 'hi' }).why === 'engine');

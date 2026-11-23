@@ -56,6 +56,7 @@ const codexUsage = require('../ai/codex-usage');
 const locate = require('../ai/codex-locate');
 const { validModel } = require('../ai/cli-utils');
 const { removeDir } = require('../ai/temp-dirs');
+const { wrap: steerWrap } = require('../ai/steer');
 
 const IDLE_MS = 15 * 60 * 1000;
 const SPARE_IDLE_MS = 3 * 60 * 1000; // a process started ahead of a message nobody sent yet
@@ -66,6 +67,9 @@ const CANCEL_WAIT_MS = 5000; // Stop: how long an interrupted turn may take to e
 const QUIT_GRACE_MS = 2000; // stdin closed: time to flush before the process is killed
 const EXIT_WAIT_MS = 8000; // a headless run in the same home waits this long at most for an ending process
 const modeOf = (fullAccess) => (fullAccess === true ? 'full' : 'locked');
+// [mid-run messages] Items that are a tool call at work: a message the user typed goes in (turn/steer) while one of these runs, as for Claude Code.
+const TOOL_ITEMS = new Set(['mcpToolCall', 'commandExecution', 'fileChange', 'webSearch', 'dynamicToolCall', 'collabAgentToolCall', 'imageView']);
+const STEER_TIMEOUT_MS = 10000;
 const FAILURES_BEFORE_GIVING_UP = 2; // consecutive start failures: this Codex gets headless runs only until Lumen restarts
 // Notifications Lumen never reads (the connection opts out of them: less to parse).
 const OPT_OUT = ['remoteControl/status/changed', 'account/rateLimits/updated', 'thread/status/changed', 'account/updated', 'skills/changed', 'item/reasoning/textDelta', 'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded', 'item/commandExecution/outputDelta', 'item/fileChange/outputDelta', 'turn/diff/updated', 'turn/plan/updated'];
@@ -351,7 +355,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
 
   // One message through the chat's kept process. Resolves codex.js run()'s result, or null when this message must go through
   // a headless run instead (nothing was sent to Codex then).
-  async function run({ chatId, prompt, images = [], sessionId, systemPrompt, model = 'default', effort = '', fullAccess = false, signal, emit, runAgent = null, scope = null }) {
+  async function run({ chatId, prompt, images = [], sessionId, systemPrompt, model = 'default', effort = '', fullAccess = false, signal, emit, runAgent = null, scope = null, steers = null }) {
     fullAccess = fullAccess === true;
     if (!enabled()) { disposeAll(); return null; }
     if (chatId == null || failures >= FAILURES_BEFORE_GIVING_UP) { stats.fallbacks++; return null; }
@@ -378,7 +382,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     p.used = ++used;
     clearTimeout(p.idle);
     if (signal.aborted) { p.busy = false; idleLater(p, idleMs()); return { text: '', sessionId: p.threadId, stopped: true }; }
-    const out = await turn(p, { prompt, resume, systemPrompt, images, model, effort, signal, emit, runAgent, scope });
+    const out = await turn(p, { prompt, resume, systemPrompt, images, model, effort, signal, emit, runAgent, scope, steers });
     p.busy = false;
     if (out.keep && live(p)) idleLater(p, idleMs());
     else dispose(p, { now: true });
@@ -387,7 +391,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
   }
 
   // The turn itself (turn/start), mapped to the result a headless run gives. keep: whether the process may stay.
-  async function turn(p, { prompt, resume, systemPrompt, images, model, effort, signal, emit, runAgent, scope = null }) {
+  async function turn(p, { prompt, resume, systemPrompt, images, model, effort, signal, emit, runAgent, scope = null, steers = null }) {
     const { tag, threadId } = p;
     if (p.turns === 0) { try { engine.onFresh?.({ sessionId: threadId, resume }); } catch { /* optional */ } }
     p.turns++;
@@ -437,6 +441,25 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       text += delta;
       emit({ type: 'text', text: delta });
     };
+    // [mid-run messages] (ai/steer.js) What the user typed while this turn runs: a turn/steer request while one of its tool calls is out, which
+    // Codex reads at its next model call (the same turn). Never while the final reply streams (no tool call out): those wait for the next
+    // message. Written, it can no longer be taken back; accepted, it is in the chat; refused (the turn ended first), it waits again.
+    const tools = new Set(); // ids of this turn's tool items still at work
+    let steering = null; // the turn/steer request in flight
+    const pump = () => {
+      if (!steers || steering || over || offItem || !started || !turnId || status !== null || signal.aborted || p.exited || tools.size === 0) return;
+      const got = steers.take();
+      if (!got.length) return;
+      try { steers.written?.(got); } catch { /* said on screen only */ }
+      const input = got.map((e) => ({ type: 'text', text: steerWrap(e.text), text_elements: [] }));
+      steering = p.rpc.request('turn/steer', { threadId, expectedTurnId: turnId, input }, STEER_TIMEOUT_MS).then((res) => {
+        steering = null;
+        if (res?.error) { try { steers.giveBack?.(got); } catch { /* lost: the view sends it next */ } return; }
+        try { steers.delivered(got); } catch { /* said on screen only */ }
+        pump(); // (more may have come in meanwhile)
+      });
+    };
+    if (steers) steers.pump = pump;
     p.onNote = (method, params) => {
       if (over || offItem) return;
       if (params.threadId !== threadId) { // [sub-agents] a sub-agent's own thread: checked like the parent's, its tool calls counted on its row
@@ -463,6 +486,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
         const item = params.item || {};
         const bad = offItemOf(item, { fullAccess: p.full });
         if (bad) { offItem = bad; kill(); finish('off'); return; }
+        if (TOOL_ITEMS.has(String(item.type || '')) && item.id != null) { if (method === 'item/started') { tools.add(String(item.id)); pump(); } else tools.delete(String(item.id)); } // [mid-run messages]
         if (item.type === 'collabAgentToolCall' || item.type === 'subAgentActivity') { sayAgents(subs.feed(threadId, item)); return; }
         if (method === 'item/completed' && /compaction|compacted/i.test(String(item.type || ''))) { compacted = true; emit({ type: 'codex_compacted' }); }
         if (item.type === 'agentMessage' && method === 'item/completed' && typeof item.text === 'string') { shownText.set(String(item.id), item.text); say(String(item.id), item.text); }
@@ -521,6 +545,8 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
         await ended; // turn/completed, the process ending, or the watchdog
       }
     } finally {
+      if (steering) await steering; // [mid-run messages] its answer says whether the message went into this turn
+      if (steers) steers.pump = null;
       sayAgents(subs.finish(stopAsked || offItem || status === 'interrupted' ? 'stopped' : status === 'failed' ? 'failed' : 'done'));
       over = true;
       p.onNote = null;

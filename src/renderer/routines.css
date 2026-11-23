@@ -51,6 +51,7 @@
   background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out;
 }
 .msg.assistant:has(> .reply-regen) .reply-routine { right: 46px; opacity: 0.75; }
+.msg.assistant:has(> .reply-regen.labeled) .reply-routine { right: 124px; } /* left of the labeled Regenerate (styles.css) */
 .msg.assistant .reply-routine svg { width: 13px; height: 13px; }
 .msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
 .msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }

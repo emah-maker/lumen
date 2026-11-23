@@ -49,6 +49,11 @@ body.cp-temporary .composer { border: 1.5px dashed var(--accent); }
 .msg.assistant:hover .reply-retry, .msg.assistant:has(> .reply-regen):hover .reply-retry, .msg.assistant .reply-retry:focus-visible { opacity: 1; }
 .msg.assistant.reply-actions-only .reply-retry { position: static; opacity: 0.75; }
 .msg.assistant .reply-retry svg { width: 16px; height: 16px; }
+/* the latest reply's labeled Regenerate is wider (styles.css): Retry and Read aloud move over */
+.msg.assistant:has(> .reply-regen.labeled) .reply-retry { right: calc(52px + var(--regen-extra)); }
+.msg.assistant:has(> .reply-regen.labeled) .reply-speak { right: calc(80px + var(--regen-extra)); }
+.msg.assistant:has(> .reply-regen.labeled) .reply-meta { max-width: calc(100% - 210px); }
+.msg.assistant.reply-actions-only .reply-retry { right: auto; }
 .msg.assistant .reply-retry:is(:hover, :focus-visible)::after { content: attr(aria-label); position: absolute; bottom: calc(100% + 4px); right: 0; z-index: var(--z-tip); white-space: nowrap; padding: var(--sp-1) var(--sp-4); border-radius: 7px; background: var(--card, var(--field)); color: var(--text); font-size: 11.5px; box-shadow: 0 4px 14px -4px rgba(0,0,0,.28), 0 0 0 0.5px var(--border); pointer-events: none; }
 .reply-speak:hover, .reply-retry:hover { background: var(--hover); color: var(--text); }
 .reply-speak.on { color: var(--accent); }

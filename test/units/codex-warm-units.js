@@ -7,7 +7,7 @@
 // first message, streamed deltas, Stop / Send now interrupting the turn and keeping the process (and a process that ignores
 // the interrupt being killed), Lumen's checks (config.toml, environment, approval answers, items that aren't Lumen's tools,
 // the watchdog), the fallbacks to a headless run (no app-server, a thread Codex doesn't know, MCP not connected), a changed
-// sign-in, idle timeout, the process cap, dropChat / disposeAll, images, usage.
+// sign-in, idle timeout, the process cap, dropChat / disposeAll, images, usage, and [mid-run messages] (turn/steer while a tool call runs).
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const fs = require('fs');
 const os = require('os');
@@ -90,6 +90,7 @@ function fakeCodex() {
           return undefined;
         }
         case 'account/rateLimits/read': return reply(m.id, { rateLimits: { limitId: 'codex', primary: { usedPercent: 99, windowDurationMins: 300, resetsAt: 1 }, secondary: null, planType: 'free' }, rateLimitsByLimitId: { codex: { limitId: 'codex', primary: { usedPercent: 23, windowDurationMins: 10080, resetsAt: 4102444800 }, secondary: null, planType: 'plus' } } });
+        case 'turn/steer': rec.steers = [...(rec.steers || []), p]; if (script.steerError || !rec.turn || rec.turn.id !== p.expectedTurnId) return fail(m.id, script.steerError || 'no active turn to steer'); return reply(m.id, { turnId: p.expectedTurnId });
         case 'turn/interrupt': rec.notes.push(m); reply(m.id, {}); if (rec.turn && !script.ignoreInterrupt) { const t = rec.turn; t.interrupted = true; rec.turn = null; setImmediate(() => note('turn/completed', { threadId: t.threadId, turn: { id: t.id, status: 'interrupted', error: null } })); } return undefined;
         case 'turn/start': {
           const text = p.input?.[0]?.text;
@@ -180,11 +181,11 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
     engine.keepWarm = warmLib.createCodexWarm({ engine, enabled: () => state.on, idleMs: () => state.idleMs, maxProcs, cancelWaitMs, readyWaitMs, quitGraceMs: 100 });
     return { fake, engine, state, pool: engine.keepWarm, userData, fakeGate };
   };
-  const send = async (engine, { prompt = 'hi', sessionId = null, chatId = 'chat-a', systemPrompt = 'SYS', model = 'default', effort = '', fullAccess = false, images = [], signal = new AbortController().signal, quietExpired = false } = {}) => {
+  const send = async (engine, { prompt = 'hi', sessionId = null, chatId = 'chat-a', systemPrompt = 'SYS', model = 'default', effort = '', fullAccess = false, images = [], signal = new AbortController().signal, quietExpired = false, steers = null } = {}) => {
     const events = [];
     const t0 = Date.now();
     let ttft = null;
-    const out = await engine.run({ prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, quietExpired, scope: { chatId }, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
+    const out = await engine.run({ prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, quietExpired, steers, scope: { chatId }, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
     return { out, events, ttft, ms: Date.now() - t0 };
   };
 
@@ -555,6 +556,63 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
       const h = noApp.fake.headless()[0];
       check('full: a headless run says --sandbox danger-full-access (never the bypass flag), whole environment, empty folder, config with the sandbox off', h.argv.includes('danger-full-access') && !h.argv.includes('read-only') && !h.argv.some((a) => /bypass|dangerously|full-auto/.test(a)) && h.opts.env.LUMEN_TEST_SECRET === 'visible-only-with-full-access' && /lumen-cx-/.test(h.opts.cwd) && /sandbox_mode = "danger-full-access"/.test(fs.readFileSync(path.join(cx.chatHomeFor(noApp.userData, 'chat-a'), 'config.toml'), 'utf8')), J(h.argv));
       delete process.env.LUMEN_TEST_SECRET;
+    }
+
+    // ---- [mid-run messages] what the user types while a turn runs goes in with turn/steer while a tool call is out (as for Claude Code)
+    {
+      const steerLib = require('../../src/ai/steer');
+      const mkSteers = () => {
+        const box = steerLib.createBox();
+        const log = { written: [], delivered: [], off: 0 };
+        return { box, log, steers: { pump: null, take: () => box.take(), giveBack: (e) => box.giveBack(e), written: (e) => log.written.push(...e.map((x) => x.uid)), delivered: (e) => log.delivered.push(...e.map((x) => x.uid)), off: () => { log.off++; } } };
+      };
+      // a turn with one tool call: the message waits for it, goes in while it runs, and the turn goes on
+      const toolTurn = (hold) => ({ rec, tid, id, say, item, done }) => {
+        setImmediate(async () => {
+          say('msg-1', 'Checking. ');
+          item('item/started', { type: 'mcpToolCall', id: 'call-1', server: 'lumen', tool: 'read_page', status: 'inProgress' });
+          await hold(rec);
+          item('item/completed', { type: 'mcpToolCall', id: 'call-1', server: 'lumen', tool: 'read_page', status: 'completed' });
+          say('msg-2', 'Done.');
+          done();
+        });
+      };
+      const { fake, engine } = setup();
+      const s = mkSteers();
+      s.box.add({ uid: 'u1', text: 'also check the price' });
+      fake.script.turn = toolTurn((rec) => until(() => rec.steers?.length, 1000));
+      const one = await send(engine, { steers: s.steers });
+      const rec = fake.apps()[0];
+      const st = rec.steers?.[0];
+      check('steer: a message typed before the tool call goes in once, with turn/steer on the running turn, framed as sent mid-work', rec.steers?.length === 1 && st.expectedTurnId === 'turn-1' && st.threadId === one.out.sessionId && st.input.length === 1 && st.input[0].type === 'text' && st.input[0].text === steerLib.wrap('also check the price'), J(rec.steers));
+      check('steer: it is written (no taking it back), then delivered (in the chat), and the box is empty', J(s.log.written) === '["u1"]' && J(s.log.delivered) === '["u1"]' && s.box.size === 0 && s.box.wasSent('u1') && s.log.off === 0, J(s.log));
+      check('steer: the turn goes on in the same process and its reply is whole', one.out.text === 'Checking. \n\nDone.' && !one.out.failed && fake.apps().length === 1 && rec.prompts.length === 1, J(one.out));
+      // one typed while the tool call runs: the engine's pump sends it at once
+      const s2 = mkSteers();
+      fake.script.turn = toolTurn(async (r) => { await sleep(30); s2.box.add({ uid: 'u2', text: 'mid-tool' }); s2.steers.pump(); await until(() => r.steers?.length === 2, 1000); });
+      await send(engine, { sessionId: one.out.sessionId, steers: s2.steers });
+      check('steer: a message typed while a tool call runs goes in right away (pump)', rec.steers?.length === 2 && rec.steers[1].expectedTurnId === 'turn-2' && J(s2.log.delivered) === '["u2"]', J(s2.log));
+      // no tool call: nothing goes in mid-reply; the message waits for the next one, as before
+      const s3 = mkSteers();
+      s3.box.add({ uid: 'u3', text: 'later' });
+      fake.script.turn = null;
+      await send(engine, { sessionId: one.out.sessionId, steers: s3.steers });
+      check('steer: a turn with no tool call takes nothing mid-reply (the message is left waiting for the next one)', rec.steers.length === 2 && s3.box.size === 1 && !s3.log.written.length && !s3.log.delivered.length, J(s3.log));
+      // Codex refuses the steer (the turn could not take it): it waits again, never shown as sent
+      const s4 = mkSteers();
+      s4.box.add({ uid: 'u4', text: 'refused' });
+      fake.script.steerError = 'activeTurnNotSteerable';
+      fake.script.turn = toolTurn((r) => until(() => r.steers?.length === 3, 1000));
+      const four = await send(engine, { sessionId: one.out.sessionId, steers: s4.steers });
+      fake.script.steerError = null;
+      check('steer: a refused turn/steer gives the message back (waiting again, not delivered) and the turn still ends well', rec.steers.length === 3 && s4.box.size === 1 && !s4.box.wasSent('u4') && !s4.log.delivered.length && !four.out.failed, J({ log: s4.log, out: four.out }));
+      // no app-server: the headless run takes nothing mid-run and says so (off)
+      const cold = setup();
+      cold.fake.script.appServer = false;
+      const s5 = mkSteers();
+      s5.box.add({ uid: 'u5', text: 'x' });
+      const five = await send(cold.engine, { steers: s5.steers });
+      check('steer: a headless codex exec run calls off() and sends nothing mid-run (the message waits for the next one)', five.out.text === 'cold reply' && s5.log.off === 1 && s5.box.size === 1 && !s5.log.written.length, J(s5.log));
     }
 
     // ---- a headless run in the chat's home waits for / replaces a kept process
