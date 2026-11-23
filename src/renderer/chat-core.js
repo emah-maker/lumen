@@ -1202,7 +1202,7 @@ function queueUp(entry) {
   return entry;
 }
 // [mid-run messages] Words typed while the reply runs go to it at its next step (ai/steer.js), as in Claude Code: "Queued · goes in at the AI's
-// next step", then "Sent to the AI while it worked" once it did (steered). An AI that takes nothing mid-reply (Codex, Grok Build, Antigravity) keeps
+// next step", then "Sent to the AI while it worked" once it did (steered). An AI that takes nothing mid-reply (Grok Build, Antigravity, a headless Codex run) keeps
 // it for the next message, and the bubble says so. Pictures, files, "@" tabs and a screen always wait for the next message.
 const steerChat = (entry) => entry.chatId || shownChatId || undefined;
 function steerOut(entry) {
@@ -2551,11 +2551,13 @@ const REGEN_ICON = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" 
 const CHECK_ICON = '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></svg>';
 
 // Regenerate: asks the latest message again. A turn that acted on pages (clicks, typing) would do so again:
-// the first click says so, the second runs it.
+// the first click says so, the second runs it. It has its word beside the icon and is always shown (labeled, styles.css): an icon alone,
+// dimmed until hover, was easy to miss.
 function regenButton() {
-  const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen', title: t('chat.regenerate') });
+  const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen labeled', title: t('chat.regenerate') });
   regen.setAttribute('aria-label', t('chat.regenerate'));
   regen.innerHTML = REGEN_ICON;
+  regen.append(Object.assign(document.createElement('span'), { className: 'regen-label', textContent: t('chat.regenerateShort') }));
   // A turn that acted on pages (clicks, typing) would do so again: the first click says so, the second runs it.
   regen.onclick = () => {
     const users = messages.querySelectorAll('.msg.user');

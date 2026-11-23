@@ -2248,7 +2248,7 @@ class Agent {
   steer(messages, entry) {
     const rec = this.runs.get(messages);
     if (!rec?.steers || rec.settling || rec.controller.signal.aborted) return { ok: false };
-    if (rec.noSteer || /^(codex|grokbuild|antigravity):/.test(String(messages.settings?.model))) return { ok: false, why: 'engine' };
+    if (rec.noSteer || /^(grokbuild|antigravity):/.test(String(messages.settings?.model))) return { ok: false, why: 'engine' }; // (Codex: its kept process takes them, codexTurn; a headless Codex run says no, steers.off)
     const state = rec.steers.add(entry);
     if (!state) return { ok: false };
     if (state === 'waiting') { try { rec.pump?.(); } catch { /* it goes at the step after */ } }
@@ -2260,7 +2260,7 @@ class Agent {
     if (!rec?.steers) return true;
     return rec.steers.remove(uid) || !rec.steers.wasSent(uid);
   }
-  // Codex, Grok Build and Antigravity take no input mid-run (Auto may route a message to one): what the user types waits for the reply to end.
+  // Grok Build, Antigravity and a headless Codex run take no input mid-run (Auto may route a message to one): what the user types waits for the reply to end.
   noSteerFor(messages) {
     const rec = this.runs?.get(messages);
     if (rec) rec.noSteer = true;
@@ -3633,7 +3633,20 @@ class Agent {
   // since are handed over in front of the next message, and a fresh thread is handed the whole chat (authorName "Codex" labels its replies).
   async codexTurn(messages, prompt, images, signal, emit) {
     const settings = messages.settings;
-    this.noSteerFor(messages);
+    // [mid-run messages] What the user types while this turn runs goes in at its next step through the chat's kept `codex app-server`
+    // (codex-warm.js turn/steer, while one of its tool calls runs), as for Claude Code. A headless `codex exec` run takes nothing mid-run:
+    // off() says so, and what waits goes as the next message, as before.
+    const rec = this.runs?.get(messages);
+    const steers = rec?.steers ? {
+      pump: null,
+      take: () => rec.steers.take(),
+      giveBack: (entries) => rec.steers.giveBack(entries),
+      written: (entries) => emit({ type: 'steer_written', uids: entries.map((e) => e.uid) }),
+      delivered: (entries) => { messages.push({ role: 'user', content: steerLib.blocksFor(entries) }); emit({ type: 'steered', uids: entries.map((e) => e.uid) }); },
+      off: () => { rec.noSteer = true; },
+    } : null;
+    if (rec && steers) rec.pump = () => steers.pump?.();
+    else this.noSteerFor(messages);
     // [full access] Settings → AI (codex.js FULL_ON). The thread's system note rides on its first message only, so a change of the setting
     // starts a new thread (handed the chat so far, as after a model switch).
     const fullAccess = this.browser.codexFullAccess?.() === true;
@@ -3697,6 +3710,7 @@ ${prompt}` : prompt), historyImages: [] };
       effort: this.effortFor('codex', settings), // Settings → AI → AI providers: -c model_reasoning_effort
       signal,
       emit: codexEmit,
+      steers, // [mid-run messages]
     });
     let out = await runCodex(first, settings.cxSession || null, resume);
     if (out.expired && !signal.aborted) {

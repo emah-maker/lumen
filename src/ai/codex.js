@@ -475,17 +475,18 @@ class CodexEngine {
   // One message. Resolves { text, sessionId (Codex's thread id), stopped?, failed?, expired?, planLimit?, usage?, rateLimit?, model? };
   // errors are emitted, not thrown. sessionId: the chat's saved thread id, null on its first message.
   // quietExpired: a resumed thread Codex no longer has resolves { expired: true } without an error (the caller starts a new one).
-  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '', fullAccess = false, workDir = '' }) {
+  async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, quietExpired = false, effort = '', fullAccess = false, workDir = '', steers = null }) {
     fullAccess = fullAccess === true; // [full access] Settings → AI (codexFullAccess)
     // [work folder] a folder that is there: the run happens in it (the kept app-server below has no such folder, so it does not take the message)
     if (workDir) { try { if (!(await fs.promises.stat(workDir)).isDirectory()) workDir = ''; } catch { workDir = ''; } }
     // [keep connected] The chat's kept `codex app-server` (features/codex-warm.js) takes the message when it can: null means it did not
     // (setting off, no app-server, a thread it can't resume...), and nothing was sent, so a headless run below does it.
     if (this.keepWarm && scope?.chatId != null && !workDir) {
-      const warm = await this.keepWarm.run({ chatId: scope.chatId, prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, emit, runAgent, scope });
+      const warm = await this.keepWarm.run({ chatId: scope.chatId, prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, emit, runAgent, scope, steers });
       if (warm) return warm;
       this.keepWarm.dropChat(scope.chatId); // (the headless run rewrites this chat's config.toml: no kept process may be left on the old one)
     }
+    try { steers?.off?.(); } catch { /* optional */ } // [mid-run messages] `codex exec` takes nothing mid-run: what the user types waits for the reply's end
     const { spec, gate } = await this.prepare();
     if (!spec) {
       emit({ type: 'error', text: `Codex isn't installed. ${INSTALL_HINT}` });

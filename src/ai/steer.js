@@ -2,7 +2,8 @@
 // waiting for the whole reply to end. The view hands it over (main.js agent:steer); the run takes it at its next point that can take input:
 //   - API models (agent.js loop): after a round of tool calls, the messages waiting go in with the tool results, before the next model call
 //   - Claude Code (claude-code.js): a stream-json line on stdin while one of its tool calls runs; the CLI reads it at its next step
-// Codex, Grok Build and Antigravity take no input mid-run: their messages wait for the reply to end, as before (the view says so).
+//   - Codex in a kept `codex app-server` (features/codex-warm.js): a turn/steer request while one of its tool calls runs, read at its next step
+// Grok Build, Antigravity and a headless Codex run (`codex exec`) take no input mid-run: their messages wait for the reply to end, as before (the view says so).
 // Each message goes once, in the order it was typed; one taken back (Edit, ×) before it went is never sent. What is still waiting when the run
 // ends was never sent: the view sends it as the next message, as it always did (test/units/steer-units.js).
 

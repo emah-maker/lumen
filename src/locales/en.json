@@ -3037,6 +3037,7 @@
   "chat.jumpLatest": "Jump to latest",
   "chat.retry": "Try again",
   "chat.regenerate": "Regenerate reply",
+  "chat.regenerateShort": "Regenerate",
   "chat.copyCode": "Copy",
   "chat.copied": "Copied",
   "canvas.open": "Open in canvas",

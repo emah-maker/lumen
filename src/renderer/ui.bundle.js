@@ -6563,10 +6563,12 @@ const CHECK_ICON = '<svg viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></svg>'
 
 
 
+
 function regenButton() {
-const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen', title: t('chat.regenerate') });
+const regen = Object.assign(document.createElement('button'), { type: 'button', className: 'reply-regen labeled', title: t('chat.regenerate') });
 regen.setAttribute('aria-label', t('chat.regenerate'));
 regen.innerHTML = REGEN_ICON;
+regen.append(Object.assign(document.createElement('span'), { className: 'regen-label', textContent: t('chat.regenerateShort') }));
 
 regen.onclick = () => {
 const users = messages.querySelectorAll('.msg.user');

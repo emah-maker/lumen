@@ -123,7 +123,7 @@ The tables below give each setting's key in `settings.json` and its default. Edi
 | Let the AI use files on this computer | `aiDeviceAccess` | off | The AI can look in folders such as Desktop and Downloads, upload a file to a site you asked it to, and read the clipboard. Credentials folders and Lumen's own profile stay out of reach. |
 | Let Grok Build ask to run terminal commands | `grokTerminal` | on | Grok Build in the sidebar may ask to run a command (an approval card each time). Off: every call is denied without asking. |
 | Keep Grok Build connected | `grokKeepConnected` | off | Each Grok Build chat keeps its own process between messages, so replies start sooner (about 70 MB each while it waits). |
-| Keep Codex connected | `codexKeepConnected` | on | Each Codex chat keeps its own `codex app-server` between messages (about 80 MB each while it waits). |
+| Keep Codex connected | `codexKeepConnected` | on | Each Codex chat keeps its own `codex app-server` between messages (about 80 MB each while it waits). It is also what lets a message you type mid-reply reach Codex at its next step (`turn/steer`); with it off, that message waits for the reply to end. |
 | Stop an idle Grok Build, Codex or Claude Code after | `grokKeepIdleMinutes` | `15` | Minutes before a kept process that was not used ends; 0 is only when its chat goes. |
 | Show AI research in tabs | `researchTabs` | on | `web_search` and `read_urls` also open what they look at in background tabs, grouped "AI: <query>". |
 | Sidebar button starts a new chat | `sidebarNewChat` | on | The AI button (and `Ctrl+J`) opens the sidebar on a new empty chat (an empty open chat is reused). Off: it reopens the chat it had. |
