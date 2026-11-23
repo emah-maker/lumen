@@ -276,7 +276,8 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       p.dir = fs.mkdtempSync(path.join(engine.tmp, 'lumen-cx-')); // the working folder: empty
       engine.workDirs.add(p.dir);
       // No `model` line: the model is chosen per turn (turn/start), so a process serves any of the chat's messages.
-      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun, fullAccess, contextWindow: cx.maxWindowIn(engine.userHome()) }), { mode: 0o600 });
+      await cx.seedModelsCache({ userHome, home }); // [web search] (see codex.js searchOkFromCache)
+      await fs.promises.writeFile(path.join(home, 'config.toml'), cx.configFor({ run: gateRun, fullAccess, webSearch: cx.searchOkIn(home, 'default'), contextWindow: cx.maxWindowIn(engine.userHome()) }), { mode: 0o600 });
       const inv = locate.buildInvocation(spec, ['app-server']);
       const env = cx.buildEnv({ home, run: gateRun, extra: inv.options.envExtra || {}, fullAccess });
       p.child = engine.spawn(inv.file, inv.args, { shell: false, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env, cwd: p.dir, ...(inv.options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
@@ -356,6 +357,13 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     if (chatId == null || failures >= FAILURES_BEFORE_GIVING_UP) { stats.fallbacks++; return null; }
     const resume = Boolean(sessionId) && cx.SAFE_SESSION.test(sessionId);
     const key = cx.chatKey(chatId);
+    // [web search] A kept process with full access has Codex's web search on, for every model its cache lists. A model the cache doesn't
+    // list would get Codex's fallback metadata and a web_search tool the API refuses (400): the headless run takes it, with web search off.
+    if (fullAccess) {
+      const home = cx.chatHomeFor(engine.userData, chatId);
+      if (home) { await fs.promises.mkdir(home, { recursive: true, mode: 0o700 }).catch(() => {}); await cx.seedModelsCache({ userHome: engine.userHome(), home }); }
+      if (!home || !cx.searchOkIn(home, model)) { stats.fallbacks++; return null; }
+    }
     let p = await find({ key, sessionId, resume, mode: modeOf(fullAccess) });
     // The user's sign-in changed since this process copied it (a new login, or a token another Codex refreshed): start over.
     if (p && await userSignInChanged(p)) { p.busy = false; dispose(p); stats.restarts++; p = null; }

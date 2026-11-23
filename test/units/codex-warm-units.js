@@ -169,6 +169,7 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
   fs.mkdirSync(userHome);
   fs.mkdirSync(tmpDir);
   fs.writeFileSync(path.join(userHome, 'auth.json'), 'tok');
+  fs.writeFileSync(path.join(userHome, 'models_cache.json'), JSON.stringify({ fetched_at: '2026-11-23T13:09:59Z', models: [{ slug: 'gpt-6-luna', supports_search_tool: true }] })); // [web search] a signed-in Codex has one
   let n = 0;
   const setup = ({ on = true, idleMs = 60000, maxProcs = 4, cancelWaitMs = 2000, watchdogMs = 0, readyWaitMs = 300 } = {}) => {
     const fake = fakeCodex();
@@ -523,6 +524,16 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
       f2.fake.script.turn = ({ tid, id, item, note }) => { note('turn/started', { threadId: tid, turn: { id } }); item('item/started', { type: 'mcpToolCall', id: 'c3', server: 'github', tool: 'create_issue', status: 'inProgress' }); };
       const bad = await send(f2.engine, { sessionId: sid, fullAccess: true });
       check('full: another MCP server\'s tool is still refused', bad.out.failed && bad.events.some((e) => e.type === 'error' && /github\/create_issue/.test(e.text)));
+      // [web search] a model the cache doesn't list would get Codex's fallback metadata and a web_search tool the API refuses (400):
+      // the kept process doesn't take it; the headless run does, with web_search = "disabled". A listed one stays on the kept process.
+      const f3 = setup();
+      const listed = await f3.pool.run({ chatId: 'chat-ws', prompt: 'hi', sessionId: null, systemPrompt: 'S', model: 'gpt-6-luna', fullAccess: true, signal: new AbortController().signal, emit: () => {}, scope: { chatId: 'chat-ws' } });
+      const wsHome = cx.chatHomeFor(f3.userData, 'chat-ws');
+      check('web search: full access with a model the cache lists runs on the kept process with web search live, and the chat home has the user\'s cache', listed && !listed.failed && /web_search = "live"/.test(fs.readFileSync(path.join(wsHome, 'config.toml'), 'utf8')) && cx.searchOkIn(wsHome, 'gpt-6-luna'), J(listed));
+      const unlisted = await f3.pool.run({ chatId: 'chat-ws', prompt: 'hi', sessionId: null, systemPrompt: 'S', model: 'gpt-7-unknown', fullAccess: true, signal: new AbortController().signal, emit: () => {}, scope: { chatId: 'chat-ws' } });
+      check('web search: full access with a model the cache does not list is not taken by the kept process (the headless run turns web search off)', unlisted === null);
+      const off = await f3.pool.run({ chatId: 'chat-ws', prompt: 'hi', sessionId: null, systemPrompt: 'S', model: 'gpt-7-unknown', fullAccess: false, signal: new AbortController().signal, emit: () => {}, scope: { chatId: 'chat-ws' } });
+      check('web search: without full access (web search always disabled) any model stays on the kept process', off && !off.failed, J(off));
       const ans = warmLib.approvalAnswer;
       check('full: Codex\'s own approval requests are allowed once; locked-down ones stay declined', ans('item/commandExecution/requestApproval', {}, { fullAccess: true }).decision === 'accept' && ans('item/fileChange/requestApproval', {}, { fullAccess: true }).decision === 'accept' && ans('execCommandApproval', {}, { fullAccess: true }).decision === 'approved' && ans('item/commandExecution/requestApproval', {}).decision === 'decline' && ans('mcpServer/elicitation/request', { serverName: 'other' }, { fullAccess: true }).action === 'decline');
       const o = warmLib.offItemOf;

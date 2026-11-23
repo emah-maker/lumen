@@ -215,9 +215,51 @@ function maxWindowIn(userHome, model) {
   try { return maxWindowFromCache(fs.readFileSync(path.join(userHome, 'models_cache.json'), 'utf8'), model); } catch { return 0; }
 }
 
+// [web search] A model Codex has no metadata for gets "fallback model metadata": no Code Mode, and the plain `web_search` tool, which
+// the API refuses for the newer models ("The 'web_search' tool is not available for this request", 400 invalid_request_error). That
+// happened (2026-11-23, codex-cli 0.167.2, gpt-6.2-sol, full access): Codex's model-list refresh timed out, so it fell back to the chat
+// home's models_cache.json, which predated the model; every message failed. So web search is turned on (full access) only for a model
+// the cache Codex will read lists with search support: a named model must be a row (and not supports_search_tool: false), and the
+// default needs a cache at all. Otherwise web_search = "disabled" and the turn runs without Codex's own search (Lumen's web_search tool stays).
+function cacheRows(text) {
+  let json;
+  try { json = JSON.parse(String(text)); } catch { return null; }
+  const rows = Array.isArray(json) ? json : Array.isArray(json?.models) ? json.models : null;
+  return rows ? rows.filter((r) => r && typeof r === 'object') : null;
+}
+function searchOkFromCache(text, model = 'default') {
+  const rows = cacheRows(text);
+  if (!rows || !rows.length) return false;
+  if (model === 'default' || !model) return true;
+  const own = rows.find((r) => (r.slug || r.id) === model);
+  return Boolean(own) && own.supports_search_tool !== false;
+}
+function searchOkIn(home, model) {
+  try { return searchOkFromCache(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8'), model); } catch { return false; }
+}
+// [web search] Each chat has a Codex home of its own, whose models_cache.json Codex fetched on its own the last time a refresh worked.
+// The user's Codex home (where Lumen's model picker reads its list) often has a newer one, with models the chat's copy doesn't list.
+// Before a run, the user's copy goes into the chat's home when it was fetched later (fetched_at; mtimes don't say: a chat's copy may
+// be touched later than an older fetch) or the chat has none, so a model the picker offered is one this Codex knows even when its
+// refresh times out. True when it copied. Never throws.
+async function seedModelsCache({ userHome, home }) {
+  const from = path.join(userHome, 'models_cache.json');
+  const to = path.join(home, 'models_cache.json');
+  const fetched = (text) => { try { const t = Date.parse(JSON.parse(String(text))?.fetched_at); return Number.isFinite(t) ? t : 0; } catch { return 0; } };
+  try {
+    const src = await fs.promises.readFile(from, 'utf8');
+    if (!cacheRows(src)?.length) return false;
+    let dst = null;
+    try { dst = await fs.promises.readFile(to, 'utf8'); } catch { /* none yet */ }
+    if (dst !== null && cacheRows(dst)?.length && fetched(dst) >= fetched(src)) return false;
+    await authSync.copyAtomic(from, to, await fs.promises.stat(from), { mkdir: false });
+    return true;
+  } catch { return false; }
+}
+
 // config.toml of a run's Codex home (see ISOLATION and WHAT THE MODEL MAY DO above). run: { mcpUrl } from Lumen's HTTP MCP server;
 // bridge: { command, args, env } + tag, for the stdio form (LUMEN_CODEX_MCP=stdio). Nothing secret is in the file.
-function configFor({ model = 'default', run = null, bridge = null, userData = null, tag = null, fullAccess = false, contextWindow = 0 } = {}) {
+function configFor({ model = 'default', run = null, bridge = null, userData = null, tag = null, fullAccess = false, contextWindow = 0, webSearch = true } = {}) {
   const lines = [
     '# Written by Lumen before every message: a Codex home of Lumen\'s own. Edits are overwritten.',
     ...(model !== 'default' && validModel(model) ? [`model = ${q(model)}`] : []),
@@ -225,7 +267,7 @@ function configFor({ model = 'default', run = null, bridge = null, userData = nu
     `sandbox_mode = "${fullAccess ? 'danger-full-access' : 'read-only'}"`,
     'approval_policy = "never"',
     'check_for_update_on_startup = false',
-    `web_search = "${fullAccess ? 'live' : 'disabled'}"`,
+    `web_search = "${fullAccess && webSearch ? 'live' : 'disabled'}"`, // [web search] see searchOkFromCache
     '',
     '[features]',
     ...OFF_FEATURES.filter((k) => !(fullAccess && FULL_ON.includes(k))).map((k) => `${k} = false`),
@@ -467,7 +509,8 @@ class CodexEngine {
     try {
       const stdio = process.env.LUMEN_CODEX_MCP === 'stdio' && this.bridge;
       if (stdio) this.ensureServer?.();
-      await fs.promises.writeFile(path.join(home, 'config.toml'), configFor({ model, run: gateRun, fullAccess, contextWindow: maxWindowIn(userHome, model), ...(stdio ? { bridge: this.bridge(), userData: this.userData, tag } : {}) }), { mode: 0o600 });
+      await seedModelsCache({ userHome, home }); // [web search]
+      await fs.promises.writeFile(path.join(home, 'config.toml'), configFor({ model, run: gateRun, fullAccess, webSearch: searchOkIn(home, model), contextWindow: maxWindowIn(userHome, model), ...(stdio ? { bridge: this.bridge(), userData: this.userData, tag } : {}) }), { mode: 0o600 });
       const imageFiles = [];
       for (const [i, img] of images.slice(0, 8).entries()) {
         const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }[img.media_type];
@@ -679,4 +722,4 @@ class CodexEngine {
 // A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
 CodexEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
 
-module.exports = { maxWindowFromCache, maxWindowIn, BUNDLED_SKILLS, itemImagePaths, CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };
+module.exports = { maxWindowFromCache, maxWindowIn, searchOkFromCache, searchOkIn, seedModelsCache, BUNDLED_SKILLS, itemImagePaths, CodexEngine, chatKey, exitsOf, SAFE_SESSION, chatHomeFor, chatsDirFor, removeChatHome, pruneChatHomes, pullAuth, returnAuth, copyIfNewer, AUTH_FILES, buildArgs, buildEnv, configFor, FULL_ON, FULL_WATCHDOG_MS, promptFor, parseEvent, offItemOf, describeFailure, modelsFromCache, tierFor, pretty, FALLBACK_MODELS, TOKEN_ENV, WATCHDOG_MS, INSTALL_HINT, SIGN_IN_HINT, killTree };

@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Codex chats with full access no longer stop with "The 'web_search' tool is not available for this request".** When Codex couldn't refresh its model list, it didn't recognize a newly released model (such as GPT-6.2 Sol). It then sent OpenAI a web-search tool that the model refuses, so every message failed. Now each chat's Codex gets the newer model list from your own Codex folder, and Codex's own web search is turned on only for models that list includes. Test: `test/units/codex-engine-units.js`, `test/units/codex-warm-units.js`.
 - **The AI using another app pauses only when you click or type in it.** Moving the mouse over Word (or any app the AI is using) used to pause it with "You took over. Resume?". Now only a click or typing in the app pauses it. On Windows, dragging the app's window by its title bar or resizing it from an edge doesn't pause it either, and a quick click between two checks still counts. Test: `test/units/desktop-units.js`.
 - **The "AI is using an app" banner can be moved out of the way.** Drag it anywhere by its text, or press **–** to shrink it to a small pill with the app's name, Resume and Stop. Click the pill to make it full size again. It stays where you put it, at that size, until Lumen quits, and is always kept on a screen. See [Desktop apps](docs/desktop-apps.md). Test: `test/units/desktop-units.js`.
 
