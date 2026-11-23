@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Lumen no longer sets a Chromium switch that no longer exists.** With automation on, Lumen passed `--remote-debugging-address=127.0.0.1` with its DevTools port. This Electron (44.1, Chromium 152) ignores that switch and already listens only on 127.0.0.1, so the line is gone and nothing changes. Every switch and feature Lumen sets at launch is now known to the shipped Electron. Test: `test/units/chromium-switches-units.js`.
+
 ## 0.5.105 (2026-11-19)
 
 - **Lumen finds LM Studio by itself, loads and unloads its models, and shows its speed stats.** Open Settings → AI → AI providers → Local with nothing set up, and Lumen looks for LM Studio or Ollama at their usual addresses and lists the running one's models (the Use local models switch stays as it was). With LM Studio, the list shows every downloaded model with its state, architecture, quantization, format and context size, a **Load** / **Unload** button (LM Studio 0.4 or newer), and **Test speed**, which shows tokens per second, time to first token and the runtime from a short reply. See [Local models](docs/local-models.md). Tests: `test/units/local-models-units.js`, `test/e2e/local-models.js`.

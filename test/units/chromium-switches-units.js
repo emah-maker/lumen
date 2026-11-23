@@ -65,11 +65,9 @@ else {
     words.add(c.name);
     if (/-features$/.test(c.name) && c.value) for (const w of c.value.split(',')) if (w) words.add(w);
   }
-  // Names set today that this Electron (44.1) no longer knows, found by this suite (2026-11-05) and not part of the video-overlay fix.
-  // Each is to be fixed on its own; take it out of here then (the check below fails once it is known again, or gone from src/).
-  const KNOWN_DEAD = {
-    'remote-debugging-address': 'features/ai-agents.js: Chromium binds the DevTools port to 127.0.0.1 anyway',
-  };
+  // Names set today that this Electron no longer knows, each to be fixed on its own; take it out of here then (the check below fails
+  // once it is known again, or gone from src/). Empty since 2026-11-23: WebContentsForceDark went in #998, remote-debugging-address after it.
+  const KNOWN_DEAD = {};
   const DEAD = 'disable-direct-composition-video-overlays';
   const found = inBinary(bin, [...words, DEAD]);
   const missing = [...words].filter((w) => !found.has(w));
