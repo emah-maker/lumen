@@ -5,6 +5,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **Lumen no longer sets a Chromium switch that no longer exists.** With automation on, Lumen passed `--remote-debugging-address=127.0.0.1` with its DevTools port. This Electron (44.1, Chromium 152) ignores that switch and already listens only on 127.0.0.1, so the line is gone and nothing changes. Every switch and feature Lumen sets at launch is now known to the shipped Electron. Test: `test/units/chromium-switches-units.js`.
+- **The AI using another app pauses only when you click or type in it.** Moving the mouse over Word (or any app the AI is using) used to pause it with "You took over. Resume?". Now only a click or typing in the app pauses it. On Windows, dragging the app's window by its title bar or resizing it from an edge doesn't pause it either, and a quick click between two checks still counts. Test: `test/units/desktop-units.js`.
+- **The "AI is using an app" banner can be moved out of the way.** Drag it anywhere by its text, or press **–** to shrink it to a small pill with the app's name, Resume and Stop. Click the pill to make it full size again. It stays where you put it, at that size, until Lumen quits, and is always kept on a screen. See [Desktop apps](docs/desktop-apps.md). Test: `test/units/desktop-units.js`.
 
 ## 0.5.105 (2026-11-19)
 

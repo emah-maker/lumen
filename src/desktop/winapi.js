@@ -19,6 +19,10 @@ const TYPING_KEYS = (() => {
 const VK_ESCAPE = 0x1b;
 const VK_LBUTTON = 0x01;
 const VK_RBUTTON = 0x02;
+// WM_NCHITTEST answers that mean the window's frame: the title bar and its menu, minimize and maximize, and the edges (HTCAPTION 2,
+// HTSYSMENU 3, HTMINBUTTON 8, HTMAXBUTTON 9, HTLEFT 10 to HTBOTTOMRIGHT 17, HTBORDER 18). A press there moves or sizes the window, not the app.
+const FRAME_HITS = new Set([2, 3, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+const HTTRANSPARENT = -1;
 
 function load({ koffi: injected = null } = {}) {
   if (process.platform !== 'win32' && !injected) return { ok: false, reason: 'platform' };
@@ -38,6 +42,9 @@ function load({ koffi: injected = null } = {}) {
     const setForeground = user32.func('__stdcall', 'SetForegroundWindow', 'int', ['intptr']);
     const isIconic = user32.func('__stdcall', 'IsIconic', 'int', ['intptr']);
     const showWindow = user32.func('__stdcall', 'ShowWindow', 'int', ['intptr', 'int']);
+    const sendTimeout = user32.func('__stdcall', 'SendMessageTimeoutW', 'intptr', ['void *', 'uint32', 'uintptr', 'intptr', 'uint32', 'uint32', koffi.out(koffi.pointer('intptr'))]);
+    // Which part of a window a screen point is on (WM_NCHITTEST, 0x84): at most 50 ms, and never waits on a window that is not answering (SMTO_ABORTIFHUNG).
+    const hitOf = (hwnd, p) => { const out = [0]; const lp = ((p.y & 0xffff) << 16) | (p.x & 0xffff); return sendTimeout(hwnd, 0x84, 0, lp, 0x2, 50, out) ? Number(out[0]) | 0 : 0; };
     const pidOf = (hwnd) => { if (!hwnd) return 0; const out = [0]; getThreadProcess(hwnd, out); return out[0] >>> 0; };
     return {
       ok: true,
@@ -48,6 +55,16 @@ function load({ koffi: injected = null } = {}) {
       keyDown: (vk) => (getKey(vk) & 0x8000) !== 0,
       escapeDown: () => (getKey(VK_ESCAPE) & 0x8000) !== 0,
       mouseDown: () => (getKey(VK_LBUTTON) & 0x8000) !== 0 || (getKey(VK_RBUTTON) & 0x8000) !== 0,
+      // Down now, or pressed since the last ask (the low bit): a quick click between two 200 ms checks still counts. Both buttons are asked every time, so each one's bit is cleared.
+      mousePressed: () => { const l = getKey(VK_LBUTTON); const r = getKey(VK_RBUTTON); return ((l | r) & 0x8001) !== 0; },
+      // Is the pointer on a window's title bar or edge? A window that answers "ask my parent" (HTTRANSPARENT) is asked of its top-level window.
+      frameUnderCursor() {
+        const p = {}; if (!getCursorPos(p)) return false;
+        const w = windowFromPoint(p); if (!w) return false;
+        let hit = hitOf(w, p);
+        if (hit === HTTRANSPARENT) { const root = getAncestor(w, 2); if (root) hit = hitOf(root, p); }
+        return FRAME_HITS.has(hit);
+      },
       typing: () => TYPING_KEYS.some((vk) => (getKey(vk) & 0x8000) !== 0),
       allowForeground: () => Boolean(allowSet(0xffffffff)), // ASFW_ANY
       raise(hwnd) { const h = Number(hwnd) || 0; if (!h) return false; if (isIconic(h)) showWindow(h, 9); return Boolean(setForeground(h)); }, // (SW_RESTORE when minimized)
@@ -55,4 +72,4 @@ function load({ koffi: injected = null } = {}) {
   } catch (err) { return { ok: false, reason: 'dll', detail: err.message }; }
 }
 
-module.exports = { load, TYPING_KEYS };
+module.exports = { load, TYPING_KEYS, FRAME_HITS };

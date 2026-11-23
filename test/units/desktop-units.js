@@ -10,7 +10,7 @@ const treeLib = require('../../src/desktop/tree');
 const keys = require('../../src/desktop/keys');
 const { createDesktop } = require('../../src/desktop');
 const { createClient, scriptFile } = require('../../src/desktop/client');
-const { createBanner } = require('../../src/desktop/banner');
+const { createBanner, WIDTH: BANNER_W, SMALL_WIDTH: BANNER_SMALL_W } = require('../../src/desktop/banner');
 const { createDesktopSettings } = require('../../src/desktop/settings');
 const { Agent, requestFor, validateInput, EXTERNAL_TOOLS, DEFAULT_MODEL } = require('../../src/ai/agent');
 
@@ -422,8 +422,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
   {
     // Stop, Esc, takeover
-    let esc = false; let typing = false; let cursor = { x: 10, y: 10 }; let underCursor = 0; let foreground = 0;
-    const winapi = { ok: true, cursor: () => ({ ...cursor }), pidUnderCursor: () => underCursor, foregroundPid: () => foreground, escapeDown: () => esc, mouseDown: () => false, typing: () => typing };
+    let esc = false; let typing = false; let cursor = { x: 10, y: 10 }; let underCursor = 0; let foreground = 0; let pressed = false; let frame = false; let asked = 0;
+    const winapi = { ok: true, cursor: () => ({ ...cursor }), pidUnderCursor: () => underCursor, foregroundPid: () => foreground, escapeDown: () => esc, mouseDown: () => false, mousePressed: () => { asked++; const p = pressed; pressed = false; return p; }, frameUnderCursor: () => frame, typing: () => typing };
     let t = 1000;
     const rig = makeRig({ apps: [word], allowed: allowWord, winapi });
     const clock = createDesktop({ platform: 'win32', client: { call: async () => ({ ok: true, apps: [word], tree: { t: 'ControlType.Window', n: 'F', i: 'e1' } }), abort: () => { rig.store.aborted = (rig.store.aborted || 0) + 1; } }, settings: rig.settings, banner: rig.ban, winapi, now: () => t, stopRun: () => rig.stops.push('x'), shortcut: {}, lumen: { pid: 4242, exe: '' } });
@@ -433,7 +433,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('takeover: nothing happens while the user does nothing', !clock.paused());
     cursor = { x: 80, y: 60 };
     clock._poll();
-    check('takeover: the mouse moving over the app pauses the AI; the banner says so', clock.paused() && rig.ban.updates.some((u) => u.paused === true), J(rig.ban.updates));
+    cursor = { x: 400, y: 300 };
+    clock._poll();
+    check('takeover: only moving the mouse over the app is not a takeover (the AI carries on)', !clock.paused() && !rig.ban.updates.some((u) => u.paused === true), J(rig.ban.updates));
+    pressed = true; frame = true;
+    clock._poll();
+    check('takeover: a press on the app title bar or edge (moving or sizing its window) is not a takeover', !clock.paused());
+    frame = false; underCursor = 99; pressed = true;
+    clock._poll();
+    check('takeover: a click in another program is not a takeover, and it is not counted later over the app', !clock.paused() && (underCursor = 10, clock._poll(), !clock.paused()));
+    const before = asked;
+    pressed = true;
+    clock._poll();
+    check('takeover: a click in the app pauses the AI (even one between two checks); the banner says so', clock.paused() && asked === before + 1 && rig.ban.updates.some((u) => u.paused === true), J(rig.ban.updates));
     let resolved = false;
     const waiting = clock.run({ action: 'click', args: { element: 'e1' } }, rig.ctx).then(() => { resolved = true; }, () => { resolved = 'err'; });
     await sleep(30);
@@ -441,9 +453,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     clock.resume();
     await waiting;
     check('takeover: Resume lets it carry on (and unpauses the banner)', resolved === true && !clock.paused() && rig.ban.updates.some((u) => u.paused === false));
+    pressed = true; clock.resume(); clock._poll();
+    clock.resume();
     underCursor = 99; cursor = { x: 500, y: 500 };
     clock._poll();
-    check('takeover: the mouse moving over another program is not a takeover', !clock.paused());
+    check('takeover: a click made while paused is not a new takeover after Resume; the mouse moving over another program is not either', !clock.paused());
     t += 1000; underCursor = 10; typing = true; foreground = 10;
     clock._poll();
     check('takeover: typing in the app (keyboard) pauses it too', clock.paused());
@@ -478,14 +492,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('Stop mid-call: the helper is killed at once, the in-flight call ends with "Stopped by the user" (it does not wait to finish)', rig4.store.aborted >= 1 && outcome === 'Stopped by the user.', J([outcome, rig4.store.aborted]));
     // the user taking over mid-call
     let cur = { x: 10, y: 10 }; let under = 10;
-    const api5 = { ok: true, cursor: () => ({ ...cur }), pidUnderCursor: () => under, foregroundPid: () => 10, escapeDown: () => false, mouseDown: () => false, typing: () => false };
+    let click5 = false;
+    const api5 = { ok: true, cursor: () => ({ ...cur }), pidUnderCursor: () => under, foregroundPid: () => 10, escapeDown: () => false, mouseDown: () => click5, typing: () => false };
     const rig5 = makeRig({ apps: [word], allowed: allowWord, winapi: api5 });
     await rig5.d.run({ action: 'read_app', args: { name: 'word' } }, rig5.ctx);
     rig5.store.hangKeys = true;
     let out5 = null;
     const flying = rig5.d.run({ action: 'press_keys', args: { keys: 'ctrl+s' } }, rig5.ctx).then(() => { out5 = 'done'; }, (e) => { out5 = e.message; });
     await sleep(40);
-    cur = { x: 90, y: 90 };
+    cur = { x: 90, y: 90 }; click5 = true;
     rig5.d._poll();
     await flying;
     check('"You took over" mid-call: the in-flight call is cut off at once (helper killed), with a note that it may have partly happened', rig5.d.paused() && rig5.store.aborted >= 1 && /took over the app while this was running/.test(out5), J([out5, rig5.store.aborted]));
@@ -602,12 +617,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const created = [];
     class FakeWin {
       constructor(opts) { created.push(opts); this.webContents = { send: (ch, s) => sent.push([ch, s]) }; this.vis = false; }
-      setAlwaysOnTop() {} setIgnoreMouseEvents() {} on() {} setBounds() {}
+      setAlwaysOnTop() {} setIgnoreMouseEvents(v) { this.ignore = v; } on() {}
+      setBounds(b) { this.b = { ...b }; } getPosition() { return [this.b.x, this.b.y]; } setPosition(x, y) { this.b = { ...this.b, x, y }; }
       loadURL() { return Promise.resolve(); }
       isDestroyed() { return false; } isVisible() { return this.vis; }
       showInactive() { this.vis = true; shows++; } hide() { this.vis = false; } destroy() {}
     }
-    const electron = { BrowserWindow: FakeWin, screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1920, height: 1080 } }) }, ipcMain: { on: (ch, fn) => handlers.set(ch, fn) } };
+    const area = { workArea: { x: 0, y: 0, width: 1920, height: 1080 } };
+    const wins = [];
+    const Win = class extends FakeWin { constructor(o) { super(o); wins.push(this); } };
+    const electron = { BrowserWindow: Win, screen: { getPrimaryDisplay: () => area, getDisplayNearestPoint: () => area }, ipcMain: { on: (ch, fn) => handlers.set(ch, fn) } };
     const actions = [];
     const b = createBanner({ electron, onAction: (a) => actions.push(a) });
     await b.show('Microsoft Word');
@@ -621,6 +640,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('banner: a message from any page but its own is ignored', actions.length === 0 && own.id === 'banner' && win === null);
     b.press('stop'); b.press('resume'); b.press('format');
     check('banner: press() (tests) answers Stop and Resume only', J(actions) === J(['stop', 'resume']));
+    const bw = wins[0];
+    const me = { sender: bw.webContents };
+    check('banner: it starts at the top middle of the main screen', J(bw.b) === J({ x: (1920 - BANNER_W) / 2, y: 6, width: BANNER_W, height: 44 }), J(bw.b));
+    handlers.get('desktop-banner:hover')(me, true);
+    check('banner: the pointer over the bar makes it take clicks (it is click-through elsewhere)', bw.ignore === false);
+    handlers.get('desktop-banner:drag')({ sender: { not: 'the banner' } }, 'start', 0, 0);
+    handlers.get('desktop-banner:drag')(me, 'start', 900, 20); handlers.get('desktop-banner:drag')(me, 'move', 600, 520); handlers.get('desktop-banner:drag')(me, 'end', 600, 520);
+    check('banner: dragging it moves it by as much as the pointer moved', bw.b.x === (1920 - BANNER_W) / 2 - 300 && bw.b.y === 506 && b.state().spot.y === 506, J(bw.b));
+    handlers.get('desktop-banner:drag')(me, 'start', 10, 10); handlers.get('desktop-banner:drag')(me, 'move', 5000, 5000); handlers.get('desktop-banner:drag')(me, 'end', 5000, 5000);
+    check('banner: dropped off the screen, it is kept on the screen', bw.b.x === 1920 - BANNER_W && bw.b.y === 1080 - 44, J(bw.b));
+    handlers.get('desktop-banner:size')(me, true);
+    check('banner: "–" makes it a small pill that stays on the screen; the page is told', b.state().small && bw.b.width === BANNER_SMALL_W && bw.b.x + BANNER_SMALL_W <= 1920 && sent[sent.length - 1][1].small === true && sent[sent.length - 1][1].app === 'x', J([bw.b, sent[sent.length - 1]]));
+    b.hide(); await b.show('Microsoft Word', { paused: true });
+    check('banner: the next run shows it where it was left, small as it was (paused: the pill offers Resume)', b.state().small && bw.b.width === BANNER_SMALL_W && bw.b.y === 1080 - 44 && sent[sent.length - 1][1].paused === true, J(bw.b));
+    b.press('big');
+    check('banner: a click on the pill makes it full size again, still on the screen', !b.state().small && bw.b.width === BANNER_W && bw.b.x + BANNER_W <= 1920 && bw.b.x >= 0, J(bw.b));
+    const page = require('../../src/desktop/banner').HTML;
+    check('banner page: the bar can be dragged; buttons are not drag handles; the pill has the app name and a make-smaller button', /setPointerCapture/.test(page) && page.includes("closest('button')") && /id="small"/.test(page) && /id="name"/.test(page));
     b.hide();
     check('banner: hide() hides it', !b.visible());
     const quiet = createBanner({ electron, hidden: true, onAction: () => {} });
@@ -701,7 +738,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('macOS: the pixel actions say they are Windows only, and point to click by id', /Windows only/.test(m) && /click with an item id/.test(m) && !rig.calls.some(([c]) => c === 'mouse'), m);
   }
   {
-    // the AI moving the pointer and pressing its buttons is not "the person took over"; the person moving it afterwards still is
+    // the AI moving the pointer and pressing its buttons is not "the person took over"; the person clicking afterwards still is
     let cur = { x: 0, y: 0 }; let down = false;
     const api = { ok: true, cursor: () => ({ ...cur }), pidUnderCursor: () => 10, foregroundPid: () => 10, escapeDown: () => false, mouseDown: () => down, typing: () => false };
     const rig = makeRig({ apps: [word], allowed: allowWord, winapi: api });
@@ -712,7 +749,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('takeover: the AI\'s own drag (pointer moved, button down) does not pause the run', rig.d.paused() === false);
     await sleep(350);
     cur = { x: 960, y: 760 }; rig.d._poll();
-    check('takeover: the person moving the mouse over the app afterwards pauses it as before', rig.d.paused() === true);
+    check('takeover: the person only moving the mouse over the app afterwards does not pause it', rig.d.paused() === false);
+    down = true; rig.d._poll(); down = false;
+    check('takeover: the person clicking in the app afterwards pauses it', rig.d.paused() === true);
   }
   {
     const ag = read('src/ai/agent.js');

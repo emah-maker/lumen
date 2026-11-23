@@ -263,7 +263,7 @@ function fakeHelper(over = {}) {
     const settings = { master: () => store.master, terminals: () => false, allowed: () => store.allowed, allow() {}, setMaster() {} };
     const events = [];
     const stops = [];
-    const api = { ok: true, cursor: () => store.cursor, pidUnderCursor: () => store.over, foregroundPid: () => 0, escapeDown: () => false, mouseDown: () => false, typing: () => false };
+    const api = { ok: true, cursor: () => store.cursor, pidUnderCursor: () => store.over, foregroundPid: () => 0, escapeDown: () => false, mouseDown: () => Boolean(store.down), typing: () => false };
     const ban = { async show() {}, async update() {}, hide() {} };
     const d = createDesktop({
       client, settings, banner: ban, winapi: api, platform: 'win32', stopRun: () => stops.push(1), icon: async () => null, now: clock.now,
@@ -325,13 +325,14 @@ function fakeHelper(over = {}) {
     await rig.d.run({ action: 'read_app', args: { id: 'w100' } }, rig.ctx);
     await rig.clock.advance(300);
     rig.store.over = 10;
-    rig.store.cursor = { x: 600, y: 600 };
+    rig.store.cursor = { x: 600, y: 600 }; rig.store.down = true;
     rig.d._poll();
-    check('(rig) the person moved the mouse over the app: paused', rig.d.paused());
+    check('(rig) the person clicked in the app: paused', rig.d.paused());
     await rig.clock.advance(300);
     const n = rig.helper.calls.length;
     for (let i = 0; i < 10; i++) { await rig.clock.advance(300); rig.helper.content++; }
     check('taking over: no pictures are asked for while paused', rig.helper.calls.length === n, rig.helper.calls.length - n);
+    rig.store.down = false;
     rig.d.resume();
     await rig.clock.advance(600);
     check('Resume: the pictures go on', rig.helper.calls.length > n);
