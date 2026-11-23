@@ -60,8 +60,7 @@ function prepareAutomation(app, settings, { platform = process.platform, env = p
   // Chromium's port has no authentication; automation.js hides it as well as it can (see there).
   const file = path.join(app.getPath('userData'), 'DevToolsActivePort');
   try { fs.rmSync(file, { force: true }); } catch {}
-  app.commandLine.appendSwitch('remote-debugging-port', '0');
-  app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1');
+  app.commandLine.appendSwitch('remote-debugging-port', '0'); // (Chromium binds it to 127.0.0.1 only: --remote-debugging-address is gone)
   return { ...plan, file };
 }
 
