@@ -81,6 +81,34 @@ const fallback = require('../../src/ai/fallback');
   check('full: the system note names the home folder, says relative paths start in an empty scratch folder, keeps Lumen\'s tools and the untrusted-page warning; off says there is no shell', /C:\\Users\\x/.test(note) && /empty scratch folder/.test(note) && /server named lumen/.test(note) && /untrusted/.test(note) && /no shell/.test(codexNote()) && !/scratch/.test(codexNote()));
 }
 
+// ---------- [web search] a model Codex has no metadata for never gets web_search = "live" (400 "web_search tool is not available") ----------
+{
+  const run = { mcpUrl: 'http://127.0.0.1:5123/mcp' };
+  const cache = JSON.stringify({ fetched_at: '2026-11-23T13:09:59Z', models: [{ slug: 'gpt-6.2-sol', supports_search_tool: true }, { slug: 'gpt-6-luna' }, { slug: 'gpt-nosearch', supports_search_tool: false }] });
+  check('web search: on for a listed model (or the default with a cache); off for an unlisted model, one without search, or no/bad cache', cx.searchOkFromCache(cache, 'gpt-6.2-sol') && cx.searchOkFromCache(cache, 'gpt-6-luna') && cx.searchOkFromCache(cache, 'default') && !cx.searchOkFromCache(cache, 'gpt-7-new') && !cx.searchOkFromCache(cache, 'gpt-nosearch') && !cx.searchOkFromCache('not json', 'default') && !cx.searchOkFromCache(JSON.stringify({ models: [] }), 'default') && !cx.searchOkIn(path.join(os.tmpdir(), 'no-such-codex-home-xyz'), 'default'));
+  check('web search: full access writes web_search = "live" only when allowed; never live without full access', /^web_search = "live"/m.test(cx.configFor({ run, fullAccess: true })) && /^web_search = "disabled"/m.test(cx.configFor({ run, fullAccess: true, webSearch: false })) && /^web_search = "disabled"/m.test(cx.configFor({ run, webSearch: true })));
+}
+const seedChecks = (async () => {
+  // The 2026-11-23 failure: the chat's own cache predated gpt-6.2-sol, the user's listed it, Codex's refresh timed out.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cxseed-'));
+  const userHome = path.join(root, 'user');
+  const home = path.join(root, 'chat');
+  fs.mkdirSync(userHome); fs.mkdirSync(home);
+  const userCache = JSON.stringify({ fetched_at: '2026-11-23T13:09:59Z', models: [{ slug: 'gpt-6.2-sol', supports_search_tool: true }, { slug: 'gpt-6.1-sol', supports_search_tool: true }] });
+  const oldChat = JSON.stringify({ fetched_at: '2026-11-20T09:00:00Z', models: [{ slug: 'gpt-6.1-sol', supports_search_tool: true }] });
+  fs.writeFileSync(path.join(userHome, 'models_cache.json'), userCache);
+  fs.writeFileSync(path.join(home, 'models_cache.json'), oldChat); // written later (newer mtime) than the user's, but fetched earlier
+  check('seed: before, the chat home does not know gpt-6.2-sol, so web search is off for it', !cx.searchOkIn(home, 'gpt-6.2-sol') && cx.searchOkIn(home, 'gpt-6.1-sol'));
+  const copied = await cx.seedModelsCache({ userHome, home });
+  check('seed: the user\'s cache, fetched later, replaces the chat\'s older one (by fetched_at, not mtime); then gpt-6.2-sol is known and gets web search', copied && fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8') === userCache && cx.searchOkIn(home, 'gpt-6.2-sol'));
+  const newer = JSON.stringify({ fetched_at: '2026-11-23T17:14:57Z', models: [{ slug: 'gpt-6.2-sol' }] });
+  fs.writeFileSync(path.join(home, 'models_cache.json'), newer);
+  check('seed: a chat cache fetched later than the user\'s is kept', !(await cx.seedModelsCache({ userHome, home })) && fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8') === newer);
+  fs.rmSync(path.join(home, 'models_cache.json'));
+  check('seed: a chat home with no cache gets the user\'s', (await cx.seedModelsCache({ userHome, home })) && cx.searchOkIn(home, 'gpt-6.2-sol'));
+  check('seed: no user cache, or a missing chat home, copies nothing and does not throw', !(await cx.seedModelsCache({ userHome: path.join(root, 'none'), home })) && !(await cx.seedModelsCache({ userHome, home: path.join(root, 'gone') })) && !fs.existsSync(path.join(root, 'gone')));
+})().catch((err) => check('seed: no exception', false, err && err.stack));
+
 // ---------- the child's environment ----------
 {
   const env = cx.buildEnv({ home: '/h', base: { PATH: '/bin', HOME: '/u', OPENAI_API_KEY: 'k', CODEX_API_KEY: 'c', AWS_SECRET_ACCESS_KEY: 'no', GITHUB_TOKEN: 'no', ELECTRON_RUN_AS_NODE: '1', CODEX_HOME: '/user/.codex' }, run: { mcpToken: 'TOK' } });
@@ -144,6 +172,7 @@ const gateOf = () => { const g = { opened: [], closed: [] }; g.open = (tag, chat
 const spec = { found: true, command: process.execPath, args: [], path: process.execPath, kind: 'exe', version: '9.9.9' };
 
 (async () => {
+  await seedChecks;
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-cx-units-'));
   const userHome = path.join(userData, 'user-codex');
   const tmp = path.join(userData, 'tmp');
