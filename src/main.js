@@ -14502,7 +14502,9 @@ const focusWindow = () => {
 // files); a link opened from another app while Lumen runs comes the same way, and opens in a tab.
 // The taskbar's "Close tabs the AI opened" arrives the same way, with no link: it does its work in the background and does not
 // bring a window forward.
-app.on('second-instance', (_e, argv) => {
+const secondLaunches = instance.launchFilter();
+app.on('second-instance', (_e, argv, _cwd, launch) => {
+  if (!secondLaunches.firstTime(launch)) return; // the same launch asking again (features/instance.js acquireInstanceLock): its links are already open
   const closeAi = taskbarTasks.wantsCloseAiTabs(argv);
   if (closeAi) closeAiTabsEverywhere().catch(() => {});
   const links = linksIn(argv);

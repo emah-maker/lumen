@@ -77,6 +77,35 @@ check('watchdog: its script is valid JavaScript', (() => { try { new (require('v
   check('kill set: the guard module has no tree kill either', !/taskkill/.test(read('src/features/quit-guard.js').replace(/^\/\/.*$/gm, '')));
 }
 
+// ---- a link from another app opens once (the second launch asks for the lock more than once)
+// Electron hands the running Lumen a failed requestSingleInstanceLock()'s arguments on every call: a sign-in or "verify"
+// page another program opened in Lumen came up in two identical tabs.
+{
+  const opened = [];
+  const running = I.launchFilter();
+  const onSecondInstance = (argv, launch) => { if (running.firstTime(launch)) opened.push(...argv.filter((a) => /^https:/.test(a))); };
+  let calls = 0;
+  const tags = [];
+  // The second launch, while Lumen runs: the lock is held, and every failed ask reaches the running Lumen, as Electron does
+  // (checked on Electron 44: two asks, two 'second-instance' events). The running Lumen then answers the pipe's ping.
+  const app = { requestSingleInstanceLock: (tag) => { tags.push(tag); calls++; onSecondInstance(['lumen.exe', 'https://accounts.example.com/verify?code=1'], tag); return false; } };
+  const prevArgv = process.argv;
+  process.argv = [process.argv[0], 'lumen.exe'];
+  let got;
+  try { got = I.acquireInstanceLock(app, { launchId: 'launch-1', ping: () => 'live' }); } finally { process.argv = prevArgv; }
+  check('launch: the lock is asked for more than once (what made the second tab)', calls >= 2, String(calls));
+  check('launch: every ask of one launch carries the same id', tags.every((t) => t && t.lumenLaunch === 'launch-1'), JSON.stringify(tags));
+  check('launch: a link handed over twice by one launch opens in one tab', opened.length === 1, JSON.stringify(opened));
+  check('launch: this copy hands off and leaves', got === false);
+  // Two launches (the same link clicked twice) are two tabs; asks without an id (an older Lumen, a test) always act.
+  const f = I.launchFilter();
+  check('launch: another launch with the same link opens again', f.firstTime({ lumenLaunch: 'a' }) && f.firstTime({ lumenLaunch: 'b' }) && !f.firstTime({ lumenLaunch: 'a' }));
+  check('launch: an ask without an id is never dropped', f.firstTime(undefined) && f.firstTime(undefined) && f.firstTime({}) && f.firstTime(null));
+  const small = I.launchFilter({ max: 2 });
+  small.firstTime({ lumenLaunch: 'x' }); small.firstTime({ lumenLaunch: 'y' }); small.firstTime({ lumenLaunch: 'z' });
+  check('launch: only the most recent ids are kept', small.firstTime({ lumenLaunch: 'x' }) && !small.firstTime({ lumenLaunch: 'z' }));
+}
+
 // ---- wiring in main.js
 {
   const main = read('src/main.js');
@@ -85,6 +114,8 @@ check('watchdog: its script is valid JavaScript', (() => { try { new (require('v
   check('wiring: the lists that save a moment after a change (downloads, usage) are flushed at quit, before the deadline', /downloads\.flush\(\);[^\n]*\n\s*usage\.flush\(\);\n\s*quitting = true;/.test(main));
   check('wiring: the second-instance pipe answers "bye" while quitting', /listenForSecondInstances\(app, \(\) => \{[^\n]*\}, \{ isQuitting: \(\) => quitting \}\)/.test(main));
   check('wiring: focusWindow shows a hidden window and makes a new one when none is left', /const focusWindow = \(\) => \{[\s\S]{0,400}createWindow\(\)[\s\S]{0,300}isVisible\(\)\) win\.show\(\)/.test(main));
+  check('wiring: second-instance acts once per launch, before it opens anything', /app\.on\('second-instance', \(_e, argv, _cwd, launch\) => \{\n\s*if \(!secondLaunches\.firstTime\(launch\)\) return;/.test(main) && /const secondLaunches = instance\.launchFilter\(\);/.test(main));
+  check("wiring: every lock ask carries this launch's id", /requestSingleInstanceLock\(tag\)\) return true;/.test(inst) && /tryLock: \(\) => app\.requestSingleInstanceLock\(tag\)/.test(inst) && !/requestSingleInstanceLock\(\)/.test(inst));
   check('wiring: the lock waits instead of leaving silently; a timeout is announced', /takeOverLock\(\{/.test(inst) && /outcome === 'timeout'\) tellStuck\(\)/.test(inst));
 }
 

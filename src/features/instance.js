@@ -280,18 +280,41 @@ function takeOverLock({ tryLock, ping, reclaim, wait, now = Date.now, budgetMs =
   }
 }
 
-function acquireInstanceLock(app) {
-  if (app.requestSingleInstanceLock()) return true;
+// Every failed ask for the lock (requestSingleInstanceLock) hands this launch's arguments to the running Lumen again ('second-instance'), and
+// takeOverLock below asks more than once: a link from another app (a sign-in or "verify your email" page another program
+// opened in the default browser) opened in two identical tabs. Each launch tags its asks with one id (Electron's
+// additionalData) and the running Lumen acts on an id once (launchFilter).
+const LAUNCH_KEY = 'lumenLaunch';
+// (The tests hand in launchId and ping.)
+function acquireInstanceLock(app, { launchId = require('crypto').randomUUID(), ping = () => pingRunningInstance(app) } = {}) {
+  const tag = { [LAUNCH_KEY]: launchId };
+  if (app.requestSingleInstanceLock(tag)) return true;
   if (require('../test-mode').isTest() && !process.env.CLAUDE_BROWSER_PROFILE) return false;
   if (require('./taskbar-tasks').wantsCloseAiTabs(process.argv)) return false; // the taskbar's command: the running instance got it through 'second-instance'; the ping below would bring its window forward
   const outcome = takeOverLock({
-    tryLock: () => app.requestSingleInstanceLock(),
-    ping: () => pingRunningInstance(app),
+    tryLock: () => app.requestSingleInstanceLock(tag),
+    ping,
     reclaim: reclaimProfileLock,
     wait: (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms),
   });
   if (outcome === 'timeout') tellStuck();
   return outcome === 'acquired';
+}
+
+// The running Lumen's side: firstTime(additionalData) is true the first time a launch's id arrives, false for its repeats.
+// (No id, from an older Lumen or a test, is always new.) Only the most recent `max` ids are kept.
+function launchFilter({ max = 64 } = {}) {
+  const seen = new Set();
+  return {
+    firstTime(data) {
+      const id = data && typeof data === 'object' ? data[LAUNCH_KEY] : null;
+      if (typeof id !== 'string' || !id) return true;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      if (seen.size > max) seen.delete(seen.values().next().value);
+      return true;
+    },
+  };
 }
 
 // Never leave without a word: the other Lumen did not answer and did not let go.
@@ -302,4 +325,4 @@ function tellStuck() {
   try { require('electron').dialog.showErrorBox('Lumen did not start', message); } catch {}
 }
 
-module.exports = { isInstalledExe, appIcon, ASSOCIATION_PROG_IDS, fixAssociationIcons, fixOpenWith, fixAssociationIconsAtStartup, notifyAssociationsChanged, regDefault, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, listenForSecondInstances, takeOverLock, pingResult };
+module.exports = { isInstalledExe, appIcon, ASSOCIATION_PROG_IDS, fixAssociationIcons, fixOpenWith, fixAssociationIconsAtStartup, notifyAssociationsChanged, regDefault, fixAppName, appNameValues, installShortcuts, fixShortcutIcons, ensureStartMenuShortcut, acquireInstanceLock, launchFilter, listenForSecondInstances, takeOverLock, pingResult };
