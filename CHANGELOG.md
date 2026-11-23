@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The AI using another app pauses only when you click or type in it.** Moving the mouse over Word (or any app the AI is using) used to pause it with "You took over. Resume?". Now only a click or typing in the app pauses it. On Windows, dragging the app's window by its title bar or resizing it from an edge doesn't pause it either, and a quick click between two checks still counts. Test: `test/units/desktop-units.js`.
+- **The "AI is using an app" banner can be moved out of the way.** Drag it anywhere by its text, or press **–** to shrink it to a small pill with the app's name, Resume and Stop. Click the pill to make it full size again. It stays where you put it, at that size, until Lumen quits, and is always kept on a screen. See [Desktop apps](docs/desktop-apps.md). Test: `test/units/desktop-units.js`.
+
 ## 0.5.105 (2026-11-19)
 
 - **Lumen finds LM Studio by itself, loads and unloads its models, and shows its speed stats.** Open Settings → AI → AI providers → Local with nothing set up, and Lumen looks for LM Studio or Ollama at their usual addresses and lists the running one's models (the Use local models switch stays as it was). With LM Studio, the list shows every downloaded model with its state, architecture, quantization, format and context size, a **Load** / **Unload** button (LM Studio 0.4 or newer), and **Test speed**, which shows tokens per second, time to first token and the runtime from a short reply. See [Local models](docs/local-models.md). Tests: `test/units/local-models-units.js`, `test/e2e/local-models.js`.

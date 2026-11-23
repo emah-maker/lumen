@@ -18,7 +18,6 @@ const openFile = require('./open-file');
 const THUMB_MS = 1500;
 const POLL_MS = 200;
 const ESC_HOLD_MS = 700;
-const TAKEOVER_PX = 24;
 const IDLE_END_MS = 90e3; // a session with no call for this long ends (a run that ends says so itself)
 const PAUSE_WAIT_MS = 10 * 60e3;
 const MAX_TYPE = 8000;
@@ -155,7 +154,7 @@ function createDesktop(deps = {}) {
     stats.sessions++;
     session = {
       id: ++seq, signal: ctx.signal, emit: ctx.emit, target: null, card: null, label: '', paused: false, stopped: false, busy: false, busyUntil: 0,
-      lastCursor: w?.cursor?.() || null, escSince: 0, timers: [], thumbBusy: false, thumbSig: '', resume: [], once: ctx.once, lastCall: now(),
+      escSince: 0, timers: [], thumbBusy: false, thumbSig: '', resume: [], once: ctx.once, lastCall: now(),
     };
     const s = session;
     if (deps.live) startLive(s);
@@ -229,7 +228,7 @@ function createDesktop(deps = {}) {
     const s = session;
     if (!s || !s.paused) return false;
     s.paused = false;
-    s.lastCursor = getApi()?.cursor?.() || s.lastCursor;
+    try { getApi()?.mousePressed?.(); } catch { /* gone */ } // (a click made while paused is not a new takeover after Resume)
     Promise.resolve(deps.banner?.update({ paused: false })).catch(() => {});
     if (s.card) cardEvent(s, 'working');
     for (const r of s.resume.splice(0)) r(true);
@@ -246,7 +245,8 @@ function createDesktop(deps = {}) {
     deps.hooks?.onPause?.(why);
   }
 
-  // Every 200 ms while the AI is using an app: Esc held stops it; the person moving the mouse over the app or typing in it pauses it.
+  // Every 200 ms while the AI is using an app: Esc held stops it; the person clicking in the app or typing in it pauses it. Only moving the
+  // mouse over the app, or dragging its window by the title bar or an edge (Windows), is not a takeover: the AI carries on.
   function poll(s) {
     const w = getApi();
     if (!w || session !== s || s.stopped) return;
@@ -258,15 +258,13 @@ function createDesktop(deps = {}) {
         return; // (Esc is not also "typing")
       }
       s.escSince = 0;
+      const pressed = w.mousePressed ? w.mousePressed() : w.mouseDown(); // (asked every time: on Windows it also counts a click made since the last check, which it then forgets)
       if (s.paused || !s.target) return;
       const busy = s.busy || now() < s.busyUntil;
-      const cur = w.cursor();
-      if (busy && s.pointing) { s.lastCursor = cur || s.lastCursor; return; } // click_at / drag / scroll move the pointer and press its buttons themselves: that is not the person taking over
+      if (busy && s.pointing) return; // click_at / drag / scroll press the mouse buttons themselves: that is not the person taking over
       const over = [s.target.pid, s.target.hpid].includes(w.pidUnderCursor());
-      if (cur && s.lastCursor && over && (Math.abs(cur.x - s.lastCursor.x) + Math.abs(cur.y - s.lastCursor.y) >= TAKEOVER_PX || w.mouseDown())) { pause(s, 'mouse'); }
+      if (over && pressed && !w.frameUnderCursor?.()) pause(s, 'mouse');
       else if (!busy && [s.target.pid, s.target.hpid].includes(w.foregroundPid()) && w.typing()) pause(s, 'keys');
-      if (!over) s.lastCursor = cur || s.lastCursor; // the baseline follows the pointer until it is over the app
-      else if (cur && s.lastCursor && !s.paused) s.lastCursor = cur;
     } catch { /* a failed check never stops the run */ }
   }
 
@@ -579,4 +577,4 @@ function createDesktop(deps = {}) {
   };
 }
 
-module.exports = { createDesktop, THUMB_MS, POLL_MS, ESC_HOLD_MS, TAKEOVER_PX };
+module.exports = { createDesktop, THUMB_MS, POLL_MS, ESC_HOLD_MS };
