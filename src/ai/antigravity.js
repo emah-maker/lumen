@@ -343,6 +343,20 @@ function buildArgs({ prompt, conversation = null, model = 'default', fullAccess 
   ];
 }
 
+// [keep connected] The argv of a kept process (features/agy-warm.js): the same flags with no -p, its messages read from stdin.
+// `--input-format stream-json` (agy 1.1.15+, --help: "reads one NDJSON message per line from stdin and runs a turn for each;
+// it requires --output-format stream-json"; a -p prompt is then refused). conversation, model, effort, access and the work folder
+// are the process's own for its life.
+function buildStreamArgs({ conversation = null, model = 'default', fullAccess = false, effort = '', workDir = '' }) {
+  const argv = buildArgs({ prompt: '', conversation, model, fullAccess, effort, workDir }).slice(2); // (without '-p', prompt)
+  return ['--input-format', 'stream-json', ...argv];
+}
+
+// One message on a kept process's stdin. VERIFIED with one signed-in agy 1.5.15 run (2026-11-23): a line without "event" is
+// refused ('stream input message is missing the "event" field'); the binary's own messages name the rest: a "user" event needs
+// "message", whose "content" is a string or a list of content blocks, of type "text" only (so images stay files, as for -p).
+const streamLine = (text) => `${JSON.stringify({ event: 'user', message: { role: 'user', content: String(text) } })}\n`;
+
 // The message agy gets. The system prompt (Lumen's note about its tools, what is untrusted, the model and date) has no
 // flag, so it is the top of a conversation's first message; later messages carry only a one-line reminder.
 function promptFor({ prompt, systemPrompt, resume, imageFiles = [] }) {
@@ -510,16 +524,24 @@ class AntigravityEngine {
   // (mcp_config.json) and the images wait for run(). The result is shared by the prepare() and run() of one message
   // (same chat, conversation and access) within PREP_TTL_MS, so the work is not done twice; run() uses it up.
   // scope: the message's task scope (its chatId picks the chat's home), sessionId: its saved conversation, fullAccess: Settings.
-  prepare({ scope = null, sessionId = null, fullAccess = false } = {}) {
+  // [keep connected] With this.keepWarm (features/agy-warm.js) and a chat, the chat's kept agy process is also started here
+  // (model, effort, workDir: what its argv needs), so its start-up (sign-in, loadCodeAssist, experiments: ~6.6 s) overlaps the page
+  // being read. warm: false for the kept process's own call (it must not start itself again).
+  prepare({ scope = null, sessionId = null, fullAccess = false, model = 'default', effort = '', workDir = '', warm = true } = {}) {
     fullAccess = fullAccess === true;
     const chatHome = chatHomeFor(this.userData, scope?.chatId);
     const key = JSON.stringify([chatHome, sessionId || null, fullAccess]);
     const hit = this.prepared;
-    if (hit && hit.key === key && Date.now() - hit.at < PREP_TTL_MS) return hit.promise;
-    const entry = { key, at: Date.now(), promise: null };
-    entry.promise = this.prepareOnce({ chatHome, sessionId, fullAccess }).catch((err) => { if (this.prepared === entry) this.prepared = null; throw err; });
-    this.prepared = entry;
-    return entry.promise;
+    let promise;
+    if (hit && hit.key === key && Date.now() - hit.at < PREP_TTL_MS) promise = hit.promise;
+    else {
+      const entry = { key, at: Date.now(), promise: null };
+      entry.promise = this.prepareOnce({ chatHome, sessionId, fullAccess }).catch((err) => { if (this.prepared === entry) this.prepared = null; throw err; });
+      this.prepared = entry;
+      promise = entry.promise;
+    }
+    if (warm && this.keepWarm && scope?.chatId != null) { try { this.keepWarm.prewarm({ chatId: scope.chatId, sessionId, fullAccess, model, effort, workDir }); } catch { /* the message runs cold */ } }
+    return promise;
   }
 
   async prepareOnce({ chatHome, sessionId, fullAccess }) {
@@ -548,7 +570,15 @@ class AntigravityEngine {
   // sessionId: the chat's saved conversation id, null on its first message.
   async run({ prompt, images = [], sessionId = null, systemPrompt, model = 'default', signal, emit, runAgent = null, scope = null, fullAccess = false, effort = '', workDir = '' }) {
     fullAccess = fullAccess === true; // [full access] (no background engine here: Antigravity is for sidebar chats only)
-    const prepared = this.prepare({ scope, sessionId, fullAccess });
+    // [keep connected] The chat's kept process takes the message when it can (features/agy-warm.js); null: nothing was sent, so
+    // it goes through a one-message process below. Its idle process ends first: two agy processes never share a chat's home.
+    if (this.keepWarm && scope?.chatId != null) {
+      const warm = await this.keepWarm.run({ chatId: scope.chatId, prompt, images, sessionId, systemPrompt, model, signal, emit, runAgent, scope, fullAccess, effort, workDir });
+      if (warm) return warm;
+      await this.keepWarm.dropChat(scope.chatId);
+      if (signal.aborted) return { text: '', sessionId, stopped: true };
+    }
+    const prepared = this.prepare({ scope, sessionId, fullAccess, warm: false });
     const { bin, gate, home, folder } = await prepared;
     if (this.prepared?.promise === prepared) this.prepared = null; // (shared by one message only: the next one looks again)
     if (!bin) {
@@ -617,56 +647,9 @@ class AntigravityEngine {
     if (signal.aborted) onAbort();
     active.arm();
 
-    let text = '';
-    let result = null;
-    let conversation = sessionId;
-    let initModel = null;
-    let usage = null;
+    const reader = turnReader({ emit, sessionId, watch: this.watch && !fullAccess, home, reads, rows, stop: () => this.kill(child) }); // [full access] agy's own tools are expected
     let stderr = '';
-    let buffer = '';
-    let offTool = null;
-    let lastStep = null; // the agent_response step the text so far belongs to
-    const handle = (msg) => {
-      if (offTool) return;
-      if (msg.event === 'init') {
-        conversation = msg.conversation_id || conversation;
-        rows?.parent(msg.conversation_id); // the run's own conversation: a hook call with another id is a subagent's
-        initModel = msg.init?.model || initModel;
-      } else if (msg.event === 'step_update' && msg.step_update) {
-        const su = msg.step_update;
-        conversation = su.conversation_id || conversation;
-        if (su.usage) usage = su.usage;
-        const tool = su.tool_name || su.tool_info?.name || null;
-        if (rows && su.state === 'DONE' && (su.subagent_info || /^invoke_subagent$/i.test(String(tool || '')))) rows.finish(typeof su.subagent_info?.conversation_id === 'string' ? su.subagent_info.conversation_id : null);
-        if (tool || su.step_type === 'tool') {
-          const bad = this.watch && !fullAccess ? offToolOf(tool, su.tool_info?.parameters || su.tool_info?.args, home, reads) : null; // [full access] agy's own tools are expected
-          if (bad) { offTool = bad; this.kill(child); return; }
-        } else if (su.step_type === 'agent_response' && su.text_delta) {
-          // A new response step starts a new paragraph in the saved reply too (see claude-code.js).
-          if (lastStep !== null && su.step_index !== lastStep && text && !/\n\n$/.test(text)) { text += '\n\n'; emit({ type: 'text_block' }); }
-          lastStep = su.step_index;
-          text += su.text_delta;
-          emit({ type: 'text', text: su.text_delta });
-        }
-      } else if (msg.event === 'result' && msg.result) {
-        result = msg.result;
-        conversation = result.conversation_id || conversation;
-        if (result.usage) usage = result.usage;
-      }
-    };
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => {
-      active.arm();
-      buffer += chunk;
-      let i;
-      while ((i = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, i).trim();
-        buffer = buffer.slice(i + 1);
-        if (!line) continue;
-        if (process.env.LUMEN_AGY_DEBUG) fs.appendFileSync(process.env.LUMEN_AGY_DEBUG, `${line}\n`);
-        try { handle(JSON.parse(line)); } catch { /* not an event */ }
-      }
-    });
+    readLines(child.stdout, (msg) => reader.handle(msg), () => active.arm());
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
 
@@ -680,7 +663,13 @@ class AntigravityEngine {
     if (this.active?.tag === tag) this.active = null;
     gate.close(tag);
     rows?.finish();
+    return this.outcome({ st: reader.st, code, stderr, signal, stalled, watchdogMs, fullAccess, emit });
+  }
 
+  // A turn's stream (turnReader's st) and how it ended, as run()'s result; errors are emitted. Shared by a one-message process
+  // (attempt) and a kept one (features/agy-warm.js), whose turn ends at its result event (code null then).
+  outcome({ st, code = null, stderr = '', signal, stalled = false, watchdogMs = this.watchdogMs, fullAccess = false, emit }) {
+    const { text, result, conversation, initModel, usage, offTool } = st;
     if (offTool) {
       emit({ type: 'error', text: `Lumen stopped Antigravity: it used a tool that isn't one of Lumen's (${offTool}). Antigravity should only use Lumen's browser tools; if this keeps happening, pick another AI in the model picker.` });
       return { text, sessionId: null, failed: true };
@@ -715,9 +704,65 @@ class AntigravityEngine {
   }
 }
 
+// NDJSON lines of a child's stdout, each parsed and handed to onMsg; onData(): any output (the watchdog's sign of life).
+function readLines(stream, onMsg, onData = null) {
+  let buffer = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk) => {
+    onData?.();
+    buffer += chunk;
+    let i;
+    while ((i = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, i).trim();
+      buffer = buffer.slice(i + 1);
+      if (!line) continue;
+      if (process.env.LUMEN_AGY_DEBUG) fs.appendFileSync(process.env.LUMEN_AGY_DEBUG, `${line}\n`);
+      let msg;
+      try { msg = JSON.parse(line); } catch { continue; } // not an event
+      onMsg(msg);
+    }
+  });
+}
+
+// One turn's events (init, step_update, result) -> what is on screen and st, the turn so far. watch: stop on a tool that
+// isn't Lumen's (offToolOf; off with full access); stop(): ends the process then. rows: [helpers] helperRows, or null.
+function turnReader({ emit, sessionId = null, watch = true, home = null, reads = null, rows = null, stop = () => {} }) {
+  const st = { text: '', result: null, conversation: sessionId, initModel: null, usage: null, offTool: null };
+  let lastStep = null; // the agent_response step the text so far belongs to
+  const handle = (msg) => {
+    if (st.offTool || !msg || typeof msg !== 'object') return;
+    if (msg.event === 'init') {
+      st.conversation = msg.conversation_id || st.conversation;
+      rows?.parent(msg.conversation_id); // the run's own conversation: a hook call with another id is a subagent's
+      st.initModel = msg.init?.model || st.initModel;
+    } else if (msg.event === 'step_update' && msg.step_update) {
+      const su = msg.step_update;
+      st.conversation = su.conversation_id || st.conversation;
+      if (su.usage) st.usage = su.usage;
+      const tool = su.tool_name || su.tool_info?.name || null;
+      if (rows && su.state === 'DONE' && (su.subagent_info || /^invoke_subagent$/i.test(String(tool || '')))) rows.finish(typeof su.subagent_info?.conversation_id === 'string' ? su.subagent_info.conversation_id : null);
+      if (tool || su.step_type === 'tool') {
+        const bad = watch ? offToolOf(tool, su.tool_info?.parameters || su.tool_info?.args, home, reads) : null;
+        if (bad) { st.offTool = bad; stop(); }
+      } else if (su.step_type === 'agent_response' && su.text_delta) {
+        // A new response step starts a new paragraph in the saved reply too (see claude-code.js).
+        if (lastStep !== null && su.step_index !== lastStep && st.text && !/\n\n$/.test(st.text)) { st.text += '\n\n'; emit({ type: 'text_block' }); }
+        lastStep = su.step_index;
+        st.text += su.text_delta;
+        emit({ type: 'text', text: su.text_delta });
+      }
+    } else if (msg.event === 'result' && msg.result) {
+      st.result = msg.result;
+      st.conversation = msg.result.conversation_id || st.conversation;
+      if (msg.result.usage) st.usage = msg.result.usage;
+    }
+  };
+  return { st, handle };
+}
+
 // A message's own engine (features/ai-agents.js leaseEngine) is let go: a run still going is ended.
 AntigravityEngine.prototype.dispose = function dispose() { if (this.active?.child) { try { this.kill(this.active.child); } catch { /* gone */ } } };
 
 AntigravityEngine.prototype.imageRoots = function imageRoots() { return this.dir ? [this.dir] : []; };
 
-module.exports = { AntigravityEngine, chatHomeFor, chatsDirFor, prepareChatHome, migrateConversation, removeChatHome, pruneChatHomes, AUTH_FILES, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, shortPath, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };
+module.exports = { AntigravityEngine, turnReader, readLines, buildStreamArgs, streamLine, returnAuth, PREP_TTL_MS, EXT, chatHomeFor, chatKey, chatsDirFor, prepareChatHome, migrateConversation, removeChatHome, pruneChatHomes, AUTH_FILES, findAgy, buildArgs, FULL_FLAGS, FULL_WATCHDOG_MS, buildEnv, promptFor, settingsFor, hooksFor, shortPath, stdioConfig, mcpConfig, parseModels, modelNames, describeFailure, offToolOf, installCommand, installArgv, userProvider, capImages, INSTALL_HINT, SIGN_IN_HINT, FALLBACK_MODELS, PROMPT_ARG_MAX, INSTALL_URL_SH, INSTALL_URL_PS, killTree };

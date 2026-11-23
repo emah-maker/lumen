@@ -175,7 +175,7 @@ Codex has no streaming in `--json` mode: each message of the reply appears whole
 
 ### Antigravity in the sidebar
 
-Antigravity's CLI is `agy` (installed to `~/.local/bin/agy`, or `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows). Lumen runs it headless for each message (`agy -p … --output-format stream-json`) and gives it Lumen's browser tools over MCP, the same tools the sidebar's other engines get. It is launched with only those tools:
+Antigravity's CLI is `agy` (installed to `~/.local/bin/agy`, or `%LOCALAPPDATA%\agy\bin\agy.exe` on Windows). Each sidebar chat keeps one `agy` process running in its own folder (`agy --input-format stream-json --output-format stream-json`, `src/features/agy-warm.js`), started while Lumen reads the page and sent each message on stdin, so only a chat's first message waits for agy's start-up (about 6.6 s of sign-in and setup). It ends after the same idle time as a kept Grok Build or Codex, when the chat's tab closes, when you press Stop, and when Lumen quits. If agy can't take messages that way, or with `LUMEN_AGY_WARM=0`, each message is its own headless run (`agy -p … --output-format stream-json`), as before. Either way agy gets Lumen's browser tools over MCP, the same tools the sidebar's other engines get. It is launched with only those tools:
 
 - its own home folder (`<profile>/antigravity-home`), so your `~/.gemini` servers, rules, plugins and hooks are not loaded; the sign-in stays in your OS keyring (a Gemini API key sign-in keeps working);
 - a `settings.json` that allows `mcp(lumen/*)` and denies `command`, `write_file`, `read_url` and `unsandboxed`, with `--sandbox` and the terminal sandbox on;

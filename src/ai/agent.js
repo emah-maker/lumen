@@ -2656,7 +2656,11 @@ class Agent {
     if (ccPlan) this.engineFor('claudecode').warm?.(ccPlan.spawn); // (an engine made for one message keeps no process: warm() does nothing there)
     // Grok Build needs the prompt at spawn (--prompt-file), so only its setup (config, gate script, sign-in link) overlaps the page read.
     if (viaGrokBuild) this.engineFor('grokbuild').prepare?.({ fullAccess: this.browser.grokBuildFullAccess?.() === true }).catch?.(() => {});
-    if (viaAntigravity) this.engineFor('antigravity').prepare?.({ scope: taskScope.getStore(), sessionId: messages.settings.agySession || null, fullAccess: this.browser.antigravityFullAccess?.() === true }).catch?.(() => {}); // (the chat's home and the files in it, while the page is read)
+    if (viaAntigravity) { // (the chat's home and the files in it, and [keep connected] the chat's kept agy process, while the page is read)
+      const agyFull = this.browser.antigravityFullAccess?.() === true;
+      const s = messages.settings;
+      this.engineFor('antigravity').prepare?.({ scope: taskScope.getStore(), sessionId: (Boolean(s.agyFull) === agyFull && s.agySession) || null, fullAccess: agyFull, model: engineModel(s.model), effort: this.effortFor('antigravity', s), workDir: projectFolders.workFolderOf(s) }).catch?.(() => {});
+    }
     if (viaCodex) this.engineFor('codex').prepare?.().catch?.(() => {});
     // [mcp client] An API model's first request waits for the user's own MCP servers to start (externalToolDefs):
     // they start now, alongside the page read, instead of after it. (Starting is shared: the turn's own call
