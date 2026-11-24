@@ -116,7 +116,8 @@ const CONTRAST = `(() => {
       const s = m.querySelector(':scope > .reply-speak');
       return { speak: r('.reply-speak'), copy: r('.reply-copy'), regen: r('.reply-regen'), retry: r('.reply-retry'), label: s && s.getAttribute('aria-label'), title: s && s.getAttribute('title'), inMeta: Boolean(m.querySelector('.reply-meta .reply-speak')) };
     })()`);
-    const ok = row.speak && row.copy && row.regen && row.speak.w === row.regen.w && row.speak.h === row.regen.h && row.speak.top === row.regen.top && row.speak.top === row.copy.top && row.speak.right < row.regen.right && (!row.retry || row.speak.right < row.retry.right) && row.retry && row.retry.right < row.regen.right && row.copy.right > row.regen.right;
+    // (Regenerate is labeled since #1040, wider than the icon buttons: Read aloud is the size of Copy, and clear of Retry and Regenerate)
+    const ok = row.speak && row.copy && row.regen && row.speak.w === row.copy.w && row.speak.h === row.copy.h && row.speak.h === row.regen.h && row.speak.top === row.regen.top && row.speak.top === row.copy.top && row.speak.right <= row.regen.right - row.regen.w && (!row.retry || row.speak.right <= row.retry.right - row.retry.w) && row.retry && row.retry.right <= row.regen.right - row.regen.w && row.copy.right > row.regen.right;
     check('Read aloud is in the action group, the same size and row, after Copy, Regenerate and Retry', Boolean(ok) && !row.inMeta, JSON.stringify(row));
     check('Read aloud is named "Read aloud" (its tooltip comes from the label, no second native one)', row.label === 'Read aloud' && row.title === null, JSON.stringify(row));
 
