@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Opening a crafted email can't stall Lumen.** postal-mime, which reads saved emails (.eml), is updated to 4.2.1, which fixes very slow parsing of certain encoded headers.
+
 ## 0.5.106 (2026-11-23)
 
 - **You can send Codex a message while it works, as with Claude Code.** Type while a Codex reply runs and your message goes in at Codex's next step, while one of its tool calls runs (reading a page, clicking), instead of waiting for the whole reply to end. The bubble says "goes in at the AI's next step", then "Sent to the AI while it worked". This needs Settings → AI → Keep Codex connected (on by default); with it off, or in a chat with a work folder, the message still waits for the reply to end and the bubble says so. Lumen uses Codex's own `turn/steer` request (codex-cli 0.167). If Codex can't take the message mid-turn, it is sent as your next message.
