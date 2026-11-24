@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Resume works after you take over an app the AI is using.** If you clicked or typed in the app while the AI was in the middle of a step, that step failed with "the user took over" and the AI ended its reply, so Resume on the banner or the chat card had nothing to carry on and did nothing. Now the cut-off step waits for Resume or Stop, as later steps already did; after Resume the AI reads the app again and continues the task. Stop ends it as "Stopped by the user". (`src/desktop/index.js`; `test/units/desktop-units.js`)
+
 ## 0.5.106 (2026-11-23)
 
 - **You can send Codex a message while it works, as with Claude Code.** Type while a Codex reply runs and your message goes in at Codex's next step, while one of its tool calls runs (reading a page, clicking), instead of waiting for the whole reply to end. The bubble says "goes in at the AI's next step", then "Sent to the AI while it worked". This needs Settings → AI → Keep Codex connected (on by default); with it off, or in a chat with a work folder, the message still waits for the reply to end and the bubble says so. Lumen uses Codex's own `turn/steer` request (codex-cli 0.167). If Codex can't take the message mid-turn, it is sent as your next message.
