@@ -144,7 +144,14 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
     check('on: the file is set on the field after one card that names it and the site', set && J(set.files) === J([shot]) && cards().length === 1 && /Screenshot 2026-10-08\.png/.test(cards()[0].title) && /forms\.example\.com/.test(cards()[0].title) && /Put Screenshot/.test(done), J([set, cards().map((c) => c.title), done]));
     state.calls.length = 0;
     await call('upload_file', { element_id: 1, paths: [shot] });
-    check('the next upload to the same site in the chat does not ask again', cards().length === 1 && sets().length === 1);
+    check('the same file to the same site in the chat does not ask again', cards().length === 1 && sets().length === 1);
+    const other = put('Desktop/other.png', 'png');
+    state.calls.length = 0;
+    await call('upload_file', { element_id: 1, paths: [other] });
+    check('a different file from disk to the same site asks again, naming it', cards().length === 2 && /other\.png/.test(cards()[1].title) && sets().length === 1, J(cards().map((c) => c.title)));
+    state.calls.length = 0;
+    await call('upload_file', { element_id: 1, paths: [shot, other] });
+    check('files from disk that were each approved for the site do not ask again together', cards().length === 2 && sets().length === 1, J(cards().map((c) => c.title)));
 
     reset(); state.access = true; answer = false;
     msg = await refused(() => call('upload_file', { element_id: 1, paths: [shot] }));

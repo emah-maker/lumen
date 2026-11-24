@@ -6676,13 +6676,14 @@ ${out.text}${note}
   }
 
   // ---- [uploads] upload_file (features/upload-files.js, docs/uploading-files.md)
-  // The model never names a file on disk. It passes refs of files the user attached to the chat (the chat's store, which
-  // only holds what the user attached), or passes none, and the user is asked to choose one with the OS picker (the card's
-  // "Choose file…", main.js agent:upload-choose). Either way the page gets only those files, through the tab's DevTools
-  // session (DOM.setFileInputFiles), and the user sees the file names and the site: on a card the first time for a site in
-  // this chat, as a step after. The tool is an acting tool, so site approval, hands-off mode, a tab kept off and a site with
-  // AI off all refuse it first (ensureAllowed, execute). "Don't ask" settings skip the card for attached files only: never
-  // the picker, never the need for the user to have attached or picked the file.
+  // The model passes refs of files the user attached to the chat (the chat's store, which only holds what the user attached),
+  // or, with device access on, paths on this computer that it names itself, or passes none, and the user is asked to choose
+  // one with the OS picker (the card's "Choose file…", main.js agent:upload-choose). Either way the page gets only those
+  // files, through the tab's DevTools session (DOM.setFileInputFiles), and the user sees the file names and the site: on a
+  // card for attached files the first time for a site in this chat, and for a path on disk the first time for each file and
+  // site; a step after. The tool is an acting tool, so site approval, hands-off mode, a tab kept off and a site with AI off
+  // all refuse it first (ensureAllowed, execute). "Don't ask" settings (Auto-allow, Bypass) skip the card for attached files
+  // and disk paths: never the picker, never the need for the user to have attached or picked the file.
 
   // The names the step row shows (describeStep): attached files by ref, else that the user will be asked.
   uploadLabel(input) {
@@ -6755,13 +6756,15 @@ ${out.text}${note}
       }
       const problem = known ? uploadFiles.checkFiles(field, files) : files.length > uploadFiles.MAX_UPLOAD_FILES ? 'Too many files.' : null;
       if (problem) throw new Error(problem);
-      // The first upload to a site in this chat asks, naming the files and the site; after that it is a step (describeStep).
-      const key = `upload:${host}`;
-      if (!hosts.has(key) && !this.autoAllows(gate)) {
+      // Attached files were chosen by the user, so one card per site covers them. A path on disk is chosen by the model, so each
+      // new file asks for this site (a page that was allowed one screenshot can't then be sent other files).
+      const keys = refs.length ? [`upload:${host}`] : files.map((f) => `upload:${host}:${f.path}`);
+      const ask = keys.filter((k) => !hosts.has(k));
+      if (ask.length && !this.autoAllows(gate)) {
         const names = files.map((f) => f.name).join(', ');
         const ok = await this.askApproval(host, emit, signal, { action: 'upload', who, title: `${who} wants to upload ${names} to ${host}`, upload: { files: files.map((f) => ({ name: f.name, size: f.size })), label: facts.label || '' } });
         if (!ok) throw new Error(`The user did not allow uploading ${names} to ${host}. Ask them what to do instead.`);
-        hosts.add(key);
+        keys.forEach((k) => hosts.add(k));
       }
     } else {
       const spec = { ...field, host, label: facts.label || '' };
