@@ -56,7 +56,7 @@ const codexUsage = require('../ai/codex-usage');
 const locate = require('../ai/codex-locate');
 const { validModel } = require('../ai/cli-utils');
 const { removeDir } = require('../ai/temp-dirs');
-const { wrap: steerWrap } = require('../ai/steer');
+const steerWrap = (text) => require('../ai/steer').wrap(text); // [mid-run messages] (loaded on a chat's first steer, not at startup: perf-budget's module count)
 
 const IDLE_MS = 15 * 60 * 1000;
 const SPARE_IDLE_MS = 3 * 60 * 1000; // a process started ahead of a message nobody sent yet

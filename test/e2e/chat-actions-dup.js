@@ -91,9 +91,10 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   const row = await inPage(`(() => {
     const r = (sel) => { const e = document.querySelector('#messages ' + sel); const b = e.getBoundingClientRect(); return { w: Math.round(b.width), h: Math.round(b.height), top: Math.round(b.top), right: Math.round(b.right) }; };
     const retry = document.querySelector('#messages .reply-retry');
-    return { copy: r('.reply-copy'), regen: r('.reply-regen'), retry: r('.reply-retry'), label: retry.getAttribute('aria-label'), icon: retry.innerHTML === document.querySelector('#messages .reply-regen').innerHTML };
+    return { copy: r('.reply-copy'), regen: r('.reply-regen'), retry: r('.reply-retry'), label: retry.getAttribute('aria-label'), icon: retry.innerHTML === document.querySelector('#messages .reply-regen').innerHTML, regenWord: (document.querySelector('#messages .reply-regen .regen-label')?.getClientRects().length > 0) ? document.querySelector('#messages .reply-regen .regen-label').textContent.trim() : '' };
   })()`);
-  check('(e) Retry sits in the row with Regenerate and Copy (Copy, Regenerate, Retry from the right), same size, its own icon and tooltip', row.copy.w === row.retry.w && row.regen.w === row.retry.w && row.copy.h === row.retry.h && row.regen.h === row.retry.h && row.regen.top === row.retry.top && row.copy.top === row.retry.top && row.retry.right < row.regen.right && row.regen.right < row.copy.right && !row.icon && /another model/i.test(row.label), JSON.stringify(row));
+  // (Regenerate on the latest reply is labeled since #1040: its word beside the icon, wider than the icon buttons; Retry and Copy keep the icon size and Retry sits clear of it)
+  check('(e) Retry sits in the row with Regenerate and Copy (Copy, Regenerate, Retry from the right), the size of Copy, clear of the labeled Regenerate, its own icon and tooltip', row.copy.w === row.retry.w && row.copy.h === row.retry.h && row.regen.h === row.retry.h && row.regen.w > row.retry.w * 2 && row.regenWord === 'Regenerate' && row.regen.top === row.retry.top && row.copy.top === row.retry.top && row.retry.right <= row.regen.right - row.regen.w && row.regen.right <= row.copy.right - row.copy.w && !row.icon && /another model/i.test(row.label), JSON.stringify(row));
 
   // ---- a handoff retry: main drops the first text and says "Trying another way...", then the second pass answers
   await app.evaluate(() => { global.__fake.gate = new Promise((r) => { global.__fake.release = r; }); });
