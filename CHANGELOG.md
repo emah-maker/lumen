@@ -4,7 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
-- **Security fixes from Chromium and Electron.** Lumen now runs on castlabs Electron 44.10.1 (was 44.1.0), which fixes permission requests credited to the wrong site, SameSite cookies in opened windows, extensions reading tab addresses without permission, and more.
+- **Lumen runs on Electron 45.** castlabs Electron 45.2.1 (was 44.1.0), with the upstream security fixes of the 44.x line: permission requests credited to the wrong site, SameSite cookies in opened windows, extensions reading tab addresses without permission, and more. uBlock Origin keeps Lumen's workaround for its background page: castlabs' build still needs it.
 
 ## 0.5.106 (2026-11-23)
 
