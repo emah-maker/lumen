@@ -242,6 +242,7 @@ function setupAiAgents(deps) {
         engine: grokBuild,
         enabled: grokKeepOn,
         idleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? m * 60000 : 15 * 60000; },
+        toolsMissing: (tag, chat) => toolsMissing(tag, chat), // [tools] a chat that gained a Lumen tool since the process listed them gets a new one
       });
     }
     return grokBuild;
@@ -298,6 +299,7 @@ function setupAiAgents(deps) {
           engine,
           enabled: () => process.env.LUMEN_AGY_WARM !== '0' && antigravitySidebar(),
           idleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? m * 60000 : 15 * 60000; },
+          toolsMissing: (tag, chat) => toolsMissing(tag, chat), // [tools]
         })),
       });
     }
@@ -325,6 +327,7 @@ function setupAiAgents(deps) {
         engine: codex,
         enabled: codexKeepOn,
         idleMs: () => { const m = Number(readSettings().grokKeepIdleMinutes); return Number.isFinite(m) && m >= 0 ? m * 60000 : 15 * 60000; },
+        toolsMissing: (tag, chat) => toolsMissing(tag, chat), // [tools] the word tool for a chat that turned to a Word document after the process started
       });
     }
     return codex;

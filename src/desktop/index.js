@@ -314,14 +314,22 @@ function createDesktop(deps = {}) {
     if (s.stopped) throw new Error('Stopped by the user.');
     if (!s.paused) return;
     const ok = await new Promise((resolve) => { s.resume.push(resolve); const t = setTimeout(() => resolve(false), PAUSE_WAIT_MS); t.unref?.(); });
-    if (!ok || s.stopped) throw new Error('The user took over the app and did not let the AI carry on. Ask them what they want next.');
+    if (s.stopped) throw new Error('Stopped by the user.');
+    if (!ok) throw new Error('The user took over the app and did not let the AI carry on. Ask them what they want next.');
   }
 
   async function act(s, fn) {
     await gate(s);
     s.busy = true;
     try { return await fn(); } catch (err) {
-      if (err?.aborted) throw new Error(s.stopped ? 'Stopped by the user.' : 'The user took over the app while this was running, so it was cut off. It may have partly happened: read the app again before going on.');
+      if (err?.aborted && s.stopped) throw new Error('Stopped by the user.');
+      if (err?.aborted) {
+        // The person took over mid-call. The call waits here for Resume (banner or card) or Stop, so the run is still there to carry on:
+        // returning at once ended the AI's turn with "you took over", and a later Resume had nothing left to resume.
+        s.busy = false;
+        await gate(s);
+        throw new Error('The user took over the app while this was running, so it was cut off, and has now pressed Resume. It may have partly happened: read the app again, then carry on with the task.');
+      }
       throw err;
     } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s) { if (s.live?.active()) s.live.kick(); else if (!s.card?.thumb) setImmediate(() => thumb(s)); } }
   }
@@ -373,8 +381,15 @@ function createDesktop(deps = {}) {
     if (win.app !== session.target.app) throw new Error('That window now belongs to a different program. Call list_apps and read the app again.');
     await authorize(win, ctx, { acting: true, what: `${action} ${el}` });
     const s = await useWindow(win, ctx, policy.stepLabel(action, { element: el }, win.name));
-    return act(s, () => getClient().call(cmd, { ...targetOf(win), el, ...extra }, { timeoutMs: 20000 }));
+    keysForward();
+    return act(s, () => getClient().call(cmd, { ...targetOf(win), el, ...extra, raise: true }, { timeoutMs: 20000 }));
   }
+
+  // Keys go to the window in front. The helper is a background process Windows does not let take the foreground, so typing into an app while
+  // Lumen or another window was in front stopped at the first key ("the keyboard focus left the app"): Lumen lets the helper hand the foreground
+  // on (AllowSetForegroundWindow), and the helper brings the app forward once before the first key (raise: uia-helper.ps1 Bring-Forward). Its
+  // guard still stops if the user takes the foreground while it types.
+  function keysForward() { try { getApi()?.allowForeground?.(); } catch { /* the helper still tries */ } }
 
   async function click(args, ctx) {
     const r = await elementCall('click', args, ctx, 'invoke', {});
@@ -394,7 +409,8 @@ function createDesktop(deps = {}) {
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `press ${parsed.shown}` });
     const s = await useWindow(win, ctx, policy.stepLabel('press_keys', { keys: parsed.shown }, win.name));
-    await act(s, () => getClient().call('keys', { ...targetOf(win), chords: parsed.chords }, { timeoutMs: 15000 }));
+    keysForward();
+    await act(s, () => getClient().call('keys', { ...targetOf(win), chords: parsed.chords, raise: true }, { timeoutMs: 15000 }));
     return `Pressed ${parsed.shown} in ${win.name}.`;
   }
 
@@ -459,7 +475,8 @@ function createDesktop(deps = {}) {
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `type ${text.length} character${text.length === 1 ? '' : 's'}` });
     const s = await useWindow(win, ctx, policy.stepLabel('type', {}, win.name));
-    await act(s, () => getClient().call('typefocus', { ...targetOf(win), text, submit: args.submit === true }, { timeoutMs: 20000 }));
+    keysForward();
+    await act(s, () => getClient().call('typefocus', { ...targetOf(win), text, submit: args.submit === true, raise: true }, { timeoutMs: 20000 }));
     return `Typed ${text.length} character${text.length === 1 ? '' : 's'} where the keyboard focus is in ${win.name}.${args.submit ? ' Pressed Enter.' : ''}`;
   }
 

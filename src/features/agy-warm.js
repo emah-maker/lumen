@@ -51,11 +51,11 @@ const bounded = (promise, ms = EXIT_WAIT_MS) => Promise.race([promise, sleep(ms)
 
 // engine: the sidebar's AntigravityEngine (prepare, outcome, spawn, kill, home, dir, watch, watchdogMs, onFresh).
 // enabled(): the feature (and Antigravity in use). idleMs(): ms an idle process is kept (0: until the chat goes).
-function createAgyWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, spareIdleMs = SPARE_IDLE_MS, maxProcs = MAX_PROCS, quitGraceMs = QUIT_GRACE_MS, exitWaitMs = EXIT_WAIT_MS }) {
+function createAgyWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, spareIdleMs = SPARE_IDLE_MS, maxProcs = MAX_PROCS, quitGraceMs = QUIT_GRACE_MS, exitWaitMs = EXIT_WAIT_MS, toolsMissing = null }) {
   const procs = new Set(); // kept processes
   const pending = new Set(); // starts in flight: { key, mode, wanted, spare, promise, proc, cancelled }
   const exits = new Map(); // chat key -> Set of promises of its processes that are ending
-  const stats = { spawned: 0, reused: 0, fallbacks: 0, prewarmed: 0 };
+  const stats = { spawned: 0, reused: 0, fallbacks: 0, prewarmed: 0, toolRestarts: 0 };
   let used = 0;
   let failures = 0;
 
@@ -200,6 +200,11 @@ function createAgyWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, s
     const resume = Boolean(sessionId) && SAFE_SESSION.test(sessionId);
     const want = { key: ag.chatKey(chatId), mode: modeOf({ fullAccess, model, effort, workDir }), sessionId: resume ? sessionId : null, resume };
     let p = await find(want);
+    // [tools] A kept process listed Lumen's tools once, when it connected (a prewarm at composer focus, before the chat was about Word): a
+    // chat that has since turned to a Word document (or got the desktop, project or connector tool) found the word tool missing ("The Word
+    // tool was unavailable"). That process goes and a new one resumes the same thread with the full list, as Claude Code does (#914;
+    // features/ai-agents.js toolsMissing).
+    if (p && toolsMissing?.(p.tag, scope?.chat)) { p.busy = false; dispose(p); stats.toolRestarts++; p = null; }
     if (p) stats.reused++;
     else {
       try { p = await starting({ chatId, sessionId: want.sessionId, fullAccess, model, effort, workDir, claimed: true }); } catch { failures++; stats.fallbacks++; return null; }

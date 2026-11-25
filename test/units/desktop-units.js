@@ -402,6 +402,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('thumbnails are re-authorized on a fresh window list: a window that turned into a bank (or another program) is not captured again, and the session ends', shots() === before && !rig.d.active() && rig.events[rig.events.length - 1].status === 'stopped', J([shots(), before, rig.d.active()]));
   }
   {
+    // keys go to the window in front: Lumen lets the helper take the foreground and asks it to raise the app before the first key (typing into Word
+    // while another window had the focus stopped at the first key)
+    const allowed = [];
+    const api = { ok: true, cursor: () => ({ x: 0, y: 0 }), pidUnderCursor: () => 0, foregroundPid: () => 0, escapeDown: () => false, mouseDown: () => false, typing: () => false, allowForeground: () => { allowed.push(1); return true; } };
+    const rig = makeRig({ apps: [word], allowed: allowWord, winapi: api });
+    await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
+    await rig.d.run({ action: 'type', args: { element: 'e2', text: 'hello' } }, rig.ctx);
+    await rig.d.run({ action: 'press_keys', args: { keys: 'ctrl+s' } }, rig.ctx);
+    const keyCalls = rig.calls.filter(([c]) => c === 'settext' || c === 'keys');
+    check('focus: type and press_keys ask the helper to raise the app (raise: true) after Lumen allowed it the foreground', keyCalls.length === 2 && keyCalls.every(([, a]) => a.raise === true && a.hwnd === word.hwnd) && allowed.length >= 2, J([keyCalls, allowed]));
+    const ps = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'desktop', 'uia-helper.ps1'), 'utf8');
+    const cmd = (name) => { const at = ps.indexOf(`function ${name}($req) {`); return at < 0 ? '' : ps.slice(at, ps.indexOf('\n}', at)); };
+    const raiseCode = ps.slice(ps.indexOf('public static bool RaiseHard'), ps.indexOf('public static bool RaiseHard') + 900);
+    check('focus (helper): Bring-Forward raises the window (AttachThreadInput when SetForegroundWindow is refused, no key sent for it) before the field gets the focus, in settext, keys, typefocus and the Enter fallback; the per-piece guard is unchanged', /AttachThreadInput\(me, other, true\)/.test(raiseCode) && !/keybd_event|SendInput\(/.test(raiseCode) && /function Bring-Forward\(\$req\) \{\s*if \(-not \$req\['raise'\]/.test(ps) && /Bring-Forward \$req\s+\$e\.SetFocus\(\)/.test(cmd('Cmd-SetText')) && /Bring-Forward \$req\s+try \{ \$t\.el\.SetFocus\(\)/.test(cmd('Cmd-Keys')) && /Bring-Forward \$req/.test(cmd('Cmd-TypeFocus')) && /Bring-Forward \$req\s+\$e\.SetFocus\(\)/.test(cmd('Cmd-Invoke')) && /if \(\$pids -notcontains \[int\]\$st\.fgPid\) \{ \$why = 'focus'; break \}/.test(ps));
+  }
+  {
     // click / type / keys
     const rig = makeRig({ apps: [word], allowed: allowWord });
     check('click before reading: the AI is told to read first', /Read the app first/.test(await rejects(() => rig.d.run({ action: 'click', args: { element: 'e3' } }, rig.ctx))));
@@ -502,8 +518,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(40);
     cur = { x: 90, y: 90 }; click5 = true;
     rig5.d._poll();
+    await sleep(40);
+    check('"You took over" mid-call: the in-flight call is cut off at once (helper killed) and waits for Resume instead of ending the turn', rig5.d.paused() && rig5.store.aborted >= 1 && out5 === null, J([out5, rig5.store.aborted]));
+    rig5.d.resume();
     await flying;
-    check('"You took over" mid-call: the in-flight call is cut off at once (helper killed), with a note that it may have partly happened', rig5.d.paused() && rig5.store.aborted >= 1 && /took over the app while this was running/.test(out5), J([out5, rig5.store.aborted]));
+    check('"You took over" mid-call, then Resume: the call returns, saying it may have partly happened and to carry on', !rig5.d.paused() && /took over the app while this was running/.test(out5 || '') && /pressed Resume/.test(out5 || '') && /carry on/.test(out5 || ''), J([out5]));
+    // the same, then Stop: the waiting call ends as stopped
+    rig5.store.hangKeys = true;
+    out5 = null;
+    const flying2 = rig5.d.run({ action: 'press_keys', args: { keys: 'ctrl+s' } }, rig5.ctx).then(() => { out5 = 'done'; }, (e) => { out5 = e.message; });
+    await sleep(40);
+    click5 = true; rig5.d._poll();
+    await sleep(40);
+    check('"You took over" mid-call, then Stop: still waiting before Stop', rig5.d.paused() && out5 === null, J([out5]));
+    rig5.d.stop('banner');
+    await flying2;
+    check('"You took over" mid-call, then Stop: the waiting call ends with "Stopped by the user"', /Stopped by the user/.test(out5 || ''), J([out5]));
   }
 
   // ---- the card's Open / "Show in application": the helper is a background process, which Windows keeps from taking the foreground, so the click

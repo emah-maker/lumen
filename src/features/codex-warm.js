@@ -185,10 +185,10 @@ const sleep = (ms, { unref = false } = {}) => new Promise((r) => { const t = set
 
 // engine: the sidebar's CodexEngine (prepare, userHome, userData, spawn, kill, tmp, workDirs, watchdogMs, onFresh, afterLast).
 // enabled(): the setting (and Codex in use). idleMs(): ms an idle process is kept (0: until the chat goes).
-function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, spareIdleMs = SPARE_IDLE_MS, maxProcs = MAX_PROCS, readyWaitMs = READY_WAIT_MS, cancelWaitMs = CANCEL_WAIT_MS, startTimeoutMs = START_TIMEOUT_MS, quitGraceMs = QUIT_GRACE_MS }) {
+function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, spareIdleMs = SPARE_IDLE_MS, maxProcs = MAX_PROCS, readyWaitMs = READY_WAIT_MS, cancelWaitMs = CANCEL_WAIT_MS, startTimeoutMs = START_TIMEOUT_MS, quitGraceMs = QUIT_GRACE_MS, toolsMissing = null }) {
   const procs = new Set(); // every kept process that has its thread
   const pending = new Set(); // starts in flight: { key, wanted (thread id, null: new), spare, promise, proc, cancelled }
-  const stats = { spawned: 0, reused: 0, fallbacks: 0, prewarmed: 0, restarts: 0 };
+  const stats = { spawned: 0, reused: 0, fallbacks: 0, prewarmed: 0, restarts: 0, toolRestarts: 0 };
   let used = 0; // recency clock
   let failures = 0;
 
@@ -371,6 +371,11 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     let p = await find({ key, sessionId, resume, mode: modeOf(fullAccess) });
     // The user's sign-in changed since this process copied it (a new login, or a token another Codex refreshed): start over.
     if (p && await userSignInChanged(p)) { p.busy = false; dispose(p); stats.restarts++; p = null; }
+    // [tools] A kept process listed Lumen's tools once, when it connected (a prewarm at composer focus, before the chat was about Word): a
+    // chat that has since turned to a Word document (or got the desktop, project or connector tool) found the word tool missing ("The Word
+    // tool was unavailable"). That process goes and a new one resumes the same thread with the full list, as Claude Code does (#914;
+    // features/ai-agents.js toolsMissing).
+    if (p && toolsMissing?.(p.tag, scope?.chat)) { p.busy = false; dispose(p); stats.restarts++; stats.toolRestarts++; p = null; }
     // A reasoning effort chosen earlier stays on a thread until another is chosen: back to Codex's own default needs a new process.
     if (p && p.effort && !effort) { p.busy = false; dispose(p); stats.restarts++; p = null; }
     if (p) stats.reused++;
