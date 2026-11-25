@@ -1,17 +1,18 @@
-# TEMPORARY diagnostic (delete before merge): which way of reading the Electron binary leaves a Windows process that will not exit.
+# TEMPORARY diagnostic (delete before merge): does ending chromium-switches-units with exitCode stop the Windows exit hang under the real parallel run?
 name: diag-exit
 on:
   pull_request:
 permissions:
   contents: read
 jobs:
-  loop:
+  full:
     strategy:
       fail-fast: false
       matrix:
-        n: [1, 2, 3, 4, 5]
+        variant: [exitcode, process-exit]
+        n: [1, 2, 3, 4, 5, 6]
     runs-on: windows-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -21,8 +22,16 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Fetch the Electron binary
-        run: node node_modules/electron/install.js
-      - name: Loop variants
+      - name: Control: put process.exit back
+        if: matrix.variant == 'process-exit'
         shell: bash
-        run: node scripts/diag/loop.js
+        run: |
+          sed -i 's/^process.exitCode = failures ? 1 : 0;/process.exit(failures ? 1 : 0);/' test/units/chromium-switches-units.js
+          grep -n "process.exit(failures" test/units/chromium-switches-units.js
+      - name: Full parallel unit runs, three times
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            node scripts/test/test-units.js --jobs 3 > run$i.log 2>&1 || true
+            echo "RESULT ${{ matrix.variant }} run $i: $(grep -E '^(FAIL )' run$i.log | tr '\n' ' ')$(grep -E '^all [0-9]+ unit suites passed' run$i.log)"
+          done
