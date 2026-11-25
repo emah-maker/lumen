@@ -26,7 +26,7 @@ const launch = async (profile) => {
 const modeState = `(() => { const b = document.getElementById('auto-allow'); const g = document.getElementById('bypass-badge'); return { mode: b.dataset.mode, label: b.querySelector('.perm-state')?.textContent, title: b.title, armed: b.classList.contains('armed'), badge: Boolean(g) && !g.hidden && g.getBoundingClientRect().width > 0, badgeTitle: g?.title }; })()`;
 const measure = `(() => {
   const box = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height, cy: (r.top + r.bottom) / 2 }; };
-  const ids = ['cp-export', 'cp-home', 'auto-allow', 'cp-more'];
+  const ids = ['cp-export', 'cp-home', 'auto-allow', 'cp-fullscreen', 'cp-more'];
   const actions = ids.map((id) => ({ id, ...box(document.getElementById(id)) }));
   const named = [['title', '.cp-title-wrap'], ['chip', '#cp-target'], ...ids.map((id) => [id, '#' + id])].map(([n, sel]) => ({ n, ...box(document.querySelector(sel)) })).filter((x) => x.w > 0);
   const overlaps = [];
@@ -188,7 +188,7 @@ const stubProvider = (app) => app.evaluate(() => {
       const lay = await inPage(measure);
       const con = await inPage(contrast);
       const tag = `${w}px ${theme}`;
-      check(`header ${tag}: the four right-side controls (and the chip) are all 32px tall and share one centre line`, lay.heights.every((h) => h === 32) && new Set(lay.centres).size === 1 && (w < 900 ? lay.chip?.h === 0 : lay.chip?.h === 32), JSON.stringify(lay));
+      check(`header ${tag}: the five right-side controls (and the chip) are all 32px tall and share one centre line`, lay.heights.every((h) => h === 32) && new Set(lay.centres).size === 1 && (w < 900 ? lay.chip?.h === 0 : lay.chip?.h === 32), JSON.stringify(lay));
       check(`header ${tag}: even spacing between the controls`, new Set(lay.gaps).size === 1, JSON.stringify(lay.gaps));
       check(`header ${tag}: nothing overlaps (model, title, chip, controls), nothing wider than the window`, lay.overlaps.length === 0 && !lay.scrollX && lay.right, JSON.stringify(lay));
       check(`header ${tag}: the chip text truncates with an ellipsis inside its pill and carries the full name in its tooltip (under 900px the page hides the chip by design)`, lay.chip && lay.chip.overflow === 'ellipsis' && lay.chip.hidden === 'hidden' && (w < 900 || lay.chip.cut || w > 900) && lay.chip.title.includes(LONG) && (w !== 900 || lay.chip.cut), JSON.stringify(lay.chip));
