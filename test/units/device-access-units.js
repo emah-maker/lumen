@@ -46,7 +46,11 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
   // ---- never reachable
   {
     const b = (rel) => D.blockedReason(path.join(home, rel), opts);
-    check('Lumen\'s own profile is out of reach', /Lumen's own profile/.test(b('Library/Application Support/Lumen/Cookies')) && /profile/.test(b('Library/Application Support/Lumen')));
+    check('a Windows alternate data stream is refused', [['project', '.env::$DATA'], ['Desktop', 'id_rsa::$DATA'], ['Desktop', 'photo.png:Zone.Identifier']].every(([d, f]) => D.blockedReason(path.join(home, d, f), { ...opts, platform: 'win32' })));
+    check('AI command-line sign-ins are out of reach', ['.claude/.credentials.json', '.codex/auth.json', '.gemini/oauth_creds.json'].every((x) => b(x)), J(['.claude/.credentials.json', '.codex/auth.json', '.gemini/oauth_creds.json'].map(b)));
+    check('browser password stores are out of reach', ['AppData/Local/Google/Chrome/User Data/Default/Login Data', 'AppData/Local/Microsoft/Edge/User Data/Profile 1/Login Data', 'AppData/Roaming/gcloud/credentials.db'].every((x) => b(x)), J(['AppData/Local/Google/Chrome/User Data/Default/Login Data', 'AppData/Roaming/gcloud/credentials.db'].map(b)));
+    check('ordinary files are still reachable', !b('Desktop/notes.txt') && !b('Documents/Login Data notes.txt') && !b('Documents/Cookies'), J([b('Desktop/notes.txt'), b('Documents/Login Data notes.txt'), b('Documents/Cookies')]));
+    check('Lumen\'s own profile is out of reach',/Lumen's own profile/.test(b('Library/Application Support/Lumen/Cookies')) && /profile/.test(b('Library/Application Support/Lumen')));
     check('credentials folders are out of reach', ['.ssh/id_rsa', '.aws/credentials', '.gnupg/x', 'Library/Keychains/login.keychain-db', '.config/gh/hosts.yml'].every((x) => b(x)), J(['.ssh/id_rsa', '.aws/credentials'].map(b)));
     check('.env and key files anywhere are out of reach; .env.example is not', b('project/.env') && b('project/.env.local') && b('Desktop/server.pem') && b('Desktop/id_rsa') && !b('project/.env.example') && !b('Desktop/photo.png'), J([b('project/.env.example')]));
     check('a link on the Desktop pointing at a key is refused by where it really goes', /credentials/.test(throws(() => D.checkedPath('~/Desktop/sneaky.png', 'file', opts)) || ''), throws(() => D.checkedPath('~/Desktop/sneaky.png', 'file', opts)));
