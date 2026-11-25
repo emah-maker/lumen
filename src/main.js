@@ -2400,7 +2400,7 @@ function tabState() {
           pinned: Boolean(t.pinned),
           sleeping: true,
           chat: tabChatMark(t.id),
-          aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), // [ai manners] the AI opened this tab (aiForUser: because the user asked for it, so it shows with theirs)
+          aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), aiShown: aiTabShown(t), // [ai manners] the AI opened this tab (aiForUser: because the user asked for it, so it shows with theirs; aiShown: see aiTabShown)
           openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window: the strip says whose
           aiKeepOff: manners.isKeptOff(t), // [ai off-tab]
           ...splitMark(t),
@@ -2438,7 +2438,7 @@ function tabState() {
         account: t.account ? accounts().badge(t.account) : null, // [account tabs] { id, name, color }: the strip's colored mark
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
-        aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card)
+        aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), aiShown: aiTabShown(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card; aiShown: see aiTabShown)
         openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window ("Opened by Claude Desktop")
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...splitMark(t), // [split view]
@@ -4306,6 +4306,7 @@ function switchTab(id, { wake = true } = {}) {
   if (id !== activeId) {
     linkStatusRt?.hide(win); // (the old page's hovered link)
     tab.fillDue = true;
+    if (input && manners.isAiTab(tab)) tab.userSeen = true; // [ai tabs] the user went to it: it stays in sight (aiTabShown)
     const leaving = tabs.find((t) => t.id === activeId);
     if (leaving) leaving.lastActiveAt = Date.now(); // starts its idle clock for tab sleeping (sweepSleep)
     activeTab()?.webContents.stopFindInPage('clearSelection');
@@ -4423,6 +4424,15 @@ function userTookOver(tab) {
 // gray "AI tabs" group there, folded when it is made, so a run that opens dozens of tabs adds one label to the strip. The
 // tab in front shows even in a folded group (app.js), and the user's own unfolding is kept. The group holds no other tabs
 // (one the user takes over leaves it), so when the AI's tabs close it goes too. Runs in the tab's window (tabGroups is that window's).
+// [ai tabs] An AI tab the user has been to (switched to it themselves, or from a chip in the chat) or one an AI reply names ([[tab:ID]]) stays in
+// sight: beside the folded "AI tabs" label (app.js), and not left out of the strip by "Hide tabs the AI opened". Without this, a tab the AI pointed
+// the user to went back out of sight the moment they switched away from it, and the folded label showed nothing of it.
+function aiTabShown(t) { return Boolean(t && manners.isAiTab(t) && (t.userSeen || t.aiMentioned)); }
+function noteAiTabsMentioned(text) {
+  let ids = [];
+  try { ids = tabMarker.idsIn(String(text || '')); } catch { return; }
+  for (const id of ids) { const hit = tabAnywhere(id); if (hit && manners.isAiTab(hit.t)) hit.t.aiMentioned = true; }
+}
 const aiGroupName = () => t('tabs.aiGroup');
 function aiGroup() {
   for (const g of tabGroups.groups.values()) {
@@ -6329,7 +6339,7 @@ function focusAddress() {
 }
 
 // [ai manners] with "hide tabs the AI opened" on, the tabs it leaves out of the strip are skipped (the one in front, and one playing sound, stay)
-const aiTabHidden = (t) => readSettings().hideAiTabs === true && manners.isAiTab(t) && !manners.forUser(t) && t.id !== activeId && !(alive(t) && t.view.webContents.isCurrentlyAudible?.());
+const aiTabHidden = (t) => readSettings().hideAiTabs === true && manners.isAiTab(t) && !manners.forUser(t) && t.id !== activeId && !aiTabShown(t) && !(alive(t) && t.view.webContents.isCurrentlyAudible?.());
 function cycleTab(direction) {
   const list = tabs.filter((t) => !aiTabHidden(t));
   const index = list.findIndex((t) => t.id === activeId);
@@ -11957,6 +11967,7 @@ function tabChips() {
     raise: (id, senderWc) => {
       const hit = tabAnywhere(id);
       if (!hit) return false;
+      if (manners.isAiTab(hit.t)) hit.t.userSeen = true; // [ai tabs] the user went to it from the chat: it stays in sight (aiTabShown)
       withWindow(hit.rec, () => switchTab(id)); // an AI tab hidden from the strip shows again while it is the one in front, as with Open preview
       const from = senderWc ? recOfSender(senderWc) : null;
       if (hit.rec !== from && rcAlive(hit.rec) && !(TEST && process.env.LUMEN_TEST_BACKGROUND)) raiseWindow(hit.rec.win); // another window comes to the front
@@ -12100,7 +12111,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     }
     if (run.doneMsg && msg.type === 'tool' && run.thumbs) { run.thumbs = null; run.thumbTarget = null; } // (see below: a helper's step after 'done')
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
-    if (msg.type === 'done' && !run.deleted) { aiTabsKeepLinked(runId, run.reply); aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
+    if (msg.type === 'done' && !run.deleted) { noteAiTabsMentioned(run.reply); aiTabsKeepLinked(runId, run.reply); aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
     if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone (a live picture of an app window changes neither)
     if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in
