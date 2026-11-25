@@ -113,6 +113,7 @@
       clearTimeout(liveTimer); if (state.view !== 'code') liveTimer = setTimeout(drawPreview, LIVE_MS);
     });
     editor.addEventListener('keydown', (e) => {
+      if (isImeEnter(e)) return; // Japanese, Chinese, Korean input: Enter confirms the text
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); clearTimeout(liveTimer); snapshot(); if (state.view !== 'code') drawPreview(); return; }
       if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); editor.setRangeText('  ', editor.selectionStart, editor.selectionEnd, 'end'); editor.dispatchEvent(new Event('input')); }
     });
