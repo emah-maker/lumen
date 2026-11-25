@@ -92,10 +92,10 @@ function fakeSpotify(opts) {
   process.exit(failures ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });
 
-async function launch(base, widgets, extraSettings = {}) {
+async function launch(base, widgets, extraSettings = {}, extraEnv = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-spotify-profile-'));
   fs.writeFileSync(path.join(profile, 'settings.json'), JSON.stringify({ homeWidgets: widgets, newTabFavorites: false, newTabFrequent: false, newTabPrivacy: false, ...extraSettings }));
-  const app = await electron.launch({ args: [path.join(__dirname, '..', '..'), '--ignore-certificate-errors'], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1' } });
+  const app = await electron.launch({ args: [path.join(__dirname, '..', '..'), '--ignore-certificate-errors'], env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', ...extraEnv } });
   const ui = await app.firstWindow();
   await ui.waitForSelector('.tab');
   return { app, profile };
@@ -262,7 +262,7 @@ async function partWeb(fake, base, scratch, shots) {
   const W = [
     { id: 'wwebsmall', type: 'spotify', mode: 'web', x: 0, y: 0, w: 2, h: 2 },
   ];
-  const { app, profile } = await launch(base, W);
+  const { app, profile } = await launch(base, W, {}, { LUMEN_TEST_SPOTIFY_WEB_URL: `${base}/web` });
   await app.evaluate((_e, b) => { global.__spotifyWebUrl = `${b}/web`; global.__spotifyDrmProbe = async () => false; }, base);
   await app.evaluate(() => new Promise((res) => { const t = global.__agent.browser.openTab(); global.__wtab = t; t.webContents.once('did-finish-load', res); }));
   const page = (code) => app.evaluate((_e, c) => global.__wtab.webContents.executeJavaScript(c), code);

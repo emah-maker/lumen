@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Two release checks no longer fail by timing.** Nothing changes in the browser. `close-ai-tab-by-user` typed into a sidebar that was still closing for the new tab, so the message never went; it now opens the sidebar on the tab in front first. `spotify-ui` now names its Spotify stand-in at launch (`LUMEN_TEST_SPOTIFY_WEB_URL`, test runs only) so the card's player view can't start on the real site first.
+
 - **Codex chats really get the Word tool now.** After the last fix, Codex still said "Both tools are unavailable" when a chat turned to a Word document: the new Codex process Lumen started for the message read Lumen's tool list while it was connecting, before the message was tied to it, so the list had no chat and no word tool. A kept Codex, Grok Build or Antigravity process now knows its chat from the start. Tried with the real Codex and Word: Codex opened the document, added the title and paragraphs, and asked before saving. Tests: `test/units/codex-warm-units.js`.
 
 - **The AI's tabs you care about stay in sight.** A tab the AI opened that you went to, or that its reply points you to (a tab chip), now stays beside the folded **AI tabs** label after you switch away, instead of folding back out of sight. With **Hide tabs the AI opened** on, those tabs stay in the strip too; the ones it only used for its own work are still hidden.
