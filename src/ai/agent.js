@@ -4094,7 +4094,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (this.screenshotScale && this.screenshotScale.wc === wc) {
       const { wc: _wc, ...taken } = this.screenshotScale;
       let now = null; // the page may have scrolled since the screenshot
-      try { now = await runScript(wc, '({ x: scrollX, y: scrollY })', 2000); } catch { /* no delta */ }
+      try { now = await runScript(wc, annotate.SCROLL_SCRIPT, 2000); } catch { /* no delta */ }
       shot = { ...taken, zoom: taken.zoom || wc.getZoomFactor(), now };
     }
     const spec = annotate.normalize(input, shot);
@@ -7302,7 +7302,7 @@ ${CLI_DESKTOP_RULE}`;
   async shotScaleFor(wc) {
     const have = this.screenshotScale && this.screenshotScale.wc === wc ? this.screenshotScale : null;
     if (have && have.viewDip === undefined) return have;
-    const view = await runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })', 2000).catch(() => null);
+    const view = await runScript(wc, annotate.VIEW_SCRIPT, 2000).catch(() => null);
     if (have && (!view || Math.abs(have.viewDip - view.innerWidth * wc.getZoomFactor()) <= 1)) return have;
     if (!view) throw new Error('The page did not answer, so the click could not be placed. Take a screenshot and try again.');
     let image = await captureTab(wc);
@@ -8046,7 +8046,7 @@ ${same}
         if (image.getSize().width > 1280) image = image.resize({ width: 1280 });
         const size = image.getSize();
         // click_at maps screenshot pixels back to view pixels with this ratio.
-        const view = await runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+        const view = await runScript(wc, annotate.VIEW_SCRIPT);
         this.screenshotScale = this.scaleOf(wc, view, size);
         return [
           { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image.toJPEG(75).toString('base64') } },
