@@ -22,7 +22,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Control: put process.exit back
+      - name: "Control, put process.exit back"
         if: matrix.variant == 'process-exit'
         shell: bash
         run: |
