@@ -3390,6 +3390,9 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     // Ctrl/Cmd+Enter is never a browser shortcut: it is the page's (send in Gmail, Slack and chat sites, submit in forms) and Lumen's own boxes' ("send now").
     // Page-first keys (Ctrl+S, Ctrl+P, Ctrl+F...; features/page-first-keys.js) go to the page, and Lumen's action runs only if the page did not handle them.
     if (input.type === 'keyDown' && pageFirstKeys.hold(wc, input, () => { if (!wc.isDestroyed() && activeTab()?.webContents === wc) handleShortcut({ preventDefault() {} }, input); })) return;
+    // [job dashboard look] Ctrl+K / ⌘K on a chat page showing a job dashboard opens the dashboard's own command palette (renderer/chat-job-board.js);
+    // the page claims the key only while the dashboard shows (features/chat-page.js claimsPaletteKey). Elsewhere, and from the address bar, it stays the command bar.
+    if (input.type === 'keyDown' && !input.shift && !input.alt && shortcutMod(input) && shortcutKey(input) === 'k' && chatPageRt?.claimsPaletteKey?.(wc)) { wc.executeJavaScript("document.dispatchEvent(new CustomEvent('cp:shortcut', { detail: 'palette' }))").catch(() => {}); event.preventDefault(); return; }
     handleShortcut(event, input);
   });
   wc.on('focus', () => { if (tab.showGuardUntil > Date.now() && handsOff.mayFocus(tab.rec)) ui()?.focus(); }); // see layout()

@@ -1263,6 +1263,7 @@
       for (const b of tabButtons) { const on = b.dataset.view === v; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('on', on); }
       cols.hidden = v !== 'overview';
       viewBox.hidden = v === 'overview';
+      page.board?.dispose?.(); // [job dashboard look] (gives Ctrl+K back to the command bar)
       page.board = null;
       if (v === 'jobs') { // [project templates] the dashboard
         const holder = el('div', { className: 'pjp-jobs' });
@@ -1301,6 +1302,7 @@
   function close(notify = true) {
     if (!page) return;
     const { root, host: h } = page;
+    page.board?.dispose?.(); // [job dashboard look]
     page = null;
     window.removeEventListener('focus', onFocus);
     root.remove();

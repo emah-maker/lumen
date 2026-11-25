@@ -113,8 +113,6 @@
 .cp-pj-temp { flex: none; margin-left: var(--cp-1); padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--warning, var(--accent)) 18%, transparent); color: var(--text); font-size: 10.5px; line-height: 16px; }
 /* [project templates] the job colours, for a Job applications project wherever it shows (the rail here, All projects, its page and its
    dashboard: chat-project-page.css, chat-job-board.css), and its rail row: a briefcase in them */
-.pjp-job, .cp-pj.job, .pja-card.job, .pja-row.job { --job: #6a4cf5; --job-2: #0e9f9a; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) :is(.pjp-job, .cp-pj.job, .pja-card.job, .pja-row.job) { --job: #9a85ff; --job-2: #35c9c1; } }
-:root[data-theme="dark"] :is(.pjp-job, .cp-pj.job, .pja-card.job, .pja-row.job) { --job: #9a85ff; --job-2: #35c9c1; }
+.pjp-job, .cp-pj.job, .pja-card.job, .pja-row.job { --job: var(--accent-deep); --job-2: var(--accent); } /* [job dashboard look] the job colours are the theme's accent */
 .cp-pj.job .cp-pj-icon { color: var(--job); }
 .cp-pj.job .cp-pj-icon svg { stroke-width: 1.7; }
