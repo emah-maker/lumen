@@ -977,7 +977,15 @@ transition:background-color var(--t-base) ease-out, color var(--t-base) ease-out
 @keyframes gen-img-pulse{50%{opacity:0.6;}}
 @media (prefers-reduced-motion:reduce){.gen-img-wait{animation:none;}}
 .gen-img-error{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-4);padding:var(--sp-5) var(--sp-6);border-radius:var(--r-xl);background:var(--field);color:var(--text);font-size:13px;box-shadow:0 0 0 1px var(--hairline);}
-.gen-img-bar{display:flex;gap:var(--sp-3);}
+.gen-img-bar, .gen-img-acts{display:flex;flex-wrap:wrap;gap:var(--sp-3);}
+.gen-img-foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:var(--sp-3);}
+.gen-img-prompt{font-size:12px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;}
+.gen-img-making{min-height:180px;grid-template-rows:auto auto;align-content:center;gap:var(--sp-2);background:linear-gradient(110deg, var(--field) 30%, var(--hover) 50%, var(--field) 70%) 0 0 / 300% 100%;animation:gen-img-sweep 1.8s linear infinite;}
+@keyframes gen-img-sweep{to{background-position:-150% 0;}}
+@media (prefers-reduced-motion:reduce){.gen-img-making{animation:none;}}
+.gen-img-wait-line{color:var(--text);font-size:13px;}
+.gen-img-error-card{flex-direction:column;align-items:flex-start;}
+.gen-img-error-why{color:var(--muted);font-size:12px;overflow-wrap:anywhere;}
 .gen-img-btn{height:24px;padding:0 var(--sp-5);border:none;border-radius:var(--r-xl);background:var(--field);color:var(--muted);font:inherit;font-size:12px;transition:background-color var(--t-fast) ease-out, color var(--t-fast) ease-out;}
 .gen-img-btn:hover:not(:disabled), .gen-img-btn:focus-visible{background:var(--hover);color:var(--text);}
 .gen-img-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}

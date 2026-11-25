@@ -37,6 +37,16 @@ Codex is not an image provider here (its free tier is limited). In an Antigravit
 
 The picture appears like any generated one (saved with the chat, encrypted; Save, Copy, enlarge) with a small "Made with OpenAI · gpt-image-1" line, kept when the chat is reopened. The model is told only that the picture was made and by whom, never sent the picture.
 
+While the picture is made, a card stands in its place: "Making your picture with Grok…" and the seconds so far ("Editing the picture with …" for an edit). The picture takes the card's place when it is ready. If it fails, the card says why, with **Try again**; it stays in the chat until you leave it.
+
+Under a picture a provider made: **Save**, **Copy**, **Open** (the full-size viewer), the prompt it was made from, and three asks that go through the chat like a message you type, so the same provider rules apply:
+
+- **Try again**: the same prompt, a fresh take.
+- **Variation**: the same subject with a different composition.
+- **Edit**: puts "Change this picture (…): " in the message box; finish the sentence and send.
+
+If you have a draft in the message box, the ask is added under it and nothing is sent until you send it. A picture found on the web, drawn from SVG, or marked on a screenshot has Save, Copy and Open only.
+
 ## Privacy and cost
 
 The prompt goes to the provider that makes the picture, and may count against that provider's plan or your API key's billing. After the AI has read page content in a chat, the picture request waits for your OK first (the prompt is on the card), like a web search does, since page text could otherwise be steering what is sent.

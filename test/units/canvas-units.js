@@ -50,7 +50,7 @@ const svgDoc = canvas.frameDocument('svg', '<?xml version="1.0"?><svg></svg>');
 check('an SVG is wrapped with the policy too', svgDoc.includes("default-src 'none'") && !svgDoc.includes('<?xml'));
 
 // ---- canvas: the sandbox
-const src = noComments(read('src/renderer/chat-canvas.js'));
+const src = noComments(read('src/renderer/chat-canvas.js') + read('src/renderer/chat-canvas-panel.js')); // (the panel, with its iframe, is chat-canvas-panel.js)
 const frame = read('src/renderer/canvas-frame.html');
 const page = read('src/renderer/chat-page.html');
 check('the preview iframe is sandboxed with allow-scripts only', /setAttribute\('sandbox', 'allow-scripts'\)/.test(src) && !/allow-same-origin/.test(src));

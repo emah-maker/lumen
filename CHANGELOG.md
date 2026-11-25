@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The canvas is a small editor now.** On the full-page chat, **Open in canvas** has **Code**, **Split** and **Preview** views. **Edit** changes the code in place and the preview follows as you type; each pause is a version, with **Undo**, **Redo** and **Original** to go back to the reply's code. The preview has **Full**, **Tablet** and **Phone** widths and **Reload**, and **Expand** (⤢) gives the canvas the whole chat area (Esc goes back). The preview is still the same sandbox: no network, no way into Lumen. The panel loads on the full-page chat only, so the sidebar carries none of it. Test: `test/units/canvas-image-ui-units.js`.
+- **Plain HTML looks designed.** A page the AI writes with no CSS of its own now previews with readable type, a comfortable line length, styled tables, code, quotes and form controls, your accent colour, and light or dark with your system, in the canvas and in file cards. Any CSS the page has wins (the base styles sit in a CSS layer), and a page with its own stylesheet is shown exactly as written.
+- **Pictures get a proper card.** While a picture is being made, the chat shows a card saying which provider is making it and how long it has taken, and the picture takes its place. When it fails, the card says why, with **Try again**. Under a picture: **Save**, **Copy** and **Open** (full size), and for one a provider made, the prompt it was made from with **Try again**, **Variation** (both send a new request) and **Edit** (puts "Change this picture …" in the message box for you to finish).
+
 ## 0.5.107 (2026-11-25)
 
 - **Startup loads one module fewer.** The tab-freeze image resizer now loads the first time a tab freezes instead of on every start, which keeps the start-up module count at its budget now that the encrypted-storage module (secret box) loads at start.

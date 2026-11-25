@@ -192,14 +192,64 @@
       open.onclick = () => enlarge(pic, url, open);
       open.addEventListener('contextmenu', (e) => { e.preventDefault(); menu(pic, fig, e.clientX, e.clientY); });
       const bar = el('div', { className: 'gen-img-bar' }, button(tr('genimg.save'), () => doSave(pic, fig)), button(tr('genimg.copy'), () => doCopy(pic, fig)), ...(window.assistant?.notes && pic.id ? [button(tr('notes.add'), () => doNote(pic, fig))] : []));
+      // [image card] Open full size, and for a picture a provider made (its alt is the prompt): Try again, Variation, Edit, which put the ask in the message box
+      const prompt = madeByProvider(pic) ? String(pic.alt || '').trim() : '';
+      const acts = el('div', { className: 'gen-img-acts' }, button(tr('genimg.open'), () => enlarge(pic, url, open)), ...(prompt && window.chatAskText ? [
+        button(tr('genimg.retry'), () => window.chatAskText(tr('genimg.againAsk', { prompt }), { send: true })),
+        button(tr('genimg.variation'), () => window.chatAskText(tr('genimg.variationAsk', { prompt }), { send: true })),
+        button(tr('genimg.edit'), () => window.chatAskText(tr('genimg.editAsk', { prompt: prompt.slice(0, 80) }))),
+      ] : []));
       // [image routing] which provider made it (the user's own keys or plan, so it is always said)
       // a picture taken from a file the AI made: its file name
       const caption = pic.caption ? [el('div', { className: 'gen-img-credit gen-img-caption', textContent: String(pic.caption).slice(0, 120) })] : [];
-      fig.replaceChildren(open, bar, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []), ...caption);
+      const said = prompt ? [el('div', { className: 'gen-img-prompt', textContent: prompt, title: prompt })] : [];
+      fig.replaceChildren(open, el('div', { className: 'gen-img-foot' }, bar, acts), ...said, ...(pic.credit ? [el('div', { className: 'gen-img-credit', textContent: tr('genimg.madeWith', { name: String(pic.credit).slice(0, 80) }) })] : []), ...caption);
     };
     const start = () => load(pic.id).then((url) => (url ? show(url) : fail()));
     start();
     return fig;
+  }
+
+  // A picture an image provider made from a prompt (not one found on the web, drawn from SVG or marked on a screenshot by Lumen).
+  const madeByProvider = (pic) => Boolean(pic.credit) && !/^(From |Lumen\b|Drawn by Lumen)/.test(String(pic.credit));
+
+  // ---- [image card] the picture being made: main's status events carry { state, provider, prompt, message } (agent.js generateImageTool).
+  // making: a card with who is making it and the seconds so far; done: "Almost there" until the picture takes its place (chat-core.js);
+  // failed: what went wrong, with Try again. -> the card, which chat-core keeps on the turn
+  function progress(card, image, place) {
+    if (!image || typeof image !== 'object') return card;
+    if (card?.classList.contains('gen-img-failed')) card = null; // a new try gets a new card
+    if (!card) {
+      if (image.state !== 'making' && image.state !== 'failed') return null;
+      const line = el('div', { className: 'gen-img-wait-line' });
+      const secs = el('span', { className: 'gen-img-secs' });
+      const box = el('div', { className: 'gen-img-wait gen-img-making' }, line, secs);
+      box.setAttribute('role', 'status');
+      const fig = el('figure', { className: 'gen-img gen-img-pending' }, box);
+      fig.setAttribute('aria-busy', 'true');
+      const made = el('div', { className: 'msg assistant gen-pics' }, fig);
+      const t0 = Date.now();
+      const tick = setInterval(() => { if (!made.isConnected) { clearInterval(tick); return; } const n = Math.round((Date.now() - t0) / 1000); if (n >= 3) secs.textContent = tr('genimg.seconds', { n }); }, 1000); // (stops once the picture takes its place)
+      made.stop = () => clearInterval(tick);
+      place(made);
+      card = made;
+    }
+    const fig = card.querySelector('.gen-img');
+    const line = card.querySelector('.gen-img-wait-line');
+    const prompt = String(image.prompt || card.dataset.prompt || '').slice(0, 300);
+    if (prompt) card.dataset.prompt = prompt;
+    if (image.state === 'making' && line) line.textContent = tr(image.edit ? 'genimg.editing' : 'genimg.making', { name: String(image.provider || '').slice(0, 60) || 'AI' });
+    else if (image.state === 'done' && line) line.textContent = tr('genimg.finishing');
+    else if (image.state === 'failed') {
+      card.stop?.();
+      card.classList.add('gen-img-failed');
+      fig.removeAttribute('aria-busy');
+      const note = el('div', { className: 'gen-img-error gen-img-error-card' }, el('strong', { textContent: tr('genimg.failedTitle') }), ...(image.message ? [el('span', { className: 'gen-img-error-why', textContent: String(image.message).slice(0, 400) })] : []));
+      if (prompt && window.chatAskText) note.append(el('div', { className: 'gen-img-bar' }, button(tr('genimg.retry'), () => window.chatAskText(tr('genimg.againAsk', { prompt }), { send: true }))));
+      note.setAttribute('role', 'alert');
+      fig.replaceChildren(note);
+    }
+    return card;
   }
 
   // ---- web pictures a reply points at: shown only when asked for
@@ -232,5 +282,5 @@
     }
   }
 
-  window.genImages = { figure, decorate, load, zoomable, enlarge, closeAll };
+  window.genImages = { figure, decorate, load, zoomable, enlarge, closeAll, progress, madeByProvider };
 })();
