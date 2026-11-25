@@ -69,9 +69,7 @@ else {
   // once it is known again, or gone from src/). Empty since 2026-11-23: WebContentsForceDark went in #998, remote-debugging-address after it.
   const KNOWN_DEAD = {};
   const DEAD = 'disable-direct-composition-video-overlays';
-  const scanStart = Date.now();
   const found = inBinary(bin, [...words, DEAD]);
-  console.log(`INFO  scanned the Electron binary in ${Date.now() - scanStart} ms`);
   const missing = [...words].filter((w) => !found.has(w));
   const fresh = missing.filter((w) => !(w in KNOWN_DEAD));
   check(`every launch switch and feature name is in the shipped Electron (${words.size} names, ${missing.length} known dead)`, fresh.length === 0, fresh.join(', '));
@@ -81,4 +79,7 @@ else {
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
-process.exit(failures ? 1 : 0);
+// exitCode, not process.exit(): the 32 MB scan buffer above (external memory) starts V8's concurrent marking, and process.exit() called
+// while it runs could hang the process on Windows after "All passed", until the runner's 120 s timeout (about 1 run in 10 in a loop;
+// none with --single-threaded-gc, none with exitCode). Nothing else keeps the event loop alive, so the process ends right here anyway.
+process.exitCode = failures ? 1 : 0;
