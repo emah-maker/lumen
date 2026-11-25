@@ -270,7 +270,7 @@ button.pjp-hit { cursor: pointer; }
 .pjp-job .pjp-tab.on::after { background: linear-gradient(90deg, var(--job), var(--job-2)); }
 .pjp-job .pjp-tab[data-view="jobs"] { font-weight: 600; }
 .pjp-jobs { padding-top: var(--sp-2); }
-.pjp-type-switch { display: inline-flex; padding: 4px; gap: 2px; border-radius: var(--r-pill); background: var(--hover); }
+.pjp-type-switch { display: inline-flex; flex-wrap: wrap; max-width: 100%; padding: 4px; gap: 2px; border-radius: var(--r-pill); background: var(--hover); }
 .pjp-type-opt { height: 28px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
 .pjp-type-opt:hover { color: var(--text); }
 .pjp-type-opt.on { background: var(--surface-raised, var(--surface)); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }

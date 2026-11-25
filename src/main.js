@@ -339,7 +339,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project', 'chats:project-templates', 'chats:project-applications',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project', 'chats:project-templates', 'chats:project-applications', 'chats:project-tools', 'chats:project-connect',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -6430,7 +6430,16 @@ const projectForChat = (id) => { try { const pid = pendingProject.get(id); retur
 // the AI reads the rest with the project_files tool.
 // [project permissions] The level a chat runs at: its project's own (Ask / Auto-allow / Bypass), else Settings → AI's (features/permission-mode.js).
 const permissionModeFor = (messages) => permissionModes.effectiveMode(readSettings(), messages ? projectForChat(chatIdOfMessages(messages)) : null);
-const projectAllows = (messages, what) => { const d = projectForChat(chatIdOfMessages(messages))?.defaults; return what === 'connectors' ? d?.connectors !== false : what === 'mcp' ? d?.mcp !== false : true; };
+// [project tools] what: 'connectors' / 'mcp' (any at all), 'app:<connector id>', 'mcp:<server name>' (a connector card's server follows its app), 'skill:<name>'
+const projectToolsLib = lazy(() => require('./features/project-tools'));
+const projectAllows = (messages, what) => {
+  const d = projectForChat(chatIdOfMessages(messages))?.defaults;
+  if (!d) return true;
+  const w = String(what ?? '');
+  if (w.startsWith('mcp:')) { const name = w.slice(4); let preset = ''; try { preset = mcpClient.list().find((s) => s.name === name)?.preset || ''; } catch { /* not set up yet */ } return projectToolsLib.allows(d, preset ? `preset:${preset}` : `server:${name}`); }
+  return projectToolsLib.allows(d, w);
+};
+const projectOnlyApps = (messages) => { const d = projectForChat(chatIdOfMessages(messages))?.defaults; return d ? projectToolsLib.onlyApps(d) : null; }; // [project tools] the apps the connector tool lists (null: every connected one)
 const projectBlockFor = (id) => {
   try {
     const project = projectForChat(id);
@@ -6450,17 +6459,19 @@ function projectSettingsFor(id) {
     if (block) out.projectInstructions = block;
     if (project) { out.projectId = project.id; if (project.links?.length || projectFiles().list(project.id).length) out.projectTools = true; }
     if (project?.template && require('./features/project-templates').byId(project.template)?.tracker) out.projectApplications = true; // [project templates] the applications tool
+    if (Array.isArray(project?.defaults?.skills)) { out.skillsList = skillsListNow({ only: project.defaults.skills }); out.projectSkills = true; } // [project tools] only the project's skills are listed to the AI
     const work = projectWorkFolderFor(id); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
     if (work) out.projectWorkFolder = work;
   } catch { /* no project settings: the chat goes on as any other */ }
   return out;
 }
-const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder', 'projectApplications'];
+const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder', 'projectApplications', 'projectSkills'];
 // The open chat's settings follow its project (a chat opened, moved into a project, or its project edited).
 function syncProjectInstructions() {
   const follow = (messages, id) => {
     const settings = messages?.settings;
     if (!settings) return;
+    if (settings.projectSkills) settings.skillsList = skillsListNow(); // [project tools] out of a project that picked its skills: every skill again
     for (const key of PROJECT_SETTING_KEYS) delete settings[key];
     Object.assign(settings, projectSettingsFor(id));
   };
@@ -9969,6 +9980,7 @@ const agent = new Agent({
       return { files: store.list(project.id), links: project.links || [], readText: (f) => store.readText(project.id, f.id), readImage: (f) => store.readImage(project.id, f.id) };
     },
     allows: projectAllows,
+    onlyApps: projectOnlyApps, // [project tools]
     // [project permissions] Sites allowed with "Always" in the chat's project: its chats only (features/permission-mode.js)
     name: (messages) => projectForChat(chatIdOfMessages(messages))?.name || '',
     hostAllowed: (messages, host) => permissionModes.hostAllowed(projectForChat(chatIdOfMessages(messages)), host),
@@ -10398,7 +10410,7 @@ async function completeSkillJsonOn(model, { system, user, schema }) {
 }
 // [skills] The skills the AI may use on its own, as the system prompt lists them (fixed when a chat starts). '' before
 // skillsFeature exists (a chat begun during start-up) or when there are none.
-function skillsListNow() { try { return skillsFeature.promptBlock(); } catch { return ''; } }
+function skillsListNow(opts) { try { return skillsFeature.promptBlock(opts); } catch { return ''; } } // opts.only: [project tools] a project's skills
 const skillsFeature = require('./features/skills').create({
   ipcMain,
   dialog: electronDialog,
@@ -12683,6 +12695,8 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
   // [project templates] A new project made from a template (features/project-templates.js): its name, goal line and instructions unless typed.
   const template = !fields.id && project?.template ? require('./features/project-templates').byId(project.template) : null;
   if (template) Object.assign(fields, require('./features/project-templates').fieldsFor(template.id, fields));
+  // [project tools] A new project's tools: the template's (its apps, plan first), with what was ticked in the dialog on top.
+  if (!fields.id && (template?.tools || (project?.tools && typeof project.tools === 'object'))) fields.defaults = projectToolsLib.mergeChosen(projectToolsLib.templateDefaults(template), project?.tools);
   let made = '';
   try {
     const use = async (dir, confirmed) => { const chk = await projectFolders.checkWorkFolder(String(dir || ''), { confirmed: confirmed === true }); if (!chk.ok) throw Object.assign(new Error(chk.reason), { reason: chk.reason }); return chk.real; };
@@ -13700,9 +13714,64 @@ ipcMain.handle('chats:project-defaults', (_e, id, defaults) => {
   const p = projectById(String(id));
   if (!p) return null;
   const d = defaults && typeof defaults === 'object' ? defaults : {};
-  const out = chats().saveProject({ id: p.id, name: p.name, defaults: { model: String(d.model || '').slice(0, 120), plan: d.plan === true, connectors: d.connectors !== false, mcp: d.mcp !== false } });
+  // (only the keys given change: the Defaults card sends the model and plan first, the Tools view its lists)
+  const next = { ...(p.defaults || {}) };
+  if ('model' in d) next.model = String(d.model || '').slice(0, 120);
+  if ('plan' in d) next.plan = d.plan === true;
+  if ('connectors' in d) next.connectors = d.connectors !== false;
+  if ('mcp' in d) next.mcp = d.mcp !== false;
+  for (const k of ['apps', 'servers', 'skills']) if (k in d) { if (Array.isArray(d[k])) next[k] = d[k]; else delete next[k]; } // [project tools] null: every one
+  const out = chats().saveProject({ id: p.id, name: p.name, defaults: next });
   if (out) projectChanged();
   return out && projectPage(out);
+});
+// [project tools] The project page's Tools view and the New project dialog (features/project-tools.js): every connected app, MCP server and skill,
+// each with whether the project's chats get it. id: the project (null in the dialog, which shows a template's preset: change.template).
+// change: { kind: 'apps' | 'servers' | 'skills', id, on } switches one ('all' / 'none' for the whole list). -> { catalog, project? } or null
+function projectToolsCatalog(defaults) {
+  let connectors = [];
+  try { connectors = connectorsSvc().list().connectors || []; } catch { /* the connectors could not be read: none listed */ }
+  let servers = [];
+  try { servers = mcpClient.list(); } catch { /* none */ }
+  let skills = [];
+  try { skills = skillsFeature.autoSkills().map((x) => ({ name: x.name, title: x.title, description: x.description, source: x.source || '' })); } catch { /* none */ }
+  return projectToolsLib.catalog({ connectors, servers, skills }, defaults || {});
+}
+ipcMain.handle('chats:project-tools', (_e, id, change) => {
+  const c = change && typeof change === 'object' ? change : {};
+  if (!id) { // (the dialog: a template's preset, with what was ticked so far)
+    const tpl = c.template ? require('./features/project-templates').byId(String(c.template)) : null;
+    return { catalog: projectToolsCatalog(projectToolsLib.mergeChosen(projectToolsLib.templateDefaults(tpl), c.tools)) };
+  }
+  let p = projectById(String(id));
+  if (!p) return null;
+  if (c.kind && c.id !== undefined) {
+    const cat = projectToolsCatalog(p.defaults);
+    const present = (cat[c.kind] || []).filter((x) => x.on).map((x) => x.id);
+    const next = projectToolsLib.toggle(p.defaults, String(c.kind), String(c.id), c.on === true, present);
+    const out = chats().saveProject({ id: p.id, name: p.name, defaults: next });
+    if (!out) return null;
+    p = out;
+    syncProjectInstructions(); // (the open chat's skills follow)
+    projectChanged();
+  }
+  return { catalog: projectToolsCatalog(p.defaults), project: projectPage(p) };
+});
+// [project tools] Connect from the project page: one sign-in in the user's browser for Google, Microsoft, Gmail, a connector card's MCP server and
+// Canvas (when Lumen finds the school's address); an app that needs a token or an address typed opens Settings → Apps and connections instead.
+// Connected, it is switched on in the project (when the project has a list). -> { ok, catalog, project } | { settings: true } | { error }
+ipcMain.handle('chats:project-connect', async (_e, id, connectorId) => {
+  const cid = String(connectorId || '');
+  const card = (() => { try { return connectorsSvc().list().connectors.find((x) => x.id === cid); } catch { return null; } })();
+  if (!card) return { error: 'That app isn’t known.' };
+  if (projectToolsLib.connectMode(card) !== 'click') { openSettingsPage('connectors'); return { settings: true }; }
+  try { await connectorsSvc().connect(cid, {}); } catch (err) {
+    if (cid === 'canvas') { openSettingsPage('connectors'); return { settings: true }; } // (its address could not be found: typed in Settings)
+    return { error: String(err?.message || err).slice(0, 200) };
+  }
+  let p = id ? projectById(String(id)) : null;
+  if (p && Array.isArray(p.defaults?.apps) && !p.defaults.apps.includes(cid)) { p = chats().saveProject({ id: p.id, name: p.name, defaults: projectToolsLib.toggle(p.defaults, 'apps', cid, true) }) || p; projectChanged(); }
+  return { ok: true, catalog: projectToolsCatalog(p?.defaults), ...(p ? { project: projectPage(p) } : {}) };
 });
 // [project permissions] A project's own level (Ask / Auto-allow / Bypass, or null: "Use default") and the sites allowed with Always in it (features/permission-mode.js projectPatchOf; kept on this computer only). Every view's bolt menu hears
 // of it (agent:perm-project): the open chat's project may be this one.
@@ -14713,7 +14782,7 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
   secrets: secretBox, // [external apps] the tokens other apps are given are kept with it (features/secret-box.js)
-  connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
+  connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs(chat ? { only: projectOnlyApps(chat) } : undefined) : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
   projectTools: (chat) => [...(chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), ...(chat?.settings?.projectApplications === true ? [require('./ai/agent').APPLICATIONS_TOOL_DEF] : [])], // [project templates] applications, in a project made from a template with a tracker; // [project workspace] project_files, to a run in a project chat that has files or pinned pages
   desktopTools: (chat) => agent.cliDesktopToolDefs(chat), // [desktop apps] the desktop tool, to a run whose chat may use other apps (agent.js cliDesktopNote)
   wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)

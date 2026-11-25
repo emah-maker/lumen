@@ -1,0 +1,44 @@
+/* [project tools] A project's Tools view and the New project dialog's Tools step (renderer/chat-project-tools.js). Theme tokens only, so light,
+   dark and the user's accent follow styles.css; loaded with its script the first time either is shown. */
+.ptl { display: flex; flex-direction: column; gap: var(--cp-3); min-width: 0; color: var(--text); }
+.ptl-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--cp-3); align-items: start; }
+.ptl-card .pjp-note { margin: 0; }
+.ptl-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--sp-2) var(--cp-3); }
+.ptl-pair .ptl-list, .ptl-pick .ptl-list { grid-template-columns: 1fr; }
+.ptl-row { display: flex; align-items: center; gap: var(--cp-2); min-height: 52px; padding: var(--sp-3) var(--sp-5); border-radius: 12px; box-shadow: 0 0 0 1px var(--hairline); background: var(--surface); }
+.ptl-row.on { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, var(--hairline)); background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }
+.ptl-row:focus-within { box-shadow: 0 0 0 2px var(--accent); }
+.ptl-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ptl-row-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ptl-row-status { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ptl-row-status.ok { color: var(--text-2, var(--muted)); }
+.ptl-row-status.ok::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--accent); vertical-align: 1px; }
+.ptl-row-status.warn { color: var(--danger); }
+.ptl-mark { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--ptl-mark, var(--accent)); color: #fff; font-weight: 600; font-size: 14px; }
+.ptl-mark-plain { background: var(--accent-soft); color: var(--accent); }
+.ptl-connect { flex: none; }
+.ptl-empty { margin: 0; padding: var(--sp-5) var(--sp-6); border-radius: 12px; background: var(--hover); color: var(--muted); font-size: 13px; line-height: 1.45; }
+.ptl-status { margin: 0; min-height: 1em; font-size: 12.5px; color: var(--muted); }
+.ptl-status:empty { display: none; }
+
+/* the switch: the accent when on */
+.ptl-switch { flex: none; position: relative; width: 36px; height: 20px; padding: 0; border: none; border-radius: var(--r-pill, 999px); background: var(--border); cursor: pointer; transition: background var(--t-fast, .12s); }
+.ptl-switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-raised, #fff); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform var(--t-fast, .12s); }
+.ptl-switch.on { background: var(--accent); }
+.ptl-switch.on::after { transform: translateX(16px); }
+.ptl-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .ptl-switch, .ptl-switch::after { transition: none; } }
+
+/* the New project dialog's step: one line that opens into the list */
+.ptl-pick { gap: var(--sp-3); }
+.ptl-pick-head { display: flex; align-items: center; gap: var(--cp-2); width: 100%; min-height: 44px; padding: var(--sp-3) var(--sp-5); border: none; border-radius: 12px; box-shadow: 0 0 0 1px var(--hairline); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ptl-pick-head:hover { background: var(--hover); }
+.ptl-pick-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ptl-pick-title { flex: none; font-weight: 500; }
+.ptl-pick-line { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ptl-pick-warn { flex: none; padding: 1px var(--sp-3); border-radius: var(--r-pill, 999px); background: var(--accent-soft); color: var(--accent); font-size: 12px; }
+.ptl-chev { flex: none; color: var(--muted); transition: transform var(--t-fast, .12s); }
+.ptl-pick-head[aria-expanded="true"] .ptl-chev { transform: rotate(180deg); }
+.ptl-pick-body { display: flex; flex-direction: column; gap: var(--sp-3); max-height: 300px; overflow-y: auto; padding: 2px; }
+.ptl-pick-body[hidden] { display: none; }
+.ptl-pick-body .pjp-note { margin: 0; font-size: 12.5px; color: var(--muted); }

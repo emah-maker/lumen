@@ -391,6 +391,20 @@
     pick.setAttribute('role', 'radiogroup');
     pick.setAttribute('aria-label', tr('projecttpl.label', 'Start from'));
     const tplNote = el('p', { className: 'cp-pj-note', hidden: true });
+    // [project tools] Which apps the new project's chats get: the template's ticked, Connect inline (renderer/chat-project-tools.js, loaded here).
+    const toolsBox = el('div', { className: 'cp-pj-tools', hidden: true });
+    let toolsPick = null;
+    if (!project && typeof api.projectTools === 'function') {
+      const ready = window.chatProjectTools ? Promise.resolve(true) : new Promise((done) => {
+        const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-project-tools.css' });
+        const js = Object.assign(document.createElement('script'), { src: 'chat-project-tools.js', onload: () => done(true), onerror: () => done(false) });
+        css.dataset.later = '';
+        js.dataset.later = '';
+        document.head.append(css);
+        document.body.append(js);
+      });
+      ready.then((ok) => { if (!ok || !back.isConnected || !window.chatProjectTools) return; toolsPick = window.chatProjectTools.picker(toolsBox, { api, tr }); toolsBox.hidden = false; if (template) toolsPick.setTemplate(template); });
+    }
     if (!project && typeof api.projectTemplates === 'function') {
       api.projectTemplates().then((list) => {
         if (!Array.isArray(list) || !list.length || !back.isConnected) return;
@@ -400,11 +414,12 @@
           b.setAttribute('role', 'radio');
           b.onclick = () => {
             template = c.id;
+            toolsPick?.setTemplate(c.id); // [project tools]
             for (const x of buttons) x.setAttribute('aria-checked', String(x === b));
             name.placeholder = c.id ? tr(`projecttpl.${c.id}`, c.name) : tr('chatpage.project.name', 'Project name');
             text.placeholder = c.id ? tr('projecttpl.instructions', 'Left empty, the template’s instructions are used. Anything you write here replaces them.') : tr('chatpage.project.hint', 'How should the AI work in this project? For example: answer in a formal tone, or the audience is first-year students.');
-            tplNote.hidden = !c.id;
             tplNote.textContent = c.id === 'job-applications' ? tr('projecttpl.job-applications.note', 'Comes with instructions for tailored résumé copies (your master résumé is never edited), a “Tailored résumés” folder, its own automation profile for filling forms, and an applications tracker.') : '';
+            tplNote.hidden = !tplNote.textContent;
           };
           b.setAttribute('aria-checked', String(!c.id));
           return b;
@@ -425,7 +440,7 @@
       };
       row.prepend(del);
     }
-    box.append(heading, pick, tplNote, name, text, note, folderBox, row);
+    box.append(heading, pick, tplNote, toolsBox, name, text, note, folderBox, row);
     back.append(box);
     const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
     const onKey = (e) => {
@@ -467,7 +482,7 @@
       e.preventDefault();
       if (!name.value.trim() && !template) { name.focus(); return; }
       save.disabled = true;
-      const payload = { id: project?.id, name: name.value.trim() || name.placeholder, instructions: text.value, mirror: mirrorOn, portable: portableOn, ...(template ? { template } : {}) };
+      const payload = { id: project?.id, name: name.value.trim() || name.placeholder, instructions: text.value, mirror: mirrorOn, portable: portableOn, ...(template ? { template } : {}), ...(toolsPick?.value() ? { tools: toolsPick.value() } : {}) }; // ([project tools] the apps ticked)
       if (!project) { if (pickedFolder) { payload.folderMode = 'existing'; payload.folder = pickedFolder; payload.confirmed = confirmed; } }
       else if (pickedFolder) { payload.folder = pickedFolder; payload.confirmed = confirmed; }
       else if (makeFolder && !project.folder) payload.folderMode = 'new';

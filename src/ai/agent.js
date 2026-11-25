@@ -4861,6 +4861,14 @@ ${prompt}` : prompt), historyImages: [] };
   projectAllows(what) {
     try { const chat = taskScope.getStore()?.chat; return !chat || this.browser.projects?.allows?.(chat, what) !== false; } catch { return true; }
   }
+  // [project tools] The connected apps a project picked (null: every connected one), and its MCP servers' tools only (`allows` asks per 'mcp:<server>').
+  projectOnlyApps(chat = taskScope.getStore()?.chat) {
+    try { return chat ? this.browser.projects?.onlyApps?.(chat) ?? null : null; } catch { return null; }
+  }
+  projectServersOnly(defs, allows) {
+    const ext = this.browser.externalTools;
+    return (defs || []).filter((d) => { const f = ext?.lookupTool?.(d.name); return !f || allows(`mcp:${f.server}`); });
+  }
   // ---- [/project workspace]
 
   async memoryTool(input) {
@@ -6182,10 +6190,11 @@ ${prompt}` : prompt), historyImages: [] };
 
   // The servers' tools for this turn; a server that won't start is mentioned once per error.
   async externalToolDefs(emit) {
-    const own = this.projectAllows('connectors') ? this.browser.connectors?.defs({ readOnly: Boolean(this.browser.background) }) || [] : []; // [project workspace] a project can turn them off. [connectors] one tool for every connected service (none when nothing is connected); a background task or routine gets the reads only
+    const own = this.projectAllows('connectors') ? this.browser.connectors?.defs({ readOnly: Boolean(this.browser.background), only: this.projectOnlyApps() }) || [] : []; // [project workspace] a project can turn them off. [connectors] one tool for every connected service (none when nothing is connected); a background task or routine gets the reads only
     const ext = this.projectAllows('mcp') ? this.browser.externalTools : null; // [project workspace]
     if (!ext) return own;
-    const { defs, failed } = await ext.tools();
+    const { defs: all, failed } = await ext.tools();
+    const defs = this.projectServersOnly(all, (name) => this.projectAllows(name)); // [project tools] the project's MCP servers only
     this.mcpNoted ||= new Set();
     for (const f of failed) {
       const key = `${f.name}\n${f.error}`;
@@ -6205,7 +6214,7 @@ ${prompt}` : prompt), historyImages: [] };
   async allowExternal(name, input, { emit, signal, who, external, run }) {
     const ext = this.browser.externalTools;
     const found = ext.lookupTool(name);
-    if (external || !found || !this.projectAllows('mcp')) throw new Error(`Unknown tool: ${name}`);
+    if (external || !found || !this.projectAllows('mcp') || !this.projectAllows(`mcp:${found.server}`)) throw new Error(`Unknown tool: ${name}`);
     const holder = taintHolder(run);
     const tainted = Boolean(holder?.tainted) && holder.onlyFrom !== found.server;
     // A read-only tool of an official preset (GitHub, Notion, Todoist) runs without a card, as the old connectors' reads did; the chat still counts as having read untrusted content after.
@@ -6236,6 +6245,7 @@ ${prompt}` : prompt), historyImages: [] };
   async allowConnector(input, { emit, signal, who, run, noAsk, external }) {
     const svc = this.browser.connectors;
     if (external || !svc?.hasAny() || !this.projectAllows('connectors')) throw new Error('Unknown tool: connector');
+    if (input && typeof input === 'object' && input.app && !this.projectAllows(`app:${input.app}`)) throw new Error(`${String(input.app).slice(0, 40)} isn’t one of this project’s apps. Tell the user they can turn it on in the project’s Tools.`); // [project tools]
     const holder = taintHolder(run);
     if (svc.isWrite(input)) {
       if (this.browser.background) throw new Error('Background tasks and routines can only read from connected services. Tell the user what you would have changed.');
@@ -7147,7 +7157,7 @@ ${CLI_DESKTOP_RULE}`;
     try {
       const ext = this.browser.externalTools;
       if (!ext?.readyDefs || (chat && this.browser.projects?.allows?.(chat, 'mcp') === false)) return [];
-      return ext.readyDefs();
+      return chat ? this.projectServersOnly(ext.readyDefs(), (what) => this.browser.projects?.allows?.(chat, what) !== false) : ext.readyDefs(); // [project tools]
     } catch { return []; }
   }
   // Starts the user's MCP servers before a CLI run lists its tools (a server that fails is said once, as for an API chat), for at most waitMs.

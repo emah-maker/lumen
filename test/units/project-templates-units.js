@@ -22,7 +22,7 @@ const NOW = 1_800_000_000_000;
   // ---- the templates
   {
     const list = T.list();
-    check('Job applications is a template, listed with its name and goal line only', list.some((t) => t.id === 'job-applications' && t.name === 'Job applications' && t.description) && list.every((t) => Object.keys(t).sort().join() === 'description,id,name'), J(list));
+    check('Job applications is a template, listed with its name, goal line and the apps its chats get only', list.some((t) => t.id === 'job-applications' && t.name === 'Job applications' && t.description && J(t.apps) === J(['gmail', 'sheets', 'drive', 'docs', 'calendar'])) && list.every((t) => Object.keys(t).sort().join() === 'apps,description,id,name' && Array.isArray(t.apps)), J(list));
     const tpl = T.byId('job-applications');
     check('its instructions fit a project (4,000 characters at most)', tpl.instructions.length > 200 && tpl.instructions.length <= 4000, tpl.instructions.length);
     check('its instructions keep the master résumé untouched and tailor a copy', /Never edit, rename or overwrite/.test(tpl.instructions) && /tailored COPY/.test(tpl.instructions) && /Tailored résumés/.test(tpl.instructions));
@@ -110,7 +110,7 @@ const NOW = 1_800_000_000_000;
   // ---- the project type: an existing project switched to Job applications and back
   {
     const tpl = T.byId('job-applications');
-    check('type: Standard and Job applications are offered', J(T.types().map((t) => t.id)) === J(['', 'job-applications']));
+    check('type: Standard, Job applications and the tool templates are offered', J(T.types().map((t) => t.id)) === J(['', 'job-applications', 'coursework', 'coding', 'research']));
     const empty = T.typeChange({ instructions: '' }, 'job-applications');
     check('type: a project with no instructions gets the template\'s', empty.template === 'job-applications' && empty.instructions === tpl.instructions && empty.added === true, J(empty));
     const own = T.typeChange({ instructions: 'Answer briefly.' }, 'job-applications');

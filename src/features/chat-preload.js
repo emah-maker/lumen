@@ -97,6 +97,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       paletteKey: (on) => ipcRenderer.send('chatpage:palette-key', Boolean(on)), // [job dashboard look] while the dashboard shows, Ctrl+K / ⌘K opens its palette (main.js)
       projectMemory: (id, change) => ipcRenderer.invoke('chats:project-memory', id, change), // [project memory] { add } | { update: { id, text } } | { pin: { id, on } } | { tidy: [ids] }
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
+      projectTools: (id, change) => ipcRenderer.invoke('chats:project-tools', id, change), // [project tools] the Tools view: { catalog }, or one switched: { kind, id, on }
+      projectConnect: (id, connectorId) => ipcRenderer.invoke('chats:project-connect', id, connectorId), // [project tools] Connect from the project page
       projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] { permissionMode, allowedHosts }
       projectFlag: (id, key, on) => ipcRenderer.invoke('chats:project-flag', id, key, on), // [project list] 'pinned' | 'archived'
       projectDrive: (id, change) => ipcRenderer.invoke('chats:project-drive', id, change), // [project drive] { on } | { save }

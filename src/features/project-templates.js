@@ -42,12 +42,53 @@ const TEMPLATES = [
     profile: true, // an automation profile of its own (résumé, cover letter, major, start date, location), named for the project
     tracker: true, // the applications tool and the tracker card
     keyDocs: ['Master résumé', 'Cover letter base'], // what its page asks for first
+    tools: { apps: ['gmail', 'sheets', 'drive', 'docs', 'calendar'] }, // [project tools] what its chats get (features/project-tools.js): the tracker sheet, application emails, the résumé files, interviews
+  },
+  // [project tools] Templates that are mostly a set of tools: instructions, and the apps their chats get. Nothing else is made for them.
+  {
+    id: 'coursework',
+    name: 'Coursework',
+    description: 'Classes, assignments and deadlines',
+    instructions: [
+      'This project is for my classes.',
+      '- Check Canvas for the assignment, its rubric and its due date before working on one, and name the course.',
+      '- Put deadlines on my calendar or task list only when I ask, and say what you added.',
+      '- Help me understand and plan; when I ask for a draft, keep my own voice and say what you changed.',
+    ].join('\n'),
+    folders: [],
+    tools: { apps: ['canvas', 'calendar', 'gtasks', 'drive', 'docs'] },
+  },
+  {
+    id: 'coding',
+    name: 'Code project',
+    description: 'A repository, its issues and pull requests',
+    instructions: [
+      'This project is for a software repository.',
+      '- Read the code and the issue before changing anything, and keep to the style already there.',
+      '- Say which files you changed and how you checked the change.',
+      '- Ask before pushing, opening a pull request or commenting on GitHub.',
+    ].join('\n'),
+    folders: [],
+    tools: { apps: ['github'], plan: true },
+  },
+  {
+    id: 'research',
+    name: 'Research',
+    description: 'Papers, notes and a draft',
+    instructions: [
+      'This project is for research on one topic.',
+      '- Cite every claim with its source (my Zotero library, the project\'s files, or the page), and say when a source is weak.',
+      '- Keep a running list of open questions and decisions in my notes when I ask.',
+      '- Never invent a reference, a quote or a number.',
+    ].join('\n'),
+    folders: [],
+    tools: { apps: ['zotero', 'drive', 'docs', 'notion'] },
   },
 ];
 
 const byId = (id) => TEMPLATES.find((t) => t.id === String(id ?? '')) || null;
 // What the New project dialog lists.
-const list = () => TEMPLATES.map(({ id, name, description }) => ({ id, name, description }));
+const list = () => TEMPLATES.map(({ id, name, description, tools }) => ({ id, name, description, apps: tools?.apps || [] })); // (apps: [project tools] what its chats get, shown on its button)
 
 // The fields a new project gets from a template: its goal line and instructions unless the user wrote their own, its name when the
 // name box was left empty, and `template` (kept on the project: its page and its chats read it). null for no template or an unknown one.
