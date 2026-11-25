@@ -305,12 +305,40 @@
     r.ctx.globalCompositeOperation = 'source-over';
   }
 
+  // The soft effects are not cleared behind the content column (above), so they get a cleared patch behind the clock, greeting and date
+  // instead: a few glows drifting together there could wash the date out (it measured 4:1 on Nebula with Soft blobs; text needs 4.5).
+  // An ellipse big enough that its full-strength core covers the text block's corners, 80% cleared, fading out past it.
+  function clearHeader(r) {
+    if (EFFECTS[r.name].fade !== false) return;
+    let box = null;
+    for (const id of ['clock', 'greeting', 'date']) {
+      const el = document.getElementById(id);
+      if (!el || el.hidden) continue;
+      const b = el.getBoundingClientRect();
+      if (!b.width || !b.height) continue;
+      box = box ? { l: Math.min(box.l, b.left), t: Math.min(box.t, b.top), r: Math.max(box.r, b.right), b: Math.max(box.b, b.bottom) } : { l: b.left, t: b.top, r: b.right, b: b.bottom };
+    }
+    if (!box) return;
+    const ry = ((box.b - box.t) / 2 + 24) * 2.4; const rx = ((box.r - box.l) / 2 + 24) * 2.4;
+    const ctx = r.ctx;
+    ctx.save();
+    ctx.translate((box.l + box.r) / 2, (box.t + box.b) / 2);
+    ctx.scale(rx / ry, 1);
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
+    g.addColorStop(0, 'rgba(0, 0, 0, 0.8)'); g.addColorStop(0.6, 'rgba(0, 0, 0, 0.8)'); g.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = g;
+    ctx.fillRect(-ry, -ry, ry * 2, ry * 2);
+    ctx.restore();
+  }
+
   function draw() {
     const r = run;
     r.ctx.clearRect(0, 0, r.w, r.h);
     EFFECTS[r.name].draw(r.ctx, r.list, r.colors, r.mouse, r);
     r.ctx.globalAlpha = 1;
     fade(r);
+    clearHeader(r);
   }
 
   // The loop asks for an animation frame only when a frame is due: a timer waits out most of the interval (the effect's own: 30 fps for the

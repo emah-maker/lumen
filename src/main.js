@@ -2902,7 +2902,8 @@ if (TEST) global.__accounts = { // test/e2e/account-tabs.js
 // What the main session has for pages: Lumen's page preloads, the PDF viewer, permissions (the same remembered answers),
 // downloads (the same list), Safe Browsing and Focus mode, the ad blocker, the proxy and request headers, the Site activity list.
 function prepareAccountSession(ses) {
-  for (const p of PAGE_PRELOADS) ses.registerPreloadScript({ type: 'frame', ...p });
+  const have = new Set(ses.getPreloadScripts().map((p) => p.id)); // (the passkey gate may be in already: the session-created hook)
+  for (const p of PAGE_PRELOADS) if (!p.id || !have.has(p.id)) ses.registerPreloadScript({ type: 'frame', ...p });
   pdfViewer.attachSession(ses, pdfHandler);
   setupPermissions(ses);
   downloads.setup(ses);
