@@ -99,6 +99,11 @@ function shotScaleOf(view, size, zoom = 1) {
 }
 // A length (w, h) of the screenshot in CSS px.
 const shotLen = (v, scale, axis) => (scale && scale.css ? v * scale.css[axis] : shotToCss(v, scale));
+// The view a screenshot is of, and the scroll a mark's screenshot position is measured against. A PDF viewer (Lumen's, any pdf.js one)
+// scrolls #viewerContainer, not the window: its scroll counts too, or marks placed from a screenshot taken before the user scrolled the
+// PDF land off by that much (scrollX/Y stay 0 there). Run in the page; plain JSON back.
+const VIEW_SCRIPT = "(() => { const c = document.getElementById('viewerContainer'); return { innerWidth, innerHeight, scrollX: scrollX + (c ? c.scrollLeft : 0), scrollY: scrollY + (c ? c.scrollTop : 0) }; })()";
+const SCROLL_SCRIPT = "(() => { const c = document.getElementById('viewerContainer'); return { x: scrollX + (c ? c.scrollLeft : 0), y: scrollY + (c ? c.scrollTop : 0) }; })()";
 // A position of the screenshot in CSS px of the viewport NOW: the page may have scrolled since (scale.now = the scroll at the call).
 // An offset inside a target: screenshot px when there is a screenshot, else CSS px (no scroll in it: it moves with the element).
 const offLen = (v, scale, axis) => (scale ? shotLen(v, scale, axis) : v);
@@ -1096,4 +1101,4 @@ function resultText({ drawn, added, missing, dropped, where, seconds, steps }) {
   return parts.join(' ');
 }
 
-module.exports = { MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_WRITE, MAX_POINTS, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, shotScaleOf, normalize, choosePath, overlayMain, viewerSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, offsetBox, resultText };
+module.exports = { VIEW_SCRIPT, SCROLL_SCRIPT, MAX_MARKS, MAX_TOTAL, MAX_TEXT, MAX_WRITE, MAX_POINTS, MAX_SECONDS, TYPES, COLORS, TOOL, extendTools, coerce, parseTarget, shotToCss, shotScaleOf, normalize, choosePath, overlayMain, viewerSpace, overlayScript, clearScript, rectScript, miniDom, staticSvg, offsetBox, resultText };

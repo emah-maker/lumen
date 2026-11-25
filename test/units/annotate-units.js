@@ -64,6 +64,16 @@ check('normalize: nothing to do is an error; clear alone is fine', /Give marks t
       if (!near(later.y, 80) || !near(later.x, 300)) bad += ` scroll dpr${dpr}/z${zoom}:${J(later)}`;
     }
     check('math: right at DPR 1/1.25/1.5/2, page zoom 0.8/1/1.25, downscaled captures and scrolled pages', !bad, bad);
+    // A PDF viewer scrolls #viewerContainer, not the window: the screenshot's scroll and the call's both count it, so the user scrolling the
+    // PDF between the screenshot and the drawing moves the marks with the page (they landed off by the scroll: Codex, Chapter 4 p.64).
+    const vm = require('vm');
+    const page = (top) => ({ innerWidth: 1000, innerHeight: 700, scrollX: 0, scrollY: 0, document: { getElementById: (id) => (id === 'viewerContainer' && top != null ? { scrollLeft: 0, scrollTop: top } : null) } });
+    const atShot = vm.runInNewContext(annotate.VIEW_SCRIPT, page(400));
+    const atCall = vm.runInNewContext(annotate.SCROLL_SCRIPT, page(555));
+    check('pdf scroll: the view and the call read the viewer container scroll, and a plain page the window scroll', atShot.scrollY === 400 && atShot.innerWidth === 1000 && atCall.y === 555 && vm.runInNewContext(annotate.SCROLL_SCRIPT, page(null)).y === 0);
+    const pdfScale = annotate.shotScaleOf(atShot, { width: 1000, height: 700 });
+    const moved = annotate.normalize({ marks: [{ type: 'highlight', x: 66, y: 354, w: 129, h: 44 }] }, { ...pdfScale, now: atCall }).marks[0].at.box;
+    check('pdf scroll: a mark from the screenshot moves up by what the PDF scrolled since', Math.abs(moved.y - (354 - 155)) < 1e-9 && moved.x === 66, J(moved));
     // The zoom changing after the screenshot used to skew every mark (ratio had the old zoom in it, the live zoom divided again).
     const s = annotate.shotScaleOf({ innerWidth: 800, innerHeight: 560, scrollX: 0, scrollY: 0 }, { width: 1000, height: 700 }, 1.25);
     check('math: independent of the zoom at call time', Math.abs(annotate.normalize({ marks: [{ type: 'box', x: 500, y: 350 }] }, { ...s, zoom: 2 }).marks[0].at.box.x - 400) < 1e-9);
