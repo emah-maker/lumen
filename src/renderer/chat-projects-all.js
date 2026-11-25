@@ -99,7 +99,8 @@
     const sum = page.summary[p.id] || {};
     const chatCount = chats.filter((c) => c.project === p.id && !c.archived).length;
     const docs = sum.docs || [];
-    const node = el(grid ? 'article' : 'div', { className: `${grid ? 'pja-card' : 'pja-row'}${p.pinned ? ' pinned' : ''}${p.archived ? ' archived' : ''}${p.temporary ? ' temp' : ''}` });
+    const job = p.template === 'job-applications'; // [project templates]
+    const node = el(grid ? 'article' : 'div', { className: `${grid ? 'pja-card' : 'pja-row'}${p.pinned ? ' pinned' : ''}${p.archived ? ' archived' : ''}${p.temporary ? ' temp' : ''}${job ? ' job' : ''}` });
     node.dataset.project = p.id;
     node.setAttribute('role', 'listitem');
     const mark = el('span', { className: 'pja-mark', textContent: (p.name.trim()[0] || '?').toUpperCase() });
@@ -108,6 +109,7 @@
     const name = el('button', { type: 'button', className: 'pja-name', textContent: p.name, title: p.name });
     name.onclick = () => page.host.open(p);
     const badges = el('span', { className: 'pja-badges' });
+    if (job) badges.append(el('span', { className: 'pja-badge pja-job', textContent: tr('projecttpl.job-applications', 'Job applications') }));
     if (p.pinned) badges.append(el('span', { className: 'pja-badge pja-pinned', textContent: tr('projectws.list.pinned', 'Pinned') }));
     if (p.temporary) badges.append(el('span', { className: 'pja-badge pja-temp', textContent: tr('projectws.temp.chip', 'Temp'), title: p.expires && window.chatProjects.expiresText ? window.chatProjects.expiresText(p.expires) : '' }));
     if (p.drive) badges.append(el('span', { className: 'pja-badge pja-drive', textContent: tr('projects.all.drive', 'Drive'), title: p.driveError ? tr('projects.all.driveError', 'Not saved to Drive: {why}', { why: p.driveError }) : p.driveSaved ? tr('projects.all.driveSaved', 'Saved to Google Drive {when}', { when: new Date(p.driveSaved).toLocaleString() }) : tr('projects.all.driveOn', 'Saved to Google Drive') })); // [project drive]

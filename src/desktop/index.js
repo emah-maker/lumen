@@ -423,10 +423,17 @@ function createDesktop(deps = {}) {
     if (win.app !== session.target.app) throw new Error('That window now belongs to a different program. Call list_apps and read the app again.');
     await authorize(win, ctx, { acting: true, what: `${action} ${el}` });
     const s = await useWindow(win, ctx, policy.stepLabel(action, { element: el }, win.name));
-    const r = await act(s, () => getClient().call(cmd, { ...targetOf(win), el, ...extra }, { timeoutMs: 20000 }));
+    keysForward(); // (only a path that sends keys brings the app forward: a UI Automation click leaves the foreground alone)
+    const r = await act(s, () => getClient().call(cmd, { ...targetOf(win), el, ...extra, raise: true }, { timeoutMs: 20000 }));
     pointAt(s, r, { kind: action === 'click' ? 'click' : 'point' }); // (where the item is, as the helper measured it: UI Automation never moves the pointer)
     return r;
   }
+
+  // Keys go to the window in front. The helper is a background process Windows does not let take the foreground, so typing into an app while
+  // Lumen or another window was in front stopped at the first key ("the keyboard focus left the app"): Lumen lets the helper hand the foreground
+  // on (AllowSetForegroundWindow), and the helper brings the app forward once before the first key (raise: uia-helper.ps1 Bring-Forward). Its
+  // guard still stops if the user takes the foreground while it types.
+  function keysForward() { try { getApi()?.allowForeground?.(); } catch { /* the helper still tries */ } }
 
   async function click(args, ctx) {
     const r = await elementCall('click', args, ctx, 'invoke', {});
@@ -446,7 +453,8 @@ function createDesktop(deps = {}) {
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `press ${parsed.shown}` });
     const s = await useWindow(win, ctx, policy.stepLabel('press_keys', { keys: parsed.shown }, win.name));
-    await act(s, () => getClient().call('keys', { ...targetOf(win), chords: parsed.chords }, { timeoutMs: 15000 }));
+    keysForward();
+    await act(s, () => getClient().call('keys', { ...targetOf(win), chords: parsed.chords, raise: true }, { timeoutMs: 15000 }));
     return `Pressed ${parsed.shown} in ${win.name}.`;
   }
 
@@ -562,7 +570,8 @@ function createDesktop(deps = {}) {
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `type ${text.length} character${text.length === 1 ? '' : 's'}` });
     const s = await useWindow(win, ctx, policy.stepLabel('type', {}, win.name));
-    await act(s, () => getClient().call('typefocus', { ...targetOf(win), text, submit: args.submit === true }, { timeoutMs: 20000 }));
+    keysForward();
+    await act(s, () => getClient().call('typefocus', { ...targetOf(win), text, submit: args.submit === true, raise: true }, { timeoutMs: 20000 }));
     return `Typed ${text.length} character${text.length === 1 ? '' : 's'} where the keyboard focus is in ${win.name}.${args.submit ? ' Pressed Enter.' : ''}`;
   }
 

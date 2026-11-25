@@ -10,7 +10,7 @@
 //   - only a real tab may ask: the tab in front of its window, that window focused, visible and not minimized
 //   - never a page the AI is working in or opened (agent windows, the AI's research tabs, a tab a run is using,
 //     a signed-in-site tab the AI reads), so no AI tool can start or finish a ceremony, hands-off mode or not
-//   - one ceremony at a time; a document gets one ceremony without a user gesture, the rest need one
+//   - one ceremony at a time; each needs a click or key press on the page first (none on page load)
 //   - the client data (type, challenge, origin, crossOrigin) is built here; Windows signs over its hash
 // Windows draws the dialog, owned by the tab's window, and keeps the credentials; Lumen stores nothing (a private
 // window only tells Windows it is one). Nothing is logged but "available or not": no challenge, credential id,
@@ -36,7 +36,6 @@ function createPasskeys(deps) {
   let status = { available: false, reason: 'not-loaded' };
   let uvpaa = null; // Windows Hello set up (isUserVerifyingPlatformAuthenticatorAvailable), asked once
   let pending = null; // the one ceremony running: { key, wcId, frameKey, id, op, finish }
-  const documents = new Map(); // frameKey -> { url, ungestured } (a document's ceremony without a gesture)
 
   function nativeApi() {
     if (native !== undefined) return native;
@@ -108,18 +107,11 @@ function createPasskeys(deps) {
     const ctx = context(wc);
     if (!ctx || !ctx.ok) return { error: NOT_ALLOWED };
 
-    // How often: one ceremony at a time; a document's first may come without a gesture, the rest need one.
+    // How often: one ceremony at a time, each right after a click or key press on the page. A page that asks on load
+    // (Microsoft's sign-in does, for the account it last remembered) never pops Windows Security by itself.
     if (pending) return { error: { name: 'NotAllowedError', message: 'A passkey request is already open.' } };
+    if (!gesture) return { error: { name: 'NotAllowedError', message: 'This request needs a click or a key press on the page first.' } };
     const key = frameKey(wc, frame);
-    const doc = documents.get(key);
-    const url = frame.url;
-    const state = doc && doc.url === url ? doc : { url, ungestured: 0 };
-    documents.set(key, state);
-    if (documents.size > 500) documents.delete(documents.keys().next().value);
-    if (!gesture) {
-      if (state.ungestured >= 1) return { error: { name: 'NotAllowedError', message: 'This request needs a click or a key press on the page first.' } };
-      state.ungestured++;
-    }
 
     // What: the relying party, the options, the client data.
     const o = msg.options;

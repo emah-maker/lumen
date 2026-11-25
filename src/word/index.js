@@ -14,6 +14,12 @@ const spec = require('./spec');
 
 const MAX_FILE = 100 * 1024 * 1024;
 const READ_BUDGET = 6000; // (characters of text per read; was 9000: a long document is paged with offset)
+const MAX_CHECKPOINTS = 10; // (per document, while Lumen runs)
+// Actions only Word's own object model does (each paragraph's formatting, deleting paragraphs, a table of contents, fields and content controls):
+// a .docx that Word does not have open is opened in it first.
+const WORD_ONLY = ['inspect', 'delete', 'toc', 'fields'];
+// Paragraph numbers, heading paths and finds inside fields are Word's (the file route finds by text, outside fields).
+const NEEDS_WORD = (v) => v.para !== undefined || Boolean(v.under) || v.fields !== undefined || ['breaks', 'paras', 'sectionBreaks', 'columnBreaks'].some((k) => Array.isArray(v[k]) && v[k].some((t) => typeof t === 'number'));
 
 // deps: settings { enabled(), always() -> [{ key, name, added }], addAlways(key, name) }, host (com.js shape), platform, fs, checkFile(path) -> real path (throws a plain sentence), checkTarget(path) (throws for a place the AI may not write),
 // docx (stand-in for ./docx), now, hooks
@@ -184,12 +190,14 @@ function createWord(deps = {}) {
       return formatRead(got, ref.name, 'file');
     }
 
-    if (['new', 'insert', 'table', 'format', 'style', 'image', 'replace', 'comment', 'track'].includes(A) && v.path && !(await wordHasIt(v))) {
+    if (['new', 'insert', 'table', 'format', 'style', 'image', 'replace', 'comment', 'track', ...WORD_ONLY].includes(A) && v.path && !(await wordHasIt(v))) {
       if (win && (mode() !== 'file' || !isDocx(v.path)) && (await installed())) { // (file: a .docx is changed in the file itself; any other kind still needs Word)
         if (A !== 'new') await openThen(v, ctx); // Word is there: the document is opened in it and changed there
         else return newViaWord(v, ctx);
       } else return fileWrite(v, ctx);
     }
+    // checkpoint and restore of a .docx Word does not have open: a copy of the file itself
+    if ((A === 'checkpoint' || A === 'restore') && v.path && !(await wordHasIt(v))) return fileCheckpoint(v, ctx);
 
     if (fileOnly) throw new Error(spec.NOT_WINDOWS);
     if (!(await installed())) throw new Error(spec.NO_WORD);
@@ -225,6 +233,28 @@ function createWord(deps = {}) {
         const r = await getHost().saveAs({ doc: d.path || d.name, path: v.path, format: v.format });
         return `Saved as ${r.path || v.path}${v.format === 'docx' ? `. The open document is now called ${r.doc}.` : '.'}`;
       }
+      case 'inspect': {
+        const d = docRef(pick(await openDocs(), v));
+        await authorize(ctx, 'read', d);
+        noteRead(ctx, d.key);
+        cardUse(ctx, d, spec.stepLabel(v, d.name));
+        return inspectText(await getHost().inspect({ doc: d.path || d.name, ...formatFields(v) }), d.name, v);
+      }
+      case 'fields': {
+        if (spec.fieldsChange(v)) break; // (update, unlink, control: an edit, below)
+        const d = docRef(pick(await openDocs(), v));
+        await authorize(ctx, 'read', d);
+        noteRead(ctx, d.key);
+        cardUse(ctx, d, spec.stepLabel(v, d.name));
+        return fieldsText(await getHost().fields({ doc: d.path || d.name }), d.name);
+      }
+      case 'checkpoint': {
+        const d = docRef(pick(await openDocs(), v));
+        if (v.list) return checkpointList(d);
+        cardUse(ctx, d, spec.stepLabel(v, d.name));
+        const cp = await takeCheckpoint(d, d.path || d.name, v.name);
+        return `Saved checkpoint “${cp.name}” of ${d.name} (${cp.paragraphs} paragraphs, ${clock(cp.at)}). restore with name “${cp.name}” puts the document back as it is now. Lumen keeps checkpoints while it runs (the last ${MAX_CHECKPOINTS} per document).`;
+      }
       default: break;
     }
 
@@ -240,9 +270,38 @@ function createWord(deps = {}) {
     const hint = d.tracking ? '' : ' Tracked changes are off, so the edit is not marked; track with on:true shows later edits as revisions.';
     switch (A) {
       case 'insert': { if (v.find) { const r = await H.insert({ doc: target, ...formatFields(v) }); return done(`${atDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.insert({ doc: target, at: v.at, heading: v.heading, text: v.text, style: v.style, levels: v.levels, bold: v.bold, italic: v.italic }); return done(`Added ${r.paragraphs} paragraph${r.paragraphs === 1 ? '' : 's'} to ${d.name}${placeText(v)}. Not saved yet.${hint}`); }
-      case 'replace': { const r = await H.replace({ doc: target, ...formatFields(v) }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${r.capped ? ' (stopped at the limit)' : ''}. Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}; nothing changed. find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
+      case 'replace': { const r = await H.replace({ doc: target, ...formatFields(v) }); return done(r.replaced ? `Replaced ${r.replaced} match${r.replaced === 1 ? '' : 'es'} of “${spec.clip(v.find, 40)}” in ${d.name}${scopeText(r.scope)}${r.capped ? ' (stopped at the limit)' : ''}.${skipText(r.skipped)}${r.locked ? ` ${r.locked} ${r.locked === 1 ? 'was' : 'were'} in a locked content control, unlocked for the change and locked again.` : ''} Not saved yet.${hint}` : `No match for “${spec.clip(v.find, 40)}” in ${d.name}${scopeText(r.scope)}; nothing changed.${skipText(r.skipped)} find must be the document's text exactly as read shows it (same case, spaces and punctuation); each line of read is a paragraph, and a shorter find within one paragraph is surer.`); }
       case 'format': { const r = await H.format({ doc: target, ...formatFields(v) }); return done(`${formatDone(r.done || {}, d.name, v, false)} Not saved yet.${d.tracking ? '' : ' Tracked changes are off, so the edit is not marked.'}`); }
-      case 'style': { const r = await H.style({ doc: target, ...formatFields(v) }); return done(styleDone(r, d.name, v)); }
+      case 'style': { const r = await H.style({ doc: target, ...formatFields(v) }); return done(`${styleDone(r, d.name, v)}${skipText(r.skipped)}`); }
+      case 'delete': {
+        if (v.breaks) { const r = await H.delete({ doc: target, ...formatFields(v) }); return done(`${unbreakDone(r.unbroken || {}, d.name, v)} Not saved yet.${hint}`); }
+        const p = await H.delete({ doc: target, ...formatFields(v), preview: true });
+        if (!p.preview || !p.preview.count) return `Nothing to delete in ${d.name}: there ${v.emptyHeadings ? 'are no empty headings' : v.empty ? 'are no empty paragraphs' : 'is nothing'} ${v.para !== undefined || v.under ? 'there' : 'in it'}; nothing changed.`;
+        const n = p.preview.count;
+        const ok = await ctx.ask({ kind: 'content-loss', site: d.name, title: `The AI is about to delete ${n} paragraph${n === 1 ? '' : 's'} from ${d.name}`, args: `${(p.preview.lines || []).join('\n')}\n\nA checkpoint of the document is saved first, so restore brings them back.` });
+        if (!ok) throw new Error(`The user did not allow deleting those paragraphs. Nothing was changed. Ask them what to do instead.`);
+        const cp = await takeCheckpoint(ref, target, 'before delete');
+        const r = await H.delete({ doc: target, ...formatFields(v) });
+        return done(`Deleted ${r.deleted} paragraph${r.deleted === 1 ? '' : 's'} from ${d.name}${r.tracking ? ' (marked as tracked deletions)' : ''}; it has ${r.paragraphs} now. Checkpoint “${cp.name}” has the document as it was: restore with name “${cp.name}” brings them back. Not saved yet.`);
+      }
+      case 'toc': {
+        const cp = v.rebuild ? await takeCheckpoint(ref, target, 'before toc') : null;
+        const r = await H.toc({ doc: target, ...formatFields(v) });
+        return done(`${tocDone(r, d.name, v)}${cp ? ` (checkpoint “${cp.name}” has it as it was)` : ''}. Not saved yet.`);
+      }
+      case 'fields': {
+        const cp = v.unlink !== undefined ? await takeCheckpoint(ref, target, 'before unlink') : null;
+        const r = await H.fields({ doc: target, ...formatFields(v) });
+        return done(`${fieldsDone(r, d.name, v)}${cp ? ` Checkpoint “${cp.name}” has it as it was.` : ''} Not saved yet.`);
+      }
+      case 'restore': {
+        const cp = pickCheckpoint(ref, v.name, 'word');
+        const ok = await ctx.ask({ kind: 'content-loss', site: d.name, title: `The AI is about to put ${d.name} back as it was at checkpoint “${cp.name}” (${clock(cp.at)})`, args: `Everything in the document now is replaced by that copy (${cp.paragraphs} paragraphs). What is there now is saved first as a checkpoint, so this can be undone.` });
+        if (!ok) throw new Error('The user did not allow restoring that checkpoint. Nothing was changed. Ask them what to do instead.');
+        const now = await takeCheckpoint(ref, target, 'before restore');
+        await H.restore({ doc: target, file: cp.file, sections: cp.sections });
+        return done(`Restored ${d.name} to checkpoint “${cp.name}” (${clock(cp.at)}). What was there just before is checkpoint “${now.name}”. Not saved yet.`);
+      }
       case 'table': { if (isEdit(v)) { if (v.deleteRows || v.deleteColumns) await confirmLoss(ctx, d.name, v, (await H.table({ doc: target, ...formatFields(v), preview: true })).preview); const r = await H.table({ doc: target, ...formatFields(v) }); return done(`${tableDone(r.done || {}, d.name, v)} Not saved yet.${hint}`); } const r = await H.table({ doc: target, ...formatFields(v) }); return done(`Added a table (${r.rows} rows, ${r.columns} columns) to ${d.name}${placeText(v)}${r.caption ? `, captioned “Table ${r.caption}${v.caption ? `: ${spec.clip(v.caption, 40)}` : ''}”` : ''}. Not saved yet.${hint}`); }
       case 'image': { const pic = await pictureFor(v); let r; try { r = await H.image({ doc: target, ...formatFields(v), url: undefined, image: pic.file }); } finally { pic.done(); } return done(`${imageDone(r, d.name, v, pic)} Not saved yet.${hint}`); }
       case 'comment': await H.comment({ doc: target, find: v.find, text: v.text }); return done(`Added a comment on “${spec.clip(v.find, 40)}” in ${d.name}.`);
@@ -253,6 +312,111 @@ function createWord(deps = {}) {
 
   // format: the fields formatDocx and the helper take, and what was done, in words.
   const formatFields = (v) => { const { action, path, doc, ...f } = v; void action; void path; void doc; return f; };
+
+  // ---- checkpoints: a copy of the whole document (Word's WordOpenXML, or the .docx file's bytes) in Lumen's own temp folder, kept while Lumen
+  // runs (the last MAX_CHECKPOINTS per document), put back by restore after the user saw what it does. Removed when Lumen closes.
+  const checkpoints = new Map(); // document key -> [{ n, name, at, file, kind, sections, paragraphs }]
+  let cpDir = null;
+  const P = require('path');
+  const cpFolder = () => { if (!cpDir) { cpDir = deps.checkpointDir || P.join(require('os').tmpdir(), 'lumen-word-checkpoints', `${process.pid}-${Date.now().toString(36)}`); fs.mkdirSync(cpDir, { recursive: true }); } return cpDir; };
+  const nowMs = () => (deps.now ? Number(deps.now()) : Date.now());
+  const clock = (ms) => { const t = new Date(ms); return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`; };
+  const keyHash = (k) => require('crypto').createHash('sha1').update(k).digest('hex').slice(0, 12);
+  function newCheckpoint(ref, name, kind) {
+    const list = checkpoints.get(ref.key) || [];
+    const n = (list.length ? list[list.length - 1].n : 0) + 1;
+    let label = name || `checkpoint ${n}`;
+    if (list.some((c) => c.name.toLowerCase() === label.toLowerCase())) label = `${label} ${n}`;
+    return { list, cp: { n, name: label, at: nowMs(), kind, file: P.join(cpFolder(), `${keyHash(ref.key)}-${n}.${kind === 'word' ? 'xml' : 'docx'}`) } };
+  }
+  function keep(ref, list, cp) {
+    list.push(cp);
+    while (list.length > MAX_CHECKPOINTS) { const old = list.shift(); try { fs.unlinkSync(old.file); } catch { /* gone */ } }
+    checkpoints.set(ref.key, list);
+    return cp;
+  }
+  async function takeCheckpoint(ref, target, name) {
+    const { list, cp } = newCheckpoint(ref, name, 'word');
+    const r = await getHost().checkpoint({ doc: target, file: cp.file });
+    return keep(ref, list, { ...cp, sections: r.sections || [], paragraphs: r.paragraphs });
+  }
+  function pickCheckpoint(ref, name, kind) {
+    const list = checkpoints.get(ref.key) || [];
+    if (!list.length) throw new Error(`${ref.name} has no checkpoint in this Lumen session. Save one with checkpoint before a big edit.`);
+    const cp = name ? list.find((c) => c.name.toLowerCase() === name.toLowerCase()) || list.find((c) => String(c.n) === name) : list[list.length - 1];
+    if (!cp) throw new Error(`${ref.name} has no checkpoint called “${name}”. It has: ${list.map((c) => `“${c.name}” (${clock(c.at)})`).join(', ')}.`);
+    if (cp.kind !== kind) throw new Error(`Checkpoint “${cp.name}” is a copy of the ${cp.kind === 'word' ? 'document as Word had it open' : 'file on disk'}, so it is restored the same way: ${cp.kind === 'word' ? 'with the document open in Word' : 'with path, while Word does not have the file open'}.`);
+    return cp;
+  }
+  function checkpointList(ref) {
+    const list = checkpoints.get(ref.key) || [];
+    if (!list.length) return `${ref.name} has no checkpoints yet.`;
+    return `Checkpoints of ${ref.name} (newest last): ${list.map((c) => `“${c.name}” at ${clock(c.at)}${c.paragraphs !== undefined ? ` (${c.paragraphs} paragraphs)` : ''}`).join('; ')}.`;
+  }
+  async function fileCheckpoint(v, ctx) {
+    if (!isDocx(v.path)) throw new Error('Checkpoints of a file work on .docx files; other kinds open in Word first.');
+    const { real, buf } = readFile(v.path);
+    const ref = fileRef(real);
+    if (v.action === 'checkpoint') {
+      if (v.list) return checkpointList(ref);
+      await authorize(ctx, 'read', ref);
+      const { list, cp } = newCheckpoint(ref, v.name, 'file');
+      fs.writeFileSync(cp.file, buf, { flag: 'wx' });
+      keep(ref, list, cp);
+      return `Saved checkpoint “${cp.name}” of ${ref.name} (a copy of the file, ${clock(cp.at)}). restore with path and name “${cp.name}” puts the file back as it is now.`;
+    }
+    const cp = pickCheckpoint(ref, v.name, 'file');
+    checkTarget(real);
+    await authorize(ctx, 'save', ref, { detail: `Allow the AI to put ${real} back as it was at checkpoint “${cp.name}” (${clock(cp.at)})?`, args: `File: ${real}\nThe file is replaced by the copy Lumen saved then. The file as it is now is saved first as a checkpoint, so this can be undone.` });
+    const { list, cp: now } = newCheckpoint(ref, 'before restore', 'file');
+    fs.writeFileSync(now.file, buf, { flag: 'wx' });
+    keep(ref, list, now);
+    writeAtomic(real, fs.readFileSync(cp.file));
+    return `Restored ${ref.name} to checkpoint “${cp.name}” (${clock(cp.at)}), saved in the file. The file as it was just before is checkpoint “${now.name}”.`;
+  }
+
+  // ---- text for the new actions
+  const scopeText = (s) => (s ? (s.name ? ` under “${spec.clip(s.name, 40)}” (paragraphs ${s.a}–${s.b})` : s.a === s.b ? ` in paragraph ${s.a}` : ` in paragraphs ${s.a}–${s.b}`) : '');
+  const skipText = (n) => (n ? ` ${n} match${n === 1 ? ' in the table of contents or a field was' : 'es in the table of contents or fields were'} left as ${n === 1 ? 'it is' : 'they are'} (Word writes that text; include_fields true changes ${n === 1 ? 'it' : 'them'} too, and toc update refreshes the contents).` : '');
+  const pt = (x) => `${Math.round(Number(x) * 10) / 10}`;
+  const inch = (x) => `${Math.round(Number(x) / 72 * 100) / 100}`;
+  const fontWords = (o = {}) => [o.font || 'mixed fonts', o.size !== undefined ? `${pt(o.size)} pt` : 'mixed sizes', o.bold === true && 'bold', o.bold === 'mixed' && 'partly bold', o.italic === true && 'italic', o.italic === 'mixed' && 'partly italic'].filter(Boolean).join(' ');
+  function inspectText(r, name, v) {
+    const rows = (r.rows || []).map((x) => {
+      const bits = [x.style || '(no style)', fontWords(x), `before ${pt(x.before)} pt, after ${pt(x.after)} pt, line ${x.line}`, x.align];
+      if (x.indent !== undefined || x.firstLine !== undefined) bits.push(`indent ${x.indent ?? 0} in${x.firstLine !== undefined ? `, first line ${x.firstLine} in` : ''}`);
+      if (x.page !== undefined) bits.push(`page ${x.page}`);
+      const flags = [x.pageBreakBefore && 'page break before', x.pageBreaks && `${x.pageBreaks === 1 ? 'a page break' : `${x.pageBreaks} page breaks`} in it`, x.sectionBreak && `section break after (${x.sectionBreak})`, x.columnBreaks && 'column break', x.keepNext && 'keep with next', x.list && `list ${x.list}`, x.table && 'in a table', x.toc && 'table of contents', x.fields && `fields: ${x.fields.join(', ')}`, x.control && `content control ${x.control}${x.locked ? ' (locked)' : ''}`].filter(Boolean);
+      return `[${x.i}] ${bits.join(' | ')}${flags.length ? ` | ${flags.join(', ')}` : ''} | “${x.text || ''}”`;
+    });
+    const b = r.body || {};
+    const secs = (r.sections || []).slice(0, 6).map((s, k) => `section ${k + 1}: ${s.o === 1 ? 'landscape' : 'portrait'} ${inch(s.w)} × ${inch(s.h)} in, margins ${inch(s.t)} ${inch(s.r)} ${inch(s.b)} ${inch(s.l)} in (top right bottom left)${s.cols > 1 ? `, ${s.cols} columns` : ''}${s.first ? ', different first page' : ''}`);
+    const head = [`${name}: ${r.total} paragraphs${r.scope ? `; ${scopeText(r.scope).trim()}` : ''}${v.find ? `; ${r.matched || 0} paragraph${r.matched === 1 ? '' : 's'} with “${spec.clip(v.find, 40)}”` : ''}.`, `Body text (Normal style): ${fontWords(b)}, before ${pt(b.before)} pt, after ${pt(b.after)} pt, line ${b.line}.`, `Pages: ${secs.join('; ')}${(r.sections || []).length > 6 ? `; and ${r.sections.length - 6} more sections` : ''}.`, r.tocs ? `Tables of contents: ${r.tocs}.` : 'No table of contents.', 'Each line: [paragraph number] style | font size | spacing | alignment | page | breaks and where it sits | its text. para / to / under take these numbers.'];
+    const body = [...head, ...rows].join('\n');
+    return [spec.wrap(body, name), r.next ? `More: inspect with para ${r.next}.` : rows.length ? '' : 'No paragraphs there.', skipText(r.skipped).trim()].filter(Boolean).join('\n');
+  }
+  function fieldsText(r, name) {
+    const fl = (r.fields || []).map((f) => `[${f.i}] ${f.kind} (paragraph ${f.para}): ${f.code}${f.result ? ` → “${f.result}”` : ''}`);
+    const cl = (r.controls || []).map((c) => `[${c.i}] ${c.type}${c.title ? ` “${c.title}”` : ''}${c.tag ? ` (tag ${c.tag})` : ''} (paragraph ${c.para})${c.locked ? ', contents locked' : ''}${c.fixed ? ', cannot be deleted' : ''}: “${c.text}”`);
+    const lines = [`Fields in ${name}: ${r.fieldCount || 0}${r.inToc ? ` (${r.inToc} of them are the table of contents' own links and page numbers, not listed)` : ''}.`, ...fl, r.more ? `...and ${r.more} more.` : '', `Content controls: ${r.controlCount || 0}.`, ...cl].filter(Boolean);
+    const tip = r.tocs ? 'To change one line of the table of contents: fields unlink "toc" makes it plain text (delete or replace then work line by line, but toc update no longer does), or toc rebuild remakes it from the headings. fields update true updates every field.' : 'fields update true updates every field (cross-references, page numbers, captions).';
+    return `${spec.wrap(lines.join('\n'), name)}\n${tip}`;
+  }
+  function unbreakDone(u, name, v) {
+    const parts = [u.page && `${u.page} page break${u.page === 1 ? '' : 's'}`, u.before && `"page break before" on ${u.before} paragraph${u.before === 1 ? '' : 's'}`, u.section && `${u.section} section break${u.section === 1 ? '' : 's'} (the text before each now takes the page setup of the section after it)`, u.column && `${u.column} column break${u.column === 1 ? '' : 's'}`].filter(Boolean);
+    return parts.length ? `Removed ${parts.join(', ')} in ${name}${v.para !== undefined || v.under ? ' (in the paragraphs given)' : ''}.` : `There were no ${v.breaks === 'all' ? '' : `${v.breaks} `}breaks to remove in ${name}${v.para !== undefined || v.under ? ' there' : ''}; nothing changed.`;
+  }
+  function tocDone(r, name) {
+    if (r.updated) return `Updated the table of contents in ${name} (${r.entries} lines)`;
+    if (r.rebuilt) return `Rebuilt the table of contents in ${name} from Heading ${r.upper} to ${r.lower}, in the same place with its title (${r.entries} lines)`;
+    return `Added a table of contents to ${name}${r.title ? ` under “${spec.clip(r.title, 40)}”` : ''}, from Heading ${r.upper} to ${r.lower} (${r.entries} lines)`;
+  }
+  function fieldsDone(r, name, v) {
+    if (v.update) return `Updated ${r.updated} field${r.updated === 1 ? '' : 's'} in ${name}${r.headers ? ` and ${r.headers} in headers and footers` : ''}${r.tocs ? `, and ${r.tocs === 1 ? 'the table of contents' : `${r.tocs} tables of contents`}` : ''}.${r.failed ? ' Word said at least one field has an error (read shows "Error!" where it is).' : ''}`;
+    if (v.unlink !== undefined) return `Made ${r.unlinked === 'TOC' ? 'the table of contents' : `the ${r.unlinked} field`} at paragraph ${r.para} of ${name} plain text: its lines can now be edited or deleted one by one, and Word no longer updates ${r.unlinked === 'TOC' ? 'it (toc adds a new one)' : 'it'}.`;
+    const c = r.control || {};
+    return `Content control ${c.i}${c.title ? ` “${spec.clip(c.title, 40)}”` : ''} in ${name}: ${[r.text && 'its text was set (its lock is as it was)', r.unlocked && 'unlocked, so replace and delete can change it'].filter(Boolean).join('; ')}.`;
+  }
   function formatDone(r, name, v, file) {
     const out = [];
     const q = (t) => `“${spec.clip(t, 40)}”`;
@@ -370,6 +534,8 @@ function createWord(deps = {}) {
 
   async function fileWrite(v, ctx) {
     const A = v.action;
+    if (WORD_ONLY.includes(A)) throw new Error(`${A} works through Microsoft Word (it needs Word's own view of the document)${platform === 'win32' ? ', and Word is not used for this file here (Settings → AI → "Work on files in their apps", or Word is not installed)' : ', which is on Windows only'}. On the file, read, replace, format, table and insert still work.`);
+    if (NEEDS_WORD(v)) throw new Error('para, to, under, include_fields and paragraph numbers need Microsoft Word with the document open (open it first). On the file itself, find, heading and paragraph texts pick the place.');
     if (A === 'new') {
       checkTarget(v.path);
       if (fs.existsSync(v.path)) throw new Error('That file already exists.');
@@ -407,7 +573,7 @@ function createWord(deps = {}) {
     run, installed, host: () => host,
     finishRun(signal) { try { return card?.finishRun(signal); } catch { return null; } }, // the run is over: the card's last picture and "completed"
     openCard: (id, hint) => getCard().open(id, hint || {}), // "Show in Word" on the card: { ok } or { ok: false, message } (a card from before a restart opens its file by hint.path)
-    destroy() { try { card?.destroy(); } catch { /* none */ } try { host?.destroy?.(); } catch { /* not running */ } },
+    destroy() { try { card?.destroy(); } catch { /* none */ } try { host?.destroy?.(); } catch { /* not running */ } if (cpDir && !deps.checkpointDir) { try { fs.rmSync(cpDir, { recursive: true, force: true }); } catch { /* left for the system's temp cleanup */ } } }, // (the checkpoints are Lumen's own copies)
   };
 }
 

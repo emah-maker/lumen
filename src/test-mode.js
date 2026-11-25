@@ -36,4 +36,19 @@ function standInWebStore() {
   };
 }
 
-module.exports = { isTest, isPackaged, PRELOAD_FLAG, standInWebStore };
+// LUMEN_TEST_BACKGROUND (tests only): nothing in a test run may take the foreground from the app the person is using. Each window
+// already opens off-screen without focus, but other paths still asked for it: focusApp (a routine opened, a connector sign-in ending)
+// called app.focus({ steal: true }), which on Windows forces the window in front and pulls the keyboard and mouse away. Rather than
+// guard every caller, the calls that activate a window are made harmless here: app.focus and BrowserWindow focus/moveTop do nothing,
+// and show() shows without activating (showInactive). In-window focus (webContents.focus) is left alone: it moves no OS focus.
+function handsOff({ app, BrowserWindow }) {
+  if (!app || !BrowserWindow?.prototype) return false;
+  app.focus = () => {};
+  const proto = BrowserWindow.prototype;
+  proto.focus = function focus() {};
+  proto.moveTop = function moveTop() {};
+  proto.show = function show() { this.showInactive(); };
+  return true;
+}
+
+module.exports = { isTest, isPackaged, PRELOAD_FLAG, standInWebStore, handsOff };

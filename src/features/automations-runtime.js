@@ -430,6 +430,76 @@ function create(deps) {
   function removeProfile(id) { const ok = store.removeProfile(String(id)); changed(); return { ok }; }
   async function exportCsv() { return deps.saveCsv(auto.toCsv(store.log())); }
   function clearLog() { store.clearLog(); changed(); return { ok: true }; }
+  // [project templates] A project's applications tracker (features/project-templates.js): its own entries and its automations', the
+  // ones the AI logs from a chat (the applications tool), a stage moved on, and the project's rows as CSV.
+  const templates = () => require('./project-templates');
+  const applications = (projectId) => templates().projectEntries(store.log(), store.automations(), projectId);
+  function logApplication(projectId, input) {
+    const r = templates().manualEntry(input, { projectId, now: now() });
+    if (!r.ok) return r;
+    const already = r.entry.url ? templates().appliedBefore(applications(projectId), r.entry.url) : null;
+    // A posting saved for later and now applied to moves on (Saved → Applied) instead of being logged twice.
+    if (already?.stage === 'saved' && r.entry.stage !== 'saved') return moveApplication(projectId, templates().entryKey(already), r.entry.stage, { resume: input?.resume });
+    if (already) return { ok: false, already, error: 'That posting is in the tracker already.' };
+    store.addLog(r.entry);
+    save();
+    changed();
+    return r;
+  }
+  function updateApplication(projectId, input) {
+    const entry = templates().updateEntry(store.log(), store.automations(), projectId, input, now());
+    if (!entry) return { ok: false, error: 'No application in this project matches that.' };
+    save();
+    changed();
+    return { ok: true, entry };
+  }
+  // The dashboard's drag (or a row's stage menu): one application of the project, by its key, to a stage.
+  function moveApplication(projectId, key, stage, { resume } = {}) {
+    const lib = templates();
+    if (!lib.STAGES.includes(stage)) return { ok: false, error: 'Unknown stage.' };
+    const mine = new Set(lib.projectEntries(store.log(), store.automations(), projectId).map(lib.entryKey));
+    const entry = mine.has(String(key)) ? store.log().find((e) => lib.entryKey(e) === String(key)) : null;
+    if (!entry) return { ok: false, error: 'No application in this project matches that.' };
+    if (!lib.STAGES.includes(entry.stage)) entry.stage = lib.stageOf(entry); // (an automation's entry gets a stage of its own the first time it moves)
+    lib.setStage(entry, stage, now());
+    const file = lib.resumeName(resume);
+    if (file) entry.resume = file;
+    save();
+    changed();
+    return { ok: true, entry };
+  }
+  // [project templates] A linked sheet's sync (features/job-sync.js plan()): its new rows added, the entries it moved, and what each matched
+  // row says now kept on the entry (entry.sheet) for the next sync. appended: the keys of entries just written to the sheet as new rows.
+  function applySheetPlan(projectId, p, { appended = [], now: at = now() } = {}) {
+    const lib = templates();
+    for (const e of p.add || []) store.addLog({ ...e, projectId: String(projectId) });
+    const byKey = new Map(lib.projectEntries(store.log(), store.automations(), projectId).map((e) => [lib.entryKey(e), e]));
+    const real = (key) => { const c = byKey.get(key); return c ? store.log().find((x) => lib.entryKey(x) === key) : null; };
+    for (const m of p.moves || []) {
+      const e = real(m.key);
+      if (!e) continue;
+      if (!lib.STAGES.includes(e.stage)) e.stage = lib.stageOf(e);
+      lib.setStage(e, m.stage, at);
+      if (m.applied && m.stage !== 'saved' && (!e.submittedAt || e.submittedAt === at)) e.submittedAt = m.applied;
+    }
+    for (const s of p.seen || []) { const e = real(s.key); if (e) e.sheet = { status: s.sheetStatus, row: s.row }; }
+    for (const a of appended) { const e = real(a.key); if (e) e.sheet = { status: a.status, row: 0 }; }
+    save();
+    changed();
+    return { added: (p.add || []).length, moved: (p.moves || []).length };
+  }
+  // An email's suggestion applied: the entry it matched moved on, or a new application (company from the email).
+  function applyEmail(projectId, s) {
+    if (s?.key) return moveApplication(projectId, s.key, s.stage);
+    const r = templates().manualEntry({ company: s?.company, role: s?.role, stage: s?.stage, from: 'email', note: s?.subject ? `Email: ${s.subject}` : '' }, { projectId, now: now() });
+    if (!r.ok) return r;
+    if (s.at && r.entry.stage !== 'saved') { r.entry.submittedAt = r.entry.at = Math.min(Number(s.at) || now(), now()); r.entry.history = [{ stage: r.entry.stage, at: r.entry.submittedAt }]; if (r.entry.respondedAt) r.entry.respondedAt = r.entry.submittedAt; }
+    store.addLog(r.entry);
+    save();
+    changed();
+    return r;
+  }
+  async function exportProjectCsv(projectId) { return deps.saveCsv(auto.toCsv(applications(projectId).map((e) => ({ ...e, status: e.stage })))); } // (the Status column says where each one stands)
 
   function init() { store.load(); armSchedule(); }
   function shutdown() {
@@ -441,6 +511,8 @@ function create(deps) {
 
   return {
     init, shutdown, state, start, itemAct, runAct, describe, recordStart, recordStop, saveAutomation, removeAutomation, saveProfile, removeProfile, exportCsv, clearLog,
+    applications, logApplication, updateApplication, moveApplication, applySheetPlan, applyEmail, exportProjectCsv, // [project templates]
+    profile: (id) => store.profile(String(id ?? '')),
     pickFile: (kind) => deps.pickFile(kind), runDue, armSchedule,
     // Test hooks (test/e2e/automations.js): nothing in the app itself uses these.
     store, active: () => active, scheduleTimer: () => scheduleTimer,
