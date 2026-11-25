@@ -18,6 +18,16 @@ function pickTab({ kind, approvalTab = null, runTab = null, aiNavTab = null, hom
   return null;
 }
 
+// A chat kept in a full-page chat tab (lumen://chat): its notification goes to that page, never to a sidebar. The page whose tab is on the
+// chat, else (the run was sent from a page) the page it was sent from. pages: [{ id, chat }] -> a page's id, or null.
+function pickPage({ chatId = null, fromPage = false, senderPage = null, pages = [] } = {}) {
+  const list = Array.isArray(pages) ? pages : [];
+  const on = chatId != null ? list.find((p) => p && p.chat === chatId) : null;
+  if (on) return on.id;
+  if (fromPage && senderPage != null && list.some((p) => p && p.id === senderPage)) return senderPage;
+  return null;
+}
+
 // Electron's Notification loses its click handler when the object is garbage collected, so every notification is held here until
 // it is clicked or too old. A toast that went to the Action Center can still be clicked then: Windows starts (or wakes) the app instead
 // of calling the handler, so the newest unclicked one is also what an activation without a link ('second-instance', the pipe's
@@ -41,4 +51,4 @@ function createKeeper({ now = Date.now, keepMs = 30 * 60 * 1000, activationMs = 
   };
 }
 
-module.exports = { pickTab, createKeeper };
+module.exports = { pickTab, pickPage, createKeeper };
