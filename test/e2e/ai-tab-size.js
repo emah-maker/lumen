@@ -25,8 +25,10 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
   const readSrc = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
   const cap = readSrc('src/features/tab-capture.js');
   const count = (text, needle) => text.split(needle).length - 1;
-  const raw = count(cap, "sendCommand('Page.captureScreenshot'");
-  const queued = count(cap, "oneAtATime(wc, () => dbg.sendCommand('Page.captureScreenshot'");
+  // (every capture goes through shoot(), the one place that sends Page.captureScreenshot: it places a clip on the viewport, see viewClip)
+  const direct = count(cap, "sendCommand('Page.captureScreenshot'");
+  const raw = direct === 1 && cap.includes("return dbg.sendCommand('Page.captureScreenshot', params);") ? count(cap, 'shoot(wc, dbg, {') + count(cap, 'inTime(wc, shoot(wc, dbg, params))') : -1;
+  const queued = count(cap, 'oneAtATime(wc, async () => shoot(wc, dbg,');
   check("every Page.captureScreenshot in tab-capture.js is in the page queue (the live card's poll directly, captureJpeg's inside captureJpegQueued's oneAtATime, the others through viaDevTools / viaProtocol)", raw === 4 && queued === 1 && cap.includes('function viaDevTools(wc, rect) { return oneAtATime') && cap.includes('function viaProtocol(wc, opts) { return oneAtATime'), JSON.stringify({ raw, queued }));
   check("a full-page screenshot and an outside client's screenshot use the same queue", readSrc('src/features/screenshot.js').includes('oneAtATime(ctx.wc') && readSrc('src/automation/cdp-inproc.js').includes('oneAtATime(s.wc, send)'));
 }
