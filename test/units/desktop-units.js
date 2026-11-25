@@ -152,7 +152,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // ---- the controller, with a stand-in helper
   const WORDX = 'C:\\Office\\WINWORD.EXE';
   const key = (exe) => policy.exeKey(exe);
-  const makeRig = ({ apps = [], master = true, terminals = false, allowed = [], winapi, platform = 'win32', treeFor, banner, tainted = false } = {}) => {
+  const makeRig = ({ apps = [], master = true, terminals = false, allowed = [], winapi, platform = 'win32', treeFor, banner, tainted = false, deps: more = {} } = {}) => {
     const calls = [];
     const store = { master, terminals, allowed: allowed.slice() };
     const pending = new Set();
@@ -161,12 +161,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         calls.push([cmd, args]);
         if (cmd === 'apps') return { ok: true, apps: typeof apps === 'function' ? apps() : apps };
         if (cmd === 'tree') return { ok: true, tree: treeFor ? treeFor(args) : { t: 'ControlType.Window', n: 'Form', i: 'e1', c: [{ t: 'ControlType.Edit', n: 'Name', i: 'e2', v: 'Ada' }, { pw: true }] } };
-        if (cmd === 'invoke') return { ok: true, method: 'invoke' };
+        if (cmd === 'invoke') return { ok: true, method: 'invoke', ...(store.invokeAt || {}) };
         if (cmd === 'settext') return { ok: true, method: 'value' };
         if (cmd === 'keys') { if (store.hangKeys) return new Promise((resolve, reject) => { pending.add(reject); store.rejectKeys = reject; }); return { ok: true, sent: true }; }
         if (cmd === 'focus') return { ok: true, foreground: store.focusForeground !== false };
         if (cmd === 'shot') return { ok: true, image: 'QUJD'.repeat(40) + Math.random().toString(36).slice(2), w: 1280, h: 720, rw: 1920, rh: 1080 };
-        if (cmd === 'mouse') { if (store.mouseHook) await store.mouseHook(args); return { ok: true, at: [] }; }
+        if (cmd === 'mouse') { if (store.mouseHook) await store.mouseHook(args); const r = store.mouseRoute?.(args); return { ok: true, at: [], ...(r || {}) }; }
         if (cmd === 'typefocus') return { ok: true, method: 'keys' };
         if (cmd === 'resolve') return { ok: true, found: store.found || [] };
         if (cmd === 'launch') { for (const w of store.launches || []) (Array.isArray(apps) ? apps : []).push(w); return { ok: true }; }
@@ -185,7 +185,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const quietApi = { ok: true, cursor: () => ({ x: 0, y: 0 }), pidUnderCursor: () => 0, foregroundPid: () => 0, escapeDown: () => false, mouseDown: () => false, typing: () => false };
     const ctx = { emit: (e) => events.push(e), signal: new AbortController().signal, once: new Set(), tainted: () => store.tainted, ask: async (card) => { asked.push(card); return typeof answer === 'function' ? answer(card) : answer; } };
     store.tainted = tainted;
-    const d = createDesktop({ client, settings, banner: ban, winapi: winapi || quietApi, platform, stopRun: () => stops.push(1), icon: async () => null, shortcut: { register: (k) => unregistered.push(['reg', k]), unregister: (k) => unregistered.push(['unreg', k]) }, lumen: { pid: 4242, exe: 'C:\\Lumen\\Lumen.exe' }, openWaitMs: 300 });
+    const d = createDesktop({ client, settings, banner: ban, winapi: winapi || quietApi, platform, stopRun: () => stops.push(1), icon: async () => null, shortcut: { register: (k) => unregistered.push(['reg', k]), unregister: (k) => unregistered.push(['unreg', k]) }, lumen: { pid: 4242, exe: 'C:\\Lumen\\Lumen.exe' }, openWaitMs: 300, ...more });
     return { d, calls, store, events, asked, ctx, ban, stops, shortcuts: unregistered, setAnswer: (a) => { answer = a; }, settings };
   };
   const mk = (hwnd, pid, proc, title, exe, extra = {}) => ({ hwnd, pid, proc, title, exe, description: '', start: 1000 + pid, ...extra });
@@ -752,12 +752,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('macOS: the pixel actions say they are Windows only, and point to click by id', /Windows only/.test(m) && /click with an item id/.test(m) && !rig.calls.some(([c]) => c === 'mouse'), m);
   }
   {
-    // the AI moving the pointer and pressing its buttons is not "the person took over"; the person clicking afterwards still is
+    // the AI moving the pointer and pressing its buttons (the real-mouse fallback) is not "the person took over"; the person clicking afterwards still is
     let cur = { x: 0, y: 0 }; let down = false;
     const api = { ok: true, cursor: () => ({ ...cur }), pidUnderCursor: () => 10, foregroundPid: () => 10, escapeDown: () => false, mouseDown: () => down, typing: () => false };
     const rig = makeRig({ apps: [word], allowed: allowWord, winapi: api });
     await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
-    rig.store.mouseHook = async () => { cur = { x: 400, y: 300 }; down = true; rig.d._poll(); cur = { x: 900, y: 700 }; rig.d._poll(); down = false; };
+    rig.store.mouseRoute = (a) => (a.via === 'real' ? { method: 'mouse' } : { skip: 'this app takes only real mouse input' });
+    rig.store.mouseHook = async (a) => { if (a.via !== 'real') return; cur = { x: 400, y: 300 }; down = true; rig.d._poll(); cur = { x: 900, y: 700 }; rig.d._poll(); down = false; };
     await rig.d.run({ action: 'drag', args: { x: 1, y: 2, to_x: 600, to_y: 450 } }, rig.ctx);
     rig.d._poll();
     check('takeover: the AI\'s own drag (pointer moved, button down) does not pause the run', rig.d.paused() === false);
@@ -766,6 +767,145 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('takeover: the person only moving the mouse over the app afterwards does not pause it', rig.d.paused() === false);
     down = true; rig.d._poll(); down = false;
     check('takeover: the person clicking in the app afterwards pauses it', rig.d.paused() === true);
+  }
+
+  // ---- click_at / drag / scroll without the person's pointer: UI Automation, then window messages, then the real mouse (put back)
+  const routeRig = ({ route, api: over = {}, deps = {} } = {}) => {
+    const moves = [];
+    const st = { cur: { x: 50, y: 60 }, down: false };
+    const api = { ok: true, cursor: () => ({ ...st.cur }), setCursor: (x, y) => { moves.push([x, y]); st.cur = { x, y }; return true; }, pidUnderCursor: () => 10, foregroundPid: () => 10, escapeDown: () => false, mouseDown: () => st.down, typing: () => false, ...over };
+    const rig = makeRig({ apps: [word], allowed: allowWord, winapi: api, deps });
+    rig.store.mouseRoute = route;
+    return { rig, moves, st, vias: () => rig.calls.filter(([c]) => c === 'mouse').map(([, a]) => a.via) };
+  };
+  {
+    const { rig, moves, vias } = routeRig({ route: (a) => (a.via === 'uia' ? { method: 'uia-invoke' } : { skip: 'no' }) });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    const out = await rig.d.run({ action: 'click_at', args: { x: 10, y: 20 } }, rig.ctx);
+    check('route: UI Automation is tried first; when it does the click nothing else is sent and the pointer is never touched', J(vias()) === J(['uia']) && moves.length === 0 && /through UI Automation, without moving your mouse/.test(out) && /real_mouse: true/.test(out), J([vias(), moves, out]));
+  }
+  {
+    const { rig, moves, vias } = routeRig({ route: (a) => (a.via === 'uia' ? { skip: 'the element at the point has no Invoke, Toggle or Select' } : a.via === 'post' ? { method: 'post' } : { method: 'mouse' }) });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    const out = await rig.d.run({ action: 'drag', args: { x: 10, y: 20, to_x: 30, to_y: 40 } }, rig.ctx);
+    const sent = rig.calls.filter(([c]) => c === 'mouse').map(([, a]) => a);
+    check('route: UI Automation says skip -> window messages; the same point, picture size and target go with each try; the pointer is never touched', J(vias()) === J(['uia', 'post']) && sent.every((a) => a.op === 'drag' && a.hwnd === 100 && a.pid === 10 && J(a.points) === J([[10, 20], [30, 40]]) && a.pw === 1280) && moves.length === 0 && /with window messages, without moving your mouse/.test(out), J([vias(), out]));
+  }
+  {
+    const { rig, moves, vias, st } = routeRig({ route: (a) => (a.via === 'real' ? { method: 'mouse', at: [[700, 500]] } : { skip: a.via === 'uia' ? 'nothing scrollable through UI Automation at the point' : 'this app takes only real mouse input (Windows.UI.Core.CoreWindow)' }) });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    rig.store.mouseHook = async (a) => { if (a.via === 'real') st.cur = { x: 700, y: 500 }; }; // (the helper moved the real pointer to the point)
+    const out = await rig.d.run({ action: 'scroll', args: { x: 10, y: 20, dy: 2 } }, rig.ctx);
+    check('route: both ways skip -> the real mouse, last; the pointer goes back where the person left it, and the reply says so (with why the others did not fit)', J(vias()) === J(['uia', 'post', 'real']) && J(moves) === J([[50, 60]]) && /with your mouse pointer, then put it back/.test(out) && /Your pointer was put back where it was/.test(out) && /uia: nothing scrollable/.test(out) && /post: this app takes only real mouse input/.test(out), J([vias(), moves, out]));
+    rig.store.mouseHook = async (a) => { if (a.via === 'real') st.cur = { x: 1500, y: 20 }; }; // the person moved the mouse away while the AI had it
+    st.cur = { x: 50, y: 60 }; moves.length = 0;
+    const out2 = await rig.d.run({ action: 'click_at', args: { x: 10, y: 20 } }, rig.ctx);
+    check('route: the pointer is NOT put back when the person moved it meanwhile (it is no longer where the AI left it)', moves.length === 0 && /left where you moved it/.test(out2), J([moves, out2]));
+  }
+  {
+    const { rig, moves, vias } = routeRig({ route: () => ({ method: 'mouse' }) });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    const out = await rig.d.run({ action: 'click_at', args: { x: 10, y: 20, real_mouse: true } }, rig.ctx);
+    check('route: real_mouse: true (the app ignored the other ways) goes straight to the real pointer, and puts it back', J(vias()) === J(['real']) && J(moves) === J([[50, 60]]) && /put back/.test(out), J([vias(), moves, out]));
+  }
+  {
+    // without the real mouse, the AI presses no buttons: a click by the person during the call is a takeover at once (no exemption)
+    const { rig, st } = routeRig({ route: () => ({ method: 'post' }) });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    rig.store.mouseHook = async (a) => { if (a.via === 'uia') { st.down = true; rig.d._poll(); st.down = false; } };
+    await rejects(() => rig.d.run({ action: 'click_at', args: { x: 10, y: 20 } }, rig.ctx));
+    check('takeover: the person clicking in the app while the AI clicks by UI Automation or messages pauses it (only the real-mouse fallback is exempt)', rig.d.paused() === true && rig.store.aborted >= 1, J([rig.d.paused(), rig.store.aborted]));
+  }
+  {
+    const helper = read('src/desktop/uia-helper.ps1');
+    check('helper: mouse takes via uia | post | real; uia and post never call SendInput; post writes to the approved window\'s own child (ChildWindowFromPointEx from its handle) and refuses another program\'s', /\$via = \[string\]\$req\['via'\]/.test(helper) && /function Mouse-Uia/.test(helper) && /function Mouse-Post/.test(helper) && !/Mouse-(Uia|Post)[\s\S]*?\[LumenNative\]::(Move|Button|Wheel)\(/.test(helper.slice(helper.indexOf('function Mouse-Uia'), helper.indexOf('function Cmd-Frame'))) && /ChildWindowFromPointEx\(h, p, 0x0001 \| 0x0004\)/.test(helper) && /OwnerPid\(\$h\)\) \{ return @\{ skip = 'the window at the point belongs to another program' \}/.test(helper));
+    check('helper: UI Automation acts only where the app shows at the point, never on a password field, with Invoke / Toggle / Select (click) or ScrollPattern (scroll); Store-app input sites go to the real mouse', /if \(& \$covered\) \{ return @\{ skip = 'another window covers the point' \} \}/.test(helper) && /if \(Test-PwElement \$el\) \{ return @\{ skip = 'a password field' \} \}/.test(helper) && /ScrollPattern\]::Pattern/.test(helper) && /\$REALONLY = @\('Windows\.UI\.Core\.CoreWindow'/.test(helper));
+  }
+
+  // ---- the AI's cursor over the app (cursor.js), from the controller
+  {
+    const shows = []; const follows = []; let hides = 0; let vis = false;
+    const cursor = { show: async (o) => { shows.push(o); vis = true; return true; }, follow: (r, on) => follows.push([r, on]), hide: () => { hides++; vis = false; }, visible: () => vis };
+    const tag = { key: 'h2', n: 2, label: 'Helper 2', color: '#30d158' };
+    let rect = [100, 50, 1380, 770]; let at = 10;
+    const { rig, st } = routeRig({ route: () => ({ method: 'uia-invoke' }), api: { windowRect: (h) => (h === 100 ? rect : null), pidAt: () => at }, deps: { cursor, tag: () => tag } });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    await rig.d.run({ action: 'click_at', args: { x: 639, y: 359 } }, rig.ctx);
+    const [first, last] = [shows[0], shows[shows.length - 1]];
+    check('cursor: click_at moves the AI\'s cursor to the spot first, then shows the click there (fractions of the window, over the window\'s rectangle)', shows.length === 2 && first.kind === 'point' && last.kind === 'click' && J(last.rect) === J(rect) && Math.abs(last.fx - 0.5) < 0.001 && Math.abs(last.fy - 0.5) < 0.001 && J(first.rect) === J(rect), J(shows));
+    check('cursor: a helper\'s call draws that helper\'s color and name (as its cursor in pages)', last.tag === tag);
+    check('card: the step line says which way it went ("without your mouse")', / · without your mouse$/.test(rig.events.filter((e) => e.type === 'desktop_card').pop().task), rig.events.filter((e) => e.type === 'desktop_card').pop().task);
+    rect = [300, 80, 1580, 800]; rig.d._poll();
+    check('cursor: it follows the window when it moves', J(follows[follows.length - 1]) === J([[300, 80, 1580, 800], true]), J(follows));
+    at = 77; rig.d._poll();
+    check('cursor: out of sight while another program covers its point (never drawn over another app)', follows[follows.length - 1][1] === false);
+    at = 10; rect = null; rig.d._poll();
+    check('cursor: out of sight while the window is minimized or gone', follows[follows.length - 1][0] === null && follows[follows.length - 1][1] === false);
+    rect = [100, 50, 1380, 770];
+    await rig.d.run({ action: 'drag', args: { x: 0, y: 0, to_x: 1279, to_y: 719 } }, rig.ctx);
+    const dr = shows[shows.length - 1];
+    check('cursor: a drag glides from its start to its end', dr.kind === 'drag' && dr.from && dr.from.fx < 0.01 && dr.fx > 0.99 && dr.fy > 0.99, J(dr));
+    rig.store.invokeAt = { fx: 0.25, fy: 0.75 };
+    await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
+    await rig.d.run({ action: 'click', args: { element: 'e2' } }, rig.ctx);
+    const el = shows[shows.length - 1];
+    check('cursor: click by id points at the item where UI Automation says it is, with the click ring', el.kind === 'click' && el.fx === 0.25 && el.fy === 0.75, J(el));
+    const before = hides;
+    st.down = true; rig.d._poll(); st.down = false;
+    check('cursor: the person taking over hides it', rig.d.paused() && hides === before + 1);
+    rig.d.resume();
+    rig.d.finishRun();
+    check('cursor: the run ending hides it', hides >= before + 2);
+  }
+  {
+    // no window rectangle (macOS, or a helper that cannot say): no cursor rather than one in the wrong place
+    const shows = [];
+    const cursor = { show: async (o) => { shows.push(o); }, follow: () => {}, hide: () => {}, visible: () => false };
+    const { rig } = routeRig({ route: () => ({ method: 'post' }), deps: { cursor } });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    await rig.d.run({ action: 'click_at', args: { x: 5, y: 5 } }, rig.ctx);
+    check('cursor: not drawn when the window\'s place on the screen is unknown', shows.length === 0);
+  }
+
+  // ---- cursor.js: the overlay window
+  {
+    const { createCursor, HTML: CURSOR_HTML, LEAD } = require('../../src/desktop/cursor');
+    const made = []; const runs = [];
+    class W {
+      constructor(o) { this.o = o; this.vis = false; this.b = null; made.push(this); this.webContents = { executeJavaScript: (code) => { runs.push(code); return Promise.resolve(); } }; }
+      setAlwaysOnTop(on, level) { this.top = [on, level]; } setIgnoreMouseEvents(v, opt) { this.ignore = [v, opt]; } on() {}
+      setBounds(b) { this.b = { ...b }; } loadURL() { return Promise.resolve(); } isDestroyed() { return false; } isVisible() { return this.vis; }
+      showInactive() { this.vis = true; } hide() { this.vis = false; } destroy() {}
+    }
+    const screen = { screenToDipRect: (_w, r) => ({ x: r.x / 1.5, y: r.y / 1.5, width: r.width / 1.5, height: r.height / 1.5 }) };
+    const c = createCursor({ electron: { BrowserWindow: W, screen } });
+    await c.show({ rect: [150, 300, 1650, 1200], fx: 0.5, fy: 0.25, kind: 'click', tag: { color: '#ff9f0a', label: 'Helper 3' } });
+    const w = made[0];
+    check('overlay: frameless, transparent, always on top, never focusable, not in the taskbar, sandboxed, shown without activating', w.o.frame === false && w.o.transparent === true && w.o.alwaysOnTop === true && w.o.focusable === false && w.o.skipTaskbar === true && w.o.webPreferences.sandbox === true && w.o.webPreferences.contextIsolation === true && w.vis === true);
+    check('overlay: click-through everywhere (setIgnoreMouseEvents(true), not forwarding: the app below gets every click and hit test)', w.ignore && w.ignore[0] === true && w.ignore[1] === undefined, J(w.ignore));
+    check('overlay: placed over the app\'s window, screen pixels turned into DIPs (150%: 2/3)', J(w.b) === J({ x: 100, y: 200, width: 1000, height: 600 }), J(w.b));
+    const sent = JSON.parse(runs[runs.length - 1].match(/__lumenCursor\((\{.*\})\)$/)[1]);
+    check('overlay: the page is told the point, the kind, and the helper\'s color and name', sent.visible === true && sent.fx === 0.5 && sent.fy === 0.25 && sent.kind === 'click' && sent.color === '#ff9f0a' && sent.label === 'Helper 3', J(sent));
+    c.follow([300, 300, 1800, 1200]);
+    check('overlay: follow() moves it with the window', J(w.b) === J({ x: 200, y: 200, width: 1000, height: 600 }) && w.vis, J(w.b));
+    c.follow([300, 300, 1800, 1200], false);
+    check('overlay: follow(rect, false) takes it out of sight; true brings it back', w.vis === false && (c.follow([300, 300, 1800, 1200], true), w.vis === true));
+    c.hide();
+    check('overlay: hide() hides it', w.vis === false && !c.visible());
+    await c.show({ rect: [0, 0, 10, 10], fx: 2, fy: -1, tag: { color: 'red; x', label: 'L'.repeat(90) } });
+    const s2 = c.state();
+    check('overlay: the point is kept inside the window, a color must be #rrggbb (else the lead\'s blue), the name is clipped', s2.fx === 1 && s2.fy === 0 && s2.color === LEAD.color && s2.label.length === 40, J(s2));
+    check('overlay: a bad rectangle shows nothing', (await c.show({ rect: [5, 5, 5, 9], fx: 0, fy: 0 })) === false);
+    const quiet = createCursor({ electron: { BrowserWindow: W, screen }, hidden: true });
+    const n = made.length;
+    await quiet.show({ rect: [0, 0, 100, 100], fx: 0.1, fy: 0.2, kind: 'drag', from: { fx: 0, fy: 0 } });
+    check('overlay: in a test run it is never created on screen (state only)', made.length === n && quiet.visible() && quiet.state().kind === 'drag' && J(quiet.point()) === J({ x: 10, y: 20 }));
+    const page = read('src/ai/page-scripts.js');
+    const arrow = 'M1 1v17l4.6-4.3 3.1 7 3-1.3-3-6.9H15z';
+    check('overlay page: the same arrow as the page cursor, the label pill, the click ring (28 px, the cursor\'s color), reduced motion respected, no pointer events', page.includes(arrow) && CURSOR_HTML.includes(arrow) && /width: 28px; height: 28px/.test(CURSOR_HTML) && /prefers-reduced-motion/.test(CURSOR_HTML) && /pointer-events: none/.test(CURSOR_HTML) && /left: 14px; top: 16px/.test(CURSOR_HTML));
+    check('overlay: the lead agent\'s cursor is the blue of its click ring in pages; helpers use agent-tags colors', LEAD.color === '#0a84ff' && /#0a84ff/.test(page) && require('../../src/features/agent-tags').COLORS.includes('#30d158'));
+    const wire = read('src/desktop/wire.js');
+    check('wire: the cursor is created with the banner (hidden in test runs) and calls carry the helper\'s tag', /createCursor\(\{ electron, hidden \}\)/.test(wire) && /require\('\.\.\/features\/agent-tags'\)\.current\(\)/.test(wire) && /createDesktop\(\{ settings, banner, cursor, tag,/.test(wire));
   }
   {
     const ag = read('src/ai/agent.js');

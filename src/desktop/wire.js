@@ -6,6 +6,7 @@ function wire({ electron, readSettings, writeSettings, stopRun, hidden = false, 
   const { createDesktop } = require('./index');
   const { createDesktopSettings } = require('./settings');
   const { createBanner } = require('./banner');
+  const { createCursor } = require('./cursor');
   const settings = createDesktopSettings({ readSettings, writeSettings });
   let controller = null;
 
@@ -14,6 +15,8 @@ function wire({ electron, readSettings, writeSettings, stopRun, hidden = false, 
     hidden,
     onAction: (what) => { if (what === 'stop') controller?.stop('banner'); else if (what === 'resume') controller?.resume(); },
   });
+  const cursor = createCursor({ electron, hidden }); // the AI's pointer drawn over the app (never the system one)
+  const tag = () => require('../features/agent-tags').current(); // a helper's call: its own color and name, as its cursor in web pages
   const accel = new Set();
   const shortcut = {
     register(key, fn) { if (hidden) { accel.add(key); return; } if (electron.globalShortcut.register(key, fn)) accel.add(key); },
@@ -37,8 +40,9 @@ function wire({ electron, readSettings, writeSettings, stopRun, hidden = false, 
     openSettings: (url) => (/^x-apple\.systempreferences:com\.apple\.preference\.security\?Privacy_[A-Za-z]+$/.test(url) ? electron.shell.openExternal(url) : null),
   } : {};
   const exe = require('./platforms').backendFor(process.platform)?.lumenExe(process.execPath) || process.execPath;
-  controller = createDesktop({ settings, banner, shortcut, icon, stopRun, live: liveDeps, lumen: { pid: process.pid, exe }, profile: electron.app.getPath('userData'), ...mac });
+  controller = createDesktop({ settings, banner, cursor, tag, shortcut, icon, stopRun, live: liveDeps, lumen: { pid: process.pid, exe }, profile: electron.app.getPath('userData'), ...mac });
   controller.banner = banner;
+  controller.cursor = cursor;
   controller.shortcut = shortcut;
   return { controller, settings };
 }
