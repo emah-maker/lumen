@@ -248,6 +248,7 @@ button.pjp-hit { cursor: pointer; }
 .pjp-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
 .pjp-cols[hidden], .pjp-view[hidden] { display: none; }
 .pjp-view { max-width: 760px; }
+.pjp-view:has(> .pjp-jobs) { max-width: none; } /* [project templates] the job dashboard has the page's whole width */
 .pjp-settings { display: flex; flex-direction: column; gap: var(--sp-5); }
 .pjp-setting { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); padding: var(--sp-3) 0; }
 .pjp-setting + .pjp-setting { border-top: 1px solid var(--hairline, var(--border)); }
@@ -255,3 +256,24 @@ button.pjp-hit { cursor: pointer; }
 
 /* [project drive] the Save to Drive line in Settings */
 .pjp-drive .pjp-drive-say { flex: 1; min-width: 200px; font-size: 13px; color: var(--muted); }
+/* [project templates] the Applications card */
+.pjp-apps-list .pjp-row-main { flex-wrap: nowrap; }
+.pjp-apps-list .pjp-place-loc { flex-basis: auto; flex-shrink: 0; margin-left: auto; }
+.pjp-stage { flex-shrink: 0; height: 20px; padding: 0 var(--sp-3); font-size: 11.5px; }
+.pjp-stage.interview, .pjp-stage.offer { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.pjp-stage.rejected, .pjp-stage.withdrawn { color: var(--muted); }
+/* [project templates] A Job applications project looks its own: the job colours (also used by chat-job-board.css), a banner behind the
+   header, a briefcase mark and a "Job applications" badge; Settings → Type */
+.pjp-job .pjp-head-row { position: relative; padding: var(--sp-5); border-radius: 20px; background: linear-gradient(120deg, color-mix(in srgb, var(--job) 14%, transparent), color-mix(in srgb, var(--job-2) 10%, transparent) 70%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--job) 18%, transparent); }
+.pjp-job .pjp-mark { background: linear-gradient(135deg, var(--job), var(--job-2)); color: #fff; box-shadow: 0 6px 18px color-mix(in srgb, var(--job) 30%, transparent); }
+.pjp-type-badge { align-self: flex-start; display: inline-flex; align-items: center; height: 20px; padding: 0 var(--sp-3); border-radius: var(--r-pill); background: color-mix(in srgb, var(--job) 16%, transparent); color: color-mix(in srgb, var(--job) 80%, var(--text)); font-size: 11px; font-weight: 650; letter-spacing: 0.03em; text-transform: uppercase; }
+.pjp-job .pjp-tab.on::after { background: linear-gradient(90deg, var(--job), var(--job-2)); }
+.pjp-job .pjp-tab[data-view="jobs"] { font-weight: 600; }
+.pjp-jobs { padding-top: var(--sp-2); }
+.pjp-type-switch { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--r-pill); background: var(--hover); }
+.pjp-type-opt { height: 28px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
+.pjp-type-opt:hover { color: var(--text); }
+.pjp-type-opt.on { background: var(--surface-raised, var(--surface)); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.pjp-type-opt.job.on { background: linear-gradient(135deg, #6a4cf5, #0e9f9a); color: #fff; }
+.pjp-type-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pjp-type-opt:disabled { opacity: 0.6; cursor: default; }

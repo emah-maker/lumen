@@ -30,13 +30,26 @@ const TIMEOUT_MS = Number(process.env.LUMEN_SUITE_TIMEOUT_MS) || 600000;
 const { withLockSync } = require('./e2e-lock');
 const { isPlainSuite, suiteFile } = require('../release/release-lib');
 
+// After each suite: any Electron from this checkout still running is a leftover (a suite killed on its timeout leaves its app behind,
+// since the kill reaches only the suite's node process). A full run once left 25 of them, still holding windows and processes.
+// Only this checkout's node_modules/electron is matched, so another checkout's run and the installed Lumen are never touched.
+const ELECTRON_DIR = path.join(__dirname, '..', '..', 'node_modules', 'electron', 'dist');
+function killStrays() {
+  if (process.platform === 'win32') {
+    const dir = ELECTRON_DIR.replace(/'/g, "''");
+    spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Get-CimInstance Win32_Process -Filter "Name='electron.exe'" | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith('${dir}', [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`], { stdio: 'ignore', timeout: 30000 });
+  } else {
+    spawnSync('pkill', ['-9', '-f', ELECTRON_DIR], { stdio: 'ignore', timeout: 30000 });
+  }
+}
+
 const results = [];
 for (const name of picked.length ? picked : SUITES) {
   console.log(`\n=== ${name}`);
   const started = Date.now();
   const tmp = suiteTmp(name);
   const go = () => spawnSync(process.execPath, [path.join(__dirname, '..', '..', suiteFile(name))], { stdio: 'inherit', env: tmp.env, timeout: TIMEOUT_MS, killSignal: 'SIGKILL' });
-  const run = isPlainSuite(name) ? go() : withLockSync(go, { owner: 'test-all' });
+  const run = isPlainSuite(name) ? go() : withLockSync(() => { try { return go(); } finally { killStrays(); } }, { owner: 'test-all' });
   tmp.done();
   const timedOut = run.error && run.error.code === 'ETIMEDOUT';
   results.push({ name, ok: run.status === 0 && !run.error, code: timedOut ? `timeout after ${TIMEOUT_MS / 1000}s` : run.status ?? run.signal ?? run.error?.message, seconds: Math.round((Date.now() - started) / 1000) });

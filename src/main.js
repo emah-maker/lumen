@@ -7,6 +7,7 @@ const TEST = require('./test-mode').isTest();
 // Never run from the install folder (the Start-menu shortcut starts us there): a program we start would inherit it and Windows would keep the next update from renaming the folder for as long as it runs (ai/cli-utils.js).
 try { require('./ai/cli-utils').leaveInstallDir(); } catch { /* stays where it is */ }
 if (TEST) require('./test-mode').standInWebStore(); // (an extension test's download server: before the extension library loads and keeps its fetch)
+if (TEST && process.env.LUMEN_TEST_BACKGROUND) require('./test-mode').handsOff({ app, BrowserWindow }); // (a background test run never takes the foreground, whoever asks)
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/e2e/perf-budget.js)
 if (TEST) global.__perf = perf;
 // A test run or a development run never opens the installed Lumen's profile (features/profile-guard.js): its userData is a
@@ -338,7 +339,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project', 'chats:project-templates', 'chats:project-applications',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -1067,6 +1068,29 @@ app.on('login', (event, webContents, details, authInfo, callback) => {
     if (response === 1 && values) callback(values.username, values.password);
     else callback();
   });
+});
+
+// Client certificates (TLS client auth): never Electron's default of sending the first one in the store unasked (on Windows a
+// Windows Hello-protected work-account key, so Microsoft's sign-in popped a Windows Security face prompt for the wrong account on
+// every Canvas read). The AI's tabs, background tasks and agent windows get none; a user's tab asks once per site (browser/client-certs.js).
+const clientCerts = lazy(() => require('./browser/client-certs').createClientCerts({
+  isUserTab: (wc) => { if (agentContents.has(wc)) return false; const tab = tabByContents(wc); return Boolean(tab) && !manners.isAiTab(tab); },
+  ask: async ({ owner, host, labels }) => {
+    const { response } = await dialogs.showMessageBox(null, {
+      type: 'question',
+      message: t('dialog.clientCert', { host }),
+      detail: t('dialog.clientCert.detail'),
+      buttons: [t('dialog.clientCert.none'), ...labels],
+      defaultId: 0,
+      cancelId: 0,
+      owner,
+    });
+    return response - 1; // (0, Don't send -> -1)
+  },
+}));
+app.on('select-client-certificate', (event, webContents, url, list, callback) => {
+  event.preventDefault();
+  clientCerts().select(webContents, url, list, callback);
 });
 
 // ---------- page-first keys: Ctrl+S, Ctrl+P, Ctrl+F... reach the page before Lumen's own action (features/page-first-keys.js) ----------
@@ -6374,12 +6398,13 @@ function projectSettingsFor(id) {
     const block = projectBlockFor(id);
     if (block) out.projectInstructions = block;
     if (project) { out.projectId = project.id; if (project.links?.length || projectFiles().list(project.id).length) out.projectTools = true; }
+    if (project?.template && require('./features/project-templates').byId(project.template)?.tracker) out.projectApplications = true; // [project templates] the applications tool
     const work = projectWorkFolderFor(id); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
     if (work) out.projectWorkFolder = work;
   } catch { /* no project settings: the chat goes on as any other */ }
   return out;
 }
-const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder'];
+const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder', 'projectApplications'];
 // The open chat's settings follow its project (a chat opened, moved into a project, or its project edited).
 function syncProjectInstructions() {
   const follow = (messages, id) => {
@@ -9903,6 +9928,14 @@ const agent = new Agent({
       const saved = chats().setProjectPermissions(p.id, { allowedHosts: [...(p.allowedHosts || []), h] });
       return Boolean(saved);
     },
+    // [project templates] The applications tool's tracker for the chat's project (features/automations-runtime.js), or null outside one.
+    applications: (messages) => {
+      const p = projectForChat(chatIdOfMessages(messages));
+      if (!p) return null;
+      const rt = automations();
+      const after = (r) => { if (r?.ok) kickJobSheet(p.id); return r; }; // [project templates] the linked tracker sheet follows
+      return { list: () => rt.applications(p.id), add: (input) => after(rt.logApplication(p.id, { ...input, from: '' })), update: (input) => after(rt.updateApplication(p.id, input)), ...(jobSearchReady() ? { search: (input) => runJobSearch(input) } : {}) };
+    },
   },
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
@@ -12593,6 +12626,9 @@ async function pickFolder(event, title, defaultPath) {
 // 'none' makes none). Answers the project, { error } for a folder that cannot be used ('root' and 'home' want `confirmed: true`), or null.
 ipcMain.handle('chats:project-save', async (_e, project) => {
   const fields = projectFields(project);
+  // [project templates] A new project made from a template (features/project-templates.js): its name, goal line and instructions unless typed.
+  const template = !fields.id && project?.template ? require('./features/project-templates').byId(project.template) : null;
+  if (template) Object.assign(fields, require('./features/project-templates').fieldsFor(template.id, fields));
   let made = '';
   try {
     const use = async (dir, confirmed) => { const chk = await projectFolders.checkWorkFolder(String(dir || ''), { confirmed: confirmed === true }); if (!chk.ok) throw Object.assign(new Error(chk.reason), { reason: chk.reason }); return chk.real; };
@@ -12612,13 +12648,41 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
     if (made) fs.promises.rmdir(made).catch(() => {});
     return { error: err.reason || 'folder', message: String(err.message).slice(0, 200) };
   }
-  const out = chats().saveProject(fields);
+  let out = chats().saveProject(fields);
   if (!out) { if (made) fs.promises.rmdir(made).catch(() => {}); return null; }
+  if (template) out = (await applyProjectTemplate(out, template)) || out;
+  let typed = null;
+  if (fields.id && project?.type !== undefined) { typed = await setProjectType(out, project.type); out = typed?.project || out; } // [project templates] Settings → Type
   syncProjectInstructions();
   pushAttention();
   if (out.portable && out.folder) portableSoon(out.id);
-  return projectPage(out);
+  return typed && !typed.added && out.template ? { ...projectPage(out), typeNote: 'long' } : projectPage(out); // ('long': its own instructions left no room for the template's)
 });
+// [project templates] A project's Type (Standard, or a template's): the template's instructions are added after the project's own (taken out
+// again when it goes back, if they are as they were added), and what applyProjectTemplate adds. The project's files, memory, chats and folder
+// stay as they are; switching back only hides the job views: the tracker and the profile are kept. -> { project, added } or null (no change)
+async function setProjectType(p, type) {
+  const lib = require('./features/project-templates');
+  const change = lib.typeChange(p, String(type || ''));
+  if (!change) return null;
+  let out = chats().saveProject({ id: p.id, name: p.name, template: change.template, instructions: change.instructions });
+  if (!out) return null;
+  if (change.template) out = (await applyProjectTemplate(out, lib.byId(change.template))) || out;
+  return { project: out, added: change.added };
+}
+// [project templates] What a template adds once its project exists: the folders it names in the project's folder ("Tailored résumés"),
+// and an automation profile of its own named for the project (résumé, cover letter and answers: features/automations.js), so an
+// automation made in the project fills forms from it. Each part is best effort: the project is there either way.
+async function applyProjectTemplate(project, template) {
+  if (project.folder) for (const name of template.folders || []) await fs.promises.mkdir(path.join(project.folder, name), { recursive: true }).catch(() => {});
+  if (!template.profile) return project;
+  if (project.profileId && automations().profile(project.profileId)) return project; // (switched back to this type: its profile is still there)
+  try {
+    const r = automations().saveProfile({ name: project.name.slice(0, 60) });
+    if (r?.ok) return chats().saveProject({ id: project.id, name: project.name, profileId: r.profile.id }) || project;
+  } catch { /* no profile (ten already, or the store can't be written): the page offers to pick one */ }
+  return project;
+}
 // [project workspace] Deleting a project can be undone for a while (the page's toast): the project, its chats' membership, its memory and its
 // files all wait; once the time is over the files go. (A project's folder on disk, and what is in it, is never touched.)
 const PROJECT_UNDO_MS = 12000;
@@ -13027,6 +13091,241 @@ ipcMain.handle('chats:drive-import', async (_e, folderId) => {
 });
 if (TEST) global.__projectDrive = { fake: (client) => { driveClientOverride = client; projectDriveSvc = null; }, state: () => driveStore.all(), saveNow: (id) => driveSaveNow(id), files: async (id) => (await driveFilesFor(projectById(id))).map((f) => f.name) };
 // Everything the project page shows about one project.
+// [project templates] The New project dialog's templates, and a project's applications tracker (its page's Applications card): the newest
+// entries with a count per stage and its automation profile in short; Export CSV; Edit profile / Make an automation open lumen://automations.
+ipcMain.handle('chats:project-templates', () => require('./features/project-templates').list());
+// The dashboard (renderer/chat-job-board.js) also moves one to a stage (its drag: 'stage', { key, stage }), adds a posting ('add', { company,
+// role, url, stage }: Saved unless said) and opens the tailored résumé a row used ('resume', { key }: a file in the project's "Tailored
+// résumés" folder, never anywhere else). 'get' answers the rows, the stat tiles, the follow-ups due and the timeline.
+// [project templates] A job project kept with the user's own tracker sheet and Gmail (features/job-sync.js). The sheet: read through the
+// Google Sheets card's sign-in (connectors/service.js sheetsRequest, never the AI's), synced when the dashboard opens (at most every 2
+// minutes), on Sync now, and after a move in Lumen when "Keep the sheet updated" is on; then written: Status (and an empty Date Applied)
+// cells as plain text, and new rows at the end. Gmail: one search through the Gmail sign-in (gmail.readonly), the subject, sender and
+// preview of what it finds sorted here into suggestions; the user applies or ignores each. Nothing else is sent anywhere.
+const jobSyncLib = () => require('./features/job-sync');
+const sheetsReq = () => { if (TEST && global.__sheetsFake) return global.__sheetsFake; try { return connectorsSvc().sheetsRequest(); } catch { return null; } };
+const sheetIdOf = (v) => (/\/spreadsheets\/d\/([A-Za-z0-9_-]{20,100})/.exec(String(v ?? '')) || /^\s*([A-Za-z0-9_-]{20,100})\s*$/.exec(String(v ?? '')) || [])[1] || '';
+const quoteTab = (tab) => (tab ? `'${String(tab).replace(/'/g, "''")}'!` : '');
+async function sheetsJson(req, target, opts) {
+  const res = await req(target, opts);
+  if (!res.ok) {
+    const { message } = require('./features/connectors/providers/_google').errorOf(res.text);
+    throw new Error(res.status === 404 || res.status === 403 ? 'Google Sheets can’t find that sheet, or this account can’t open it.' : res.status === 400 ? `Google Sheets didn’t accept that${message ? ` (${message})` : ''}. Check the tab name.` : `Google Sheets answered ${res.status}${message ? ` (${message})` : ''}.`);
+  }
+  try { return JSON.parse(res.text || '{}'); } catch { throw new Error('Google Sheets sent something Lumen couldn’t read.'); }
+}
+const saveJobSync = (id, change) => { const p = projectById(id); if (p) chats().setJobSync(id, { ...(p.jobSync || {}), ...change }); };
+const jobSheetRuns = new Map(); // project id -> the sync running now (a second asks for the same one)
+function syncJobSheet(projectId) {
+  if (jobSheetRuns.has(projectId)) return jobSheetRuns.get(projectId);
+  const run = (async () => {
+    const p = projectById(projectId);
+    const link = p?.jobSync?.sheet;
+    if (!link) return { ok: false, error: 'No sheet is linked.' };
+    const req = sheetsReq();
+    if (!req) return { ok: false, connect: 'sheets', error: 'Connect Google Sheets first (Settings → Apps and connections).' };
+    const lib = jobSyncLib();
+    const rt = automations();
+    try {
+      const base = `/spreadsheets/${encodeURIComponent(link.id)}`;
+      const got = await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(link.tab)}A1:Z2000`)}`, { query: { majorDimension: 'ROWS', valueRenderOption: 'FORMATTED_VALUE' } });
+      const sheet = lib.readSheet(got.values || []);
+      if (sheet.error) throw new Error(sheet.error);
+      const plan = lib.plan(rt.applications(projectId), sheet, { tab: link.tab, write: link.write !== false });
+      if (plan.cells.length) await sheetsJson(req, `${base}/values:batchUpdate`, { method: 'POST', json: { valueInputOption: 'RAW', data: plan.cells.map((c) => ({ range: c.range, majorDimension: 'ROWS', values: [[c.value]] })) } });
+      if (plan.append.length) await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(link.tab)}A1`)}:append`, { method: 'POST', query: { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' }, json: { majorDimension: 'ROWS', values: plan.append.map((a) => a.cells) } });
+      const r = rt.applySheetPlan(projectId, plan, { appended: plan.append });
+      saveJobSync(projectId, { sheet: { ...link, at: Date.now(), error: '' } });
+      return { ok: true, ...r, written: plan.cells.filter((c) => Object.values(lib.STATUS_TEXT).includes(c.value)).length, appended: plan.append.length, rows: sheet.rows.length };
+    } catch (err) {
+      const error = String(err?.message || err).slice(0, 200);
+      saveJobSync(projectId, { sheet: { ...link, error } });
+      return { ok: false, error };
+    } finally { jobSheetRuns.delete(projectId); }
+  })();
+  jobSheetRuns.set(projectId, run);
+  return run;
+}
+// After a change in Lumen: the sheet follows, when one is linked and "Keep the sheet updated" is on. Best effort, in the background.
+function kickJobSheet(projectId) {
+  const link = projectById(projectId)?.jobSync?.sheet;
+  if (link && link.write !== false) syncJobSheet(projectId).catch(() => {});
+}
+const jobEmailFound = new Map(); // project id -> the last check's suggestions (Apply takes them from here, never from the page)
+async function checkJobEmail(projectId) {
+  const g = connectorsGoogle;
+  const st = await g.status().catch(() => null);
+  if (!st?.oauth) return { ok: false, connect: 'gmail', error: 'Connect Gmail with the Google sign-in first (Settings → Apps and connections → Gmail).' };
+  const lib = jobSyncLib();
+  const GV = require('./features/gmail-view');
+  try {
+    const params = new URLSearchParams({ maxResults: '60', fields: 'messages/id', q: lib.GMAIL_QUERY });
+    const ids = GV.messageIds(await g.api(`/users/me/messages?${params}`), 60);
+    const msgs = (await Promise.all(ids.map((mid) => g.api(GV.messagePath(mid)).catch(() => null)))).map((m) => GV.normalizeMessage(m)).filter(Boolean).map((m) => ({ ...m, from: m.address && m.address !== m.from ? `${m.from} <${m.address}>` : m.from }));
+    const p = projectById(projectId);
+    const found = lib.emailSuggestions(automations().applications(projectId), msgs, p?.jobSync?.emailDone || []);
+    jobEmailFound.set(projectId, found);
+    saveJobSync(projectId, { emailAt: Date.now() });
+    return { ok: true, suggestions: found, checked: msgs.length };
+  } catch (err) {
+    return { ok: false, error: `Could not search Gmail: ${String(err?.message || err).slice(0, 160)}` };
+  }
+}
+const sourcesOf = async (p) => {
+  const link = p.jobSync?.sheet || null;
+  let gmail = false;
+  try { gmail = Boolean((await connectorsGoogle.status())?.oauth); } catch { /* not signed in */ }
+  return { sheet: link ? { ...link, url: `https://docs.google.com/spreadsheets/d/${link.id}/edit` } : null, sheets: Boolean(sheetsReq()), gmail, emailAt: p.jobSync?.emailAt || 0, suggestions: jobEmailFound.get(p.id) || [] };
+};
+// [project templates] Find jobs (features/job-search.js): a job skill the user has, or Job search (JobSpy) installed on request into
+// <userData>/job-search/venv. A search runs that Python with the runner on stdin-fed arguments; nothing else is run from there.
+const jobSearchLib = () => require('./features/job-search');
+const jobSearchDir = () => path.join(app.getPath('userData'), 'job-search');
+const jobSearchPython = () => (TEST && global.__jobSearchPython) || path.join(jobSearchDir(), 'venv', process.platform === 'win32' ? 'Scripts\\python.exe' : 'bin/python3');
+function runPy(cmd, args, { input = '', timeout = 120000 } = {}) {
+  return new Promise((resolve) => {
+    let out = '';
+    let err = '';
+    let child;
+    try { child = require('./ai/cli-utils').spawn(cmd, args, { env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', PIP_DISABLE_PIP_VERSION_CHECK: '1' } }); } catch (e) { resolve({ code: -1, out: '', err: String(e?.message || e) }); return; }
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, timeout);
+    child.stdout.on('data', (d) => { if (out.length < 5e6) out += d; });
+    child.stderr.on('data', (d) => { err = (err + d).slice(-20000); });
+    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: String(e?.message || e) }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+const jobSearchReady = () => (TEST && global.__jobSearchFake) ? true : fs.existsSync(jobSearchPython());
+const lastLine = (text) => String(text || '').trim().split(/\r?\n/).filter(Boolean).pop()?.slice(0, 200) || '';
+let jobInstall = null; // the install running now
+function installJobSearch() {
+  if (jobInstall) return jobInstall;
+  jobInstall = (async () => {
+    const lib = jobSearchLib();
+    try {
+      if (TEST && global.__jobSearchInstallFake) { const r = await global.__jobSearchInstallFake(); if (!r?.ok) return r; } else {
+        let found = null;
+        for (const [cmd, pre] of lib.PYTHONS) {
+          const v = await runPy(cmd, [...pre, '--version'], { timeout: 15000 });
+          if (v.code === 0 && lib.pythonOk(`${v.out} ${v.err}`)) { found = [cmd, pre]; break; }
+        }
+        if (!found) return { ok: false, python: false, error: 'Job search needs Python 3.10 to 3.13 on this computer (JobSpy’s parts aren’t built for newer ones yet). Install Python 3.12 from python.org, then press Install again.' };
+        await fs.promises.mkdir(jobSearchDir(), { recursive: true });
+        const venv = await runPy(found[0], [...found[1], '-m', 'venv', path.join(jobSearchDir(), 'venv')], { timeout: 180000 });
+        if (venv.code !== 0) return { ok: false, error: `Could not make Lumen’s Python environment: ${lastLine(venv.err) || 'no reason given'}` };
+        const pip = await runPy(jobSearchPython(), ['-m', 'pip', 'install', '--no-input', lib.JOBSPY_PACKAGE], { timeout: 900000 });
+        if (pip.code !== 0) return { ok: false, error: `Could not install JobSpy: ${lastLine(pip.err) || 'no reason given'}` };
+      }
+      if (!skillsFeature.store.byName(lib.JOBSPY_SKILL.name)) { const r = skillsFeature.store.save({ ...lib.JOBSPY_SKILL }); if (r.ok) skillsFeature.changed(); }
+      return { ok: true };
+    } catch (err) { return { ok: false, error: String(err?.message || err).slice(0, 200) }; } finally { jobInstall = null; }
+  })();
+  return jobInstall;
+}
+async function runJobSearch(input) {
+  const lib = jobSearchLib();
+  const a = lib.searchArgs(input);
+  if (!a.ok) return a;
+  if (!jobSearchReady()) return { ok: false, error: 'Job search isn’t installed: Find jobs on the project’s Applications page installs it.' };
+  const r = TEST && global.__jobSearchFake ? { code: 0, out: await global.__jobSearchFake(a.args), err: '' } : await runPy(jobSearchPython(), ['-I', '-c', lib.RUNNER], { input: JSON.stringify(a.args), timeout: 300000 });
+  if (r.code !== 0) return { ok: false, error: `The search failed: ${lastLine(r.err) || 'no answer from the job boards'}` };
+  return lib.readResults(r.out, require('./features/automations'));
+}
+const jobSearchFound = new Map(); // project id -> the last search's listings (Save takes them from here)
+function jobSearchState() {
+  const lib = jobSearchLib();
+  let skill = null;
+  try { skill = lib.pickSkill(skillsFeature.all()); } catch { /* no skills */ }
+  return { installed: jobSearchReady(), installing: Boolean(jobInstall), package: lib.JOBSPY_PACKAGE, skill: skill ? { name: skill.name, title: skill.title, ours: skill.name === lib.JOBSPY_SKILL.name, claudeCode: String(skill.id || '').startsWith('cc:') || skill.source === 'claude-code' } : null };
+}
+const tailoredDir = (p) => (p?.folder ? path.join(p.folder, require('./features/project-templates').byId('job-applications').folders[0]) : '');
+async function tailoredNames(p) {
+  const dir = tailoredDir(p);
+  if (!dir) return [];
+  try { return (await fs.promises.readdir(dir, { withFileTypes: true })).filter((d) => d.isFile() && !d.name.startsWith('~$')).map((d) => d.name).slice(0, 2000); } catch { return []; } // (~$: Word's lock file while one is open)
+}
+ipcMain.handle('chats:project-applications', async (_e, id, action, arg) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const lib = require('./features/project-templates');
+  if (action === 'export') return automations().exportProjectCsv(p.id);
+  if (action === 'open') { managers.open('automations'); return { ok: true }; }
+  if (action === 'stage') { const r = automations().moveApplication(p.id, String(arg?.key ?? ''), String(arg?.stage ?? '')); if (r.ok) kickJobSheet(p.id); return { ok: r.ok, error: r.error }; }
+  if (action === 'add') { const r = automations().logApplication(p.id, { company: arg?.company, role: arg?.role, url: arg?.url, stage: lib.STAGES.includes(arg?.stage) ? arg.stage : 'saved', from: 'page' }); if (r.ok) kickJobSheet(p.id); return { ok: r.ok, error: r.error }; }
+  // [project templates] the user's own tracker sheet and Gmail (job-sync.js, above)
+  if (action === 'sources') return sourcesOf(p);
+  // [project templates] Find jobs
+  if (action === 'search-state') return jobSearchState();
+  if (action === 'search-install') { const r = await installJobSearch(); return { ...r, state: jobSearchState() }; }
+  if (action === 'search') { const r = await runJobSearch(arg); if (r.ok) jobSearchFound.set(p.id, r.listings); const have = automations().applications(p.id); return r.ok ? { ok: true, listings: r.listings.map((l) => ({ ...l, tracked: Boolean(lib.appliedBefore(have, l.url)) })) } : r; }
+  if (action === 'search-save') {
+    const want = new Set((Array.isArray(arg?.urls) ? arg.urls : []).map(String));
+    let saved = 0;
+    for (const l of (jobSearchFound.get(p.id) || []).filter((x) => want.has(x.url))) if (automations().logApplication(p.id, { company: l.company, role: l.title, url: l.url, stage: 'saved', from: 'search', note: [l.site, l.location, l.pay].filter(Boolean).join(' · ') }).ok) saved++;
+    if (saved) kickJobSheet(p.id);
+    return { ok: true, saved };
+  }
+  if (action === 'connect') { openSettingsPage('connectors'); return { ok: true }; }
+  if (action === 'link-sheet') {
+    const sid = sheetIdOf(arg?.url);
+    if (!sid) return { ok: false, error: 'Paste the sheet’s address (docs.google.com/spreadsheets/d/…).' };
+    const req = sheetsReq();
+    if (!req) return { ok: false, connect: 'sheets', error: 'Connect Google Sheets first (Settings → Apps and connections).' };
+    let tab = String(arg?.tab ?? '').trim().slice(0, 100);
+    try {
+      const meta = await sheetsJson(req, `/spreadsheets/${encodeURIComponent(sid)}`, { query: { fields: 'properties.title,sheets.properties.title' } });
+      const tabs = (meta.sheets || []).map((s) => String(s?.properties?.title || '')).filter(Boolean);
+      if (tab && !tabs.includes(tab)) return { ok: false, error: `That sheet has no tab “${tab}”. Its tabs: ${tabs.join(', ')}.` };
+      tab ||= tabs[0] || '';
+      saveJobSync(p.id, { sheet: { id: sid, tab, write: arg?.write !== false, at: 0, title: '' } });
+    } catch (err) { return { ok: false, error: String(err?.message || err).slice(0, 200) }; }
+    return syncJobSheet(p.id);
+  }
+  if (action === 'unlink-sheet') { const js = { ...(p.jobSync || {}) }; delete js.sheet; chats().setJobSync(p.id, js); return { ok: true }; }
+  if (action === 'sheet-write') { const link = p.jobSync?.sheet; if (link) saveJobSync(p.id, { sheet: { ...link, write: arg?.write !== false } }); return { ok: Boolean(link) }; }
+  if (action === 'sync') return syncJobSheet(p.id);
+  if (action === 'check-email') return checkJobEmail(p.id);
+  if (action === 'email-apply' || action === 'email-ignore') {
+    const found = jobEmailFound.get(p.id) || [];
+    const picked = arg?.all ? found : found.filter((s) => s.id === String(arg?.id ?? ''));
+    if (!picked.length) return { ok: false, error: 'That email is no longer in the list. Check email again.' };
+    let applied = 0;
+    if (action === 'email-apply') for (const s of picked) if (automations().applyEmail(p.id, s).ok) applied++;
+    const done = new Set(picked.map((s) => s.id));
+    jobEmailFound.set(p.id, found.filter((s) => !done.has(s.id)));
+    saveJobSync(p.id, { emailDone: [...(projectById(p.id)?.jobSync?.emailDone || []), ...done] });
+    if (applied) kickJobSheet(p.id);
+    return { ok: true, applied };
+  }
+  const entries = automations().applications(p.id);
+  const names = await tailoredNames(p);
+  if (action === 'resume') {
+    const e = entries.find((x) => lib.entryKey(x) === String(arg?.key ?? ''));
+    const name = e ? lib.resumeFor(e, names) : '';
+    if (!name) return { ok: false };
+    const file = path.join(tailoredDir(p), name);
+    if (path.dirname(file) !== tailoredDir(p)) return { ok: false };
+    const err = await filesShell('open', file);
+    return { ok: !err };
+  }
+  const prof = p.profileId ? automations().profile(p.profileId) : null;
+  const base = (x) => (x ? path.basename(x) : '');
+  const now = Date.now();
+  const row = (e) => ({ key: lib.entryKey(e), company: e.company, role: e.role, url: e.url, stage: e.stage, at: e.submittedAt || e.at, applied: e.submittedAt || 0, respondedAt: e.respondedAt || 0, updatedAt: e.updatedAt || 0, note: e.note, source: e.automation || '', resume: lib.resumeFor(e, names) });
+  return {
+    entries: entries.slice(0, 500).map(row),
+    total: entries.length,
+    counts: lib.stageCounts(entries),
+    stages: lib.STAGES,
+    stats: lib.stats(entries, now),
+    followUps: lib.followUps(entries, now).slice(0, 30).map((e) => ({ ...row(e), waited: e.waited })),
+    timeline: lib.timeline(entries, 80),
+    folder: Boolean(p.folder),
+    profile: prof ? { name: prof.name, resume: base(prof.resumePath), cover: base(prof.coverLetterPath), filled: Object.values(prof.fields || {}).filter(Boolean).length } : null,
+  };
+});
 ipcMain.handle('chats:project-get', async (_e, id) => {
   if (projectById(String(id))?.portable) await syncPortable(String(id)); // [portable projects] what was changed in the folder is picked up first
   const p = projectById(String(id));
@@ -14358,7 +14657,7 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
   connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
-  projectTools: (chat) => (chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), // [project workspace] project_files, to a run in a project chat that has files or pinned pages
+  projectTools: (chat) => [...(chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), ...(chat?.settings?.projectApplications === true ? [require('./ai/agent').APPLICATIONS_TOOL_DEF] : [])], // [project templates] applications, in a project made from a template with a tracker; // [project workspace] project_files, to a run in a project chat that has files or pinned pages
   desktopTools: (chat) => agent.cliDesktopToolDefs(chat), // [desktop apps] the desktop tool, to a run whose chat may use other apps (agent.js cliDesktopNote)
   wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)

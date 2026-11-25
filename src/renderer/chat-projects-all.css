@@ -60,3 +60,7 @@
 .pja-import-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .pja-import-row { display: flex; align-items: center; gap: 10px; }
 .pja-import-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 13px; }
+/* [project templates] a Job applications project: its mark in the job colours (chat-projects.css) and a badge */
+.pja-card.job .pja-mark, .pja-row.job .pja-mark { background: linear-gradient(135deg, var(--job), var(--job-2)); color: #fff; }
+.pja-card.job { box-shadow: 0 0 0 1px var(--hairline, var(--border)), inset 0 3px 0 color-mix(in srgb, var(--job) 70%, transparent); }
+.pja-badge.pja-job { background: color-mix(in srgb, var(--job) 16%, transparent); color: color-mix(in srgb, var(--job) 80%, var(--text)); font-weight: 600; }
