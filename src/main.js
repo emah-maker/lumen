@@ -9909,7 +9909,8 @@ const agent = new Agent({
       const p = projectForChat(chatIdOfMessages(messages));
       if (!p) return null;
       const rt = automations();
-      return { list: () => rt.applications(p.id), add: (input) => rt.logApplication(p.id, { ...input, from: '' }), update: (input) => rt.updateApplication(p.id, input) };
+      const after = (r) => { if (r?.ok) kickJobSheet(p.id); return r; }; // [project templates] the linked tracker sheet follows
+      return { list: () => rt.applications(p.id), add: (input) => after(rt.logApplication(p.id, { ...input, from: '' })), update: (input) => after(rt.updateApplication(p.id, input)) };
     },
   },
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
@@ -13072,6 +13073,86 @@ ipcMain.handle('chats:project-templates', () => require('./features/project-temp
 // The dashboard (renderer/chat-job-board.js) also moves one to a stage (its drag: 'stage', { key, stage }), adds a posting ('add', { company,
 // role, url, stage }: Saved unless said) and opens the tailored résumé a row used ('resume', { key }: a file in the project's "Tailored
 // résumés" folder, never anywhere else). 'get' answers the rows, the stat tiles, the follow-ups due and the timeline.
+// [project templates] A job project kept with the user's own tracker sheet and Gmail (features/job-sync.js). The sheet: read through the
+// Google Sheets card's sign-in (connectors/service.js sheetsRequest, never the AI's), synced when the dashboard opens (at most every 2
+// minutes), on Sync now, and after a move in Lumen when "Keep the sheet updated" is on; then written: Status (and an empty Date Applied)
+// cells as plain text, and new rows at the end. Gmail: one search through the Gmail sign-in (gmail.readonly), the subject, sender and
+// preview of what it finds sorted here into suggestions; the user applies or ignores each. Nothing else is sent anywhere.
+const jobSyncLib = () => require('./features/job-sync');
+const sheetsReq = () => { if (TEST && global.__sheetsFake) return global.__sheetsFake; try { return connectorsSvc().sheetsRequest(); } catch { return null; } };
+const sheetIdOf = (v) => (/\/spreadsheets\/d\/([A-Za-z0-9_-]{20,100})/.exec(String(v ?? '')) || /^\s*([A-Za-z0-9_-]{20,100})\s*$/.exec(String(v ?? '')) || [])[1] || '';
+const quoteTab = (tab) => (tab ? `'${String(tab).replace(/'/g, "''")}'!` : '');
+async function sheetsJson(req, target, opts) {
+  const res = await req(target, opts);
+  if (!res.ok) {
+    const { message } = require('./features/connectors/providers/_google').errorOf(res.text);
+    throw new Error(res.status === 404 || res.status === 403 ? 'Google Sheets can’t find that sheet, or this account can’t open it.' : res.status === 400 ? `Google Sheets didn’t accept that${message ? ` (${message})` : ''}. Check the tab name.` : `Google Sheets answered ${res.status}${message ? ` (${message})` : ''}.`);
+  }
+  try { return JSON.parse(res.text || '{}'); } catch { throw new Error('Google Sheets sent something Lumen couldn’t read.'); }
+}
+const saveJobSync = (id, change) => { const p = projectById(id); if (p) chats().setJobSync(id, { ...(p.jobSync || {}), ...change }); };
+const jobSheetRuns = new Map(); // project id -> the sync running now (a second asks for the same one)
+function syncJobSheet(projectId) {
+  if (jobSheetRuns.has(projectId)) return jobSheetRuns.get(projectId);
+  const run = (async () => {
+    const p = projectById(projectId);
+    const link = p?.jobSync?.sheet;
+    if (!link) return { ok: false, error: 'No sheet is linked.' };
+    const req = sheetsReq();
+    if (!req) return { ok: false, connect: 'sheets', error: 'Connect Google Sheets first (Settings → Apps and connections).' };
+    const lib = jobSyncLib();
+    const rt = automations();
+    try {
+      const base = `/spreadsheets/${encodeURIComponent(link.id)}`;
+      const got = await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(link.tab)}A1:Z2000`)}`, { query: { majorDimension: 'ROWS', valueRenderOption: 'FORMATTED_VALUE' } });
+      const sheet = lib.readSheet(got.values || []);
+      if (sheet.error) throw new Error(sheet.error);
+      const plan = lib.plan(rt.applications(projectId), sheet, { tab: link.tab, write: link.write !== false });
+      if (plan.cells.length) await sheetsJson(req, `${base}/values:batchUpdate`, { method: 'POST', json: { valueInputOption: 'RAW', data: plan.cells.map((c) => ({ range: c.range, majorDimension: 'ROWS', values: [[c.value]] })) } });
+      if (plan.append.length) await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(link.tab)}A1`)}:append`, { method: 'POST', query: { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' }, json: { majorDimension: 'ROWS', values: plan.append.map((a) => a.cells) } });
+      const r = rt.applySheetPlan(projectId, plan, { appended: plan.append });
+      saveJobSync(projectId, { sheet: { ...link, at: Date.now(), error: '' } });
+      return { ok: true, ...r, written: plan.cells.filter((c) => Object.values(lib.STATUS_TEXT).includes(c.value)).length, appended: plan.append.length, rows: sheet.rows.length };
+    } catch (err) {
+      const error = String(err?.message || err).slice(0, 200);
+      saveJobSync(projectId, { sheet: { ...link, error } });
+      return { ok: false, error };
+    } finally { jobSheetRuns.delete(projectId); }
+  })();
+  jobSheetRuns.set(projectId, run);
+  return run;
+}
+// After a change in Lumen: the sheet follows, when one is linked and "Keep the sheet updated" is on. Best effort, in the background.
+function kickJobSheet(projectId) {
+  const link = projectById(projectId)?.jobSync?.sheet;
+  if (link && link.write !== false) syncJobSheet(projectId).catch(() => {});
+}
+const jobEmailFound = new Map(); // project id -> the last check's suggestions (Apply takes them from here, never from the page)
+async function checkJobEmail(projectId) {
+  const g = connectorsGoogle;
+  const st = await g.status().catch(() => null);
+  if (!st?.oauth) return { ok: false, connect: 'gmail', error: 'Connect Gmail with the Google sign-in first (Settings → Apps and connections → Gmail).' };
+  const lib = jobSyncLib();
+  const GV = require('./features/gmail-view');
+  try {
+    const params = new URLSearchParams({ maxResults: '60', fields: 'messages/id', q: lib.GMAIL_QUERY });
+    const ids = GV.messageIds(await g.api(`/users/me/messages?${params}`), 60);
+    const msgs = (await Promise.all(ids.map((mid) => g.api(GV.messagePath(mid)).catch(() => null)))).map((m) => GV.normalizeMessage(m)).filter(Boolean).map((m) => ({ ...m, from: m.address && m.address !== m.from ? `${m.from} <${m.address}>` : m.from }));
+    const p = projectById(projectId);
+    const found = lib.emailSuggestions(automations().applications(projectId), msgs, p?.jobSync?.emailDone || []);
+    jobEmailFound.set(projectId, found);
+    saveJobSync(projectId, { emailAt: Date.now() });
+    return { ok: true, suggestions: found, checked: msgs.length };
+  } catch (err) {
+    return { ok: false, error: `Could not search Gmail: ${String(err?.message || err).slice(0, 160)}` };
+  }
+}
+const sourcesOf = async (p) => {
+  const link = p.jobSync?.sheet || null;
+  let gmail = false;
+  try { gmail = Boolean((await connectorsGoogle.status())?.oauth); } catch { /* not signed in */ }
+  return { sheet: link ? { ...link, url: `https://docs.google.com/spreadsheets/d/${link.id}/edit` } : null, sheets: Boolean(sheetsReq()), gmail, emailAt: p.jobSync?.emailAt || 0, suggestions: jobEmailFound.get(p.id) || [] };
+};
 const tailoredDir = (p) => (p?.folder ? path.join(p.folder, require('./features/project-templates').byId('job-applications').folders[0]) : '');
 async function tailoredNames(p) {
   const dir = tailoredDir(p);
@@ -13084,8 +13165,42 @@ ipcMain.handle('chats:project-applications', async (_e, id, action, arg) => {
   const lib = require('./features/project-templates');
   if (action === 'export') return automations().exportProjectCsv(p.id);
   if (action === 'open') { managers.open('automations'); return { ok: true }; }
-  if (action === 'stage') { const r = automations().moveApplication(p.id, String(arg?.key ?? ''), String(arg?.stage ?? '')); return { ok: r.ok, error: r.error }; }
-  if (action === 'add') { const r = automations().logApplication(p.id, { company: arg?.company, role: arg?.role, url: arg?.url, stage: lib.STAGES.includes(arg?.stage) ? arg.stage : 'saved', from: 'page' }); return { ok: r.ok, error: r.error }; }
+  if (action === 'stage') { const r = automations().moveApplication(p.id, String(arg?.key ?? ''), String(arg?.stage ?? '')); if (r.ok) kickJobSheet(p.id); return { ok: r.ok, error: r.error }; }
+  if (action === 'add') { const r = automations().logApplication(p.id, { company: arg?.company, role: arg?.role, url: arg?.url, stage: lib.STAGES.includes(arg?.stage) ? arg.stage : 'saved', from: 'page' }); if (r.ok) kickJobSheet(p.id); return { ok: r.ok, error: r.error }; }
+  // [project templates] the user's own tracker sheet and Gmail (job-sync.js, above)
+  if (action === 'sources') return sourcesOf(p);
+  if (action === 'connect') { openSettingsPage('connectors'); return { ok: true }; }
+  if (action === 'link-sheet') {
+    const sid = sheetIdOf(arg?.url);
+    if (!sid) return { ok: false, error: 'Paste the sheet’s address (docs.google.com/spreadsheets/d/…).' };
+    const req = sheetsReq();
+    if (!req) return { ok: false, connect: 'sheets', error: 'Connect Google Sheets first (Settings → Apps and connections).' };
+    let tab = String(arg?.tab ?? '').trim().slice(0, 100);
+    try {
+      const meta = await sheetsJson(req, `/spreadsheets/${encodeURIComponent(sid)}`, { query: { fields: 'properties.title,sheets.properties.title' } });
+      const tabs = (meta.sheets || []).map((s) => String(s?.properties?.title || '')).filter(Boolean);
+      if (tab && !tabs.includes(tab)) return { ok: false, error: `That sheet has no tab “${tab}”. Its tabs: ${tabs.join(', ')}.` };
+      tab ||= tabs[0] || '';
+      saveJobSync(p.id, { sheet: { id: sid, tab, write: arg?.write !== false, at: 0, title: '' } });
+    } catch (err) { return { ok: false, error: String(err?.message || err).slice(0, 200) }; }
+    return syncJobSheet(p.id);
+  }
+  if (action === 'unlink-sheet') { const js = { ...(p.jobSync || {}) }; delete js.sheet; chats().setJobSync(p.id, js); return { ok: true }; }
+  if (action === 'sheet-write') { const link = p.jobSync?.sheet; if (link) saveJobSync(p.id, { sheet: { ...link, write: arg?.write !== false } }); return { ok: Boolean(link) }; }
+  if (action === 'sync') return syncJobSheet(p.id);
+  if (action === 'check-email') return checkJobEmail(p.id);
+  if (action === 'email-apply' || action === 'email-ignore') {
+    const found = jobEmailFound.get(p.id) || [];
+    const picked = arg?.all ? found : found.filter((s) => s.id === String(arg?.id ?? ''));
+    if (!picked.length) return { ok: false, error: 'That email is no longer in the list. Check email again.' };
+    let applied = 0;
+    if (action === 'email-apply') for (const s of picked) if (automations().applyEmail(p.id, s).ok) applied++;
+    const done = new Set(picked.map((s) => s.id));
+    jobEmailFound.set(p.id, found.filter((s) => !done.has(s.id)));
+    saveJobSync(p.id, { emailDone: [...(projectById(p.id)?.jobSync?.emailDone || []), ...done] });
+    if (applied) kickJobSheet(p.id);
+    return { ok: true, applied };
+  }
   const entries = automations().applications(p.id);
   const names = await tailoredNames(p);
   if (action === 'resume') {

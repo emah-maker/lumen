@@ -688,9 +688,19 @@ function create({
     return (target, opts) => ctx.http(target, opts);
   }
 
+  // [project templates] Google Sheets' request function for Lumen's own use (a Job applications project's linked tracker sheet,
+  // features/job-sync.js): the Sheets card's sign-in and permission, never the AI's. null while Sheets isn't connected.
+  function sheetsRequest() {
+    const def = registry.get('sheets');
+    const entry = def && connected.sheets;
+    if (!entry) return null;
+    const ctx = makeCtx(def, entry);
+    return (target, opts) => ctx.http(target, opts);
+  }
+
   const isSend = (input) => input?.app === 'gmail' && input?.action === 'send';
   const googleHolds = (clientId, email) => { try { return Boolean(googleSealed) && googleAuth().holds?.(clientId, email) === true; } catch { return true; } }; // (unknown: kept, never revoked)
-  return { googleHolds, setPaused, setSending, sendingOn, sendOffered, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, driveRequest, forgetAll: () => { cache.clear(); } };
+  return { googleHolds, setPaused, setSending, sendingOn, sendOffered, sendLog: () => sendLog().list(), isSend, list, detect, connect, disconnect, allowDrafts, syncShared, usesShared, signInUrl, pageTarget, pageOk, pageSignedOut, defs, validate, label, isWrite, hasAny, connectedIds, describeWrite, call, sheetsRequest, driveRequest, forgetAll: () => { cache.clear(); } };
 }
 
 module.exports = { create };

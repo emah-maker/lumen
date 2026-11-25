@@ -652,7 +652,18 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     return out;
   };
-  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults, temporary, template, profileId } = {}) { // temporary: [temp projects] true makes it one, false keeps it as a project; template, profileId: [project templates] the template it was made from and its automation profile
+  // [project templates] jobSync: a Job applications project's linked tracker sheet ({ id, tab, write, at }) and the Gmail messages already
+  // applied or ignored on its dashboard (features/job-sync.js). Cleaned here; anything else in it is dropped.
+  const cleanJobSync = (v) => {
+    if (!v || typeof v !== 'object') return null;
+    const out = {};
+    const s = v.sheet;
+    if (s && /^[A-Za-z0-9_-]{20,100}$/.test(String(s.id))) out.sheet = { id: String(s.id), tab: cleanText(s.tab, 100), write: s.write !== false, at: Number(s.at) || 0, ...(s.error ? { error: cleanText(s.error, 200) } : {}) };
+    if (Array.isArray(v.emailDone)) out.emailDone = v.emailDone.map(String).filter((x) => /^[0-9a-f]{6,32}$/i.test(x)).slice(-1000);
+    if (Number(v.emailAt) > 0) out.emailAt = Number(v.emailAt);
+    return Object.keys(out).length ? out : null;
+  };
+  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults, temporary, template, profileId, jobSync } = {}) { // temporary: [temp projects] true makes it one, false keeps it as a project; template, profileId: [project templates] the template it was made from and its automation profile
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -676,6 +687,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (temporary !== undefined) { if (temporary === true) project.temporary = true; else delete project.temporary; } // [temp projects] main deletes one TEMP_PROJECT_MS after it was last used
     if (template !== undefined) { const tp = /^[a-z][a-z0-9-]{0,39}$/.test(String(template)) ? String(template) : ''; if (tp) project.template = tp; else delete project.template; } // [project templates]
     if (profileId !== undefined) { const pr = /^[a-f0-9]{6,32}$/.test(String(profileId)) ? String(profileId) : ''; if (pr) project.profileId = pr; else delete project.profileId; }
+    if (jobSync !== undefined) { const js = cleanJobSync(jobSync); if (js) project.jobSync = js; else delete project.jobSync; }
     project.updated = now();
     writeIndex();
     return { ...project };
@@ -689,6 +701,16 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (idx.degraded || !project || !PROJECT_FLAGS.has(key)) return false;
     if (on) project[key] = true; else delete project[key];
     if (key === 'archived' && on) delete project.pinned; // (an archived project is out of the list: a pin would bring nothing)
+    writeIndex();
+    return true;
+  }
+  // [project templates] A job project's sync state (cleanJobSync), kept without making the project "changed" (no new `updated`: a sync is not an edit).
+  function setJobSync(id, value) {
+    const idx = readIndex();
+    const project = projectById(id);
+    if (idx.degraded || !project) return false;
+    const js = cleanJobSync(value);
+    if (js) project.jobSync = js; else delete project.jobSync;
     writeIndex();
     return true;
   }
@@ -971,7 +993,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   const isForeign = (id) => foreign.has(id);
   // True when the chat list and projects can be trusted to decide what to delete: the index was read, and not rebuilt this run.
   function trusted() { return !readIndex().degraded && !rebuilt; }
-  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, setProjectFlag, removeProject, projectSnapshot, restoreProject, adoptProject, setProjectPermissions, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, setProjectFlag, setJobSync, removeProject, projectSnapshot, restoreProject, adoptProject, setProjectPermissions, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

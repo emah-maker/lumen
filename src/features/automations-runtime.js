@@ -468,6 +468,37 @@ function create(deps) {
     changed();
     return { ok: true, entry };
   }
+  // [project templates] A linked sheet's sync (features/job-sync.js plan()): its new rows added, the entries it moved, and what each matched
+  // row says now kept on the entry (entry.sheet) for the next sync. appended: the keys of entries just written to the sheet as new rows.
+  function applySheetPlan(projectId, p, { appended = [], now: at = now() } = {}) {
+    const lib = templates();
+    for (const e of p.add || []) store.addLog({ ...e, projectId: String(projectId) });
+    const byKey = new Map(lib.projectEntries(store.log(), store.automations(), projectId).map((e) => [lib.entryKey(e), e]));
+    const real = (key) => { const c = byKey.get(key); return c ? store.log().find((x) => lib.entryKey(x) === key) : null; };
+    for (const m of p.moves || []) {
+      const e = real(m.key);
+      if (!e) continue;
+      if (!lib.STAGES.includes(e.stage)) e.stage = lib.stageOf(e);
+      lib.setStage(e, m.stage, at);
+      if (m.applied && m.stage !== 'saved' && (!e.submittedAt || e.submittedAt === at)) e.submittedAt = m.applied;
+    }
+    for (const s of p.seen || []) { const e = real(s.key); if (e) e.sheet = { status: s.sheetStatus, row: s.row }; }
+    for (const a of appended) { const e = real(a.key); if (e) e.sheet = { status: a.status, row: 0 }; }
+    save();
+    changed();
+    return { added: (p.add || []).length, moved: (p.moves || []).length };
+  }
+  // An email's suggestion applied: the entry it matched moved on, or a new application (company from the email).
+  function applyEmail(projectId, s) {
+    if (s?.key) return moveApplication(projectId, s.key, s.stage);
+    const r = templates().manualEntry({ company: s?.company, role: s?.role, stage: s?.stage, from: 'email', note: s?.subject ? `Email: ${s.subject}` : '' }, { projectId, now: now() });
+    if (!r.ok) return r;
+    if (s.at && r.entry.stage !== 'saved') { r.entry.submittedAt = r.entry.at = Math.min(Number(s.at) || now(), now()); r.entry.history = [{ stage: r.entry.stage, at: r.entry.submittedAt }]; if (r.entry.respondedAt) r.entry.respondedAt = r.entry.submittedAt; }
+    store.addLog(r.entry);
+    save();
+    changed();
+    return r;
+  }
   async function exportProjectCsv(projectId) { return deps.saveCsv(auto.toCsv(applications(projectId).map((e) => ({ ...e, status: e.stage })))); } // (the Status column says where each one stands)
 
   function init() { store.load(); armSchedule(); }
@@ -480,7 +511,7 @@ function create(deps) {
 
   return {
     init, shutdown, state, start, itemAct, runAct, describe, recordStart, recordStop, saveAutomation, removeAutomation, saveProfile, removeProfile, exportCsv, clearLog,
-    applications, logApplication, updateApplication, moveApplication, exportProjectCsv, // [project templates]
+    applications, logApplication, updateApplication, moveApplication, applySheetPlan, applyEmail, exportProjectCsv, // [project templates]
     profile: (id) => store.profile(String(id ?? '')),
     pickFile: (kind) => deps.pickFile(kind), runDue, armSchedule,
     // Test hooks (test/e2e/automations.js): nothing in the app itself uses these.

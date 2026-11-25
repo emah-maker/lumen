@@ -6,7 +6,10 @@
 // an answer, and the last 8 weeks as small bars), the follow-ups due (applied two weeks ago or more, no answer), then one of three views:
 // Board (Saved, Applied, Interview, Offer, Closed: drag a card to move it on, or use its stage menu), Table (sortable) and Timeline (every
 // move, by day). Each row opens its posting and the tailored résumé it used. Everything comes from main ("chats:project-applications"):
-// the tracker is kept on this computer with the automations, encrypted; nothing here is sent anywhere.
+// the tracker is kept on this computer with the automations, encrypted.
+// [project templates] Sources: a Google Sheet the user already tracks in, linked here and kept in step both ways (main reads it when the
+// dashboard opens, at most every 2 minutes, and writes Status cells and new rows when "Keep the sheet updated" is on), and Gmail: "Check
+// email" sorts application emails into suggestions (received, interview, offer, rejection) the user applies or ignores (features/job-sync.js).
 (() => {
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.filter((k) => k !== null && k !== undefined && k !== false)); return n; };
   const COLUMNS = [['saved', ['saved']], ['applied', ['applied']], ['interview', ['interview']], ['offer', ['offer']], ['closed', ['rejected', 'withdrawn']]];
@@ -34,6 +37,9 @@
     const stageName = (s) => tr(`projecttpl.stage.${s}`, s);
     const day = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
     let data = null;
+    let src = null; // the sources: { sheet, sheets, gmail, emailAt, suggestions }
+    let autoDone = false; // (the dashboard's first draw syncs the sheet and checks email once, when they are due)
+    let linking = false;
     let view = VIEWS.includes(remember.get('view', 'board')) ? remember.get('view', 'board') : 'board';
     let sort = { key: 'at', dir: -1 };
     const root = el('div', { className: 'jb' });
@@ -46,8 +52,31 @@
       if (!root.isConnected) return;
       if (!got) { root.replaceChildren(el('p', { className: 'jb-empty', textContent: tr('projecttpl.apps.failed', 'Could not read the tracker.') })); return; }
       data = got;
+      src = await api.projectApplications(id, 'sources').catch(() => null);
+      if (!root.isConnected) return;
       render();
+      if (!autoDone && src) { autoDone = true; auto(); }
     }
+    const MIN = 60000;
+    async function auto() {
+      let again = false;
+      if (src.sheet && src.sheets && Date.now() - (src.sheet.at || 0) > 2 * MIN) { const r = await api.projectApplications(id, 'sync').catch(() => null); again ||= Boolean(r); }
+      if (src.gmail && Date.now() - (src.emailAt || 0) > 30 * MIN) { const r = await api.projectApplications(id, 'check-email').catch(() => null); again ||= Boolean(r?.ok); }
+      if (again && root.isConnected) await load();
+    }
+    async function act(action, arg, busyBtn) {
+      if (busyBtn) busyBtn.disabled = true;
+      const out = await api.projectApplications(id, action, arg).catch(() => null);
+      if (busyBtn) busyBtn.disabled = false;
+      if (!out?.ok) say.textContent = out?.error || tr('jobs.src.failed', 'That didn’t work. Try again.');
+      else say.textContent = action === 'sync' || action === 'link-sheet' ? syncSays(out) : action === 'check-email' ? (out.suggestions.length ? tr('jobs.email.found', '{n} emails could update your tracker.', { n: out.suggestions.length }) : tr('jobs.email.none', 'Checked {n} emails: nothing new.', { n: out.checked })) : '';
+      if (out?.ok && action === 'link-sheet') linking = false;
+      await load();
+      return out;
+    }
+    const syncSays = (r) => tr('jobs.sheet.synced', 'Synced: {added} new from the sheet, {moved} moved, {written} written back, {appended} added to the sheet.', { added: r.added || 0, moved: r.moved || 0, written: r.written || 0, appended: r.appended || 0 });
+    const ago = (t) => { if (!t) return tr('jobs.src.never', 'not yet'); const m = Math.round((Date.now() - t) / MIN); return m < 1 ? tr('jobs.src.now', 'just now') : m < 60 ? tr('jobs.src.min', '{n} min ago', { n: m }) : m < 1440 ? tr('jobs.src.hours', '{n} h ago', { n: Math.round(m / 60) }) : new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); };
+    const small = (label, run, className = '') => { const b = el('button', { type: 'button', className: `btn small ${className}`.trim(), textContent: label }); b.onclick = () => run(b); return b; };
     async function move(key, stage) {
       const out = await api.projectApplications(id, 'stage', { key, stage }).catch(() => null);
       if (!out?.ok) say.textContent = tr('jobs.moveFailed', 'Could not move it.');
@@ -101,6 +130,66 @@
       }
       const head = el('div', { className: 'jb-follow-head' }, icon('clock'), el('strong', { textContent: due.length === 1 ? tr('jobs.follow1', '1 follow-up due') : tr('jobs.followN', '{n} follow-ups due', { n: due.length }) }), el('span', { className: 'jb-muted', textContent: tr('jobs.followNote', 'Applied 2+ weeks ago with no answer. A short, polite check-in helps.') }));
       return el('section', { className: 'jb-follow' }, head, list, due.length > 6 ? el('p', { className: 'jb-muted', textContent: tr('jobs.followMore', '{n} more in the table.', { n: due.length - 6 }) }) : null);
+    }
+
+    function sources() {
+      if (!src) return null;
+      const icoSheet = el('span', { className: 'jb-src-ic sheet', textContent: '▦' });
+      const icoMail = el('span', { className: 'jb-src-ic mail', textContent: '✉' });
+      for (const i of [icoSheet, icoMail]) i.setAttribute('aria-hidden', 'true');
+      // the sheet
+      let sheetRow;
+      if (!src.sheets && !src.sheet) {
+        sheetRow = el('div', { className: 'jb-src' }, icoSheet, el('span', { className: 'jb-src-text', textContent: tr('jobs.sheet.connect', 'Track in a Google Sheet? Connect Google Sheets, then link your tracker: its rows count here and your changes go back to it.') }), small(tr('jobs.src.connectSheets', 'Connect Google Sheets'), () => act('connect')));
+      } else if (src.sheet && !linking) {
+        const s = src.sheet;
+        const text = el('span', { className: 'jb-src-text' }, el('strong', { textContent: tr('jobs.sheet.linked', 'Your tracker sheet') }), el('span', { className: 'jb-muted', textContent: ` · ${s.tab ? `${s.tab} · ` : ''}${s.error ? '' : tr('jobs.sheet.at', 'synced {when}', { when: ago(s.at) })}` }));
+        if (s.error) text.append(el('span', { className: 'jb-src-error', textContent: ` ${s.error}` }));
+        const keep = el('label', { className: 'jb-check' }, el('input', { type: 'checkbox', checked: s.write !== false }), el('span', { textContent: tr('jobs.sheet.write', 'Keep the sheet updated') }));
+        keep.querySelector('input').onchange = (e) => act('sheet-write', { write: e.target.checked });
+        const open = el('button', { type: 'button', className: 'jb-link', title: tr('jobs.sheet.open', 'Open the sheet') }, icon('open'));
+        open.setAttribute('aria-label', tr('jobs.sheet.open', 'Open the sheet'));
+        open.onclick = () => ctx.openLink(s.url);
+        sheetRow = el('div', { className: 'jb-src' }, icoSheet, text, el('span', { className: 'jb-grow' }), keep, open, small(tr('jobs.sheet.sync', 'Sync now'), (b) => act('sync', null, b)), small(tr('jobs.sheet.unlink', 'Unlink'), () => act('unlink-sheet'), 'jb-quiet'));
+        if (!src.sheets) sheetRow.append(small(tr('jobs.src.connectSheets', 'Connect Google Sheets'), () => act('connect')));
+      } else if (linking) {
+        const url = el('input', { type: 'url', className: 'jb-in jb-in-url', placeholder: tr('jobs.sheet.url', 'The sheet’s address (docs.google.com/spreadsheets/d/…)') });
+        const tab = el('input', { type: 'text', className: 'jb-in jb-in-tab', placeholder: tr('jobs.sheet.tab', 'Tab (optional: the first)') });
+        url.setAttribute('aria-label', tr('jobs.sheet.url', 'The sheet’s address (docs.google.com/spreadsheets/d/…)'));
+        tab.setAttribute('aria-label', tr('jobs.sheet.tab', 'Tab (optional: the first)'));
+        const keep = el('label', { className: 'jb-check' }, el('input', { type: 'checkbox', checked: true }), el('span', { textContent: tr('jobs.sheet.write', 'Keep the sheet updated') }));
+        const go = el('button', { type: 'submit', className: 'btn small primary', textContent: tr('jobs.sheet.linkGo', 'Link and sync') });
+        const form = el('form', { className: 'jb-src jb-src-form' }, icoSheet, url, tab, keep, go, small(tr('chatpage.project.cancel', 'Cancel'), () => { linking = false; render(); }));
+        form.onsubmit = (e) => { e.preventDefault(); if (!url.value.trim()) { url.focus(); return; } act('link-sheet', { url: url.value, tab: tab.value, write: keep.querySelector('input').checked }, go); };
+        form.append(el('p', { className: 'jb-src-note', textContent: tr('jobs.sheet.note', 'Lumen reads the first row for Company, Role, Status, Apply URL and Date Applied. Rows count toward your stats; moving a card here changes its Status cell, and an application logged here becomes a new row. Nothing else in the sheet is touched.') }));
+        setTimeout(() => url.focus(), 0);
+        sheetRow = form;
+      } else {
+        sheetRow = el('div', { className: 'jb-src' }, icoSheet, el('span', { className: 'jb-src-text', textContent: tr('jobs.sheet.none', 'Already tracking in a Google Sheet? Link it: its rows count here, and your changes go back to it.') }), small(tr('jobs.sheet.link', 'Link a Google Sheet'), () => { linking = true; render(); }, 'primary'));
+      }
+      // email
+      const mailRow = src.gmail
+        ? el('div', { className: 'jb-src' }, icoMail, el('span', { className: 'jb-src-text' }, el('strong', { textContent: tr('jobs.email.title', 'Email') }), el('span', { className: 'jb-muted', textContent: ` · ${tr('jobs.email.at', 'checked {when}', { when: ago(src.emailAt) })} · ${tr('jobs.email.how', 'confirmations, interviews, offers and rejections in Gmail')}` })), el('span', { className: 'jb-grow' }), small(tr('jobs.email.check', 'Check email'), (b) => act('check-email', null, b)))
+        : el('div', { className: 'jb-src' }, icoMail, el('span', { className: 'jb-src-text', textContent: tr('jobs.email.connect', 'Let your inbox update the tracker: connect Gmail (read-only) and Lumen finds confirmations, interviews, offers and rejections for you to apply.') }), small(tr('jobs.src.connectGmail', 'Connect Gmail'), () => act('connect')));
+      return el('section', { className: 'jb-sources' }, sheetRow, mailRow);
+    }
+
+    function suggestions() {
+      const list = src?.suggestions || [];
+      if (!list.length) return null;
+      const what = (s) => ({ applied: tr('jobs.email.k.applied', 'Application received'), interview: tr('jobs.email.k.interview', 'Interview'), offer: tr('jobs.email.k.offer', 'Offer'), rejected: tr('jobs.email.k.rejected', 'Rejection') })[s.kind];
+      const rows = el('ul', { className: 'jb-sug-list' });
+      for (const s of list.slice(0, 12)) {
+        const action = s.key ? tr('jobs.email.move', 'Move to {stage}', { stage: stageName(s.stage) }) : tr('jobs.email.add', 'Add as {stage}', { stage: stageName(s.stage) });
+        const apply = small(action, (b) => act('email-apply', { id: s.id }, b), 'primary');
+        const ignore = small(tr('jobs.email.ignore', 'Ignore'), (b) => act('email-ignore', { id: s.id }, b), 'jb-quiet');
+        rows.append(el('li', { className: `jb-sug s-${s.stage}` },
+          el('span', { className: 'jb-pill', textContent: what(s) }),
+          el('span', { className: 'jb-sug-main' }, el('strong', { textContent: s.company }), s.role ? el('span', { className: 'jb-muted', textContent: ` · ${s.role}` }) : null, el('span', { className: 'jb-sug-subj', textContent: `“${s.subject}” · ${day(s.at)}`, title: s.from })),
+          apply, ignore));
+      }
+      const all = small(tr('jobs.email.applyAll', 'Apply all'), (b) => act('email-apply', { all: true }, b));
+      return el('section', { className: 'jb-sug-box' }, el('div', { className: 'jb-follow-head' }, el('strong', { textContent: list.length === 1 ? tr('jobs.email.one', '1 email could update your tracker') : tr('jobs.email.many', '{n} emails could update your tracker', { n: list.length }) }), el('span', { className: 'jb-muted', textContent: tr('jobs.email.check2', 'Sorted from the subject and preview. Check before you apply.') }), el('span', { className: 'jb-grow' }), all), rows);
     }
 
     function toolbar() {
@@ -254,7 +343,7 @@
 
     function render() {
       const empty = !(data.entries || []).length;
-      const parts = [tiles(), followUps(), toolbar(), profileLine()];
+      const parts = [tiles(), sources(), suggestions(), followUps(), toolbar(), profileLine()];
       if (empty) parts.push(el('div', { className: 'jb-empty-state' }, el('strong', { textContent: tr('jobs.emptyTitle', 'No applications yet') }), el('p', { textContent: tr('jobs.emptyText', 'Ask in a chat here: “tailor my résumé for this posting”. After you submit, the AI logs it and it shows up here. Or add a posting yourself to keep it for later.') })));
       else parts.push(view === 'table' ? table() : view === 'timeline' ? timeline() : board());
       parts.push(say);
@@ -264,7 +353,7 @@
     root.append(el('p', { className: 'jb-empty', textContent: tr('projecttpl.apps.loading', 'Loading…') }));
     load();
     // (a chat logged one: drawn again, but never under a half-typed posting or an open stage menu)
-    const busy = () => Boolean(root.querySelector('.jb-addform')) || (root.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName));
+    const busy = () => linking || Boolean(root.querySelector('.jb-addform')) || (root.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName));
     return { refresh: () => (root.isConnected && !busy() ? load() : null) };
   }
 
