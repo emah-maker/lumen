@@ -7,6 +7,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 - **Opening a crafted email can't stall Lumen.** postal-mime, which reads saved emails (.eml), is updated to 4.2.1, which fixes very slow parsing of certain encoded headers.
 - **The AI can't reach more credential files.** With "Let the AI use files on this computer" on, it now also refuses Claude Code, Codex and Gemini sign-ins, browser password and cookie databases, and Windows alternate-stream paths such as `.env::$DATA`. Tests in `test/units/device-access-units.js`.
 - **Uploading files from your computer asks for each new file.** With "Let the AI use files on this computer" on, approving one upload to a site no longer lets the AI send other files there without asking; attached files still ask once per site. Tests in `test/units/device-access-units.js`.
+- **Resume works after you take over an app the AI is using.** If you clicked or typed in the app while the AI was in the middle of a step, that step failed with "the user took over" and the AI ended its reply, so Resume on the banner or the chat card had nothing to carry on and did nothing. Now the cut-off step waits for Resume or Stop, as later steps already did; after Resume the AI reads the app again and continues the task. Stop ends it as "Stopped by the user". (`src/desktop/index.js`; `test/units/desktop-units.js`)
 
 ## 0.5.106 (2026-11-23)
 
