@@ -70,6 +70,7 @@ const CHAT_IPC = new Set([
   'settings:get', 'settings:set-model', 'settings:set-effort', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',
+  'chatpage:palette-key', // [job dashboard look] the job dashboard claims Ctrl+K / ⌘K while it shows (claimsPaletteKey below; main.js)
   'skills:menu', 'skills:context', 'skills:prepare', 'skills:draft-from-chat', 'skills:offer-save', 'skills:offer-update', // the "/" menu and the save / update cards (features/skills.js)
   'chat:routine-preview', 'chat:routine-create', // "Schedule this" on the page: read a schedule phrase, save a routine (registerRoutines below)
   'dictation:status', 'dictation:transcribe', // (dictation) voice input in the chat box (main.js; ai/dictation.js)
@@ -293,8 +294,14 @@ function create(deps) {
     });
   }
 
+  // [job dashboard look] The chat pages whose job dashboard is showing: there, Ctrl+K / ⌘K opens the dashboard's command palette instead of
+  // Lumen's command bar (main.js, the tab's before-input-event). The page says so when the dashboard is drawn and again when it goes.
+  const paletteKeys = new WeakSet();
+  const claimsPaletteKey = (wc) => Boolean(wc) && paletteKeys.has(wc);
+
   function register() {
     const { ipcMain } = deps;
+    ipcMain.on('chatpage:palette-key', (event, on) => { if (!isChatSender(event)) return; if (on === true) paletteKeys.add(event.sender); else paletteKeys.delete(event.sender); });
     // A private window's UI has no chat calls at all; this also refuses one that found its way here.
     ipcMain.on('chat:open-page', (event, projectId, focus) => { if (!deps.isPrivateSender(event)) open(typeof projectId === 'string' ? { id: projectId, focus } : null); });
     ipcMain.handle('chatpage:state', (event) => {
@@ -310,7 +317,7 @@ function create(deps) {
     ipcMain.on('chatpage:link', (_e, url) => { if (/^https?:\/\//i.test(String(url))) deps.openTab(String(url)); });
   }
 
-  return { register, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, runFromPage, retarget, pushTarget, open, back, home, fromHome, pick, chatTabs, everyChatTab, surfaces, runs };
+  return { register, claimsPaletteKey, isChatSender, allows, broadcast, emit, beginRun, endRun, runTarget, runFromPage, retarget, pushTarget, open, back, home, fromHome, pick, chatTabs, everyChatTab, surfaces, runs };
 }
 
 module.exports = { create, pickTargetTab, createRunTracker, isChatUrl, isCanvasFrameUrl, displayUrl, parseChatInput, guardTab, guardOthers, CHAT_URL, PRELOAD, CHAT_IPC, SPARE_FLAG, SPARE_IPC };

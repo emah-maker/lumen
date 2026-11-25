@@ -274,6 +274,6 @@ button.pjp-hit { cursor: pointer; }
 .pjp-type-opt { height: 28px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
 .pjp-type-opt:hover { color: var(--text); }
 .pjp-type-opt.on { background: var(--surface-raised, var(--surface)); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
-.pjp-type-opt.job.on { background: linear-gradient(135deg, #6a4cf5, #0e9f9a); color: #fff; }
+.pjp-type-opt.job.on { background: var(--accent-deep); color: var(--on-accent, #fff); }
 .pjp-type-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .pjp-type-opt:disabled { opacity: 0.6; cursor: default; }
