@@ -96,6 +96,16 @@ function readSheet(values, now = Date.now()) {
   return { header, rows };
 }
 
+// Which tab holds the tracker: the first one whose first row has a Company or Apply URL column. A sheet often opens on a summary or
+// dashboard tab (counts, charts), so the first tab isn't always it. tabs: [{ tab, row (its first row's cells) }] -> the tab's name, or ''.
+function pickTab(tabs) {
+  for (const t of Array.isArray(tabs) ? tabs : []) {
+    const h = mapHeader(t?.row);
+    if (h.company !== undefined || h.url !== undefined) return String(t.tab || '');
+  }
+  return '';
+}
+
 // The same application? Its posting's address (whatever its tracking parameters), else the same company and role (or the same company
 // when one side has no role).
 function same(a, b) {
@@ -230,4 +240,4 @@ function emailSuggestions(entries, messages, done = []) {
 // The Gmail search: the last 120 days of mail that looks like an application's (the classifier decides).
 const GMAIL_QUERY = 'newer_than:120d -in:chats (subject:(application OR applying OR applied OR interview OR offer OR candidacy OR "next steps" OR "your interest") OR "thank you for applying" OR "unfortunately")';
 
-module.exports = { HEADERS, STATUS_TEXT, KINDS, GMAIL_QUERY, mapHeader, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions, colName: col };
+module.exports = { HEADERS, STATUS_TEXT, KINDS, GMAIL_QUERY, mapHeader, pickTab, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions, colName: col };
