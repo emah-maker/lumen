@@ -161,7 +161,7 @@ function rig({ answers = [], tainted = false, host: extra = {} } = {}) {
     const docs = [];
     const both = rig({ host: { list: async () => ({ docs }) } });
     await both.word.run({ action: 'checkpoint', path: f }, both.ctx);
-    docs.push({ ...DOC, name: 'Lab 3 (draft).docx', path: f });
+    docs.push({ ...DOC, name: 'Lab 3 (draft).docx', path: fs.realpathSync(f) }); // (Word lists a document by its real path; the checkpoint is keyed by it too: on macOS the temp folder /var is /private/var)
     const mixed = await rejects(() => both.word.run({ action: 'restore' }, both.ctx));
     check('file checkpoint: a copy of the file is not put into the document Word has open (it says how it is restored)', /is a copy of the file on disk, so it is restored the same way: with path, while Word does not have the file open/.test(mixed || '') && both.of('restore').length === 0, mixed);
   }
