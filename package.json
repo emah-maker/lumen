@@ -27,9 +27,9 @@
     "@ghostery/adblocker-electron": "^2.20.1",
     "electron-chrome-extensions": "^4.9.0",
     "electron-chrome-web-store": "^0.13.0",
-    "electron-updater": "^6.8.10",
-    "koffi": "^3.3.2",
-    "openai": "^7.34.0",
+    "electron-updater": "^6.8.11",
+    "koffi": "^3.3.3",
+    "openai": "^7.43.0",
     "postal-mime": "^4.2.1",
     "qrcode-generator": "^2.0.4",
     "tldts-experimental": "^7.4.18"
@@ -39,10 +39,10 @@
     "@eslint/js": "^10.0.1",
     "acorn": "8.19.0",
     "electron": "github:castlabs/electron-releases#v45.2.1+wvcus",
-    "electron-builder": "^26.15.3",
-    "eslint": "^10.12.0",
-    "globals": "^17.13.0",
-    "playwright-core": "^1.64.1"
+    "electron-builder": "^26.18.0",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "playwright-core": "^1.65.1"
   },
   "author": "Lumen",
   "build": {
