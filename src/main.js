@@ -2089,7 +2089,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => zoomBy(wc, 0.5) },
         { label: t('menu.zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => zoomBy(wc, -0.5) },
         { label: t('menu.actualSize'), accelerator: 'CmdOrCtrl+0', click: () => zoomBy(wc, 0) },
-        ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => win.setFullScreen(!win.isFullScreen()) }]),
+        ...(process.platform === 'darwin' ? [] : [{ label: t('menu.fullScreen'), accelerator: 'F11', click: () => toggleFullScreen() }]),
       ], 'zoom', t('menu.zoom'), 3),
       chunk([
         { label: t('menu.print'), accelerator: 'CmdOrCtrl+P', enabled: Boolean(wc), click: () => printTab(wc) },
@@ -6356,6 +6356,13 @@ function newSidebarChat() {
 }
 
 // Ctrl+Shift+L / the menu: open the chat as a full page, or from the page go back to the sidebar.
+// F11: a full-page chat or project goes full screen on its own (renderer/chat-page.js: the page fills the screen, no tab strip or toolbar,
+// the chat list folded); anything else, the window. (A user gesture, so the page may ask for full screen.)
+function toggleFullScreen() {
+  const wc = activeTab()?.webContents;
+  if (wc && !wc.isDestroyed() && activeTabIsChatPage() && (!win.isFullScreen() || tabs.find((t) => t.id === activeId)?.fullscreen)) { wc.executeJavaScript("document.dispatchEvent(new CustomEvent('cp:shortcut', { detail: 'full' }))", true).catch(() => {}); return; }
+  win.setFullScreen(!win.isFullScreen());
+}
 const activeTabIsChatPage = () => tabs.find((t) => t.id === activeId)?.managerPage === 'chat';
 function toggleChatPage() {
   if (tabs.find((t) => t.id === activeId)?.managerPage === 'chat') chatPageRt.back();
@@ -6808,6 +6815,7 @@ function showNotification(run, kind) {
 // the chat. The tab is where the AI last worked (its own tab when it navigated), see features/notify-target.js; if that tab is gone, the
 // tab the chat started in, else the run's window.
 function openNotified({ run, kind, approvalTab }) {
+  if (openNotifiedPage(run)) return true;
   const found = notifyTarget.pickTab({ kind, approvalTab, runTab: run.tabId, aiNavTab: run.messages?.aiNavTabId, homeTab: run.homeTab, bound: chatBind.tabsHomeFirst(run.chatId) }, (id) => Boolean(tabAnywhere(id)));
   const home = found != null ? tabAnywhere(found) : null;
   const rec = home?.rec || (run.rec && winRecs.has(run.rec) && rcAlive(run.rec) ? run.rec : curRec);
@@ -6816,6 +6824,23 @@ function openNotified({ run, kind, approvalTab }) {
   if (home) { showTab(home.rec, home.t.id); showChatInTab(home, run.chatId); }
   else raiseWindow(w);
   w.webContents.send('agent:open-chat', { id: run.chatId });
+  return true;
+}
+// A chat kept in a full-page chat tab: the click brings that page forward on the chat, in whichever window holds it, and leaves the
+// sidebar shut (the page has the whole conversation). False when no chat page has it (notify-target.js pickPage).
+function openNotifiedPage(run) {
+  const pages = chatPageRt?.everyChatTab() || [];
+  if (!pages.length) return false;
+  const id = notifyTarget.pickPage({ chatId: run.chatId, fromPage: Boolean(run.fromPage), senderPage: pageTabOf(run.sender)?.id ?? null, pages: pages.map((t) => ({ id: t.id, chat: chatBind.chatOf(t.id) })) });
+  const home = id != null ? tabAnywhere(id) : null;
+  if (!home) return false;
+  showTab(home.rec, home.t.id);
+  if (chatBind.chatOf(home.t.id) !== run.chatId) {
+    chatBind.bind(home.t.id, run.chatId, { share: true });
+    withWindow(home.rec, () => followTabChat(home.t, { push: false }));
+    const wc = home.t.view?.webContents;
+    if (wc && !wc.isDestroyed()) wc.send('chat:sync', { view: chatView() });
+  }
   return true;
 }
 // A tab the AI worked in has no chat of its own (it carried the open one): it shows the chat the notification is about, opened.
@@ -12107,7 +12132,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
   const ownTab = steered ? (chatBind.tabsHomeFirst(runChat).find((id) => tabAnywhere(id)) ?? (tabAnywhere(chatWorkTab.get(runChat)) ? chatWorkTab.get(runChat) : null)) : null;
   const homeTab = fromChatPage ? null : goingAt ? goingTab : steered ? ownTab : activeId;
   if (homeTab != null) chatBind.bind(homeTab, runChat);
-  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), log: require('./features/run-replay').createRunLog(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [] } };
+  const run = { chatId: runChat, messages, runId, startedAt: Date.now(), rec: goingAt ? goingAt.rec : curRec, sender: event.sender, pending: new Map(), log: require('./features/run-replay').createRunLog(), reply: '', error: null, stopped: false, deleted: false, tabId: null, queued: false, homeTab, fromPage: fromChatPage, text: askText, waitReason: null, startLen: messages.length, details: { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [] } };
   chatRuns.set(runChat, run);
   unreadChats.delete(runChat);
   bumpChat(runChat); // sending is activity: the chat moves to the top of every list now

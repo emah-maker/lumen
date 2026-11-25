@@ -54,7 +54,8 @@
   let autoCollapsed = false; // folded to make room for the canvas, and opened again when it closes
   let drawerOpen = false; // the narrow window's drawer
   let canvasOpen = false;
-  const railHidden = () => (narrowQuery.matches ? !drawerOpen : collapsed || autoCollapsed);
+  let fullFolded = false; // folded for full screen, and opened again when it ends
+  const railHidden = () => (narrowQuery.matches ? !drawerOpen : collapsed || autoCollapsed || fullFolded);
   function applyRail() {
     const hidden = railHidden();
     body.classList.toggle('cp-narrow', narrowQuery.matches);
@@ -68,7 +69,8 @@
   function toggleRail(force) {
     const show = typeof force === 'boolean' ? force : railHidden();
     if (narrowQuery.matches) drawerOpen = show;
-    else { collapsed = !show; autoCollapsed = false; store.set(collapsed ? 'collapsed' : 'open'); }
+    else if (fullFolded && show) { fullFolded = false; collapsed = false; autoCollapsed = false; } // (opened while full screen: for now, not saved as the choice)
+    else { collapsed = !show; autoCollapsed = false; fullFolded = false; store.set(collapsed ? 'collapsed' : 'open'); }
     applyRail();
     if (show) (items.querySelector('.chat-item.current .chat-open') || $('new-chat')).focus();
     else prompt.focus();
@@ -87,8 +89,30 @@
   new MutationObserver(() => { canvasOpen = Boolean(document.querySelector('.cp-main .cv:not([hidden])')); canvasRoom(); })
     .observe(document.querySelector('.cp-main'), { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
   window.addEventListener('resize', canvasRoom);
+  // ---- full screen: the chat or project alone on the screen (no tab strip, toolbar or sidebar), the chat list folded. The header's
+  // button, the rail's, or F11 (main hands it over on this page: main.js toggleFullScreen); F11 or Esc leaves.
+  const isFull = () => Boolean(document.fullscreenElement);
+  function toggleFull() {
+    if (isFull()) { document.exitFullscreen().catch(() => {}); return; }
+    document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+  }
+  function applyFull() {
+    const on = isFull();
+    body.classList.toggle('cp-full', on);
+    if (on && !narrowQuery.matches && !railHidden()) fullFolded = true;
+    if (!on) fullFolded = false;
+    for (const b of document.querySelectorAll('.cp-full-btn')) {
+      b.setAttribute('aria-pressed', String(on));
+      b.title = on ? tr('chatpage.full.exit.title', 'Exit full screen (F11 or Esc)') : tr('chatpage.full.title', 'Full screen (F11)');
+      b.setAttribute('aria-label', on ? tr('chatpage.full.exit', 'Exit full screen') : tr('chatpage.full', 'Full screen'));
+    }
+    applyRail();
+  }
+  document.addEventListener('fullscreenchange', applyFull);
+  $('cp-fullscreen').onclick = toggleFull;
+  $('cp-rail-full').onclick = toggleFull;
   const newChat = () => { $('new-chat').click(); };
-  const shortcut = (what) => { if (what === 'rail') toggleRail(); else if (what === 'new') newChat(); };
+  const shortcut = (what) => { if (what === 'rail') toggleRail(); else if (what === 'new') newChat(); else if (what === 'full') toggleFull(); };
   document.addEventListener('cp:shortcut', (e) => shortcut(e.detail)); // main hands these two keys over (main.js handleShortcut)
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
@@ -96,6 +120,7 @@
     if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); shortcut('rail'); }
     else if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') { e.preventDefault(); shortcut('new'); }
     else if (e.key === 'Escape' && narrowQuery.matches && drawerOpen && rail.contains(document.activeElement)) { e.preventDefault(); toggleRail(false); }
+    else if (e.key === 'Escape' && isFull() && !document.querySelector('[role="menu"]:not([hidden]), [role="dialog"]:not([hidden]), dialog[open]')) { e.preventDefault(); toggleFull(); }
   });
   $('cp-new-kbd').textContent = document.documentElement.classList.contains('platform-darwin') ? '⌘⇧O' : t('chatpage.newChat.shortcut');
 

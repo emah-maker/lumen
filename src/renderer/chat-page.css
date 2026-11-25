@@ -13,6 +13,12 @@ body.chat-page {
   flex-direction: row; background: var(--surface); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
+/* ---------- full screen (F11 or the header's button): the page alone fills the screen ---------- */
+.cp-rail-top .cp-full-btn { margin-left: auto; }
+.cp-full-btn .cp-full-out { display: none; }
+body.cp-full .cp-full-btn .cp-full-in { display: none; }
+body.cp-full .cp-full-btn .cp-full-out { display: inline; }
+
 /* ---------- the rail ---------- */
 .cp-list {
   flex: none; width: var(--cp-rail); box-sizing: border-box; display: flex; flex-direction: column; min-height: 0;
