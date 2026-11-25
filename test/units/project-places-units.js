@@ -119,7 +119,7 @@ const DAY = 86400000;
     check('agent: every guarded tool call reports to notePlaces, success or failure; never without a project or with noMemory', /this\.notePlaces\(scope, name, input, result\)/.test(agent) && /this\.notePlaces\(scope, name, input, null, err\)/.test(agent) && /settings\.noMemory \|\| typeof settings\.projectId !== 'string'/.test(agent));
     check('main: records only while Memory is on, drops dead links on a failed call', /function recordPlaces[\s\S]{0,200}if \(!memoryOn\(\)/.test(main) && /deadError\(error\)/.test(main));
     check('main: recall joins the places to the memory block for project chats', /project \? placesBlock\(project, query\) : ''/.test(main));
-    check('main: the file is project-places.json, encrypted with safeStorage', /project-places\.json'\)[\s\S]{0,200}safeStorage\.encryptString/.test(main));
+    check('main: the file is project-places.json, encrypted with the secret box (the OS keychain)', /project-places\.json'\)[\s\S]{0,200}secretBox\.encrypt\(/.test(main));
     check('main: delete takes them, Undo restores them', /goneP = places\(\)\.dropProject\(id\)/.test(main) && /places\(\)\.restore\(held\.places\)/.test(main));
     check('channel: chats:project-places is served, allowed on the chat page, in the preload', /ipcMain\.handle\('chats:project-places', \(_e, id, change\) =>/.test(main) && /'chats:project-places'/.test(src('src/features/chat-page.js')) && /projectPlaces: \(id, change\) => ipcRenderer\.invoke\('chats:project-places'/.test(src('src/features/chat-preload.js')));
     const pg = src('src/renderer/chat-project-page.js');

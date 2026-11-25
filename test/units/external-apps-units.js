@@ -1,5 +1,5 @@
 // Plain Node: other apps using Lumen (features/external-apps.js, automation/client-token.js) and the MCP server's hooks for them
-// (automation/mcp.js identify / onInitialize). Fake safeStorage and a fake MCP client over the real channel; no Electron.
+// (automation/mcp.js identify / onInitialize). A fake secret box and a fake MCP client over the real channel; no Electron.
 const fs = require('fs');
 const os = require('os');
 const net = require('net');
@@ -14,12 +14,12 @@ let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ea-units-'));
 
-// A reversible stand-in for safeStorage: not the token's text, and unreadable without decryptString.
+// A reversible stand-in for the secret box (features/secret-box.js): not the token's text, and unreadable without decrypt.
 const key = crypto.randomBytes(32);
-const fakeStorage = {
-  isEncryptionAvailable: () => true,
-  encryptString: (s) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key, iv); const body = Buffer.concat([c.update(s, 'utf8'), c.final()]); return Buffer.concat([iv, c.getAuthTag(), body]); },
-  decryptString: (b) => { const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); },
+const fakeCipher = {
+  available: () => true,
+  encrypt: (s) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key, iv); const body = Buffer.concat([c.update(s, 'utf8'), c.final()]); return Buffer.concat([iv, c.getAuthTag(), body]).toString('base64'); },
+  decrypt: (b64) => { const b = Buffer.from(b64, 'base64'); const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); },
 };
 // Timers by hand, so the "finished" notice needs no waiting.
 function clock() {
@@ -28,7 +28,7 @@ function clock() {
 }
 function make(extra = {}) {
   const dir = tmp(); const c = clock(); const events = { changes: 0, prompts: [], finished: [] };
-  const ext = createExternalApps({ file: path.join(dir, 'external-apps.json'), safeStorage: fakeStorage, now: c.now, setTimer: c.set, clearTimer: c.clear, onChange: () => { events.changes++; }, onPrompt: (e) => { if (e.type === 'open') events.prompts.push(e); }, onFinished: (a) => events.finished.push(a.name), ...extra });
+  const ext = createExternalApps({ file: path.join(dir, 'external-apps.json'), cipher: fakeCipher, now: c.now, setTimer: c.set, clearTimer: c.clear, onChange: () => { events.changes++; }, onPrompt: (e) => { if (e.type === 'open') events.prompts.push(e); }, onFinished: (a) => events.finished.push(a.name), ...extra });
   return { dir, c, ext, events, file: path.join(dir, 'external-apps.json') };
 }
 const session = (extra = {}) => ({ clientName: 'Fake App', engine: null, controller: new AbortController(), disconnect() { this.cut = true; }, ...extra });
@@ -44,7 +44,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     const disk = fs.readFileSync(file, 'utf8');
     const secret = made.token.split('_')[2];
     check('the token is not on disk in plain text (encrypted)', !disk.includes(made.token) && !disk.includes(secret) && JSON.parse(disk).apps[0].secret.length > 40, disk);
-    check('a restart reads the same apps back', createExternalApps({ file, safeStorage: fakeStorage }).list().length === 1 && createExternalApps({ file, safeStorage: fakeStorage }).identify({ client: made.app.id, nonce, proof: proofFor(made.token).lumenClientProof })?.client === made.app.id);
+    check('a restart reads the same apps back', createExternalApps({ file, cipher: fakeCipher }).list().length === 1 && createExternalApps({ file, cipher: fakeCipher }).identify({ client: made.app.id, nonce, proof: proofFor(made.token).lumenClientProof })?.client === made.app.id);
     check('list() never carries a secret', !JSON.stringify(ext.list()).includes('secret') && !JSON.stringify(ext.list()).includes(secret));
     check('the right proof identifies the app', ext.identify({ client: made.app.id, nonce, ...(({ lumenClientProof }) => ({ proof: lumenClientProof }))(proofFor(made.token)) })?.client === made.app.id);
     check('a wrong proof is refused (false)', ext.identify({ client: made.app.id, nonce, proof: 'x'.repeat(64) }) === false);
@@ -55,7 +55,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     try { ext.add({ name: 'fake app' }); } catch { threw = true; }
     check('two apps cannot share a name', threw);
     let noKeychain = false;
-    try { createExternalApps({ file: path.join(tmp(), 'x.json'), safeStorage: { isEncryptionAvailable: () => false } }).add({ name: 'A' }); } catch { noKeychain = true; }
+    try { createExternalApps({ file: path.join(tmp(), 'x.json'), cipher: { available: () => false } }).add({ name: 'A' }); } catch { noKeychain = true; }
     check('without a system keychain no token is made (never kept in the clear)', noKeychain);
   }
 
@@ -126,7 +126,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     ext.answer(events.prompts[0].prompt.id, 'allow');
     check('Allow lets it through (and the one waiting behind it)', (await pending) === null && (await again) === null && s.externalId);
     check('it is listed as unverified, for this session, and always asks before it acts', ext.list().find((x) => x.name === 'Legacy Agent')?.unverified === true && ext.beginCall(s).ask === true);
-    check('Allow is not stored: nothing about it is on disk', !fs.readFileSync(file, 'utf8').includes('Legacy Agent') && createExternalApps({ file, safeStorage: fakeStorage }).list().every((x) => x.name !== 'Legacy Agent'));
+    check('Allow is not stored: nothing about it is on disk', !fs.readFileSync(file, 'utf8').includes('Legacy Agent') && createExternalApps({ file, cipher: fakeCipher }).list().every((x) => x.name !== 'Legacy Agent'));
     const next = ext.admit(session({ clientName: 'Legacy Agent' }), {});
     check('name claim: a later client with the same name is asked again, never let in by name', events.prompts.length === 2);
     ext.answer(events.prompts[1].prompt.id, 'deny');
@@ -592,7 +592,7 @@ const proofFor = (token) => clientToken.hello(token, nonce);
     ext.answer(ext.state().prompts.find((p) => p.name === 'Some Other Agent').id, 'deny');
     other.close(); ext.detach(other.session);
     // a restart keeps it
-    const reborn = createExternalApps({ file, safeStorage: fakeStorage });
+    const reborn = createExternalApps({ file, cipher: fakeCipher });
     reborn.setPolicy(() => 'ask');
     const s3 = session({ clientName: 'Claude Code' });
     check('a restart of Lumen keeps the choice (no question)', (await reborn.admit(s3, {}, { defer: true })) === null && s3.externalId && !s3.awaitingAllow);

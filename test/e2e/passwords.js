@@ -79,7 +79,7 @@ const WELCOME = '<!doctype html><html><head><title>Welcome</title></head><body><
   check('off by default: a sign-in offers nothing and writes nothing', (await stateOf(t0)) === null && !fs.existsSync(vaultFile) && settingsJson().savePasswords === undefined, JSON.stringify(await stateOf(t0)));
 
   // ---- turning it on ----
-  const available = await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable());
+  const available = await app.evaluate(() => global.__secretBox.available());
   const on = await app.evaluate(() => global.__passwords.setEnabled(true));
   if (!available) {
     check('without OS encryption it refuses to turn on', on.refused && !on.enabled, JSON.stringify(on));

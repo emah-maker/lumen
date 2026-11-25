@@ -161,7 +161,7 @@ const emlViewer = require('./features/eml-viewer'); // saved emails (.eml) shown
 const emlRt = emlViewer.create();
 // Word and Excel files in a tab (renderer/office.html) and the first-page thumbnails of Word, Excel and PowerPoint files: loaded on first use (the address checks every tab needs are in file-tabs.js)
 const officeViewer = lazy(() => require('./features/office-viewer'));
-const officeThumbs = lazy(() => require('./features/office-thumb').create({ BrowserWindow, cacheDir: path.join(app.getPath('userData'), 'office-thumb-cache'), encrypt: (text) => safeStorage.encryptString(text).toString('base64'), decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')), available: () => safeStorage.isEncryptionAvailable(), officeRender: (wc, url, o) => officeViewer.render(wc, url, o), slidesRender: (wc, url, o) => slidesRt.render(wc, url, o) }));
+const officeThumbs = lazy(() => require('./features/office-thumb').create({ BrowserWindow, cacheDir: path.join(app.getPath('userData'), 'office-thumb-cache'), encrypt: (text) => secretBox.encrypt(text), decrypt: (b64) => secretBox.decrypt(b64), decryptAsync: (b64) => secretBox.decryptAsync(b64), available: () => secretBox.available(), officeRender: (wc, url, o) => officeViewer.render(wc, url, o), slidesRender: (wc, url, o) => slidesRt.render(wc, url, o) }));
 const sessionFiles = require('./features/session-files'); // file tabs in the saved session, and the "moved or deleted" page
 const pdfViewer = require('./features/pdf-viewer'); // PDFs shown with a bundled pdf.js (renderer/pdfviewer.html), unless Settings says Chrome's viewer
 const pdfRt = pdfViewer.create({ getSetting: () => pdfViewer.cleanSetting(settingsBackend.prefs().pdfViewer) });
@@ -536,17 +536,53 @@ if (automationPlan?.relaunch && !process.argv.includes('--install-shortcuts')) {
   return;
 }
 
-// The picker and every agent step look keys up, and each OS decrypt call costs a system round
-// trip, so decrypted keys are remembered by their encrypted text (a new key is new text).
+// [secret box] Everything Lumen keeps encrypted (keys, chats, passwords, memory, tokens…) goes through one key sealed by the OS
+// keychain with Electron's asynchronous safeStorage calls (features/secret-box.js). It opens once the app is ready (the start-up
+// handler awaits secretBox.start() before any store is read); values saved by older versions read back through it.
+const secretBox = require('./features/secret-box').createSecretBox({ safeStorage, keyFile: path.join(app.getPath('userData'), 'secret-box.key') });
+if (TEST) global.__secretBox = secretBox; // (tests seed and read encrypted files with the app's own key)
+// The old-format values the stores read synchronously, decrypted before the first window opens (secretBox.start). Each store writes
+// the new format at its next save. The open chat's file is added once the chat list is read (secretWarmChat).
+function secretWarmList() {
+  const ud = app.getPath('userData');
+  const list = ['settings.json', path.join('chats', 'index.json'), 'memory.json', 'project-places.json', 'files.json', 'automations.json', 'background-tasks.json',
+    'mcp-servers.json', 'connectors.json', 'gmail-send-log.json', 'external-apps.json', 'chat.json'].map((f) => ({ file: path.join(ud, f) }));
+  list.push({ file: path.join(ud, 'passwords.bin'), kind: 'raw' }, { file: path.join(ud, 'sync-secret.bin'), kind: 'raw' });
+  try { for (const pid of fs.readdirSync(path.join(ud, 'project-files'))) list.push({ file: path.join(ud, 'project-files', pid, 'index.json') }); } catch { /* no project files */ }
+  return list;
+}
+async function secretWarmChat() {
+  try {
+    const file = path.join(app.getPath('userData'), 'chats', 'index.json');
+    const outer = JSON.parse(await fs.promises.readFile(file, 'utf8'));
+    const current = outer.enc ? JSON.parse(await secretBox.decryptAsync(outer.enc)).current : outer.current;
+    if (/^[a-f0-9]{16}$/.test(String(current))) await secretBox.warmFiles([{ file: path.join(app.getPath('userData'), 'chats', `${current}.json`) }]);
+  } catch { /* no chats yet */ }
+}
+
+// [secret migration] Once, a while after the first start on this version (the start-up queue): every secret still in the old
+// format is saved again in the new one (features/secret-migrate.js, loaded only then). `secretsMigrated` (the version) is
+// recorded only when every value moved; until then each start tries again, and so does a start that read old-format values anyway
+// (a profile restored from a backup). Values already moved are skipped.
+const SECRET_MIGRATION_DELAY_MS = 20000;
+function runSecretMigration() {
+  if (!secretBox.available() || (readSettings().secretsMigrated && !secretBox.staleCount())) return Promise.resolve(null);
+  return require('./features/secret-migrate').migrateSecrets({ box: secretBox, userData: app.getPath('userData'), readSettings, writeSettings, chats, log: (m) => console.warn(m) })
+    .then((r) => { if (!r.failed) writeSettings({ ...readSettings(), secretsMigrated: app.getVersion() }); return r; })
+    .catch((err) => { console.warn(`secret migration: ${err?.message || err}`); return null; });
+}
+if (TEST) global.__secretMigrate = () => runSecretMigration();
+
+// The picker and every agent step look keys up, so decrypted keys are remembered by their encrypted text (a new key is new text).
 const decrypted = new Map();
 function decryptKey(enc) {
-  if (!decrypted.has(enc)) decrypted.set(enc, safeStorage.decryptString(Buffer.from(enc, 'base64')));
+  if (!decrypted.has(enc)) decrypted.set(enc, secretBox.decrypt(enc));
   return decrypted.get(enc);
 }
 
 function storedApiKey() {
   const { apiKeyEnc } = readSettings();
-  if (!apiKeyEnc || !safeStorage.isEncryptionAvailable()) return null;
+  if (!apiKeyEnc || !secretBox.available()) return null;
   try {
     return decryptKey(apiKeyEnc);
   } catch {
@@ -571,7 +607,7 @@ const OPENROUTER_CACHE = () => path.join(app.getPath('userData'), 'openrouter-mo
 // The Google Safe Browsing key: settings.keys.safebrowsing, encrypted like the others.
 function safeBrowsingKey() {
   const enc = readSettings().keys?.safebrowsing;
-  if (enc && safeStorage.isEncryptionAvailable()) {
+  if (enc && secretBox.available()) {
     try { return decryptKey(enc); } catch {}
   }
   return process.env.GOOGLE_SAFE_BROWSING_API_KEY || null;
@@ -581,15 +617,15 @@ function safeBrowsingKey() {
 // the others. Only features/widgets.js asks for them, in this process; the page never sees them.
 function widgetSecret(name) {
   const enc = readSettings().keys?.[`widget:${name}`];
-  if (!enc || !safeStorage.isEncryptionAvailable()) return null;
+  if (!enc || !secretBox.available()) return null;
   try { return decryptKey(enc); } catch { return null; }
 }
 function setWidgetSecret(name, value) {
   const settings = readSettings();
   const keys = { ...(settings.keys || {}) };
   if (value) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable, so Lumen can’t store the token safely.');
-    keys[`widget:${name}`] = safeStorage.encryptString(String(value)).toString('base64');
+    if (!secretBox.available()) throw new Error('OS encryption is unavailable, so Lumen can’t store the token safely.');
+    keys[`widget:${name}`] = secretBox.encrypt(String(value));
   } else {
     delete keys[`widget:${name}`];
   }
@@ -603,7 +639,7 @@ function providerKey(provider) {
   if (provider === 'local') return readSettings().localAI?.enabled === true ? 'local' : null; // no key; just switched on
   if (keyOff(provider)) return null;
   const enc = readSettings().keys?.[provider];
-  if (enc && safeStorage.isEncryptionAvailable()) {
+  if (enc && secretBox.available()) {
     try {
       return decryptKey(enc);
     } catch {
@@ -6364,9 +6400,11 @@ const CHAT_FILE = () => path.join(app.getPath('userData'), 'chat.json'); // the 
 let chatStore = null;
 const chats = () => (chatStore ||= createChatStore({
   dir: path.join(app.getPath('userData'), 'chats'),
-  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-  available: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (text) => secretBox.encrypt(text),
+  decrypt: (b64) => secretBox.decrypt(b64),
+  decryptAsync: (b64) => secretBox.decryptAsync(b64), // (a chat file in the old format, opened from the list: read through the keychain)
+  isLegacy: (b64) => secretBox.isLegacy(b64),
+  available: () => secretBox.available(),
   legacyFile: CHAT_FILE(),
   onError: (err) => chatSaveFailed(err),
   onChange: () => { if (syncSvc) syncSvc.touch('chats'); }, // [sync]
@@ -6528,7 +6566,7 @@ function saveChat(generation = chatGeneration) {
   try {
     // No keychain (or not yet: Electron says so until the app is ready, which is where a copy of Lumen that quits because another
     // one is running ends up): nothing is saved, and nothing already on disk is deleted.
-    if (!app.isReady() || !safeStorage.isEncryptionAvailable()) return;
+    if (!secretBox.isReady() || !secretBox.available()) return;
     if (!chatId) chatId = chats().newId();
     const snapshot = chatSnapshot();
     if (!snapshot.messages.length) return;
@@ -6647,7 +6685,7 @@ function saveChatOf(id, messages) {
   if (pendingDeletes.has(id)) return; // deleted, waiting out its Undo time: a late save would bring it back (the store un-trashes a chat it saves)
   if (id === chatId && messages === agent.messages) { saveChat(); return; }
   try {
-    if (!safeStorage.isEncryptionAvailable()) return;
+    if (!secretBox.available()) return;
     const snapshot = chatSnapshot(messages);
     if (snapshot.messages.length) { chats().saveAsync(id, snapshot); keepPendingProject(id); mirrorChatSoon(id); driveSoon(projectIdOf(id)); } // ([project drive])
   } catch (err) {
@@ -9511,9 +9549,9 @@ const mcpClient = require('./features/mcp-client').create({
   userData: app.getPath('userData'),
   version: app.getVersion(),
   secrets: {
-    available: () => safeStorage.isEncryptionAvailable(),
-    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-    decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
+    available: () => secretBox.available(),
+    encrypt: (text) => secretBox.encrypt(text),
+    decrypt: (enc) => secretBox.decrypt(enc),
   },
   // A sign-in page opens in the user's own browser, never in a Lumen tab: https only (a test may also open its stand-in on 127.0.0.1).
   openExternal: (url) => { if (!String(url).startsWith('https://') && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(String(url)))) throw new Error('Refusing to open that address.'); if (TEST && global.__mcpSignInOpen) return global.__mcpSignInOpen(String(url)); return shell.openExternal(String(url)); },
@@ -9575,9 +9613,9 @@ async function signInFetch(url, options = {}) {
 const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/service').create({
   userData: app.getPath('userData'),
   secrets: {
-    available: () => safeStorage.isEncryptionAvailable(),
-    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-    decrypt: (enc) => safeStorage.decryptString(Buffer.from(enc, 'base64')),
+    available: () => secretBox.available(),
+    encrypt: (text) => secretBox.encrypt(text),
+    decrypt: (enc) => secretBox.decrypt(enc),
   },
   fetch: (url, options) => net.fetch(url, { ...options, credentials: 'omit' }), // a token goes in the header; no cookies
   fallbackFetch: (url, options, first) => { noteChromiumNet(url, first); return globalThis.fetch(url, options); }, // (Node's network, when Chromium's could not make the request: service.js says when)
@@ -9600,7 +9638,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
     builtin: () => require('./features/google-client').builtinClient(),
     own: () => require('./features/oauth').decodeCreds(widgetSecret('gmail')),
     openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
-    canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
+    canKeepSecrets: () => secretBox.available(),
     focusApp: () => focusWindow(),
   },
   // Outlook, OneDrive and Outlook Calendar: one Microsoft sign-in in the user's own browser (features/connectors/microsoft-auth.js), Lumen's built-in
@@ -9609,7 +9647,7 @@ const connectorsSvc = () => (connectorsLive ||= require('./features/connectors/s
     fetch: signInFetch,
     builtin: () => require('./features/microsoft-client').builtinClient(),
     openExternal: (url) => { if (!/^https:\/\/login\.microsoftonline\.com\//.test(url) && !(TEST && /^http:\/\/127\.0\.0\.1[:/]/.test(url))) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
-    canKeepSecrets: () => safeStorage.isEncryptionAvailable(),
+    canKeepSecrets: () => secretBox.available(),
     focusApp: () => focusWindow(),
   },
   mcp: mcpClient,
@@ -9825,10 +9863,10 @@ const passwords = () => {
 const passwordDeps = () => ({
   file: path.join(app.getPath('userData'), require('./features/passwords').FILE_NAME),
   cipher: {
-    available: () => safeStorage.isEncryptionAvailable(),
+    available: () => secretBox.available(),
     backend: () => (process.platform === 'linux' ? safeStorage.getSelectedStorageBackend?.() : null),
-    encrypt: (text) => safeStorage.encryptString(text),
-    decrypt: (buf) => safeStorage.decryptString(buf),
+    encrypt: (text) => secretBox.encryptBuffer(text),
+    decrypt: (buf) => secretBox.decrypt(buf),
   },
   readSettings, writeSettings, t: (...a) => t(...a), sendTabs: () => sendTabs(),
   onChange: () => syncTouch('passwords'), // [sync]
@@ -10046,9 +10084,9 @@ const bgTasks = require('./features/background-runner').create({
   now: TEST ? () => Date.now() + (global.__clockOffset || 0) : undefined, // (tests move the clock forward: global.__clockOffset, ms)
   connectors: connectorsFacade, connectedIds: () => (anyConnected() ? connectorsSvc().connectedIds() : []), // routines read the connected services (Gmail, Canvas…)
   routinesChanged: () => { routinesSoon(); missionSoon(); }, // (and an open lumen://tasks page)
-  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-  available: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (text) => secretBox.encrypt(text),
+  decrypt: (b64) => secretBox.decrypt(b64),
+  available: () => secretBox.available(),
   ui, readSettings, writeSettings, t, test: TEST,
   maxBackgroundTasks: () => perfMode.limits().maxBackgroundTasks, // Performance mode: one at a time
   getClient: (...args) => agent.getClient(...args), getKey: providerKey,
@@ -10082,15 +10120,15 @@ const missionFromPhone = new Set(); // [mission control] tasks Telegram started 
 const telegramDeps = () => ({
   fetch: (url, options) => (TEST ? (global.__telegramFetch ? global.__telegramFetch(url, options) : Promise.reject(new Error('No network in tests.'))) : net.fetch(url, { ...options, credentials: 'omit' })),
   readSettings, writeSettings, t,
-  getToken: () => { const enc = readSettings().keys?.telegram; if (!enc || !safeStorage.isEncryptionAvailable()) return null; try { return decryptKey(enc); } catch { return null; } },
+  getToken: () => { const enc = readSettings().keys?.telegram; if (!enc || !secretBox.available()) return null; try { return decryptKey(enc); } catch { return null; } },
   setToken: (token) => {
     const settings = readSettings();
     const keys = { ...(settings.keys || {}) };
-    if (token) keys.telegram = safeStorage.encryptString(String(token)).toString('base64');
+    if (token) keys.telegram = secretBox.encrypt(String(token));
     else delete keys.telegram;
     writeSettings({ ...settings, keys });
   },
-  canEncrypt: () => safeStorage.isEncryptionAvailable(),
+  canEncrypt: () => secretBox.available(),
   isOnline: () => net.isOnline(),
   inbox: phoneInbox(), onFile: (saved, caption) => notePhoneFile(saved, caption), openUrl: (url) => openFromPhone(url), // [phone files]
   tasks: { create: (spec) => { const task = bgTasks.create(spec); missionFromPhone.add(task.id); return task; }, stop: (id) => bgTasks.stop(id), approve: (id, approvalId, choice) => bgTasks.approve(id, approvalId, choice), find: (id) => bgTasks.find(id), subscribe: (fn) => bgTasks.subscribe(fn), approvalWaitMin: () => bgTasks.state().settings.approvalWaitMin },
@@ -10561,9 +10599,9 @@ const automationGroups = new Map(); // a run's key -> its tab group's id
 let automationsRt = null;
 const automations = () => automationsRt || (automationsRt = require('./features/automations-runtime').create({
   file: AUTOMATIONS_FILE,
-  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-  available: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (text) => secretBox.encrypt(text),
+  decrypt: (b64) => secretBox.decrypt(b64),
+  available: () => secretBox.available(),
   t,
   openTab: (url, { group, key } = {}) => {
     const known = key && automationGroups.get(key);
@@ -10724,7 +10762,7 @@ const widgets = createWidgets({
   resetNetwork, // a card that got no answer from the network drops these before it asks again (Try again, its retries)
   getSecret: widgetSecret,
   setSecret: setWidgetSecret,
-  canKeepSecrets: () => safeStorage.isEncryptionAvailable(), // checked before a sign-in starts, not after consent
+  canKeepSecrets: () => secretBox.available(), // checked before a sign-in starts, not after consent
   // OAuth consent pages (Gmail) open in the user's own browser, never in a Lumen tab; https only.
   openExternal: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); return shell.openExternal(url); },
   // GitHub sign-in (features/github-auth.js): the device-flow page opens in a Lumen tab, https://github.com/login/device only (a test only
@@ -11300,9 +11338,9 @@ function filesBroadcast() { // the list changed: the UI, every new-tab page and 
 }
 const filesApi = () => (filesRt ||= require('./features/files').create({
   file: path.join(app.getPath('userData'), 'files.json'),
-  encrypt: (text) => safeStorage.encryptString(text).toString('base64'), // encrypted like the chats (the OS keychain)
-  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-  available: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (text) => secretBox.encrypt(text), // encrypted like the chats (the OS keychain)
+  decrypt: (b64) => secretBox.decrypt(b64),
+  available: () => secretBox.available(),
   remember: () => readSettings().filesRemember !== false, // Settings > Downloads and files > Files > Remember files I open
   ignore: (p) => insidePath(app.getPath('userData'), p) || insidePath(__dirname, p), // Lumen's own profile and pages are never "files the user opened"
   openFile: (p) => { openTab(fileTabUrl(p)); focusWindow(); },
@@ -12941,9 +12979,10 @@ function projectFiles() {
   if (projectFilesStore) return projectFilesStore;
   projectFilesStore = require('./features/project-files').createProjectFilesStore({
     dir: path.join(app.getPath('userData'), 'project-files'),
-    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-    decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => secretBox.encrypt(text),
+    decrypt: (b64) => secretBox.decrypt(b64),
+    decryptAsync: (b64) => secretBox.decryptAsync(b64),
+    available: () => secretBox.available(),
   });
   // Folders of projects that are gone (Lumen quit inside a delete's Undo time) are removed, a while after the first use.
   // (Not when the project list may be incomplete: an unreadable or rebuilt chat index would otherwise cost every project its files.)
@@ -12958,9 +12997,9 @@ let placesStore = null;
 function places() {
   return (placesStore ||= require('./ai/project-places').createPlacesStore({
     file: path.join(app.getPath('userData'), 'project-places.json'),
-    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-    decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => secretBox.encrypt(text),
+    decrypt: (b64) => secretBox.decrypt(b64),
+    available: () => secretBox.available(),
   }));
 }
 function recordPlaces(project, { name, input, result, error } = {}) {
@@ -13349,7 +13388,7 @@ ipcMain.handle('chats:project-get', async (_e, id) => {
   const snippets = {};
   const recent = chats().list().filter((c) => !c.missing && !c.archived && c.project === p.id).sort((a, b) => (b.updated || 0) - (a.updated || 0)).slice(0, 6);
   await Promise.all(recent.map(async (c) => { snippets[c.id] = await chats().lastWords(c.id); }));
-  return { project: projectPage(p), snippets, files: store.list(p.id), totals: store.totals(p.id), ...projectMemoryOf(p.id), ...projectPlacesOf(p.id), memoryOn: memoryOn(), limits: projectLimits(), keychain: safeStorage.isEncryptionAvailable() };
+  return { project: projectPage(p), snippets, files: store.list(p.id), totals: store.totals(p.id), ...projectMemoryOf(p.id), ...projectPlacesOf(p.id), memoryOn: memoryOn(), limits: projectLimits(), keychain: secretBox.available() };
 });
 // Files chosen in the page (its file picker or a drop): [{ name, bytes }]. Each is read with Lumen's own readers (PDF, Word, PowerPoint, email,
 // text, pictures) and kept as text in the profile. Answers { results: [{ ok, name, file | error }], files }.
@@ -13686,7 +13725,7 @@ const projectMenuItems = (tab) => {
   } catch { return []; }
 };
 // [project memory] (tests) make some entries look untouched for `days`: the file is rewritten and read again.
-if (TEST) global.__projectMemoryAge = (ids, days) => { const file = path.join(app.getPath('userData'), 'memory.json'); const data = JSON.parse(safeStorage.decryptString(Buffer.from(JSON.parse(fs.readFileSync(file, 'utf8')).enc, 'base64'))); for (const e of data.entries) if (ids.includes(e.id)) e.updated -= days * 86400000; fs.writeFileSync(file, JSON.stringify({ enc: safeStorage.encryptString(JSON.stringify(data)).toString('base64') })); memory().reset(); };
+if (TEST) global.__projectMemoryAge = (ids, days) => { const file = path.join(app.getPath('userData'), 'memory.json'); const data = JSON.parse(secretBox.decrypt(JSON.parse(fs.readFileSync(file, 'utf8')).enc)); for (const e of data.entries) if (ids.includes(e.id)) e.updated -= days * 86400000; fs.writeFileSync(file, JSON.stringify({ enc: secretBox.encrypt(JSON.stringify(data)) })); memory().reset(); };
 if (TEST) global.__projectWorkspace = { info: (id) => { const t = allTabsEverywhere().find((x) => x.id === id); return t ? { url: tabUrl(t), alive: alive(t), iso: !!t.isolated } : null; }, files: () => projectFiles(), blockFor: (id) => projectBlockFor(id), settingsFor: (id) => projectSettingsFor(id), addTab: (tabId, pid) => addTabToProject(allTabsEverywhere().find((x) => x.id === tabId), pid), menuItems: (tabId) => projectMenuItems(allTabsEverywhere().find((x) => x.id === tabId)).map((i) => ({ label: i.label, enabled: i.enabled !== false, items: (i.submenu || []).map((s) => s.label) })), pendingDeletes: () => [...pendingProjectDeletes.keys()], memoryEntries: () => memory().list(), tools: (id) => (agent.messages.settings?.projectTools === true), chatSettings: () => ({ projectId: agent.messages.settings?.projectId || null, projectTools: agent.messages.settings?.projectTools === true }) };
 // [work folder] The open chat's own working folder (chats outside a project, or a project chat that works elsewhere): get / pick / set / clear / open.
 // Answers { ok, info: { path, shown, source, missing } | null }. A drive root or the home folder needs `confirmed` (reason 'root' | 'home').
@@ -13834,9 +13873,9 @@ let memoryStore = null;
 function memory() {
   return (memoryStore ||= require('./ai/memory').createMemoryStore({
     file: path.join(app.getPath('userData'), 'memory.json'),
-    encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-    decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-    available: () => safeStorage.isEncryptionAvailable(),
+    encrypt: (text) => secretBox.encrypt(text),
+    decrypt: (b64) => secretBox.decrypt(b64),
+    available: () => secretBox.available(),
   }));
 }
 function memoryOn() { return readSettings().aiMemory === true; }
@@ -13879,7 +13918,7 @@ function syncService() {
   syncSvc = lib.createSyncService({
     userData: app.getPath('userData'),
     readSettings, writeSettings,
-    cipher: { available: () => safeStorage.isEncryptionAvailable(), encrypt: (text) => safeStorage.encryptString(text), decrypt: (buf) => safeStorage.decryptString(buf) },
+    cipher: { available: () => secretBox.available(), encrypt: (text) => secretBox.encryptBuffer(text), decrypt: (buf) => secretBox.decrypt(buf) },
     appVersion: app.getVersion(),
     deviceName: TEST ? 'This computer' : undefined,
     timing: TEST && process.env.LUMEN_SYNC_TEST_MS ? { local: 200, history: 400, watch: 200, poll: 300, first: 100, periodic: 60000 } : undefined,
@@ -13907,7 +13946,7 @@ function syncService() {
   if (TEST) global.__sync = syncSvc;
   return syncSvc;
 }
-const syncOffState = () => ({ on: false, running: false, path: '', folderName: '', kinds: { bookmarks: true, history: true, chats: true, widgets: true, settings: true }, passwords: false, keychain: safeStorage.isEncryptionAvailable(), hasPassphrase: false, lastSynced: 0, error: null, devices: [], deviceName: require('os').hostname(), damaged: 0, newer: 0, skipped: [], problems: 0 });
+const syncOffState = () => ({ on: false, running: false, path: '', folderName: '', kinds: { bookmarks: true, history: true, chats: true, widgets: true, settings: true }, passwords: false, keychain: secretBox.available(), hasPassphrase: false, lastSynced: 0, error: null, devices: [], deviceName: require('os').hostname(), damaged: 0, newer: 0, skipped: [], problems: 0 });
 const syncState = () => ({ ...(readSettings().syncFolder?.on ? syncService().status() : syncOffState()), passwordsOn: readSettings().savePasswords === true });
 const syncFail = (err) => ({ ok: false, code: String(err?.code || 'error').slice(0, 40), message: String(err?.message || err).slice(0, 300) });
 ipcMain.handle('settings:sync-state', () => syncState());
@@ -14010,9 +14049,10 @@ const genImages = require('./features/gen-images');
 let imageStoreRef = null;
 const imageStore = () => (imageStoreRef ||= genImages.createImageStore({
   dir: path.join(app.getPath('userData'), 'generated-images'),
-  encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-  decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-  available: () => safeStorage.isEncryptionAvailable(),
+  encrypt: (text) => secretBox.encrypt(text),
+  decrypt: (b64) => secretBox.decrypt(b64),
+  decryptAsync: (b64) => secretBox.decryptAsync(b64),
+  available: () => secretBox.available(),
 }));
 Object.defineProperty(agent, 'imageStore', { get: imageStore, set() {}, configurable: true });
 if (TEST) global.__imageStore = imageStore;
@@ -14076,10 +14116,10 @@ setTimeout(() => {
   } catch { /* nothing to prune */ }
 }, 30000).unref?.();
 // The picture as a data URL for the chat to draw (null: gone). Ids are checked against a strict pattern in the store.
-ipcMain.handle('images:data', (_e, id) => imageStore().dataUrl(String(id)));
+ipcMain.handle('images:data', (_e, id) => imageStore().dataUrlAsync(String(id)));
 // Save image: always through a save dialog.
 ipcMain.handle('images:save', async (_e, id) => {
-  const found = imageStore().read(String(id));
+  const found = await imageStore().readAsync(String(id));
   if (!found) return { ok: false, reason: 'gone' };
   const ext = found.mime === 'image/jpeg' ? 'jpg' : found.mime.slice(6);
   const { canceled, filePath } = await electronDialog.showSaveDialog(win, {
@@ -14091,8 +14131,8 @@ ipcMain.handle('images:save', async (_e, id) => {
   await fs.promises.writeFile(filePath, found.buffer);
   return { ok: true, filePath };
 });
-ipcMain.handle('images:copy', (_e, id) => {
-  const found = imageStore().read(String(id));
+ipcMain.handle('images:copy', async (_e, id) => {
+  const found = await imageStore().readAsync(String(id));
   const image = found && require('electron').nativeImage.createFromBuffer(found.buffer);
   if (!image || image.isEmpty()) return false;
   copyImage(image);
@@ -14345,8 +14385,8 @@ ipcMain.handle('settings:set-safe-browsing-key', async (_e, key) => {
   const value = typeof key === 'string' ? key.trim() : '';
   if (value) {
     if (!/^[\w-]{10,200}$/.test(value)) throw new Error("That doesn't look like a Google API key.");
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable; set GOOGLE_SAFE_BROWSING_API_KEY instead.');
-    keys.safebrowsing = safeStorage.encryptString(value).toString('base64');
+    if (!secretBox.available()) throw new Error('OS encryption is unavailable; set GOOGLE_SAFE_BROWSING_API_KEY instead.');
+    keys.safebrowsing = secretBox.encrypt(value);
   } else {
     delete keys.safebrowsing;
   }
@@ -14445,8 +14485,8 @@ function saveProviderKey(provider, key) {
   const settings = readSettings();
   const keys = { ...(settings.keys || {}) };
   if (key) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error(`OS encryption is unavailable; set ${ENV_KEYS[provider]} instead.`);
-    keys[provider] = safeStorage.encryptString(String(key).trim()).toString('base64');
+    if (!secretBox.available()) throw new Error(`OS encryption is unavailable; set ${ENV_KEYS[provider]} instead.`);
+    keys[provider] = secretBox.encrypt(String(key).trim());
   } else {
     delete keys[provider];
   }
@@ -14651,8 +14691,8 @@ ipcMain.handle('settings:set-key', async (_e, key) => {
   }
   const settings = readSettings();
   if (key) {
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable; set ANTHROPIC_API_KEY instead.');
-    settings.apiKeyEnc = safeStorage.encryptString(key.trim()).toString('base64');
+    if (!secretBox.available()) throw new Error('OS encryption is unavailable; set ANTHROPIC_API_KEY instead.');
+    settings.apiKeyEnc = secretBox.encrypt(key.trim());
   } else {
     delete settings.apiKeyEnc;
   }
@@ -14670,6 +14710,7 @@ ipcMain.handle('settings:set-key', async (_e, key) => {
 const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
+  secrets: secretBox, // [external apps] the tokens other apps are given are kept with it (features/secret-box.js)
   connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
   projectTools: (chat) => [...(chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), ...(chat?.settings?.projectApplications === true ? [require('./ai/agent').APPLICATIONS_TOOL_DEF] : [])], // [project templates] applications, in a project made from a template with a tracker; // [project workspace] project_files, to a run in a project chat that has files or pinned pages
   desktopTools: (chat) => agent.cliDesktopToolDefs(chat), // [desktop apps] the desktop tool, to a run whose chat may use other apps (agent.js cliDesktopNote)
@@ -14843,6 +14884,10 @@ app.whenReady().then(async () => {
     return;
   }
   if (!singleInstance) return;
+  // [secret box] the key opens, and the old-format values the stores read at once are decrypted, before anything reads a store
+  await secretBox.start({ warmList: secretWarmList() });
+  await secretWarmChat();
+  perf.mark('secretBox');
   // Widevine CDM for DRM video (castlabs ECS build only; `components` is undefined on stock
   // Electron). It installs in the background: the window no longer waits for it (a first run
   // showed nothing for up to 10 s). Pages that need DRM before it's ready can simply be reloaded.
@@ -14911,6 +14956,7 @@ app.whenReady().then(async () => {
   startup.add('model lists', () => perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }), { priority: 3 }); // nothing waits for them
   startup.add('folder sync', () => { if (readSettings().syncFolder?.on) syncService().start(); }, { priority: 6 }); // [sync] off by default: nothing is loaded unless the person turned it on
   startup.add('update check', () => updates.start(), { priority: 4 }); // first check after a short delay (longer in Performance mode), then every few hours
+  startup.add('secret migration', () => { setTimeout(() => runSecretMigration(), SECRET_MIGRATION_DELAY_MS).unref?.(); }, { priority: 7 }); // [secret migration] secrets saved before Electron 45, saved again in the new format (in the background, well after the first page: its module is not a start-up one)
   startup.add('GPU check', () => { setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); }, { priority: 2 }); // the GPU process has reported by then
   firstTabLoaded.then(() => startup.release());
 });

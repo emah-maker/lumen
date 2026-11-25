@@ -1,5 +1,7 @@
 // Manifest V2 extension pages (uBlock Origin's background page: features/ublock-mode.js), registered after electron-chrome-extensions'
-// preload. Two Electron 44 gaps there, both fixed in Electron 45.1 (electron/electron#55155), which castlabs' Widevine builds don't have yet:
+// preload. Two Electron gaps there. Electron reports both fixed upstream in 45.1 (electron/electron#55155), but castlabs' 45.2.1+wvcus
+// (Lumen's Electron) still needs them: test/e2e/ublock-origin.js failed 10 checks with them off (measured 2026-11-24). Keep them until a
+// castlabs build passes that test without them:
 //  - The page runs without context isolation, so the library completes `chrome` (browserAction, contextMenus, webNavigation, windows…)
 //    in place, but Chromium's own `browser` namespace stays bare, and uBlock Origin uses `browser` when there is one: it started with no
 //    browserAction and stopped at once. Both names now give the completed object. The library also swaps webRequest.onHeadersReceived for

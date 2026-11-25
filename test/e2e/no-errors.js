@@ -18,7 +18,9 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
 // Lines that are expected in this environment. `where`: 'main' (console.error/warn in the main process), 'renderer' (a web
 // contents' console, matched on the text), 'stderr' (what the process itself prints, Chromium's native logging included).
+// `url` (optional) limits an entry to the pages it names.
 const ALLOW = [
+  { where: 'renderer', url: /^(?:http:\/\/127[.]0[.]0[.]1:\d+\/|file:\/\/\/.*\/cb-noerr-[^/]+\/)/, text: /^Electron Security Warning \(Insecure Content-Security-Policy\)/, reason: 'Electron 45 prints this in a development run (never once packaged) on a page with no Content-Security-Policy; these are the suite\'s own fixture pages (its 127.0.0.1 server, the refused address\'s error page, its temp local.html). Lumen\'s own pages are not covered by this entry' },
   { where: 'main', text: /Failed to load URL: http:\/\/127[.]0[.]0[.]1:\d+\/refused with error: ERR_CONNECTION_REFUSED/, reason: 'Electron itself warns about the refused address the session opens on purpose (Lumen catches the rejection and shows its error page)' },
   { where: 'renderer', text: /ERR_CONNECTION_REFUSED/, reason: 'the session deliberately loads a refused address to show the error page; Chromium logs the failed load' },
   { where: 'stderr', text: /ERR_CONNECTION_REFUSED|Autofill\.|DevTools listening|Electron Helper|trace-warnings|Waiting for the debugger to disconnect|^\s*$/, reason: 'the refused address above, the DevTools attach line Playwright prints, and Chromium/Windows noise outside Lumen' },
@@ -247,7 +249,7 @@ ${r.stderr}`); process.exit(1); }
   events = events.filter((ev) => ev.where !== 'trace');
   for (const line of stderrLines) events.push({ where: 'stderr', level: 'stderr', text: line });
   const used = new Set();
-  const allowed = (ev) => ALLOW.findIndex((a) => a.where === ev.where && a.text.test(ev.text));
+  const allowed = (ev) => ALLOW.findIndex((a) => a.where === ev.where && a.text.test(ev.text) && (!a.url || a.url.test(ev.url || '')));
   const bad = [];
   for (const ev of events) {
     const idx = allowed(ev);

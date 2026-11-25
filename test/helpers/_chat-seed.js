@@ -41,14 +41,14 @@ async function seed(profile, { chats = 50, big = 60, kb = 3, scale = 1 } = {}) {
     await (await app.firstWindow()).waitForSelector('.tab');
     const snaps = [];
     for (let c = 0; c < chats; c++) snaps.push(snapshot(c, c === 0 ? big : (2 + (c % 11)) * scale, kb));
-    return await app.evaluate(({ app: electronApp, safeStorage }, { snaps: list, dir }) => {
+    return await app.evaluate(({ app: electronApp }, { snaps: list, dir }) => {
       const { createChatStore } = process.mainModule.require(`${dir}/src/features/chat-store.js`);
       const path = process.mainModule.require('path');
       const store = createChatStore({
         dir: path.join(electronApp.getPath('userData'), 'chats'),
-        encrypt: (text) => safeStorage.encryptString(text).toString('base64'),
-        decrypt: (b64) => safeStorage.decryptString(Buffer.from(b64, 'base64')),
-        available: () => safeStorage.isEncryptionAvailable(),
+        encrypt: (text) => global.__secretBox.encrypt(text), // the app's own key (features/secret-box.js)
+        decrypt: (b64) => global.__secretBox.decrypt(b64),
+        available: () => global.__secretBox.available(),
         limit: 500,
       });
       const ids = [];

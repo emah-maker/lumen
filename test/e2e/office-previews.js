@@ -254,7 +254,7 @@ const fx = require('../helpers/_office-fixtures');
     // ---------- 6. the thumbnail window ----------
     console.log('--- thumbnail window');
     const cache = path.join(profile, 'office-thumb-cache');
-    const keychain = await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable());
+    const keychain = await app.evaluate(() => global.__secretBox.available());
     const cached = fs.existsSync(cache) ? fs.readdirSync(cache).filter((n) => n.endsWith('.thumb')) : [];
     check('the thumbnails are kept on disk, encrypted, by file, size and time (one per file; none without a keychain)', keychain ? cached.length >= 3 && cached.every((n) => !fs.readFileSync(path.join(cache, n)).includes(Buffer.from('iVBOR'))) : cached.length === 0, `${keychain} ${cached.length}`);
     check('nothing from a file reached the network, and no page error was raised', hits.every((u) => u === '/page' || u === '/favicon.ico' || u.startsWith('/Budget.xlsx')) && errors.length === 0, `${hits.join()} ${errors.join()}`);

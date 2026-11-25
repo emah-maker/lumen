@@ -16,7 +16,7 @@ The device flow asks for `read:user` and `notifications`. That shows who you are
 
 ## Where the token lives
 
-One encrypted string, the widget secret `github` (the system keyring through Electron `safeStorage`, in `settings.json`'s `keys`). The connector reads it from there at each request: `connectors.json` holds only the account name and `"shared": true`, never a copy. The token goes only to `api.github.com` (and the sign-in calls to `github.com`), from the main process. The new-tab page and Settings get who you are, how you signed in and which permissions, never the token. Nothing logs tokens or codes.
+One encrypted string, the widget secret `github` (encrypted with Lumen's key, which the system keyring locks: `features/secret-box.js`; in `settings.json`'s `keys`). The connector reads it from there at each request: `connectors.json` holds only the account name and `"shared": true`, never a copy. The token goes only to `api.github.com` (and the sign-in calls to `github.com`), from the main process. The new-tab page and Settings get who you are, how you signed in and which permissions, never the token. Nothing logs tokens or codes.
 
 ## One-time maintainer step: register the OAuth App
 
