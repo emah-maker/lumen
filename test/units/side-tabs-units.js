@@ -57,6 +57,15 @@ check('home: after a whole run (a selection or a group)', core.homeBefore(all, [
 check('home: a run spread over the list is after the last of it', core.homeBefore(all, [1, 3]).id === 4);
 check('home: nothing moving', core.homeBefore(all, []).id === 1);
 
+// ---- leaving a group (tabs 2 and 3 are group 7)
+check('same target: before a group\'s label is not before its first tab', !core.sameTarget({ id: 2, outside: true }, { id: 2, outside: false }) && core.sameTarget({ id: 2 }, { id: 2, outside: false }) && core.sameTarget(null, null));
+check('leave: a group\'s last tab let go in place stays in its group', core.dropGroup({ id: 4 }, { id: 4 }, tabs, 7, false) === 7);
+check('leave: pulled below its own row, it leaves the group in place', core.dropGroup({ id: 4 }, { id: 4 }, tabs, 7, true) === null);
+check('leave: a group at the end of the list is left the same way', core.dropGroup(null, null, tabs, 7, false) === 7 && core.dropGroup(null, null, tabs, 7, true) === null);
+check('leave: above the label (the first tab of the group) leaves it', core.dropGroup({ id: 3, outside: true }, { id: 3 }, tabs, 7, false) === null);
+check('leave: between its group\'s tabs it stays in', core.dropGroup({ id: 3 }, { id: 4 }, tabs, 7, true) === 7);
+check('leave: a loose tab is never pulled into a group by this', core.dropGroup({ id: 4 }, { id: 4 }, tabs, null, false) === null);
+
 // ---- wired through
 const html = read('src/renderer/index.src.html');
 check('markup: the column, its list, head, collapse button and resize edge exist', ['id="side-tabs"', 'id="side-tabs-list"', 'id="side-head"', 'id="side-collapse"', 'id="side-resize"'].every((s) => html.includes(s)));

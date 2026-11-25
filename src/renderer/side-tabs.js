@@ -164,7 +164,7 @@
       ? { left: (after ? r.right + 1 : r.left - 1) - 1, top: r.top, width: 2, height: r.bottom - r.top }
       : { left: lr.left + 6, top: (after ? r.bottom + 1 : r.top - 1) - 1, width: lr.width - 12, height: 2 };
     Object.assign(line.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
-    const join = d.groupId == null && !d.pinnedDrag ? core.joinGroup(hit, lastTabState?.tabs || []) : null;
+    const join = d.groupId == null && !d.pinnedDrag ? d.join : null;
     const color = join && (lastTabState?.groups || []).find((x) => x.id === join)?.color;
     line.style.background = color ? `var(--g-${String(color).replace(/[^a-z]/g, '')})` : '';
   }
@@ -182,6 +182,10 @@
       if (g) hit = items.slice(items.indexOf(hit) + 1).find((it) => inside(it) !== g) || null;
     }
     d.hit = hit;
+    d.home = core.homeBefore(all, d.moving);
+    // A tab pulled below its own row (the list may have scrolled since the press) has left the group it ended.
+    const pastOwn = d.lastY > d.ownBottom - (list.scrollTop - d.scroll0) + 6;
+    d.join = d.groupId == null && !d.pinnedDrag ? core.dropGroup(hit, d.home, lastTabState?.tabs || [], d.ownGroup, pastOwn) : null;
     d.targeted = true;
     showLine(d, items, hit);
   }
@@ -223,6 +227,10 @@
         const label = d.groupId != null;
         d.moving = label ? d.members : selectedTabs.size > 1 && selectedTabs.has(d.id) ? stripOrder().filter((x) => selectedTabs.has(x)) : [d.id];
         d.pinnedDrag = !label && d.el.classList.contains('pinned');
+        // The group the dragged tabs are all in now (null: none, undefined: several), and where the grabbed row ends.
+        const groupsOf = new Set(d.moving.map((x) => (lastTabState?.tabs || []).find((t) => t.id === x)?.groupId || null));
+        d.ownGroup = groupsOf.size === 1 ? [...groupsOf][0] : undefined;
+        d.ownBottom = d.el.getBoundingClientRect().bottom;
         // Every tab of the window is moving: the window itself follows the pointer right away, like its title bar.
         if (window.browser.dragTabStart && (lastTabState?.tabs.length || 0) - d.moving.length < 1) { handOff(e); return; }
       }
@@ -255,13 +263,14 @@
       if (!d.moved || escaped || !d.targeted) return;
       const hit = d.hit;
       const home = core.homeBefore(candidates(d), d.moving);
-      if ((hit?.id ?? null) === (home?.id ?? null)) return; // let go where it started: nothing moves
       const tabsNow = lastTabState?.tabs || [];
+      // Let go where it started, in the group it was in: nothing moves. (The same place outside its group is a move out of it.)
+      if (core.sameTarget(hit, home) && (d.groupId != null || d.pinnedDrag || d.ownGroup === undefined || d.join === d.ownGroup)) return;
       const live = $('tab-live');
       expectMove(); // (the list holds updates until main has put the tabs in order)
       if (d.groupId != null) window.browser.moveTabs?.(d.members, hit?.id ?? null, d.groupId);
       else if (d.pinnedDrag) window.browser.moveTab?.(d.id, indexBefore(hit?.id ?? null, d.id), true);
-      else window.browser.moveTabs?.(d.moving, hit?.id ?? null, null, core.joinGroup(hit, tabsNow));
+      else window.browser.moveTabs?.(d.moving, hit?.id ?? null, null, d.join ?? null);
       if (live) live.textContent = d.moving.length > 1 ? t('tabs.movedMany', { n: d.moving.length }) : t('tabs.moved', { title: tabsNow.find((x) => x.id === d.id)?.title || '' });
     },
     // Where the grabbed tab sits in the new window's list, from the top of the window.
