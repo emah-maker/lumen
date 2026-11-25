@@ -38,7 +38,7 @@
     const math = window.pageMath?.ready(text); // [page math] Temml, when the page has formulas (they are typeset in frameDocument)
     frame.addEventListener('load', async () => {
       await math;
-      const html = window.chatCanvas.frameDocument(file.kind, text);
+      const html = window.chatCanvas.frameDocument(file.kind, text, { accent: window.chatCanvas.accent?.() });
       try { frame.contentWindow.postMessage({ lumenCanvas: html }, '*'); } catch { /* frame gone */ }
     });
     frame.src = 'canvas-frame.html';

@@ -1894,7 +1894,7 @@ function onAgentEvent(event) {
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)
-  if (event.type === 'status') { if (turn.working) setStatus(turn.working, event.text, event.runNow); return; }
+  if (event.type === 'status') { if (turn.working) setStatus(turn.working, event.text, event.runNow); if (event.image) turn.imgPending = window.genImages?.progress?.(turn.imgPending, event.image, appendToTurn) || null; return; } // [image card] the picture being made
   if (turn.working?.dataset.status && ['text', 'thinking', 'tool', 'approval', 'error', 'done'].includes(event.type)) setStatus(turn.working, '');
   if (turn.userBubble && window.chatQueue.countsAsRead(event.type)) setMark(turn.userBubble, 'read'); // (the AI took the message up)
   switch (event.type) {
@@ -1920,7 +1920,8 @@ function onAgentEvent(event) {
       turn.textSource = '';
       const bubble = Object.assign(document.createElement('div'), { className: 'msg assistant gen-pics' });
       bubble.append(window.genImages.figure({ id: event.id, alt: event.alt || '', ...(event.credit ? { credit: event.credit } : {}), ...(event.caption ? { caption: event.caption } : {}) }));
-      appendToTurn(bubble);
+      if (turn.imgPending?.isConnected && !turn.imgPending.classList.contains('gen-img-failed')) { turn.imgPending.replaceWith(bubble); scrollToBottom(); } else appendToTurn(bubble); // [image card] in the place of its progress card
+      turn.imgPending = null;
       turn.pics = bubble;
       announce(t('genimg.made'));
       break;
@@ -2247,6 +2248,8 @@ function lateCardEvent(t, event) {
 // (reply_complete); the run's own 'done' then only adds what it carries (late 'done' in onEvent).
 function finishTurn(event, { early }) {
   settleThinking();
+  if (turn.imgPending && !turn.imgPending.classList.contains('gen-img-failed')) turn.imgPending.remove(); // [image card] a progress card no picture came for (a failure card stays)
+  turn.imgPending = null;
   dropEmptyBubbles();
   // [quiet run] A turn that ends while its run goes on (helpers, reviewers or agents still at work on its card) is not a finished reply: what it
   // said is the card's live line, its bubble put away (unless it asks the user something, or an approval waits), and it gets no Try again, no
@@ -2324,6 +2327,14 @@ function stopReply() {
   }, STOP_WAIT_MS);
 }
 window.chatStopReply = stopReply;
+// [image card] Try again / Variation / Edit on a picture: the words go in the message box; send: true sends them (queued while a reply runs).
+window.chatAskText = (text, { send = false } = {}) => {
+  const typed = prompt.value.trim();
+  prompt.value = typed ? `${typed}\n${text}` : text; // (a draft is kept, and then nothing is sent for the user)
+  autosize(); updateSend(); prompt.focus();
+  if (send && !typed) sendComposer();
+  else prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+};
 // The messages waiting for a reply that was stopped come back to the box (as clearChatView does for a chat that was left).
 function queuedToDraft() {
   const mine = line.drain((q) => !q.fresh && !queueOther(q.chatId));

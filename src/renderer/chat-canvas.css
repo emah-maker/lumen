@@ -1,24 +1,45 @@
-/* lumen://chat: the canvas side panel (chat-canvas.js). */
+/* lumen://chat: the canvas side panel (chat-canvas-panel.js). Lumen's tokens only (tokens.css): surface, field, hairline, accent. */
 .cv { position: relative; flex: none; min-width: 320px; max-width: calc(100% - 360px); display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-left: 1px solid var(--border); }
 .cv[hidden] { display: none; }
 .cv-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 2; touch-action: none; }
 .cv-grip:hover, .cv.resizing .cv-grip, .cv-grip:focus-visible { background: var(--accent-soft); outline: none; }
 .cv.resizing { user-select: none; }
 .cv.resizing .cv-frame { pointer-events: none; }
-.cv-head { flex: none; display: flex; align-items: center; gap: var(--sp-3); height: 40px; padding: 0 var(--sp-4) 0 var(--sp-6); border-bottom: 1px solid var(--hairline); }
-.cv-title { font: 500 11px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--muted); text-transform: lowercase; }
+.cv.cv-wide { position: absolute; inset: 0; width: auto !important; max-width: none; z-index: 6; border-left: 0; }
+.cv.cv-wide .cv-grip { display: none; }
+
+.cv-head { flex: none; display: flex; align-items: center; gap: var(--sp-4); height: 44px; padding: 0 var(--sp-4) 0 var(--sp-8); }
+.cv-title { font-weight: 600; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+.cv-meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .cv-spacer { flex: 1; }
-.cv-tabs { display: flex; gap: var(--sp-1); padding: var(--sp-1); border-radius: 8px; background: var(--field); }
-.cv-tabs[hidden] { display: none; }
-.cv-tab, .cv-btn { height: 24px; padding: 0 var(--sp-5); border: none; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
-.cv-tab.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
-.cv-tab:hover, .cv-btn:hover, .cv-tab:focus-visible, .cv-btn:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); }
-.cv-close { font-size: 16px; line-height: 1; padding: 0 var(--sp-4); }
-.cv-code { flex: 1; min-height: 0; margin: 0; padding: var(--sp-6); overflow: auto; background: var(--field); font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; tab-size: 2; white-space: pre; }
-.cv-code[hidden], .cv-preview[hidden] { display: none; }
-.cv-preview { flex: 1; min-height: 0; display: flex; background: #fff; }
-.cv[data-mode="image"] .cv-btn:not(.cv-close) { display: none; }
-.cv[data-mode="image"] .cv-preview { display: block; overflow: auto; padding: var(--sp-8); box-sizing: border-box; background: var(--field); }
+.cv-tools { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-3); padding: var(--sp-2) var(--sp-4) var(--sp-4) var(--sp-8); border-bottom: 1px solid var(--hairline); }
+.cv-tabs, .cv-seg { display: flex; gap: var(--sp-1); padding: var(--sp-1); border-radius: var(--r-md); background: var(--field); }
+.cv-tabs[hidden], .cv-seg[hidden], .cv-group[hidden], .cv-btn[hidden] { display: none; }
+.cv-group { display: flex; gap: var(--sp-1); padding-right: var(--sp-3); margin-right: var(--sp-1); border-right: 1px solid var(--hairline); }
+.cv-tab, .cv-seg-btn, .cv-btn { height: 26px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.cv-tab.active, .cv-seg-btn.active { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.cv-tab:hover, .cv-seg-btn:hover, .cv-btn:hover, .cv-tab:focus-visible, .cv-seg-btn:focus-visible, .cv-btn:focus-visible { background: var(--hover, rgba(127,127,127,.12)); color: var(--text); outline: none; }
+.cv-tab:focus-visible, .cv-seg-btn:focus-visible, .cv-btn:focus-visible { box-shadow: var(--focus-ring); }
+.cv-btn:disabled { opacity: .4; cursor: default; background: transparent; }
+.cv-btn[aria-pressed="true"] { color: var(--accent-text, var(--accent)); background: var(--accent-soft); }
+.cv-icon { width: 30px; padding: 0; font-size: 16px; line-height: 1; }
+
+.cv-body { flex: 1; min-height: 0; display: flex; }
+.cv-body[data-view="split"] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.cv-body[data-view="split"] .cv-codepane { border-right: 1px solid var(--hairline); }
+@container (max-width: 640px) { .cv-body[data-view="split"] { grid-template-columns: none; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } }
+.cv { container-type: inline-size; }
+.cv-codepane { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.cv-codepane[hidden], .cv-code[hidden], .cv-edit[hidden], .cv-preview[hidden] { display: none; }
+.cv-code, .cv-edit { flex: 1; min-width: 0; min-height: 0; margin: 0; padding: var(--sp-6) var(--sp-8); overflow: auto; background: var(--field); color: var(--text); font: 13px/1.6 ui-monospace, "Cascadia Code", Consolas, monospace; tab-size: 2; white-space: pre; }
+.cv-edit { border: 0; resize: none; outline: none; box-shadow: inset 2px 0 0 var(--accent); }
+.cv-preview { flex: 1; min-width: 0; min-height: 0; display: flex; justify-content: center; background: var(--field); }
+.cv-stage { flex: 1 1 auto; max-width: 100%; display: flex; background: #fff; }
+.cv-preview:not([data-device="full"]) { padding: var(--sp-6); overflow: auto; }
+.cv-preview:not([data-device="full"]) .cv-stage { flex: 0 0 auto; border-radius: var(--r-lg); overflow: hidden; box-shadow: 0 0 0 1px var(--hairline), 0 6px 24px rgba(0,0,0,.12); }
+.cv[data-mode="image"] .cv-tools { display: none; }
+.cv[data-mode="image"] .cv-preview { display: block; overflow: auto; padding: var(--sp-8); box-sizing: border-box; }
+.cv[data-mode="image"] .cv-stage { display: block; background: transparent; }
 .cv-image { display: block; max-width: 100%; height: auto; margin: 0 auto; background: #fff; box-shadow: 0 0 0 1px var(--hairline, rgba(127,127,127,.3)); }
 .cv-frame { flex: 1; width: 100%; border: 0; background: #fff; }
 .code-canvas { margin-right: var(--sp-1); }
