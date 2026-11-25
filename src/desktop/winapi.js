@@ -42,6 +42,12 @@ function load({ koffi: injected = null } = {}) {
     const setForeground = user32.func('__stdcall', 'SetForegroundWindow', 'int', ['intptr']);
     const isIconic = user32.func('__stdcall', 'IsIconic', 'int', ['intptr']);
     const showWindow = user32.func('__stdcall', 'ShowWindow', 'int', ['intptr', 'int']);
+    // The AI's cursor (cursor.js) follows the app's window, and is drawn only where the app is what shows at its point; a real-mouse fallback
+    // puts the person's pointer back where it was.
+    const RECT = koffi.struct('LUMEN_DESKTOP_RECT', { left: 'int32', top: 'int32', right: 'int32', bottom: 'int32' });
+    const getWindowRect = user32.func('__stdcall', 'GetWindowRect', 'int', ['intptr', koffi.out(koffi.pointer(RECT))]);
+    const isWindow = user32.func('__stdcall', 'IsWindow', 'int', ['intptr']);
+    const setCursorPos = user32.func('__stdcall', 'SetCursorPos', 'int', ['int', 'int']);
     const sendTimeout = user32.func('__stdcall', 'SendMessageTimeoutW', 'intptr', ['void *', 'uint32', 'uintptr', 'intptr', 'uint32', 'uint32', koffi.out(koffi.pointer('intptr'))]);
     // Which part of a window a screen point is on (WM_NCHITTEST, 0x84): at most 50 ms, and never waits on a window that is not answering (SMTO_ABORTIFHUNG).
     const hitOf = (hwnd, p) => { const out = [0]; const lp = ((p.y & 0xffff) << 16) | (p.x & 0xffff); return sendTimeout(hwnd, 0x84, 0, lp, 0x2, 50, out) ? Number(out[0]) | 0 : 0; };
@@ -67,6 +73,9 @@ function load({ koffi: injected = null } = {}) {
       },
       typing: () => TYPING_KEYS.some((vk) => (getKey(vk) & 0x8000) !== 0),
       allowForeground: () => Boolean(allowSet(0xffffffff)), // ASFW_ANY
+      windowRect(hwnd) { const h = Number(hwnd) || 0; if (!h || !isWindow(h) || isIconic(h)) return null; const r = {}; return getWindowRect(h, r) ? [r.left, r.top, r.right, r.bottom] : null; }, // null: gone or minimized
+      pidAt(x, y) { const w = windowFromPoint({ x: Math.round(x), y: Math.round(y) }); return w ? pidOf(getAncestor(w, 2)) : 0; }, // (Lumen's click-through cursor window is never hit)
+      setCursor(x, y) { return Boolean(setCursorPos(Math.round(x), Math.round(y))); },
       raise(hwnd) { const h = Number(hwnd) || 0; if (!h) return false; if (isIconic(h)) showWindow(h, 9); return Boolean(setForeground(h)); }, // (SW_RESTORE when minimized)
     };
   } catch (err) { return { ok: false, reason: 'dll', detail: err.message }; }

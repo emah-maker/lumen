@@ -16924,7 +16924,20 @@ const last = items.map((it) => skip.has(it.id)).lastIndexOf(true);
 return items.slice(last + 1).find((it) => !skip.has(it.id)) || null;
 }
 
-const api = { MIN, MAX, DEFAULT, COLLAPSED, clampWidth, fromPrefs, dropBefore, joinGroup, homeBefore };
+
+
+const sameTarget = (a, b) => (a?.id ?? null) === (b?.id ?? null) && Boolean(a?.outside) === Boolean(b?.outside);
+
+
+
+
+function dropGroup(hit, home, tabs, own, pastOwn) {
+const join = joinGroup(hit, tabs);
+if (own && sameTarget(hit, home) && join !== own && !pastOwn) return own;
+return join;
+}
+
+const api = { MIN, MAX, DEFAULT, COLLAPSED, clampWidth, fromPrefs, dropBefore, joinGroup, homeBefore, sameTarget, dropGroup };
 if (typeof module === 'object' && module.exports) module.exports = api;
 else root.sideTabsCore = api;
 })(this);
@@ -17096,7 +17109,7 @@ const box = tile
 ? { left: (after ? r.right + 1 : r.left - 1) - 1, top: r.top, width: 2, height: r.bottom - r.top }
 : { left: lr.left + 6, top: (after ? r.bottom + 1 : r.top - 1) - 1, width: lr.width - 12, height: 2 };
 Object.assign(line.style, { left: `${box.left}px`, top: `${box.top}px`, width: `${box.width}px`, height: `${box.height}px` });
-const join = d.groupId == null && !d.pinnedDrag ? core.joinGroup(hit, lastTabState?.tabs || []) : null;
+const join = d.groupId == null && !d.pinnedDrag ? d.join : null;
 const color = join && (lastTabState?.groups || []).find((x) => x.id === join)?.color;
 line.style.background = color ? `var(--g-${String(color).replace(/[^a-z]/g, '')})` : '';
 }
@@ -17114,6 +17127,10 @@ const g = inside(hit);
 if (g) hit = items.slice(items.indexOf(hit) + 1).find((it) => inside(it) !== g) || null;
 }
 d.hit = hit;
+d.home = core.homeBefore(all, d.moving);
+
+const pastOwn = d.lastY > d.ownBottom - (list.scrollTop - d.scroll0) + 6;
+d.join = d.groupId == null && !d.pinnedDrag ? core.dropGroup(hit, d.home, lastTabState?.tabs || [], d.ownGroup, pastOwn) : null;
 d.targeted = true;
 showLine(d, items, hit);
 }
@@ -17156,6 +17173,10 @@ const label = d.groupId != null;
 d.moving = label ? d.members : selectedTabs.size > 1 && selectedTabs.has(d.id) ? stripOrder().filter((x) => selectedTabs.has(x)) : [d.id];
 d.pinnedDrag = !label && d.el.classList.contains('pinned');
 
+const groupsOf = new Set(d.moving.map((x) => (lastTabState?.tabs || []).find((t) => t.id === x)?.groupId || null));
+d.ownGroup = groupsOf.size === 1 ? [...groupsOf][0] : undefined;
+d.ownBottom = d.el.getBoundingClientRect().bottom;
+
 if (window.browser.dragTabStart && (lastTabState?.tabs.length || 0) - d.moving.length < 1) { handOff(e); return; }
 }
 d.lastX = e.clientX;
@@ -17187,13 +17208,14 @@ tabsEl.classList.remove('reordering');
 if (!d.moved || escaped || !d.targeted) return;
 const hit = d.hit;
 const home = core.homeBefore(candidates(d), d.moving);
-if ((hit?.id ?? null) === (home?.id ?? null)) return;
 const tabsNow = lastTabState?.tabs || [];
+
+if (core.sameTarget(hit, home) && (d.groupId != null || d.pinnedDrag || d.ownGroup === undefined || d.join === d.ownGroup)) return;
 const live = $('tab-live');
 expectMove();
 if (d.groupId != null) window.browser.moveTabs?.(d.members, hit?.id ?? null, d.groupId);
 else if (d.pinnedDrag) window.browser.moveTab?.(d.id, indexBefore(hit?.id ?? null, d.id), true);
-else window.browser.moveTabs?.(d.moving, hit?.id ?? null, null, core.joinGroup(hit, tabsNow));
+else window.browser.moveTabs?.(d.moving, hit?.id ?? null, null, d.join ?? null);
 if (live) live.textContent = d.moving.length > 1 ? t('tabs.movedMany', { n: d.moving.length }) : t('tabs.moved', { title: tabsNow.find((x) => x.id === d.id)?.title || '' });
 },
 

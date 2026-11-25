@@ -178,11 +178,11 @@ function resultOf(meta = {}) {
 
 // engine: the sidebar's GrokBuildEngine (prepare, spawn, kill, home, dir, userData, watchdogMs, onFresh, active, callBegin).
 // enabled(): the setting (and Grok Build in use). idleMs(): ms an idle process is kept (0: until the chat goes).
-function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, spareIdleMs = SPARE_IDLE_MS, maxProcs = MAX_PROCS, listedWaitMs = LISTED_WAIT_MS, cancelWaitMs = CANCEL_WAIT_MS, startTimeoutMs = START_TIMEOUT_MS, gb = require('../ai/grok-build') }) {
+function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, spareIdleMs = SPARE_IDLE_MS, maxProcs = MAX_PROCS, listedWaitMs = LISTED_WAIT_MS, cancelWaitMs = CANCEL_WAIT_MS, startTimeoutMs = START_TIMEOUT_MS, gb = require('../ai/grok-build'), toolsMissing = null }) {
   const { validModel } = require('../ai/cli-utils');
   const procs = new Set(); // every kept process that has its session
   const pending = new Set(); // starts in flight: { wanted (session id, null: new), spare, key, promise, proc }
-  const stats = { spawned: 0, reused: 0, fallbacks: 0, prewarmed: 0 };
+  const stats = { spawned: 0, reused: 0, fallbacks: 0, prewarmed: 0, toolRestarts: 0 };
   let used = 0; // recency clock
 
   const live = (p) => p && !p.exited && !p.disposed;
@@ -333,6 +333,11 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     effort = effortLib.clean('grokbuild', effort);
     const mode = modeOf(fullAccess, effort);
     let p = await find({ sessionId, resume, systemPrompt, mode });
+    // [tools] A kept process listed Lumen's tools once, when it connected (a prewarm at composer focus, before the chat was about Word): a
+    // chat that has since turned to a Word document (or got the desktop, project or connector tool) found the word tool missing ("The Word
+    // tool was unavailable"). That process goes and a new one resumes the same thread with the full list, as Claude Code does (#914;
+    // features/ai-agents.js toolsMissing).
+    if (p && toolsMissing?.(p.tag, scope?.chat)) { p.busy = false; dispose(p); stats.toolRestarts++; p = null; }
     if (p) stats.reused++;
     else {
       emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (cleared on the first output)
