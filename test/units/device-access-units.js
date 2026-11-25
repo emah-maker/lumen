@@ -46,7 +46,11 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
   // ---- never reachable
   {
     const b = (rel) => D.blockedReason(path.join(home, rel), opts);
-    check('Lumen\'s own profile is out of reach', /Lumen's own profile/.test(b('Library/Application Support/Lumen/Cookies')) && /profile/.test(b('Library/Application Support/Lumen')));
+    check('a Windows alternate data stream is refused', [['project', '.env::$DATA'], ['Desktop', 'id_rsa::$DATA'], ['Desktop', 'photo.png:Zone.Identifier']].every(([d, f]) => D.blockedReason(path.join(home, d, f), { ...opts, platform: 'win32' })));
+    check('AI command-line sign-ins are out of reach', ['.claude/.credentials.json', '.codex/auth.json', '.gemini/oauth_creds.json'].every((x) => b(x)), J(['.claude/.credentials.json', '.codex/auth.json', '.gemini/oauth_creds.json'].map(b)));
+    check('browser password stores are out of reach', ['AppData/Local/Google/Chrome/User Data/Default/Login Data', 'AppData/Local/Microsoft/Edge/User Data/Profile 1/Login Data', 'AppData/Roaming/gcloud/credentials.db'].every((x) => b(x)), J(['AppData/Local/Google/Chrome/User Data/Default/Login Data', 'AppData/Roaming/gcloud/credentials.db'].map(b)));
+    check('ordinary files are still reachable', !b('Desktop/notes.txt') && !b('Documents/Login Data notes.txt') && !b('Documents/Cookies'), J([b('Desktop/notes.txt'), b('Documents/Login Data notes.txt'), b('Documents/Cookies')]));
+    check('Lumen\'s own profile is out of reach',/Lumen's own profile/.test(b('Library/Application Support/Lumen/Cookies')) && /profile/.test(b('Library/Application Support/Lumen')));
     check('credentials folders are out of reach', ['.ssh/id_rsa', '.aws/credentials', '.gnupg/x', 'Library/Keychains/login.keychain-db', '.config/gh/hosts.yml'].every((x) => b(x)), J(['.ssh/id_rsa', '.aws/credentials'].map(b)));
     check('.env and key files anywhere are out of reach; .env.example is not', b('project/.env') && b('project/.env.local') && b('Desktop/server.pem') && b('Desktop/id_rsa') && !b('project/.env.example') && !b('Desktop/photo.png'), J([b('project/.env.example')]));
     check('a link on the Desktop pointing at a key is refused by where it really goes', /credentials/.test(throws(() => D.checkedPath('~/Desktop/sneaky.png', 'file', opts)) || ''), throws(() => D.checkedPath('~/Desktop/sneaky.png', 'file', opts)));
@@ -144,7 +148,14 @@ fs.symlinkSync(path.join(home, '.ssh/id_ed25519'), path.join(home, 'Desktop/snea
     check('on: the file is set on the field after one card that names it and the site', set && J(set.files) === J([shot]) && cards().length === 1 && /Screenshot 2026-10-08\.png/.test(cards()[0].title) && /forms\.example\.com/.test(cards()[0].title) && /Put Screenshot/.test(done), J([set, cards().map((c) => c.title), done]));
     state.calls.length = 0;
     await call('upload_file', { element_id: 1, paths: [shot] });
-    check('the next upload to the same site in the chat does not ask again', cards().length === 1 && sets().length === 1);
+    check('the same file to the same site in the chat does not ask again', cards().length === 1 && sets().length === 1);
+    const other = put('Desktop/other.png', 'png');
+    state.calls.length = 0;
+    await call('upload_file', { element_id: 1, paths: [other] });
+    check('a different file from disk to the same site asks again, naming it', cards().length === 2 && /other\.png/.test(cards()[1].title) && sets().length === 1, J(cards().map((c) => c.title)));
+    state.calls.length = 0;
+    await call('upload_file', { element_id: 1, paths: [shot, other] });
+    check('files from disk that were each approved for the site do not ask again together', cards().length === 2 && sets().length === 1, J(cards().map((c) => c.title)));
 
     reset(); state.access = true; answer = false;
     msg = await refused(() => call('upload_file', { element_id: 1, paths: [shot] }));

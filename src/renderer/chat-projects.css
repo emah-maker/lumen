@@ -27,6 +27,15 @@
 .cp-pj-text { resize: vertical; min-height: 120px; line-height: 1.45; }
 .cp-pj-input:focus, .cp-pj-text:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .cp-pj-note { margin: 0; font-size: 12px; color: var(--muted); }
+/* [project templates] Start from: Blank or a template */
+.cp-pj-templates { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-4); }
+.cp-pj-template { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: 10px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.cp-pj-template strong { font-size: 13px; font-weight: 600; }
+.cp-pj-template span { font-size: 12px; color: var(--muted); }
+.cp-pj-template:hover { border-color: var(--accent); }
+.cp-pj-template[aria-checked="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cp-pj-template:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (forced-colors: active) { .cp-pj-template[aria-checked="true"] { border: 2px solid Highlight; } }
 .cp-pj-buttons { display: flex; justify-content: flex-end; gap: var(--cp-2); margin-top: var(--cp-1); }
 .cp-pj-delete { margin-right: auto; color: var(--danger); }
 
@@ -102,3 +111,10 @@
 
 /* [temp projects] the Temp mark on a row */
 .cp-pj-temp { flex: none; margin-left: var(--cp-1); padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--warning, var(--accent)) 18%, transparent); color: var(--text); font-size: 10.5px; line-height: 16px; }
+/* [project templates] the job colours, for a Job applications project wherever it shows (the rail here, All projects, its page and its
+   dashboard: chat-project-page.css, chat-job-board.css), and its rail row: a briefcase in them */
+.pjp-job, .cp-pj.job, .pja-card.job, .pja-row.job { --job: #6a4cf5; --job-2: #0e9f9a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) :is(.pjp-job, .cp-pj.job, .pja-card.job, .pja-row.job) { --job: #9a85ff; --job-2: #35c9c1; } }
+:root[data-theme="dark"] :is(.pjp-job, .cp-pj.job, .pja-card.job, .pja-row.job) { --job: #9a85ff; --job-2: #35c9c1; }
+.cp-pj.job .cp-pj-icon { color: var(--job); }
+.cp-pj.job .cp-pj-icon svg { stroke-width: 1.7; }

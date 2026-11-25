@@ -39,7 +39,20 @@
     return items.slice(last + 1).find((it) => !skip.has(it.id)) || null;
   }
 
-  const api = { MIN, MAX, DEFAULT, COLLAPSED, clampWidth, fromPrefs, dropBefore, joinGroup, homeBefore };
+  // The same drop target: the same item on the same side of a group's label (before a group's label is outside it, before its first tab
+  // is inside, and both name that first tab).
+  const sameTarget = (a, b) => (a?.id ?? null) === (b?.id ?? null) && Boolean(a?.outside) === Boolean(b?.outside);
+
+  // The group dragged tab(s) end up in. `own`: the one group they are all in now (null: none, undefined: spread over several).
+  // Right after their own group's last tab (`hit` is where they are now, `home`), they stay in it until pulled clearly below their own
+  // row (`pastOwn`), as in Chrome; then they leave it in place. A group at the end of the list is left the same way.
+  function dropGroup(hit, home, tabs, own, pastOwn) {
+    const join = joinGroup(hit, tabs);
+    if (own && sameTarget(hit, home) && join !== own && !pastOwn) return own;
+    return join;
+  }
+
+  const api = { MIN, MAX, DEFAULT, COLLAPSED, clampWidth, fromPrefs, dropBefore, joinGroup, homeBefore, sameTarget, dropGroup };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.sideTabsCore = api;
 })(this);

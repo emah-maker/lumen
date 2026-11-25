@@ -24,6 +24,11 @@ const MAX_TYPE = 8000;
 const LIST_CACHE_MS = 600;
 const SHOT_W = 1280; // screenshot_app's picture width (a smaller window is sent at its own size): wide enough that a pixel the AI picks lands on a toolbar button
 const MAX_WHEEL = 30; // scroll: wheel notches in one call
+// click_at / drag / scroll: the ways the helper can act at a point, tried in this order. The first two never move the person's pointer.
+const ROUTES = ['uia', 'post', 'real'];
+const ROUTE_WORDS = { uia: 'through UI Automation, without moving your mouse', post: 'with window messages, without moving your mouse', real: 'with your mouse pointer, then put it back' };
+const ROUTE_STEP = { uia: 'without your mouse', post: 'without your mouse', real: 'with your mouse' };
+const HOME_PX = 3; // the pointer still within this many pixels of where the AI left it: the person did not move it, so it goes back
 
 // Everything an app told us (window titles, control names, values) goes to the AI inside this wrapper, with any literal wrapper tag in it defanged,
 // so app text can never end the block and pass as the user's or Lumen's own words.
@@ -36,7 +41,8 @@ const idOf = (win) => `w${win.hwnd}`;
 
 // deps: client { call, stop, destroy }, settings { master(), terminals(), allowed(), allow(app, name), setMaster(on) }, banner, winapi, shortcut { register(accel, fn), unregister(accel) },
 // stopRun(), icon(exe) -> Promise<dataUrl>, lumen { pid, exe }, platform, now, hooks (tests: observed events),
-// macOS: access { accessibility(), screen() } (permission checks that never prompt), resize(buffer, w, q), openSettings(url)
+// macOS: access { accessibility(), screen() } (permission checks that never prompt), resize(buffer, w, q), openSettings(url),
+// cursor (cursor.js: the AI's pointer drawn over the app's window), tag() -> the helper's { color, label } making this call (features/agent-tags.js), or null
 function createDesktop(deps = {}) {
   const platform = deps.platform || process.platform;
   const backend = platforms.backendFor(platform);
@@ -182,7 +188,8 @@ function createDesktop(deps = {}) {
     const moved = !s.target || s.target.hwnd !== win.hwnd || s.target.pid !== win.pid;
     s.target = { hwnd: win.hwnd, pid: win.pid, hpid: win.hpid || 0, start: win.start || 0, app: win.app, name: win.name, title: win.title, exe: win.exe };
     s.win = win; // (everything the policy looks at; the live picture asks it again with the window's current title)
-    if (moved) s.approvedTitle = null;
+    try { s.tag = deps.tag?.() || null; } catch { s.tag = null; } // (asked inside the call: which helper's cursor this is)
+    if (moved) { s.approvedTitle = null; hideCursor(s); }
     s.live?.kick({ fresh: moved });
     if (!s.card || s.card.app !== win.app) {
       if (s.card) cardEvent(s, 'completed');
@@ -207,6 +214,7 @@ function createDesktop(deps = {}) {
     if (extra.blocked && s.card) s.card.thumb = null; // a window that turned into something blocked: its picture is not kept, the card shows the placeholder
     try { deps.shortcut?.unregister('Ctrl+Alt+Esc'); } catch { /* gone */ }
     try { deps.banner?.hide(); } catch { /* gone */ }
+    hideCursor(s);
     if (s.card) cardEvent(s, status, extra.blocked ? { blocked: true } : {});
     s.stopped = status === 'stopped';
     for (const r of s.resume.splice(0)) r(false);
@@ -240,6 +248,7 @@ function createDesktop(deps = {}) {
     stats.takeovers++;
     s.paused = true;
     if (s.busy) { try { client?.abort?.('The user took over.'); } catch { /* gone */ } } // a call in flight ends now, not after it finishes
+    hideCursor(s); // (the app is the person's now: the AI's pointer goes until it points again)
     Promise.resolve(deps.banner?.update({ paused: true })).catch(() => {});
     if (s.card) cardEvent(s, 'paused');
     deps.hooks?.onPause?.(why);
@@ -251,6 +260,7 @@ function createDesktop(deps = {}) {
     const w = getApi();
     if (!w || session !== s || s.stopped) return;
     if (w.failed?.()) { stop('checks'); return; } // (macOS: the checks stopped running, so Esc would not work: the AI stops)
+    followCursor(s, w);
     try {
       if (w.escapeDown()) {
         if (!s.escSince) s.escSince = now();
@@ -261,10 +271,42 @@ function createDesktop(deps = {}) {
       const pressed = w.mousePressed ? w.mousePressed() : w.mouseDown(); // (asked every time: on Windows it also counts a click made since the last check, which it then forgets)
       if (s.paused || !s.target) return;
       const busy = s.busy || now() < s.busyUntil;
-      if (busy && s.pointing) return; // click_at / drag / scroll press the mouse buttons themselves: that is not the person taking over
+      if (busy && s.pointing) return; // only while click_at / drag / scroll fall back to the real mouse (they press its buttons themselves): that is not the person taking over
       const over = [s.target.pid, s.target.hpid].includes(w.pidUnderCursor());
       if (over && pressed && !w.frameUnderCursor?.()) pause(s, 'mouse');
       else if (!busy && [s.target.pid, s.target.hpid].includes(w.foregroundPid()) && w.typing()) pause(s, 'keys');
+    } catch { /* a failed check never stops the run */ }
+  }
+
+  // ---- the AI's cursor over the app (cursor.js; Windows, where winapi can say where the window is)
+  // f: { fx, fy } the point in fractions of the window, from: the start of a drag, kind: point | click | double | drag | scroll.
+  function pointAt(s, f, { from = null, kind = 'point' } = {}) {
+    const c = deps.cursor;
+    if (!c || session !== s || !s.target || s.paused || !Number.isFinite(f?.fx) || !Number.isFinite(f?.fy)) return;
+    let rect;
+    try { rect = getApi()?.windowRect?.(s.target.hwnd) || null; } catch { rect = null; }
+    if (!rect) return; // (minimized, gone, or no way to know where it is: no cursor rather than one in the wrong place)
+    s.cursorAt = { hwnd: s.target.hwnd, fx: f.fx, fy: f.fy };
+    Promise.resolve(c.show({ rect, fx: f.fx, fy: f.fy, from, kind, tag: s.tag })).catch(() => {});
+  }
+  function hideCursor(s) {
+    if (!s) return;
+    s.cursorAt = null;
+    try { deps.cursor?.hide(); } catch { /* gone */ }
+  }
+  // Every poll: the cursor goes with the window when it moves or changes size, and is out of sight while the window is minimized or
+  // another window covers its point (so it is never drawn over another program).
+  function followCursor(s, w) {
+    const c = deps.cursor;
+    if (!c || !s.cursorAt || !c.visible?.()) return;
+    try {
+      const rect = w.windowRect?.(s.cursorAt.hwnd) || null;
+      let shown = Boolean(rect) && !s.paused;
+      if (shown && w.pidAt) {
+        const x = rect[0] + s.cursorAt.fx * (rect[2] - rect[0]); const y = rect[1] + s.cursorAt.fy * (rect[3] - rect[1]);
+        shown = [s.target?.pid, s.target?.hpid].filter(Boolean).includes(w.pidAt(x, y));
+      }
+      c.follow(rect, shown);
     } catch { /* a failed check never stops the run */ }
   }
 
@@ -314,14 +356,22 @@ function createDesktop(deps = {}) {
     if (s.stopped) throw new Error('Stopped by the user.');
     if (!s.paused) return;
     const ok = await new Promise((resolve) => { s.resume.push(resolve); const t = setTimeout(() => resolve(false), PAUSE_WAIT_MS); t.unref?.(); });
-    if (!ok || s.stopped) throw new Error('The user took over the app and did not let the AI carry on. Ask them what they want next.');
+    if (s.stopped) throw new Error('Stopped by the user.');
+    if (!ok) throw new Error('The user took over the app and did not let the AI carry on. Ask them what they want next.');
   }
 
   async function act(s, fn) {
     await gate(s);
     s.busy = true;
     try { return await fn(); } catch (err) {
-      if (err?.aborted) throw new Error(s.stopped ? 'Stopped by the user.' : 'The user took over the app while this was running, so it was cut off. It may have partly happened: read the app again before going on.');
+      if (err?.aborted && s.stopped) throw new Error('Stopped by the user.');
+      if (err?.aborted) {
+        // The person took over mid-call. The call waits here for Resume (banner or card) or Stop, so the run is still there to carry on:
+        // returning at once ended the AI's turn with "you took over", and a later Resume had nothing left to resume.
+        s.busy = false;
+        await gate(s);
+        throw new Error('The user took over the app while this was running, so it was cut off, and has now pressed Resume. It may have partly happened: read the app again, then carry on with the task.');
+      }
       throw err;
     } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s) { if (s.live?.active()) s.live.kick(); else if (!s.card?.thumb) setImmediate(() => thumb(s)); } }
   }
@@ -373,8 +423,17 @@ function createDesktop(deps = {}) {
     if (win.app !== session.target.app) throw new Error('That window now belongs to a different program. Call list_apps and read the app again.');
     await authorize(win, ctx, { acting: true, what: `${action} ${el}` });
     const s = await useWindow(win, ctx, policy.stepLabel(action, { element: el }, win.name));
-    return act(s, () => getClient().call(cmd, { ...targetOf(win), el, ...extra }, { timeoutMs: 20000 }));
+    keysForward(); // (only a path that sends keys brings the app forward: a UI Automation click leaves the foreground alone)
+    const r = await act(s, () => getClient().call(cmd, { ...targetOf(win), el, ...extra, raise: true }, { timeoutMs: 20000 }));
+    pointAt(s, r, { kind: action === 'click' ? 'click' : 'point' }); // (where the item is, as the helper measured it: UI Automation never moves the pointer)
+    return r;
   }
+
+  // Keys go to the window in front. The helper is a background process Windows does not let take the foreground, so typing into an app while
+  // Lumen or another window was in front stopped at the first key ("the keyboard focus left the app"): Lumen lets the helper hand the foreground
+  // on (AllowSetForegroundWindow), and the helper brings the app forward once before the first key (raise: uia-helper.ps1 Bring-Forward). Its
+  // guard still stops if the user takes the foreground while it types.
+  function keysForward() { try { getApi()?.allowForeground?.(); } catch { /* the helper still tries */ } }
 
   async function click(args, ctx) {
     const r = await elementCall('click', args, ctx, 'invoke', {});
@@ -394,7 +453,8 @@ function createDesktop(deps = {}) {
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `press ${parsed.shown}` });
     const s = await useWindow(win, ctx, policy.stepLabel('press_keys', { keys: parsed.shown }, win.name));
-    await act(s, () => getClient().call('keys', { ...targetOf(win), chords: parsed.chords }, { timeoutMs: 15000 }));
+    keysForward();
+    await act(s, () => getClient().call('keys', { ...targetOf(win), chords: parsed.chords, raise: true }, { timeoutMs: 15000 }));
     return `Pressed ${parsed.shown} in ${win.name}.`;
   }
 
@@ -441,14 +501,65 @@ function createDesktop(deps = {}) {
       Object.assign(req, { dy, dx }); what = `scroll at ${points[0].join(', ')}`;
     }
     await authorize(win, ctx, { acting: true, what });
-    const s = await useWindow(win, ctx, policy.stepLabel(action, { x: points[0][0], y: points[0][1] }, win.name));
-    try { getApi()?.allowForeground?.(); } catch { /* the helper raises the app itself if it can */ }
-    s.pointing = true;
+    const label = policy.stepLabel(action, { x: points[0][0], y: points[0][1] }, win.name);
+    const s = await useWindow(win, ctx, label);
+    const frac = (p) => ({ fx: (p[0] + 0.5) / shot.w, fy: (p[1] + 0.5) / shot.h }); // (the helper maps a pixel onto the window through its middle the same way)
+    pointAt(s, frac(points[0])); // the AI's cursor goes to the spot first; the ring shows when it presses
+    // UI Automation first, then window messages; the system pointer only when the app takes neither (or real_mouse: the AI saw it ignore them).
+    const routes = args.real_mouse === true ? ['real'] : ROUTES;
+    const skipped = [];
+    let done = null;
+    let restored = null;
+    const call = { ...targetOf(win), ...req, points, pw: shot.w, ph: shot.h, rw: shot.rw, rh: shot.rh };
     try {
-      await act(s, () => getClient().call('mouse', { ...targetOf(win), ...req, points, pw: shot.w, ph: shot.h, rw: shot.rw, rh: shot.rh }, { timeoutMs: 15000 }));
-    } finally { setTimeout(() => { if (!s.busy) s.pointing = false; }, 300).unref?.(); } // (the pointer stays where the AI left it: the baseline follows it until busyUntil has passed)
+      await act(s, async () => {
+        for (const via of routes) {
+          if (via !== 'real') {
+            const r = await getClient().call('mouse', { ...call, via }, { timeoutMs: 15000 });
+            if (r?.skip) { skipped.push(`${via}: ${r.skip}`); continue; }
+            done = { ...r, via };
+            return;
+          }
+          const w = getApi();
+          let home;
+          try { home = w?.cursor?.() || null; } catch { home = null; } // where the person left the pointer
+          try { w?.allowForeground?.(); } catch { /* the helper raises the app itself if it can */ }
+          s.pointing = true; // (from here the AI presses the real buttons: the poll does not take that for the person)
+          try {
+            const r = await getClient().call('mouse', { ...call, via }, { timeoutMs: 15000 });
+            done = { ...r, via };
+          } finally { restored = putBack(w, home, endAt(w, win.hwnd, frac(points[points.length - 1])) || done?.at?.[done.at.length - 1]); }
+          return;
+        }
+      });
+    } finally { if (s.pointing) setTimeout(() => { if (!s.busy) s.pointing = false; }, 300).unref?.(); } // (the button bits the AI set are cleared by the polls meanwhile)
     list.at = 0;
-    return `Did: ${what} in ${win.name}. Take a screenshot_app to see the result (the same picture size keeps the coordinates).`;
+    const via = done?.via || 'real';
+    const last = points[points.length - 1];
+    pointAt(s, frac(last), { from: action === 'drag' ? frac(points[0]) : null, kind: action === 'click_at' ? (req.double ? 'double' : 'click') : action });
+    if (session === s && s.card) { s.label = `${policy.withWindow(label, win)} · ${ROUTE_STEP[via]}`; cardEvent(s, s.paused ? 'paused' : 'working'); } // the card's step line says which way it went
+    const back = via !== 'real' ? '' : restored === true ? ' Your pointer was put back where it was.' : restored === false ? ' The pointer was left where you moved it.' : '';
+    const tried = skipped.length && via === 'real' && args.real_mouse !== true ? ` (${skipped.join('; ')})` : '';
+    return `Did: ${what} in ${win.name}, ${ROUTE_WORDS[via]}${tried}.${back}${via !== 'real' ? ' If nothing changed, the app may ignore that way: pass real_mouse: true to use the real pointer.' : ''} Take a screenshot_app to see the result (the same picture size keeps the coordinates).`;
+  }
+
+  // Where the AI left the pointer, in the same pixels as winapi's cursor() (the window's rectangle as Lumen sees it, and the point's fractions):
+  // the helper's own pixels can differ from Lumen's when the two processes see the display scale differently.
+  function endAt(w, hwnd, f) {
+    let r;
+    try { r = w?.windowRect?.(hwnd) || null; } catch { r = null; }
+    return r ? [r[0] + f.fx * (r[2] - r[0]), r[1] + f.fy * (r[3] - r[1])] : null;
+  }
+
+  // After a real-mouse fallback: the pointer goes back where the person left it, unless they moved it meanwhile (it is no longer where the
+  // AI left it). -> true (put back), false (left: the person moved it), null (nothing to do or no way to tell).
+  function putBack(w, home, end) {
+    if (!home || !w?.setCursor) return null;
+    let pos;
+    try { pos = w.cursor?.() || null; } catch { pos = null; }
+    const at = Array.isArray(end) && end.length === 2 ? end : null;
+    if (pos && at && (Math.abs(pos.x - at[0]) > HOME_PX || Math.abs(pos.y - at[1]) > HOME_PX)) return false;
+    try { return w.setCursor(home.x, home.y) ? true : null; } catch { return null; }
   }
 
   // type with no element: into whatever has the keyboard focus in the app (a field click_at put the caret in). Guarded like every key (helper).
@@ -459,7 +570,8 @@ function createDesktop(deps = {}) {
     const win = await windowFor(args.name || args.id ? args : {});
     await authorize(win, ctx, { acting: true, what: `type ${text.length} character${text.length === 1 ? '' : 's'}` });
     const s = await useWindow(win, ctx, policy.stepLabel('type', {}, win.name));
-    await act(s, () => getClient().call('typefocus', { ...targetOf(win), text, submit: args.submit === true }, { timeoutMs: 20000 }));
+    keysForward();
+    await act(s, () => getClient().call('typefocus', { ...targetOf(win), text, submit: args.submit === true, raise: true }, { timeoutMs: 20000 }));
     return `Typed ${text.length} character${text.length === 1 ? '' : 's'} where the keyboard focus is in ${win.name}.${args.submit ? ' Pressed Enter.' : ''}`;
   }
 
@@ -568,7 +680,7 @@ function createDesktop(deps = {}) {
     session: () => (session ? { app: session.target?.name || '', paused: session.paused, card: session.card?.id || null } : null),
     stats: () => ({ ...stats, helperMs: client?.startMs?.() || 0 }),
     client: getClient,
-    destroy() { if (session) endSession(session, 'stopped'); try { client?.destroy?.(); } catch { /* gone */ } try { deps.banner?.destroy?.(); } catch { /* gone */ } },
+    destroy() { if (session) endSession(session, 'stopped'); try { client?.destroy?.(); } catch { /* gone */ } try { deps.banner?.destroy?.(); } catch { /* gone */ } try { deps.cursor?.destroy?.(); } catch { /* gone */ } },
     // tests
     _poll: () => session && poll(session),
     _thumb: () => (session ? thumb(session) : null),

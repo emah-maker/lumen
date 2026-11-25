@@ -172,24 +172,52 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
   fs.writeFileSync(path.join(userHome, 'auth.json'), 'tok');
   fs.writeFileSync(path.join(userHome, 'models_cache.json'), JSON.stringify({ fetched_at: '2026-11-23T13:09:59Z', models: [{ slug: 'gpt-6-luna', supports_search_tool: true }] })); // [web search] a signed-in Codex has one
   let n = 0;
-  const setup = ({ on = true, idleMs = 60000, maxProcs = 4, cancelWaitMs = 2000, watchdogMs = 0, readyWaitMs = 300 } = {}) => {
+  const setup = ({ on = true, idleMs = 60000, maxProcs = 4, cancelWaitMs = 2000, watchdogMs = 0, readyWaitMs = 300, toolsMissing = null } = {}) => {
     const fake = fakeCodex();
     const userData = path.join(tmp, `ud${++n}`);
     const fakeGate = mkGate();
     const engine = new cx.CodexEngine({ userData, gate: async () => fakeGate, locate: async () => spec, userHome: () => userHome, tmp: tmpDir, spawn: fake.spawn, kill: (c) => c.kill(), exec: () => {}, watchdogMs });
     const state = { on, idleMs };
-    engine.keepWarm = warmLib.createCodexWarm({ engine, enabled: () => state.on, idleMs: () => state.idleMs, maxProcs, cancelWaitMs, readyWaitMs, quitGraceMs: 100 });
+    engine.keepWarm = warmLib.createCodexWarm({ engine, enabled: () => state.on, idleMs: () => state.idleMs, maxProcs, cancelWaitMs, readyWaitMs, quitGraceMs: 100, toolsMissing });
     return { fake, engine, state, pool: engine.keepWarm, userData, fakeGate };
   };
-  const send = async (engine, { prompt = 'hi', sessionId = null, chatId = 'chat-a', systemPrompt = 'SYS', model = 'default', effort = '', fullAccess = false, images = [], signal = new AbortController().signal, quietExpired = false, steers = null } = {}) => {
+  const send = async (engine, { prompt = 'hi', sessionId = null, chatId = 'chat-a', chat = undefined, systemPrompt = 'SYS', model = 'default', effort = '', fullAccess = false, images = [], signal = new AbortController().signal, quietExpired = false, steers = null } = {}) => {
     const events = [];
     const t0 = Date.now();
     let ttft = null;
-    const out = await engine.run({ prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, quietExpired, steers, scope: { chatId }, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
+    const out = await engine.run({ prompt, images, sessionId, systemPrompt, model, effort, fullAccess, signal, quietExpired, steers, scope: { chatId, ...(chat ? { chat } : {}) }, emit: (e) => { events.push(e); if (ttft === null && e.type === 'text') ttft = Date.now() - t0; } });
     return { out, events, ttft, ms: Date.now() - t0 };
   };
 
   try {
+    // ---- [tools] a kept process started before the chat needed the word tool (a prewarm at composer focus, then "fill in this .docx"):
+    // Codex listed Lumen's tools once, so the model said "The Word tool was unavailable". The message now gets a new process that resumes the thread.
+    {
+      const asked = [];
+      const chat = { cliWord: false };
+      const givenWord = new Set(); // the tags of processes that listed the word tool (those started once the chat was about Word)
+      const missing = (tag, c) => { asked.push([tag, c]); return c?.cliWord === true && !givenWord.has(tag); }; // (features/ai-agents.js toolsMissing)
+      const tagOf = (rec) => String(rec.opts.env.LUMEN_MCP_TOKEN).replace(/^m-/, '');
+      const { fake, engine, pool } = setup({ toolsMissing: missing });
+      const one = await send(engine, { chat });
+      const two = await send(engine, { chat, sessionId: one.out.sessionId });
+      check('tools: a chat that needs nothing new keeps its process (asked with that process\'s own tag and the chat)', two.out.text === 'warm reply 2' && fake.apps().length === 1 && asked.length === 1 && asked[0][0] === tagOf(fake.apps()[0]) && asked[0][1] === chat && pool.stats.toolRestarts === 0, J({ apps: fake.apps().length, asked: asked.length }));
+      chat.cliWord = true; // (agent.js cliWordNote: this message is about a Word document)
+      const three = await send(engine, { chat, sessionId: two.out.sessionId });
+      const second = fake.apps()[1];
+      check('tools: the chat turned to Word, so the kept process that was never given the word tool goes and a new one resumes the same thread', fake.apps().length === 2 && three.out.text === 'warm reply 1' && three.out.sessionId === one.out.sessionId && second.requests.some((m) => m.method === 'thread/resume') && pool.stats.toolRestarts === 1 && pool.stats.restarts === 1, J({ apps: fake.apps().length, stats: pool.stats, text: three.out.text, sid: three.out.sessionId }));
+      givenWord.add(tagOf(second));
+      const four = await send(engine, { chat, sessionId: three.out.sessionId });
+      check('tools: the new process listed the word tool, so the next message reuses it', fake.apps().length === 2 && four.out.text === 'warm reply 2' && pool.stats.toolRestarts === 1, J({ apps: fake.apps().length, stats: pool.stats, text: four.out.text }));
+      const quiet = setup();
+      const q1 = await send(quiet.engine, { chat: { cliWord: true } });
+      const q2 = await send(quiet.engine, { chat: { cliWord: true }, sessionId: q1.out.sessionId });
+      check('tools: without a toolsMissing check the process is kept as before', quiet.fake.apps().length === 1 && q2.out.text === 'warm reply 2' && quiet.pool.stats.toolRestarts === 0);
+      const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'ai-agents.js'), 'utf8');
+      check('tools: Lumen gives the Codex, Grok Build and Antigravity kept processes the same toolsMissing check as Claude Code', (src.match(/toolsMissing: \(tag, chat\) => toolsMissing\(tag, chat\)/g) || []).length === 3 && /createCodexWarm\(\{[\s\S]{0,400}toolsMissing: \(tag, chat\) => toolsMissing/.test(src) && /createGrokWarm\(\{[\s\S]{0,400}toolsMissing: \(tag, chat\) => toolsMissing/.test(src) && /createAgyWarm\(\{[\s\S]{0,400}toolsMissing: \(tag, chat\) => toolsMissing/.test(src));
+      for (const f of ['grok-warm', 'agy-warm']) { const s = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', `${f}.js`), 'utf8'); check(`tools: ${f} ends a kept process that lacks a tool the chat needs, before reusing it`, /toolsMissing = null \}\) \{/.test(s) && /let p = await find\([^)]*\);[\s\S]{0,800}if \(p && toolsMissing\?\.\(p\.tag, scope\?\.chat\)\) \{ p\.busy = false; dispose\(p\);[^}]*p = null; \}\s+if \(p\) stats\.reused\+\+;/.test(s)); }
+    }
+
     // ---- off: exactly today's behaviour
     {
       const { fake, engine, pool } = setup({ on: false });

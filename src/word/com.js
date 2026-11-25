@@ -55,6 +55,12 @@ function createWordHost(deps = {}) {
     save: (a) => call('save', a, LONG_MS),
     saveAs: (a) => call('save_as', a, LONG_MS),
     show: (a) => call('show', a),
+    inspect: (a) => call('inspect', a, LONG_MS), // (each paragraph's formatting, and its page: Word lays the pages out first)
+    delete: (a) => call('delete', a),
+    toc: (a) => call('toc', a, LONG_MS),
+    fields: (a) => call('fields', a, LONG_MS),
+    checkpoint: (a) => call('checkpoint', a, LONG_MS),
+    restore: (a) => call('restore', a, LONG_MS),
     frame: (a) => call('frame', a, 15e3), // the card's live picture of Word's window
     peek: (a) => call('peek', a), // the paragraphs around the last change, for the page preview
     raw: call,

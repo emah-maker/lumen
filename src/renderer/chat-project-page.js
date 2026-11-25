@@ -12,6 +12,9 @@
 // in the project's chats (memory). Nothing here is a form that is always open.
 // Three views under the header: Overview (all of the above), Memory (the notes, all of them, full width) and Settings (instructions, defaults, permissions,
 // the folder, and the project itself: keep a temporary one, pin, archive, export, delete). A temporary or archived project says so above them.
+// [project templates] A Job applications project looks its own (a briefcase, the job colours, a "Job applications" badge) and opens on a fourth
+// view, Applications: the job dashboard (chat-job-board.js and .css, loaded the first time one is shown). Settings → Type (and ⋯) switches any
+// project to it and back; switching back hides the dashboard and keeps the tracker.
 (() => {
   const tr = (key, english, vars) => { const out = window.chatTr ? window.chatTr(key, english) : english; return vars ? out.replace(/\{(\w+)\}/g, (w, n) => (n in vars ? String(vars[n]) : w)) : out; };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -37,7 +40,20 @@
     open: '<path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/>',
     globe: '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.7 1.6 2.5 3.4 2.5 5.5S9.7 11.9 8 13.5C6.3 11.9 5.5 10.1 5.5 8S6.3 4.1 8 2.5z"/>',
     sliders: '<path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.6"/><circle cx="5.5" cy="11.5" r="1.6"/>',
+    briefcase: '<rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.8a1.3 1.3 0 0 1 1.3-1.3h2.4a1.3 1.3 0 0 1 1.3 1.3V5M2 8.8h12M7 8.8v1.2h2V8.8"/>',
   };
+  const JOB = 'job-applications';
+  const isJob = (p) => p?.template === JOB;
+  // [project templates] the job dashboard's script and stylesheet, the first time one is shown (marked data-later: not part of the page's start)
+  let boardLoading = null;
+  const loadJobBoard = () => (window.chatJobBoard ? Promise.resolve(true) : (boardLoading ||= new Promise((done) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-job-board.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'chat-job-board.js', onload: () => done(true), onerror: () => { boardLoading = null; done(false); } });
+    css.dataset.later = '';
+    js.dataset.later = '';
+    document.head.append(css);
+    document.body.append(js);
+  })));
   const icon = (name, className = '') => { const s = el('span', { className: `pjp-ic ${className}`.trim() }); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<svg viewBox="0 0 16 16">${ICON[name]}</svg>`; return s; };
 
   let page = null; // { root, id, ... } while a project page is open
@@ -685,6 +701,48 @@
   // (ai/project-places.js). Open, rename (click the name), pin, remove; documents first, then the folders and sites the chats keep coming back to.
   const PLACE_KIND = { file: 'File', pdf: 'PDF', doc: 'Word', sheet: 'Sheet', slides: 'Slides', drive: 'Drive', onedrive: 'OneDrive', web: 'Web', folder: 'Folder', site: 'Site' };
   const SHOWN_PLACES = 6;
+  // ---- [project templates] Applications: a project made from the Job applications template (features/project-templates.js). Its
+  // automation profile in short (Edit profile opens lumen://automations), a count per stage, the newest applications (the AI logs them
+  // with the applications tool; its automations' submits count too) and Export CSV. Drawn empty first, filled when the tracker answers.
+  function applicationsCard(data) {
+    if (data.project?.template !== 'job-applications' || typeof page.api.projectApplications !== 'function') return null;
+    const root = card(tr('projecttpl.apps', 'Applications'), { tip: tr('projecttpl.apps.tip', 'The applications in this project: the ones the AI logged after you submitted, and the ones its automations submitted. Kept on this computer with your automations, encrypted.'), className: 'pjp-apps' });
+    const say = status();
+    const id = page.id;
+    const day = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+    root.head.append(
+      button(tr('projecttpl.apps.profile', 'Edit profile'), () => page.api.projectApplications(id, 'open').catch(() => null)),
+      button(tr('projecttpl.apps.export', 'Export CSV'), async () => {
+        const out = await page.api.projectApplications(id, 'export').catch(() => null);
+        say.textContent = out?.ok ? tr('projecttpl.apps.exported', 'Saved.') : out?.canceled ? '' : tr('projecttpl.apps.exportFailed', 'Could not save the file.');
+      }),
+    );
+    root.body.append(note(tr('projecttpl.apps.loading', 'Loading…')));
+    page.api.projectApplications(id, 'get').then((t) => {
+      if (!t || !root.isConnected) return;
+      const parts = [];
+      const p = t.profile;
+      parts.push(note(p ? tr('projecttpl.apps.profileLine', 'Profile “{name}”: résumé {resume}, cover letter {cover}.', { name: p.name, resume: p.resume || tr('projecttpl.apps.none', 'not chosen yet'), cover: p.cover || tr('projecttpl.apps.none', 'not chosen yet') }) : tr('projecttpl.apps.noProfile', 'No automation profile yet: Edit profile makes one.')));
+      const counts = (t.stages || []).filter((st) => t.counts?.[st]).map((st) => `${t.counts[st]} ${tr(`projecttpl.stage.${st}`, st)}`);
+      parts.push(note(t.total ? counts.join(' · ') : tr('projecttpl.apps.empty', 'Nothing yet. Ask in a chat here: “tailor my résumé for this posting”, and after you submit, the AI logs it.')));
+      if (t.entries?.length) {
+        const list = el('ul', { className: 'pjp-list pjp-apps-list' });
+        for (const e of t.entries.slice(0, 12)) {
+          const li = el('li', { className: 'pjp-row pjp-app' });
+          const label = el('span', { className: 'pjp-row-text', textContent: [e.company || '?', e.role].filter(Boolean).join(' — '), title: e.url || '' });
+          if (e.url) { label.tabIndex = 0; label.setAttribute('role', 'link'); label.onclick = () => window.assistant?.openLink?.(e.url); label.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !isImeEnter(ev)) window.assistant?.openLink?.(e.url); }); }
+          li.append(el('div', { className: 'pjp-row-main' }, el('span', { className: `pjp-chip pjp-stage ${e.stage}`, textContent: tr(`projecttpl.stage.${e.stage}`, e.stage) }), label, el('span', { className: 'pjp-place-loc', textContent: day(e.at) })));
+          list.append(li);
+        }
+        parts.push(list);
+        if (t.total > 12) parts.push(note(tr('projecttpl.apps.more', '{n} more in the CSV.', { n: t.total - 12 })));
+      }
+      parts.push(say);
+      root.body.replaceChildren(...parts);
+    }).catch(() => { root.body.replaceChildren(note(tr('projecttpl.apps.failed', 'Could not read the tracker.'))); });
+    return root;
+  }
+
   function placesCard(data) {
     const root = card(tr('projectws.places', 'Key documents'), { tip: tr('projectws.places.tip', 'Where this project’s documents are: what its chats opened, read or edited, most used first. Each chat in the project gets this list, so the AI can open the right one straight away. Kept on this computer, encrypted.'), className: 'pjp-places' });
     const say = status();
@@ -991,7 +1049,7 @@
   }
 
   // ---- the page: the header, then the box, the latest chats and all of them on the left, the overview on the right (under them on a narrow window)
-  async function open({ api, id, host: h, focus = '' }) {
+  async function open({ api, id, host: h, focus = '', view = '' }) {
     close(false);
     const data = await api.project(id).catch(() => null);
     if (!data) return false;
@@ -1075,17 +1133,21 @@
         items: [
           { label: tr('projectws.folder', 'Folder and more…'), icon: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.2 1.5h4.8a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/></svg>', run: () => h.editFolder(page.data.project) },
           { label: tr('projectws.export', 'Export project…'), icon: svg('open'), run: exportProject },
+          { label: isJob(page.data.project) ? tr('projecttpl.type.toStandard', 'Make it a standard project') : tr('projecttpl.type.toJob', 'Make it a Job applications project'), icon: `<svg viewBox="0 0 16 16">${ICON.briefcase}</svg>`, run: () => setType(isJob(page.data.project) ? '' : JOB) },
           { label: tr('chatpage.project.delete', 'Delete project'), icon: '<svg viewBox="0 0 16 16"><path d="M3.5 5h9M6.5 5V3.5h3V5M5 5l.5 8h5L11 5"/></svg>', run: askDelete },
         ],
         onClose: () => { if (!document.activeElement || document.activeElement === document.body) more.focus(); },
       });
     };
+    const job = isJob(data.project);
     const mark = el('div', { className: 'pjp-mark' });
-    mark.append(icon('folder'));
+    mark.append(icon(job ? 'briefcase' : 'folder'));
+    root.classList.toggle('pjp-job', job);
+    const badge = job ? el('span', { className: 'pjp-type-badge', textContent: tr('projecttpl.job-applications', 'Job applications') }) : null;
     const head = el('header', { className: 'pjp-head' }, back,
       el('div', { className: 'pjp-head-row' },
         mark,
-        el('div', { className: 'pjp-head-text' }, title, desc, sub),
+        el('div', { className: 'pjp-head-text' }, ...[badge, title, desc, sub].filter(Boolean)),
         el('div', { className: 'pjp-actions' }, fresh, addFiles, folder, more)),
       confirm);
     // [temp projects] [project list] what the project is (temporary, archived), above the views
@@ -1101,7 +1163,7 @@
       notice.classList.toggle('temp', Boolean(p.temporary));
     };
     // Overview / Memory / Settings
-    const VIEWS = [['overview', tr('projectws.view.overview', 'Overview')], ['memory', tr('projectws.view.memory', 'Memory')], ['settings', tr('projectws.view.settings', 'Settings')]];
+    const VIEWS = [...(job ? [['jobs', tr('projecttpl.view.jobs', 'Applications')]] : []), ['overview', tr('projectws.view.overview', 'Overview')], ['memory', tr('projectws.view.memory', 'Memory')], ['settings', tr('projectws.view.settings', 'Settings')]];
     const tabs = el('div', { className: 'pjp-tabs' });
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-label', tr('projectws.view.label', 'Project views'));
@@ -1154,12 +1216,37 @@
       row.querySelector('.pjp-setting-text').replaceWith(say);
       return row;
     }
+    // [project templates] Type: Standard or Job applications. Switching adds the template's instructions after the project's own, its folder and
+    // its automation profile; nothing of the project is removed. Back to Standard: the dashboard is hidden, the tracker and profile are kept.
+    async function setType(type) {
+      const out = await api.saveProject({ id, name: page.data.project.name, type }).catch(() => null);
+      if (!out || out.error) { h.toast(tr('chatpage.project.failed', 'Could not save the project.')); return; }
+      h.toast(type ? (out.typeNote === 'long' ? tr('projecttpl.type.long', 'Now a Job applications project. Its instructions are long, so the job rules were not added to them: add what you need in Settings → Instructions.') : tr('projecttpl.type.on', 'Now a Job applications project: open Applications to see the dashboard.')) : tr('projecttpl.type.off', 'Now a standard project. The applications tracker is kept: switch back any time.'));
+      await open({ api, id, host: h, view: type ? 'jobs' : 'settings' });
+      h.refresh(); // (the sidebar's mark; after the page is drawn again, so its refresh finds the new type in place)
+    }
+    function typeLine(p, line) {
+      const group = el('div', { className: 'pjp-type-switch' });
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-label', tr('projecttpl.type', 'Project type'));
+      const choices = [['', tr('projecttpl.type.standard', 'Standard')], [JOB, tr('projecttpl.job-applications', 'Job applications')]];
+      for (const [value, label] of choices) {
+        const on = (p.template || '') === value;
+        const b = el('button', { type: 'button', className: `pjp-type-opt${on ? ' on' : ''}${value ? ' job' : ''}`, textContent: label });
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(on));
+        b.onclick = () => { if (!on) { for (const x of group.children) x.disabled = true; setType(value); } };
+        group.append(b);
+      }
+      return line(isJob(p) ? tr('projecttpl.type.jobNote', 'Type: Job applications. The dashboard, the tracker and the job rules for the AI. Standard hides them and keeps your applications.') : tr('projecttpl.type.note', 'Type. Job applications adds a dashboard, an applications tracker, a résumé folder and job rules for the AI. Your files, chats and memory stay as they are.'), group);
+    }
     // the Settings view's own card: the project as a whole
     const projectCard = () => {
       const p = page.data.project;
       const root2 = card(tr('projectws.settings.project', 'Project'), { className: 'pjp-project-card' });
       const line = (text, ...buttons) => el('div', { className: 'pjp-setting' }, el('span', { className: 'pjp-setting-text', textContent: text }), ...buttons);
       const rows = [];
+      rows.push(typeLine(p, line));
       if (p.temporary) rows.push(line(`${tr('projectws.temp.title', 'Temporary project.')} ${p.expires ? window.chatProjects.expiresText(p.expires) : ''}.`, button(tr('projectws.temp.keep', 'Keep as project'), keepIt, 'primary pjp-keep')));
       if (!p.archived) rows.push(line(p.pinned ? tr('projectws.settings.pinned', 'Pinned to the top of your projects.') : tr('projectws.settings.unpinned', 'Listed by your sort order.'), button(p.pinned ? tr('projectws.list.unpin', 'Unpin') : tr('projectws.list.pin', 'Pin to top'), async () => { await h.flag?.(page.data.project, 'pinned', !page.data.project.pinned); await reload(true); }, 'pjp-pin')));
       rows.push(line(p.archived ? tr('projectws.settings.archived', 'Archived: out of your project lists.') : tr('projectws.settings.archive', 'Archive it to take it out of your lists. Nothing is deleted.'), button(p.archived ? tr('projectws.list.unarchive', 'Move out of archive') : tr('projectws.list.archive', 'Archive'), async () => { await h.flag?.(page.data.project, 'archived', !page.data.project.archived); if (page) await reload(true); }, 'pjp-archive')));
@@ -1176,7 +1263,16 @@
       for (const b of tabButtons) { const on = b.dataset.view === v; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('on', on); }
       cols.hidden = v !== 'overview';
       viewBox.hidden = v === 'overview';
-      if (v === 'memory') { const m = memoryCard(page.data); m.querySelector('.pjp-memory-more:not([hidden])')?.click(); viewBox.replaceChildren(m, placesCard(page.data)); } // (the notes, then the project's key documents)
+      page.board = null;
+      if (v === 'jobs') { // [project templates] the dashboard
+        const holder = el('div', { className: 'pjp-jobs' });
+        viewBox.replaceChildren(holder);
+        loadJobBoard().then((ok) => {
+          if (!holder.isConnected) return;
+          if (!ok) { holder.replaceChildren(note(tr('projecttpl.apps.failed', 'Could not read the tracker.'))); return; }
+          page.board = window.chatJobBoard.draw(holder, { api, id, tr, openLink: (url) => window.assistant?.openLink?.(url), toast: (t) => h.toast(t), newChat: (text) => h.newChat(page.data.project, text) }); // (newChat: Find jobs with a job skill of the user's own)
+        });
+      } else if (v === 'memory') { const m = memoryCard(page.data); m.querySelector('.pjp-memory-more:not([hidden])')?.click(); viewBox.replaceChildren(m, placesCard(page.data)); } // (the notes, then the project's key documents)
       else if (v === 'settings') viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, projectCard(), instructionsCard(page.data), defaultsCard(page.data), permissionsCard(page.data), folderCard(page.data)));
       else { viewBox.replaceChildren(); if (was && was !== 'overview') reload(true); } // (the overview's cards show what changed in the other views)
     }
@@ -1184,7 +1280,7 @@
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
-    const side = el('aside', { className: 'pjp-side' }, instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
+    const side = el('aside', { className: 'pjp-side' }, ...[applicationsCard(data)].filter(Boolean), instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
     page.side = side;
     page.sub();
@@ -1192,14 +1288,14 @@
     const cols = el('div', { className: 'pjp-cols' }, ...main, side);
     root.append(el('div', { className: 'pjp-wrap' }, head, notice, tabs, cols, viewBox));
     drawNotice();
-    setView('overview');
+    setView(VIEWS.some(([x]) => x === view) ? view : job ? 'jobs' : 'overview');
     const mount = document.querySelector('.cp-main');
     document.getElementById('chat-root').hidden = true;
     mount.append(root);
     document.body.classList.add('cp-project-open');
     window.addEventListener('focus', onFocus);
     page.instructions = instructions;
-    if (focus === 'instructions') { instructions.scrollIntoView({ block: 'nearest' }); instructions.start(); } else page.composerText.focus();
+    if (focus === 'instructions') { setView('overview'); instructions.scrollIntoView({ block: 'nearest' }); instructions.start(); } else if (page.view === 'overview') page.composerText.focus(); else tabs.querySelector('.pjp-tab.on')?.focus();
     return true;
   }
   function close(notify = true) {
@@ -1228,11 +1324,12 @@
   async function refresh() {
     if (!page) return;
     page.redraw?.();
+    if (page.board && Date.now() - (page.boardAt || 0) > 1500) { page.boardAt = Date.now(); page.board.refresh(); } // [project templates]
     const shown = page.host.projects().find((p) => p.id === page.id);
     if (!shown) { if (page.listed) close(); return; } // [temp projects] gone from the list since it was shown (deleted, or swept): the page goes too
     page.listed = true;
     const mineNow = page.data.project;
-    if (shown.updated === mineNow.updated && shown.name === mineNow.name && shown.folderMissing === mineNow.folderMissing && Boolean(shown.pinned) === Boolean(mineNow.pinned) && Boolean(shown.archived) === Boolean(mineNow.archived) && shown.expires === mineNow.expires) return;
+    if (shown.updated === mineNow.updated && (shown.template || '') === (mineNow.template || '') && shown.name === mineNow.name && shown.folderMissing === mineNow.folderMissing && Boolean(shown.pinned) === Boolean(mineNow.pinned) && Boolean(shown.archived) === Boolean(mineNow.archived) && shown.expires === mineNow.expires) return;
     if (page.editing.size || page.syncing) return;
     page.syncing = true;
     const fresh = await page.api.project(page.id).catch(() => null);
@@ -1243,6 +1340,7 @@
     applyFresh(me, fresh);
   }
   function applyFresh(me, fresh) {
+    if ((fresh.project?.template || '') !== (me.data.project?.template || '')) { open({ api: me.api, id: me.id, host: me.host, view: me.view }); return; } // [project templates] its type changed: other views, other look
     me.data.project = fresh.project;
     me.data.files = fresh.files;
     me.data.totals = fresh.totals;
@@ -1257,8 +1355,8 @@
     me.composerText?.setAttribute('placeholder', tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: fresh.project.name }));
     const folderBtn = me.root.querySelector('.pjp-open-folder');
     if (folderBtn) folderBtn.hidden = !fresh.project.folder;
-    const next = [instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
-    me.side.replaceChildren(...next);
+    const next = [applicationsCard(me.data), instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
+    me.side.replaceChildren(...next.filter(Boolean));
     me.syncModel?.();
     me.sub?.();
     me.extras?.(); // [temp projects] the notice, and the Memory or Settings view when one is open
