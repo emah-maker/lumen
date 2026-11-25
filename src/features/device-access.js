@@ -6,8 +6,9 @@
 //
 // The site still gets a file only through upload_file, so the first upload to a site in a chat still shows its card
 // naming the files (unless the user chose Auto-allow or Bypass). Some places are never reachable, whatever the model
-// passes: Lumen's own profile (cookies, tokens, saved passwords), ssh/gpg/cloud credentials, the macOS keychains, and
-// .env files. Everything here is a plain function of its inputs (plus the file system), so test/units/device-access-units.js
+// passes: Lumen's own profile (cookies, tokens, saved passwords), ssh/gpg/cloud credentials, the macOS keychains,
+// AI command-line sign-ins (Claude Code, Codex, Gemini), browser password and cookie stores, .env files, and Windows
+// alternate-stream paths (file::$DATA). Everything here is a plain function of its inputs (plus the file system), so test/units/device-access-units.js
 // runs it in plain Node.
 
 const fs = require('fs');
@@ -22,7 +23,9 @@ class DeviceAccessError extends Error {}
 const OFF_TEXT = 'Using files on this computer is off. The user can turn on Settings → AI → "Let the AI use files on this computer", or attach the file in the chat instead.';
 
 // Folders under the home folder that hold credentials: never listed, never uploaded.
-const SECRET_DIRS = ['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.config/gcloud', '.config/gh', '.password-store', 'Library/Keychains', 'Library/Cookies'];
+const SECRET_DIRS = ['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.config/gcloud', '.config/gh', '.password-store', 'Library/Keychains', 'Library/Cookies', '.claude', '.codex', '.gemini', 'AppData/Roaming/gcloud']; // (.claude, .codex, .gemini hold the AI CLIs' session tokens, so the whole folder is off limits)
+// Browser password, cookie and form databases: only inside a browser's "User Data" tree, so a user's own file with one of these names still works.
+const BROWSER_STORE = /^(Login Data|Login Data For Account|Cookies|Web Data)(-journal)?$/i;
 // Files that hold credentials wherever they are.
 const SECRET_FILE = /^(\.env(\..+)?|\.netrc|\.npmrc|\.pypirc|\.git-credentials|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|keychain-db))$/i;
 const ENV_EXAMPLE = /^\.env\.(example|sample|template)$/i;
@@ -73,13 +76,15 @@ function resolvePath(raw, { home = os.homedir(), known } = {}) {
 }
 
 // Why `abs` (already resolved, and through any links) may not be used, or '' when it may. `profile`: Lumen's userData.
-function blockedReason(abs, { home = os.homedir(), profile = '' } = {}) {
+function blockedReason(abs, { home = os.homedir(), profile = '', platform = process.platform } = {}) {
+  if (platform === 'win32' && abs.slice(2).includes(':')) return 'That path names a hidden part of a file (an alternate data stream), which the AI never reads.'; // (a colon after the drive letter: file.txt::$DATA is file.txt)
   const under = (dir) => { const rel = path.relative(dir, abs); return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel)); };
   const inside = (dir) => { if (under(dir)) return true; try { const real = fs.realpathSync(dir); return real !== dir && under(real); } catch { return false; } }; // (abs is a real path: a home or profile behind a link, /var -> /private/var on macOS, is compared as it really is too)
   if (profile && inside(profile)) return 'That is Lumen\'s own profile (cookies, sign-ins, saved passwords), which the AI never reads.';
   for (const dir of SECRET_DIRS) if (inside(path.join(home, dir))) return `${path.join('~', dir)} holds credentials, which the AI never reads.`;
   const base = path.basename(abs);
   if (SECRET_FILE.test(base) && !ENV_EXAMPLE.test(base)) return `${base} looks like a credentials file, which the AI never reads.`;
+  if (BROWSER_STORE.test(base) && abs.split(/[\\/]/).includes('User Data')) return `${base} is a browser's saved passwords or cookies, which the AI never reads.`;
   return '';
 }
 

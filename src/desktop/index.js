@@ -314,14 +314,22 @@ function createDesktop(deps = {}) {
     if (s.stopped) throw new Error('Stopped by the user.');
     if (!s.paused) return;
     const ok = await new Promise((resolve) => { s.resume.push(resolve); const t = setTimeout(() => resolve(false), PAUSE_WAIT_MS); t.unref?.(); });
-    if (!ok || s.stopped) throw new Error('The user took over the app and did not let the AI carry on. Ask them what they want next.');
+    if (s.stopped) throw new Error('Stopped by the user.');
+    if (!ok) throw new Error('The user took over the app and did not let the AI carry on. Ask them what they want next.');
   }
 
   async function act(s, fn) {
     await gate(s);
     s.busy = true;
     try { return await fn(); } catch (err) {
-      if (err?.aborted) throw new Error(s.stopped ? 'Stopped by the user.' : 'The user took over the app while this was running, so it was cut off. It may have partly happened: read the app again before going on.');
+      if (err?.aborted && s.stopped) throw new Error('Stopped by the user.');
+      if (err?.aborted) {
+        // The person took over mid-call. The call waits here for Resume (banner or card) or Stop, so the run is still there to carry on:
+        // returning at once ended the AI's turn with "you took over", and a later Resume had nothing left to resume.
+        s.busy = false;
+        await gate(s);
+        throw new Error('The user took over the app while this was running, so it was cut off, and has now pressed Resume. It may have partly happened: read the app again, then carry on with the task.');
+      }
       throw err;
     } finally { s.busy = false; s.busyUntil = now() + 250; s.lastCall = now(); if (session === s) { if (s.live?.active()) s.live.kick(); else if (!s.card?.thumb) setImmediate(() => thumb(s)); } }
   }

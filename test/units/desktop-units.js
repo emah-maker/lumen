@@ -518,8 +518,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(40);
     cur = { x: 90, y: 90 }; click5 = true;
     rig5.d._poll();
+    await sleep(40);
+    check('"You took over" mid-call: the in-flight call is cut off at once (helper killed) and waits for Resume instead of ending the turn', rig5.d.paused() && rig5.store.aborted >= 1 && out5 === null, J([out5, rig5.store.aborted]));
+    rig5.d.resume();
     await flying;
-    check('"You took over" mid-call: the in-flight call is cut off at once (helper killed), with a note that it may have partly happened', rig5.d.paused() && rig5.store.aborted >= 1 && /took over the app while this was running/.test(out5), J([out5, rig5.store.aborted]));
+    check('"You took over" mid-call, then Resume: the call returns, saying it may have partly happened and to carry on', !rig5.d.paused() && /took over the app while this was running/.test(out5 || '') && /pressed Resume/.test(out5 || '') && /carry on/.test(out5 || ''), J([out5]));
+    // the same, then Stop: the waiting call ends as stopped
+    rig5.store.hangKeys = true;
+    out5 = null;
+    const flying2 = rig5.d.run({ action: 'press_keys', args: { keys: 'ctrl+s' } }, rig5.ctx).then(() => { out5 = 'done'; }, (e) => { out5 = e.message; });
+    await sleep(40);
+    click5 = true; rig5.d._poll();
+    await sleep(40);
+    check('"You took over" mid-call, then Stop: still waiting before Stop', rig5.d.paused() && out5 === null, J([out5]));
+    rig5.d.stop('banner');
+    await flying2;
+    check('"You took over" mid-call, then Stop: the waiting call ends with "Stopped by the user"', /Stopped by the user/.test(out5 || ''), J([out5]));
   }
 
   // ---- the card's Open / "Show in application": the helper is a background process, which Windows keeps from taking the foreground, so the click
