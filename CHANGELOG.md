@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Microsoft sign-in no longer pops Windows Hello by itself.** Reading Canvas or opening Word for the web showed Windows Security "Sign in with a passkey" (Face ID) for whatever Microsoft account the sign-in page last remembered. A page now gets a passkey prompt only right after you click or press a key on it; press the page's passkey button to use one. Lumen also no longer sends a client certificate without asking: the AI's tabs and background tasks never send one, and your own tabs ask once per site, with Don't send as the default.
 - **Opening a crafted email can't stall Lumen.** postal-mime, which reads saved emails (.eml), is updated to 4.2.1, which fixes very slow parsing of certain encoded headers.
 - **The AI can't reach more credential files.** With "Let the AI use files on this computer" on, it now also refuses Claude Code, Codex and Gemini sign-ins, browser password and cookie databases, and Windows alternate-stream paths such as `.env::$DATA`. Tests in `test/units/device-access-units.js`.
 - **Uploading files from your computer asks for each new file.** With "Let the AI use files on this computer" on, approving one upload to a site no longer lets the AI send other files there without asking; attached files still ask once per site. Tests in `test/units/device-access-units.js`.
