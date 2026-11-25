@@ -12,12 +12,12 @@ let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${String(detail).slice(0, 300)}`}`); };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ea-connect-'));
 const key = crypto.randomBytes(32);
-const fakeStorage = {
-  isEncryptionAvailable: () => true,
-  encryptString: (s) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key, iv); const body = Buffer.concat([c.update(s, 'utf8'), c.final()]); return Buffer.concat([iv, c.getAuthTag(), body]); },
-  decryptString: (b) => { const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); },
+const fakeCipher = {
+  available: () => true,
+  encrypt: (s) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key, iv); const body = Buffer.concat([c.update(s, 'utf8'), c.final()]); return Buffer.concat([iv, c.getAuthTag(), body]).toString('base64'); },
+  decrypt: (b64) => { const b = Buffer.from(b64, 'base64'); const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); },
 };
-const makeExt = () => createExternalApps({ file: path.join(tmp(), 'external-apps.json'), safeStorage: fakeStorage });
+const makeExt = () => createExternalApps({ file: path.join(tmp(), 'external-apps.json'), cipher: fakeCipher });
 const bridge = { command: 'C:\\Program Files\\Lumen\\Lumen.exe', args: ['C:\\Program Files\\Lumen\\resources\\app\\mcp.js'] };
 const found = { command: 'claude', args: [] };
 // A fake `claude`: records each argv; reply(argv) -> { ok, out } (default: everything works).
@@ -32,7 +32,7 @@ const tick = () => new Promise((r) => setImmediate(r));
   // ---------- the prompt offers the setup for a token-less Claude Code
   {
     const prompts = [];
-    const ext = createExternalApps({ file: path.join(tmp(), 'e.json'), safeStorage: fakeStorage, onPrompt: (e) => { if (e.type === 'open') prompts.push(e.prompt); } });
+    const ext = createExternalApps({ file: path.join(tmp(), 'e.json'), cipher: fakeCipher, onPrompt: (e) => { if (e.type === 'open') prompts.push(e.prompt); } });
     const s = { clientName: 'Claude Code', engine: null, controller: new AbortController() };
     await ext.admit(s, {}, { defer: true });
     ext.admitForCall(s);

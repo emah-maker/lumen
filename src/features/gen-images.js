@@ -164,7 +164,7 @@ function markdownImages(text) {
 const CHAT_KEY = /^(?:[a-f0-9]{16}|0)$/;
 const ID_RE = /^((?:[a-f0-9]{16}|0))~([a-f0-9]{16})$/;
 
-function createImageStore({ dir, encrypt = (s) => s, decrypt = (s) => s, available = () => true, maxBytes = MAX_BYTES }) {
+function createImageStore({ dir, encrypt = (s) => s, decrypt = (s) => s, decryptAsync = async (s) => decrypt(s), available = () => true, maxBytes = MAX_BYTES }) {
   const mem = new Map(); // id -> { buffer, mime }  (no keychain: nothing is written, as with chats)
   const parse = (id) => { const m = ID_RE.exec(String(id || '')); return m ? { chat: m[1], name: m[2] } : null; };
   const fileOf = (p) => path.join(dir, p.chat, `${p.name}.img`);
@@ -198,7 +198,19 @@ function createImageStore({ dir, encrypt = (s) => s, decrypt = (s) => s, availab
     } catch { return null; }
   }
 
+  // read() for a caller that can wait: a picture saved in the old format (before Electron 45) is read through the keychain, not refused.
+  async function readAsync(id) {
+    const p = parse(id);
+    if (!p) return null;
+    if (mem.has(id)) return mem.get(id);
+    try {
+      const raw = JSON.parse(await fs.promises.readFile(fileOf(p), 'utf8'));
+      const got = fromBase64(await decryptAsync(raw.enc), maxBytes);
+      return got ? { buffer: got.buffer, mime: got.mime } : null;
+    } catch { return null; }
+  }
   const dataUrl = (id) => { const r = read(id); return r ? `data:${r.mime};base64,${r.buffer.toString('base64')}` : null; };
+  const dataUrlAsync = async (id) => { const r = await readAsync(id); return r ? `data:${r.mime};base64,${r.buffer.toString('base64')}` : null; };
 
   function removeChat(chatId) {
     const chat = String(chatId);
@@ -220,7 +232,7 @@ function createImageStore({ dir, encrypt = (s) => s, decrypt = (s) => s, availab
     return n;
   }
 
-  return { save, read, dataUrl, removeChat, prune, parse };
+  return { save, read, readAsync, dataUrl, dataUrlAsync, removeChat, prune, parse };
 }
 
 // ---------- pictures a CLI engine wrote to disk ----------

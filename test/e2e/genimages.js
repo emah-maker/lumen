@@ -86,7 +86,7 @@ const SRC = path.join(__dirname, '..', '..', 'src').split(path.sep).join('/');
     return { block, read: block ? Boolean(store.read(block.id)) : false, size: JSON.stringify(snap).length };
   });
   check('the chat keeps a small reference and the file holds the picture', info.block?.id && info.read && info.size < 6000, JSON.stringify(info).slice(0, 200));
-  const encrypted = await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable());
+  const encrypted = await app.evaluate(() => global.__secretBox.available());
   const file = info.block ? path.join(profile, 'generated-images', info.block.id.split('~')[0], `${info.block.id.split('~')[1]}.img`) : '';
   check('the file is on disk in the profile (not in the settings)', !encrypted || (Boolean(file) && fs.existsSync(file)), file);
   const view = await app.evaluate(() => global.__agent.transcript());

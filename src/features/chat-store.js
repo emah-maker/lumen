@@ -81,7 +81,7 @@ async function serializeInSlices(snapshot) {
   return { text: parts.join(''), digest: hash.digest('base64'), size };
 }
 
-function createChatStore({ dir, encrypt, decrypt, available = () => true, limit = 500, legacyFile = null, now = () => Date.now(), onError = (err) => console.error('Could not save chat:', err?.message), onChange = null }) {
+function createChatStore({ dir, encrypt, decrypt, decryptAsync = async (v) => decrypt(v), isLegacy = () => false, available = () => true, limit = 500, legacyFile = null, now = () => Date.now(), onError = (err) => console.error('Could not save chat:', err?.message), onChange = null }) {
   const indexFile = path.join(dir, 'index.json');
   const chatFile = (id) => path.join(dir, `${id}.json`);
 
@@ -176,7 +176,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
       try {
         const outer = JSON.parse(raw);
         data = outer.enc ? JSON.parse(decrypt(outer.enc)) : outer;
-      } catch {
+      } catch (err) {
+        if (err?.transient) return { current: null, chats: [], degraded: true }; // the keychain can't answer yet (features/secret-box.js): retry next call, never write
         // Unparseable or undecryptable: keep the file for inspection and rebuild from the chat files.
         rebuilt = true;
         try { fs.renameSync(indexFile, `${indexFile}.corrupt-${Date.now()}`); } catch { return { current: null, chats: [], degraded: true }; }
@@ -385,7 +386,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
         const data = JSON.parse(await fsp.readFile(chatFile(id), 'utf8'));
         if (!data.enc) return data;
         await nextTick(); // (decrypting and parsing a long chat are separate tasks)
-        const text = decrypt(data.enc);
+        const text = await decryptAsync(data.enc); // (a file in the old format is read through the keychain, not refused)
         await nextTick();
         const snapshot = JSON.parse(text);
         savedDigest.set(id, digestOf(text));
@@ -967,7 +968,10 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
   function migrate() {
     if (!legacyFile || !fs.existsSync(legacyFile)) return null;
     let snapshot = null;
-    try { snapshot = readEnc(legacyFile); } catch { /* can't be decrypted here: drop it, as before */ }
+    try { snapshot = readEnc(legacyFile); } catch (err) {
+      if (err?.transient) return null; // the keychain can't answer yet: kept for the next start, never dropped
+      /* can't be decrypted here: drop it, as before */
+    }
     let id = null;
     if (available() && snapshot?.messages?.length) {
       id = newId();
@@ -989,11 +993,39 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     for (const id of [...jobs.keys()]) { cancelJob(id); if (!jobs.get(id).done) jobs.delete(id); }
   }
 
+  // [secret box] Chat files still in the format written before Electron 45 (one keychain blob each) are written again in the new
+  // one, one at a time in the background, so that a load() that can't wait (a chat opened from a tab, an export) finds them
+  // readable. The text is not changed: it is decrypted, encrypted again and checked before the file is replaced, and a file
+  // written meanwhile (a save) or with a save still waiting is left as it is. Returns how many were rewritten.
+  async function upgradeLegacy({ gapMs = 30 } = {}) {
+    const idx = readIndex();
+    if (idx.degraded || !available()) return 0;
+    let done = 0;
+    for (const { id } of [...idx.chats]) {
+      const file = chatFile(id);
+      if (jobs.has(id)) continue;
+      let raw;
+      try { raw = await fsp.readFile(file, 'utf8'); } catch { continue; }
+      let enc;
+      try { enc = JSON.parse(raw)?.enc; } catch { continue; }
+      if (typeof enc !== 'string' || !isLegacy(enc)) continue;
+      try {
+        const text = await decryptAsync(enc);
+        const next = encrypt(text);
+        if (decrypt(next) !== text) continue;
+        const unchanged = () => { if (jobs.has(id)) return false; try { return fs.readFileSync(file, 'utf8') === raw; } catch { return false; } };
+        if (await writeAtomicAsync(file, next, unchanged)) done++;
+      } catch { /* left in the old format: read through the keychain as before */ }
+      await sleep(gapMs);
+    }
+    return done;
+  }
+
   // [auto-delete chats] A chat another writer on this profile added to the index: never deleted by anything automatic here.
   const isForeign = (id) => foreign.has(id);
   // True when the chat list and projects can be trusted to decide what to delete: the index was read, and not rebuilt this run.
   function trusted() { return !readIndex().degraded && !rebuilt; }
-  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, setProjectFlag, setJobSync, removeProject, projectSnapshot, restoreProject, adoptProject, setProjectPermissions, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, newId, clearAll, adopt, usable };
+  return { trusted, isForeign, list, has, load, loadAsync, save, saveAsync, drain, projects, saveProject, setProjectFlag, setJobSync, removeProject, projectSnapshot, restoreProject, adoptProject, setProjectPermissions, setProject, moveToProject, restoreProjects, projectOf, lastWords, rename, remove, trash, restore, trashed, touch, setPinned, setArchived, search, current, setCurrent, flush, migrate, upgradeLegacy, newId, clearAll, adopt, usable };
 }
 
 // A chat as Markdown, for Export chat. `items` is transcriptFor()'s output.

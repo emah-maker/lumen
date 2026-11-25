@@ -14,7 +14,7 @@
 //    calls and connections; Take over pauses it (its calls are refused, with the reason) until Resume.
 //  - "Finished" notice: once an app's calls have stopped for RUN_QUIET_MS after it worked, `onFinished(app)` fires once.
 //
-// deps: { file, safeStorage { isEncryptionAvailable, encryptString, decryptString }, now, onChange(), onPrompt(prompt) (a prompt
+// deps: { file, cipher { available(), backend?(), encrypt(text) -> base64, decrypt(base64) -> text } (features/secret-box.js), now, onChange(), onPrompt(prompt) (a prompt
 //         to show, or the list changed), onFinished(app), setTimer, clearTimer }
 const fs = require('fs');
 const path = require('path');
@@ -41,7 +41,7 @@ const nameKey = (s) => cleanName(s).toLowerCase();
 // A client that calls itself Claude Code (its own name is "claude-code"; Lumen may have added "(no token)"): Settings and the Allow prompt offer to give it a key.
 const isClaudeCodeName = (s) => /^claude[ -]?code( \(no token\))*$/.test(nameKey(s));
 
-function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'external-app-tokens'), writeToken = writeTokenFile, safeStorage = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'external-app-tokens'), writeToken = writeTokenFile, cipher = null, now = Date.now, onChange = () => {}, onPrompt = () => {}, onFinished = () => {}, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   let records = [];
   // external-apps.json exists but could not be read: a copy was kept. Only the user's own change (add, revoke, the Ask switch)
   // may replace it; the quiet "last used" save never does.
@@ -77,11 +77,11 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     return { id: r.id, name: r.name, app: r.app || 'other', kind: r.secret ? 'token' : r.remembered ? 'remembered' : 'session', unverified: !r.secret, claudeCode: !r.secret && isClaudeCodeName(r.name), createdAt: r.createdAt, lastUsed: r.lastUsed || null, ask: r.ask === true, connected: l ? l.sessions.size : 0, busy: l ? l.busy > 0 : false, paused: Boolean(l?.paused) };
   };
   // (Linux's basic_text backend only obfuscates: that is no keychain)
-  const encryptionOk = () => Boolean(safeStorage?.isEncryptionAvailable?.()) && safeStorage.getSelectedStorageBackend?.() !== 'basic_text';
+  const encryptionOk = () => Boolean(cipher?.available?.()) && cipher.backend?.() !== 'basic_text';
   const tokenFileOf = (id) => path.join(tokenDir, `${id}.token`);
   const secretOf = (r) => {
     if (!r.secret || !encryptionOk()) return null;
-    try { return safeStorage.decryptString(Buffer.from(r.secret, 'base64')); } catch { return null; }
+    try { return cipher.decrypt(r.secret); } catch { return null; }
   };
 
   // ---- apps
@@ -90,7 +90,7 @@ function createExternalApps({ file, tokenDir = path.join(path.dirname(file), 'ex
     if (!encryptionOk()) throw new Error('This computer has no system keychain to keep the token in, so Lumen can’t make one safely.');
     if (records.some((r) => r.name.toLowerCase() === label.toLowerCase() && r.secret)) throw new Error(`There is already an app called “${label}”. Pick another name, or revoke that one first.`);
     const { id, token } = clientToken.make();
-    const rec = { id, name: label, app: APPS[app] ? app : 'other', secret: safeStorage.encryptString(token).toString('base64'), createdAt: now(), lastUsed: null, ask: ask !== false };
+    const rec = { id, name: label, app: APPS[app] ? app : 'other', secret: cipher.encrypt(token), createdAt: now(), lastUsed: null, ask: ask !== false };
     const tokenFile = tokenFileOf(id);
     try { writeToken(tokenFile, token); } catch (err) { try { fs.rmSync(tokenFile, { force: true }); } catch {} throw new Error(`Lumen couldn’t make a private file for the token, so no app was added (${err.message}).`); }
     records.push(rec);

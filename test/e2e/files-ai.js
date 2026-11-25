@@ -184,7 +184,7 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
 
   // ---- on disk: encrypted, no contents
   await files('return f.flush();', null);
-  const keychain = await app.evaluate(({ safeStorage }) => safeStorage.isEncryptionAvailable());
+  const keychain = await app.evaluate(() => global.__secretBox.available());
   const raw = fs.existsSync(path.join(profile, 'files.json')) ? fs.readFileSync(path.join(profile, 'files.json'), 'utf8') : '';
   check('disk: files.json is encrypted and holds no names, paths or contents (nothing is written where there is no OS keychain)', keychain ? /"enc"/.test(raw) && !/Chapter|Thesis|SECRET|pptx|Elsewhere/.test(raw) : raw === '', raw.slice(0, 120));
   check('clear: empties the list, and the index of pinned folders', (await ui.evaluate(() => window.lumenFiles.clear())) === true && (await ui.evaluate(() => window.lumenFiles.list())).pinned.length === 0 && (await ui.evaluate(() => window.lumenFiles.search('quiz answers'))).length === 0, '');

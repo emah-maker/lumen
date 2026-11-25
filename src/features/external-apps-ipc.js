@@ -3,7 +3,7 @@
 // hands the result to the MCP server's hooks (identify, onInitialize, onClose) and to mcpCallTool (beginCall).
 //
 // Returns { ext, invoke: { <name>: fn }, send: { <name>: fn } }: ai-agents.js registers them as mcp:external-<name> on first use (nothing here loads at
-// start-up: most people never use it). deps: { app, readSettings, writeSettings, userWc(), mcpCommand(), mcpServer(), startMcp(), agentWindows, showAgentWindow(rec) }
+// start-up: most people never use it). deps: { app, readSettings, writeSettings, secrets (features/secret-box.js), userWc(), mcpCommand(), mcpServer(), startMcp(), agentWindows, showAgentWindow(rec) }
 const path = require('path');
 const fs = require('fs');
 const externalApps = require('./external-apps');
@@ -46,7 +46,7 @@ function setupExternalApps(deps) {
   }
   ext = externalApps.createExternalApps({
     file: path.join(app.getPath('userData'), 'external-apps.json'),
-    safeStorage: isTest && global.__externalAppsSafeStorage ? global.__externalAppsSafeStorage : electron().safeStorage,
+    cipher: isTest && global.__externalAppsCipher ? global.__externalAppsCipher : deps.secrets,
     onChange: broadcast,
     onPrompt: (e) => { if (e.type === 'open') notify('Lumen', `Unverified app “${e.prompt.name}” wants to use Lumen. Open Lumen to allow or deny it.`, { silent: false, onClick: () => { try { deps.userWc()?.focus(); } catch {} } }); },
     onFinished: (a) => notify('Lumen', `${a.name} finished in Lumen`),
