@@ -141,7 +141,7 @@ function manualEntry(input, { projectId, now = Date.now() } = {}) {
   const resume = resumeName(input?.resume);
   return {
     ok: true,
-    entry: { at: now, automationId: '', automation: ({ page: 'Added by you', sheet: 'Google Sheet', email: 'Gmail' })[input?.from] || 'In chat', runId: '', url, company, role, status: 'done', need: '', submittedAt: stage === 'saved' ? 0 : now, note: line(input?.note, 300), filled: [], projectId: String(projectId ?? ''), stage, id: crypto.randomBytes(6).toString('hex'), history: [{ stage, at: now }], ...(RESPONSES.has(stage) ? { respondedAt: now } : {}), ...(resume ? { resume } : {}) },
+    entry: { at: now, automationId: '', automation: ({ page: 'Added by you', sheet: 'Google Sheet', email: 'Gmail', search: 'Job search' })[input?.from] || 'In chat', runId: '', url, company, role, status: 'done', need: '', submittedAt: stage === 'saved' ? 0 : now, note: line(input?.note, 300), filled: [], projectId: String(projectId ?? ''), stage, id: crypto.randomBytes(6).toString('hex'), history: [{ stage, at: now }], ...(RESPONSES.has(stage) ? { respondedAt: now } : {}), ...(resume ? { resume } : {}) },
   };
 }
 // A tailored résumé's file name (no folder: the copies are in the project's "Tailored résumés" folder), or ''.

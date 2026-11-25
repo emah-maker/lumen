@@ -9910,7 +9910,7 @@ const agent = new Agent({
       if (!p) return null;
       const rt = automations();
       const after = (r) => { if (r?.ok) kickJobSheet(p.id); return r; }; // [project templates] the linked tracker sheet follows
-      return { list: () => rt.applications(p.id), add: (input) => after(rt.logApplication(p.id, { ...input, from: '' })), update: (input) => after(rt.updateApplication(p.id, input)) };
+      return { list: () => rt.applications(p.id), add: (input) => after(rt.logApplication(p.id, { ...input, from: '' })), update: (input) => after(rt.updateApplication(p.id, input)), ...(jobSearchReady() ? { search: (input) => runJobSearch(input) } : {}) };
     },
   },
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
@@ -13153,6 +13153,69 @@ const sourcesOf = async (p) => {
   try { gmail = Boolean((await connectorsGoogle.status())?.oauth); } catch { /* not signed in */ }
   return { sheet: link ? { ...link, url: `https://docs.google.com/spreadsheets/d/${link.id}/edit` } : null, sheets: Boolean(sheetsReq()), gmail, emailAt: p.jobSync?.emailAt || 0, suggestions: jobEmailFound.get(p.id) || [] };
 };
+// [project templates] Find jobs (features/job-search.js): a job skill the user has, or Job search (JobSpy) installed on request into
+// <userData>/job-search/venv. A search runs that Python with the runner on stdin-fed arguments; nothing else is run from there.
+const jobSearchLib = () => require('./features/job-search');
+const jobSearchDir = () => path.join(app.getPath('userData'), 'job-search');
+const jobSearchPython = () => (TEST && global.__jobSearchPython) || path.join(jobSearchDir(), 'venv', process.platform === 'win32' ? 'Scripts\\python.exe' : 'bin/python3');
+function runPy(cmd, args, { input = '', timeout = 120000 } = {}) {
+  return new Promise((resolve) => {
+    let out = '';
+    let err = '';
+    let child;
+    try { child = require('./ai/cli-utils').spawn(cmd, args, { env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1', PIP_DISABLE_PIP_VERSION_CHECK: '1' } }); } catch (e) { resolve({ code: -1, out: '', err: String(e?.message || e) }); return; }
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, timeout);
+    child.stdout.on('data', (d) => { if (out.length < 5e6) out += d; });
+    child.stderr.on('data', (d) => { err = (err + d).slice(-20000); });
+    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -1, out, err: String(e?.message || e) }); });
+    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
+    child.stdin.on('error', () => {});
+    child.stdin.end(input);
+  });
+}
+const jobSearchReady = () => (TEST && global.__jobSearchFake) ? true : fs.existsSync(jobSearchPython());
+const lastLine = (text) => String(text || '').trim().split(/\r?\n/).filter(Boolean).pop()?.slice(0, 200) || '';
+let jobInstall = null; // the install running now
+function installJobSearch() {
+  if (jobInstall) return jobInstall;
+  jobInstall = (async () => {
+    const lib = jobSearchLib();
+    try {
+      if (TEST && global.__jobSearchInstallFake) { const r = await global.__jobSearchInstallFake(); if (!r?.ok) return r; } else {
+        let found = null;
+        for (const [cmd, pre] of lib.PYTHONS) {
+          const v = await runPy(cmd, [...pre, '--version'], { timeout: 15000 });
+          if (v.code === 0 && lib.pythonOk(`${v.out} ${v.err}`)) { found = [cmd, pre]; break; }
+        }
+        if (!found) return { ok: false, python: false, error: 'Job search needs Python 3.10 to 3.13 on this computer (JobSpy’s parts aren’t built for newer ones yet). Install Python 3.12 from python.org, then press Install again.' };
+        await fs.promises.mkdir(jobSearchDir(), { recursive: true });
+        const venv = await runPy(found[0], [...found[1], '-m', 'venv', path.join(jobSearchDir(), 'venv')], { timeout: 180000 });
+        if (venv.code !== 0) return { ok: false, error: `Could not make Lumen’s Python environment: ${lastLine(venv.err) || 'no reason given'}` };
+        const pip = await runPy(jobSearchPython(), ['-m', 'pip', 'install', '--no-input', lib.JOBSPY_PACKAGE], { timeout: 900000 });
+        if (pip.code !== 0) return { ok: false, error: `Could not install JobSpy: ${lastLine(pip.err) || 'no reason given'}` };
+      }
+      if (!skillsFeature.store.byName(lib.JOBSPY_SKILL.name)) { const r = skillsFeature.store.save({ ...lib.JOBSPY_SKILL }); if (r.ok) skillsFeature.changed(); }
+      return { ok: true };
+    } catch (err) { return { ok: false, error: String(err?.message || err).slice(0, 200) }; } finally { jobInstall = null; }
+  })();
+  return jobInstall;
+}
+async function runJobSearch(input) {
+  const lib = jobSearchLib();
+  const a = lib.searchArgs(input);
+  if (!a.ok) return a;
+  if (!jobSearchReady()) return { ok: false, error: 'Job search isn’t installed: Find jobs on the project’s Applications page installs it.' };
+  const r = TEST && global.__jobSearchFake ? { code: 0, out: await global.__jobSearchFake(a.args), err: '' } : await runPy(jobSearchPython(), ['-I', '-c', lib.RUNNER], { input: JSON.stringify(a.args), timeout: 300000 });
+  if (r.code !== 0) return { ok: false, error: `The search failed: ${lastLine(r.err) || 'no answer from the job boards'}` };
+  return lib.readResults(r.out, require('./features/automations'));
+}
+const jobSearchFound = new Map(); // project id -> the last search's listings (Save takes them from here)
+function jobSearchState() {
+  const lib = jobSearchLib();
+  let skill = null;
+  try { skill = lib.pickSkill(skillsFeature.all()); } catch { /* no skills */ }
+  return { installed: jobSearchReady(), installing: Boolean(jobInstall), package: lib.JOBSPY_PACKAGE, skill: skill ? { name: skill.name, title: skill.title, ours: skill.name === lib.JOBSPY_SKILL.name, claudeCode: String(skill.id || '').startsWith('cc:') || skill.source === 'claude-code' } : null };
+}
 const tailoredDir = (p) => (p?.folder ? path.join(p.folder, require('./features/project-templates').byId('job-applications').folders[0]) : '');
 async function tailoredNames(p) {
   const dir = tailoredDir(p);
@@ -13169,6 +13232,17 @@ ipcMain.handle('chats:project-applications', async (_e, id, action, arg) => {
   if (action === 'add') { const r = automations().logApplication(p.id, { company: arg?.company, role: arg?.role, url: arg?.url, stage: lib.STAGES.includes(arg?.stage) ? arg.stage : 'saved', from: 'page' }); if (r.ok) kickJobSheet(p.id); return { ok: r.ok, error: r.error }; }
   // [project templates] the user's own tracker sheet and Gmail (job-sync.js, above)
   if (action === 'sources') return sourcesOf(p);
+  // [project templates] Find jobs
+  if (action === 'search-state') return jobSearchState();
+  if (action === 'search-install') { const r = await installJobSearch(); return { ...r, state: jobSearchState() }; }
+  if (action === 'search') { const r = await runJobSearch(arg); if (r.ok) jobSearchFound.set(p.id, r.listings); const have = automations().applications(p.id); return r.ok ? { ok: true, listings: r.listings.map((l) => ({ ...l, tracked: Boolean(lib.appliedBefore(have, l.url)) })) } : r; }
+  if (action === 'search-save') {
+    const want = new Set((Array.isArray(arg?.urls) ? arg.urls : []).map(String));
+    let saved = 0;
+    for (const l of (jobSearchFound.get(p.id) || []).filter((x) => want.has(x.url))) if (automations().logApplication(p.id, { company: l.company, role: l.title, url: l.url, stage: 'saved', from: 'search', note: [l.site, l.location, l.pay].filter(Boolean).join(' · ') }).ok) saved++;
+    if (saved) kickJobSheet(p.id);
+    return { ok: true, saved };
+  }
   if (action === 'connect') { openSettingsPage('connectors'); return { ok: true }; }
   if (action === 'link-sheet') {
     const sid = sheetIdOf(arg?.url);

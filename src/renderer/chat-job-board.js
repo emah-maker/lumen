@@ -10,12 +10,15 @@
 // [project templates] Sources: a Google Sheet the user already tracks in, linked here and kept in step both ways (main reads it when the
 // dashboard opens, at most every 2 minutes, and writes Status cells and new rows when "Keep the sheet updated" is on), and Gmail: "Check
 // email" sorts application emails into suggestions (received, interview, offer, rejection) the user applies or ignores (features/job-sync.js).
+// [project templates] Find jobs, a fourth view (features/job-search.js): with a job skill of the user's own, a search starts a chat in the
+// project with it (ctx.newChat); with none, it offers to install Job search (JobSpy), then searches right here: listings with Open and
+// Save (to the tracker as Saved, and from there to the linked sheet).
 (() => {
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.filter((k) => k !== null && k !== undefined && k !== false)); return n; };
   const COLUMNS = [['saved', ['saved']], ['applied', ['applied']], ['interview', ['interview']], ['offer', ['offer']], ['closed', ['rejected', 'withdrawn']]];
   const STAGE_OF_COLUMN = { saved: 'saved', applied: 'applied', interview: 'interview', offer: 'offer', closed: 'rejected' }; // (a card dropped on Closed is rejected; its menu has Withdrawn)
   const STAGES = ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'];
-  const VIEWS = ['board', 'table', 'timeline'];
+  const VIEWS = ['board', 'table', 'timeline', 'find'];
   const DAY = 86400000;
   const ICON = {
     open: '<path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/>',
@@ -24,6 +27,7 @@
     clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>',
     board: '<rect x="2.5" y="3" width="3" height="10" rx="1"/><rect x="6.5" y="3" width="3" height="7" rx="1"/><rect x="10.5" y="3" width="3" height="5" rx="1"/>',
     table: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M2.5 10h11M6.5 3v10"/>',
+    find: '<circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2 13.5 13.5"/>',
     timeline: '<path d="M4.5 2.5v11"/><circle cx="4.5" cy="4.5" r="1.4"/><circle cx="4.5" cy="8" r="1.4"/><circle cx="4.5" cy="11.5" r="1.4"/><path d="M7.5 4.5h6M7.5 8h5M7.5 11.5h6"/>',
   };
   const icon = (name) => { const s = el('span', { className: 'jb-ic' }); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<svg viewBox="0 0 16 16">${ICON[name]}</svg>`; return s; };
@@ -196,7 +200,7 @@
       const switcher = el('div', { className: 'jb-switch' });
       switcher.setAttribute('role', 'tablist');
       switcher.setAttribute('aria-label', tr('jobs.views', 'Views'));
-      const names = { board: tr('jobs.board', 'Board'), table: tr('jobs.table', 'Table'), timeline: tr('jobs.timeline', 'Timeline') };
+      const names = { board: tr('jobs.board', 'Board'), table: tr('jobs.table', 'Table'), timeline: tr('jobs.timeline', 'Timeline'), find: tr('jobs.find', 'Find jobs') };
       for (const v of VIEWS) {
         const b = el('button', { type: 'button', className: `jb-switch-btn${v === view ? ' on' : ''}` }, icon(v), el('span', { textContent: names[v] }));
         b.setAttribute('role', 'tab');
@@ -334,6 +338,86 @@
       return out;
     }
 
+    // ---- Find jobs
+    const find = { state: null, listings: null, busy: '', form: { query: '', location: '', type: 'internship', days: '14' }, picked: new Set() };
+    async function findState() { find.state = await api.projectApplications(id, 'search-state').catch(() => null); if (view === 'find' && root.isConnected) render(); }
+    function findView() {
+      const box = el('section', { className: 'jb-find' });
+      const st = find.state;
+      if (!st) { box.append(el('p', { className: 'jb-empty', textContent: tr('projecttpl.apps.loading', 'Loading…') })); findState(); return box; }
+      const head = (title, text) => el('div', { className: 'jb-find-head' }, el('strong', { textContent: title }), text ? el('span', { className: 'jb-muted', textContent: text }) : null);
+      const useOwn = st.skill && !st.skill.ours;
+      if (!st.skill && !st.installed) {
+        const install = small(find.busy === 'install' ? tr('jobs.find.installing', 'Installing… (a minute or two)') : tr('jobs.find.install', 'Install Job search'), async (b) => {
+          find.busy = 'install'; render();
+          const out = await api.projectApplications(id, 'search-install').catch(() => null);
+          find.busy = '';
+          if (out?.state) find.state = out.state;
+          say.textContent = out?.ok ? tr('jobs.find.installed', 'Job search is installed. Search below.') : out?.error || tr('jobs.src.failed', 'That didn’t work. Try again.');
+          render();
+        }, 'primary');
+        install.disabled = find.busy === 'install';
+        box.append(el('div', { className: 'jb-find-offer' },
+          el('span', { className: 'jb-src-ic find', textContent: '⌕' }),
+          el('div', { className: 'jb-find-offer-text' },
+            el('strong', { textContent: tr('jobs.find.noSkill', 'No job search skill yet') }),
+            el('p', { textContent: tr('jobs.find.offer', 'Install Job search: JobSpy, the most-starred job scraper on GitHub (MIT), searches LinkedIn, Indeed, Google Jobs and ZipRecruiter from this computer. Lumen makes a Python environment of its own and installs {pkg} there, with a skill the AI uses. It needs Python 3.10 to 3.13. Or add a job skill of your own in Settings → Skills.', { pkg: st.package }) })),
+          install));
+        return box;
+      }
+      if (useOwn) box.append(head(tr('jobs.find.ownSkill', 'Searches with your skill /{name}', { name: st.skill.name }), tr('jobs.find.ownNote', 'It runs in a new chat in this project; the listings you keep are saved here as Saved.')));
+      else box.append(head(tr('jobs.find.title', 'Find jobs'), tr('jobs.find.note', 'JobSpy searches the job boards from this computer. Listings aren’t checked: open one before applying.')));
+      const q = el('input', { type: 'text', className: 'jb-in jb-in-q', value: find.form.query, placeholder: tr('jobs.find.what', 'Role (mechanical engineering co-op)') });
+      const loc = el('input', { type: 'text', className: 'jb-in', value: find.form.location, placeholder: tr('jobs.find.where', 'Where (Boston, MA)') });
+      q.setAttribute('aria-label', tr('jobs.find.what', 'Role (mechanical engineering co-op)'));
+      loc.setAttribute('aria-label', tr('jobs.find.where', 'Where (Boston, MA)'));
+      const type = el('select', { className: 'jb-in' });
+      type.setAttribute('aria-label', tr('jobs.find.type', 'Type'));
+      for (const [v, label] of [['internship', tr('jobs.find.t.internship', 'Internship or co-op')], ['fulltime', tr('jobs.find.t.fulltime', 'Full-time')], ['', tr('jobs.find.t.any', 'Any type')]]) type.append(el('option', { value: v, textContent: label, selected: v === find.form.type }));
+      const days = el('select', { className: 'jb-in' });
+      days.setAttribute('aria-label', tr('jobs.find.days', 'Posted within'));
+      for (const d of ['1', '3', '7', '14', '30']) days.append(el('option', { value: d, textContent: tr('jobs.find.daysN', 'Last {n} days', { n: d }), selected: d === find.form.days }));
+      const go = el('button', { type: 'submit', className: 'btn small primary', textContent: find.busy === 'search' ? tr('jobs.find.searching', 'Searching… (up to a minute)') : useOwn ? tr('jobs.find.goChat', 'Search in a chat') : tr('jobs.find.go', 'Search') });
+      go.disabled = find.busy === 'search';
+      const form = el('form', { className: 'jb-find-form' }, q, loc, ...(useOwn ? [] : [type, days]), go);
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        find.form = { query: q.value.trim(), location: loc.value.trim(), type: type.value, days: days.value };
+        if (!find.form.query) { q.focus(); return; }
+        if (useOwn) {
+          ctx.newChat?.(`/${st.skill.name} ${find.form.query}${find.form.location ? ` in ${find.form.location}` : ''}\n\n${tr('jobs.find.chatAsk', 'Save each posting I want to keep with the applications tool (action add, stage saved).')}`);
+          return;
+        }
+        find.busy = 'search'; render();
+        const out = await api.projectApplications(id, 'search', { query: find.form.query, location: find.form.location, job_type: find.form.type, hours_old: Number(find.form.days) * 24, results: 30 }).catch(() => null);
+        find.busy = '';
+        find.listings = out?.ok ? out.listings : null;
+        find.picked = new Set();
+        say.textContent = out?.ok ? (out.listings.length ? '' : tr('jobs.find.none', 'Nothing found. Try other words, a wider place or more days.')) : out?.error || tr('jobs.src.failed', 'That didn’t work. Try again.');
+        render();
+      };
+      box.append(form);
+      if (useOwn && !st.installed) box.append(el('p', { className: 'jb-muted', textContent: tr('jobs.find.orInstall', 'Want to search right here instead? Remove or rename that skill and Find jobs offers Job search (JobSpy).') }));
+      if (find.listings?.length) {
+        const fresh = find.listings.filter((l) => !l.tracked);
+        const saveSome = async (urls, b) => {
+          const out = await act('search-save', { urls }, b);
+          if (out?.ok) { for (const l of find.listings) if (urls.includes(l.url)) l.tracked = true; say.textContent = tr('jobs.find.saved', 'Saved {n} to the tracker.', { n: out.saved }); render(); }
+        };
+        const bar = el('div', { className: 'jb-find-bar' }, el('span', { className: 'jb-muted', textContent: tr('jobs.find.count', '{n} postings · {fresh} new to your tracker', { n: find.listings.length, fresh: fresh.length }) }), el('span', { className: 'jb-grow' }), fresh.length ? small(tr('jobs.find.saveAll', 'Save all {n}', { n: fresh.length }), (b) => saveSome(fresh.map((l) => l.url), b)) : null);
+        const list = el('ul', { className: 'jb-find-list' });
+        for (const l of find.listings) {
+          const save = l.tracked ? el('span', { className: 'jb-pill s-saved', textContent: tr('jobs.find.inTracker', 'In tracker') }) : small(tr('jobs.find.save', 'Save'), (b) => saveSome([l.url], b), 'primary');
+          const meta = [l.location, l.remote ? tr('jobs.find.remote', 'remote') : '', l.site, l.posted ? day(l.posted) : '', l.pay].filter(Boolean).join(' · ');
+          list.append(el('li', { className: 'jb-find-row' },
+            el('div', { className: 'jb-find-main' }, el('strong', { textContent: l.title }), el('span', { className: 'jb-find-co', textContent: l.company || '?' }), el('span', { className: 'jb-muted', textContent: meta })),
+            linkBtn(tr('jobs.posting', 'Open the posting'), 'open', () => ctx.openLink(l.url), 'jb-posting'), save));
+        }
+        box.append(bar, list);
+      }
+      return box;
+    }
+
     function profileLine() {
       const p = data.profile;
       return el('p', { className: 'jb-profile-line' }, p
@@ -342,18 +426,21 @@
     }
 
     function render() {
+      if (!data) return; // (Find jobs' state can answer before the tracker does: the load draws it)
       const empty = !(data.entries || []).length;
       const parts = [tiles(), sources(), suggestions(), followUps(), toolbar(), profileLine()];
-      if (empty) parts.push(el('div', { className: 'jb-empty-state' }, el('strong', { textContent: tr('jobs.emptyTitle', 'No applications yet') }), el('p', { textContent: tr('jobs.emptyText', 'Ask in a chat here: “tailor my résumé for this posting”. After you submit, the AI logs it and it shows up here. Or add a posting yourself to keep it for later.') })));
+      if (view === 'find') parts.push(findView());
+      else if (empty) parts.push(el('div', { className: 'jb-empty-state' }, el('strong', { textContent: tr('jobs.emptyTitle', 'No applications yet') }), el('p', { textContent: tr('jobs.emptyText', 'Ask in a chat here: “tailor my résumé for this posting”. After you submit, the AI logs it and it shows up here. Or add a posting yourself to keep it for later.') })));
       else parts.push(view === 'table' ? table() : view === 'timeline' ? timeline() : board());
       parts.push(say);
       root.replaceChildren(...parts.filter(Boolean));
     }
 
     root.append(el('p', { className: 'jb-empty', textContent: tr('projecttpl.apps.loading', 'Loading…') }));
+    if (view === 'find') findState();
     load();
     // (a chat logged one: drawn again, but never under a half-typed posting or an open stage menu)
-    const busy = () => linking || Boolean(root.querySelector('.jb-addform')) || (root.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName));
+    const busy = () => linking || view === 'find' || Boolean(root.querySelector('.jb-addform')) || (root.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName));
     return { refresh: () => (root.isConnected && !busy() ? load() : null) };
   }
 

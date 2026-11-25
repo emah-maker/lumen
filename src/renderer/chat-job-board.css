@@ -141,3 +141,22 @@ select.jb-in { flex: 0 0 auto; }
 .jb-sug .jb-pill { flex: none; min-width: 92px; justify-content: center; }
 .jb-sug-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 4px; overflow: hidden; white-space: nowrap; }
 .jb-sug-subj { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12.5px; margin-left: var(--sp-2); }
+
+/* [project templates] Find jobs */
+.jb-find { display: flex; flex-direction: column; gap: var(--sp-4); }
+.jb-find-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); }
+.jb-find-offer { display: flex; align-items: flex-start; gap: var(--sp-4); padding: var(--sp-6); border-radius: 16px; background: linear-gradient(160deg, color-mix(in srgb, var(--job) 11%, transparent), color-mix(in srgb, var(--job-2) 8%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--job) 22%, transparent); }
+.jb-find-offer-text { flex: 1; min-width: 0; }
+.jb-find-offer-text p { margin: var(--sp-1) 0 0; color: var(--muted); font-size: 13px; max-width: 640px; }
+.jb-src-ic.find { background: linear-gradient(135deg, var(--job), var(--job-2)); color: #fff; font-size: 17px; }
+.jb-find-form { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.jb-find-form .jb-in-q { flex: 2 1 240px; }
+.jb-find-bar { display: flex; align-items: center; gap: var(--sp-3); }
+.jb-find-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-radius: 12px; box-shadow: inset 0 0 0 1px var(--hairline, var(--border)); overflow: hidden; }
+.jb-find-row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); }
+.jb-find-row + .jb-find-row { border-top: 1px solid var(--hairline, var(--border)); }
+.jb-find-row:hover { background: var(--hover); }
+.jb-find-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.jb-find-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.jb-find-co { font-size: 13px; color: color-mix(in srgb, var(--job) 75%, var(--text)); font-weight: 600; }
+.jb-find-main .jb-muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

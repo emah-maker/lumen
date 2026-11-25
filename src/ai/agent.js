@@ -661,8 +661,8 @@ const PROJECT_TOOL = {
 // of the run's own MCP session, to the CLI engines; never to an outside MCP client. The text is short on purpose.
 const APPLICATIONS_TOOL = {
   name: 'applications',
-  description: 'The project’s job applications tracker. list; check url (applied already?); add company role url resume note (after the user submitted; stage saved keeps a posting for later); update url|company stage note resume. resume: the tailored copy’s file name.',
-  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, resume: { type: 'string' }, note: { type: 'string' } }, required: ['action'] },
+  description: 'The project’s job applications tracker. list; check url (applied?); add company role url resume note (after the user submits; stage saved = for later); update url|company stage note resume; search query location job_type (job boards). resume: the tailored copy’s file name.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update', 'search'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, resume: { type: 'string' }, note: { type: 'string' }, query: { type: 'string' }, location: { type: 'string' }, job_type: { type: 'string', enum: ['internship', 'fulltime', 'parttime', 'contract'] } }, required: ['action'] },
   eager_input_streaming: true,
 };
 // [notes] The user's notepad (ai/notes.js, loaded on first use): read it, add to it, never edit or delete. Defined here so the module itself stays
@@ -4912,7 +4912,13 @@ ${prompt}` : prompt), historyImages: [] };
       if (!r.ok) throw new Error(r.error || 'Could not update it.');
       return `Updated: ${r.entry.company || r.entry.url} is now ${r.entry.stage}.`;
     }
-    throw new Error('action is list, check, add or update.');
+    if (action === 'search') { // [project templates] Find jobs (features/job-search.js): JobSpy on this computer, once the user installed it
+      if (!t.search) throw new Error('Job search isn’t set up: the user can install it on the project’s Applications page (Find jobs).');
+      const r = await t.search(input);
+      if (!r.ok) throw new Error(r.error || 'The search failed.');
+      return require('../features/job-search').describe(r.listings);
+    }
+    throw new Error('action is list, check, add, update or search.');
   }
   notesOffered(messages) {
     try {
@@ -5365,7 +5371,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'memory') return memoryLib.stepLabel(input); // [memory]
       if (name === 'project_files') return projectCtx.stepLabel(input); // [project workspace]
       if (name === 'notes') return require('./notes').stepLabel(input); // [notes]
-      if (name === 'applications') return ({ list: 'Reading the applications tracker', check: 'Checking the applications tracker', add: `Logging the application${input?.company ? ` to ${input.company}` : ''}`, update: `Updating the application${input?.company ? ` to ${input.company}` : ''}` })[input?.action] || 'Applications tracker'; // [project templates]
+      if (name === 'applications') return ({ list: 'Reading the applications tracker', check: 'Checking the applications tracker', add: `Logging the application${input?.company ? ` to ${input.company}` : ''}`, search: `Searching job boards${input?.query ? ` for ${String(input.query).slice(0, 60)}` : ''}`, update: `Updating the application${input?.company ? ` to ${input.company}` : ''}` })[input?.action] || 'Applications tracker'; // [project templates]
       if (name === 'research_board') return { add: 'Adding to the research board', quote: 'Pinning a quote', star: 'Starring a source', remove: 'Removing a source', list: 'Reading the research board', cite: `Formatting citations (${input.style || 'apa'})` }[input.action] || 'Using the research board';
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'document') return { outline: 'Reading the document outline', select_section: `Selecting the section ${quote(String(input.heading || ''), 40)}`, move_section: `Moving the section ${quote(String(input.heading || ''), 40)}`, replace: `Replacing ${quote(String(input.find || ''), 40)}`, style: 'Applying a style', insert_markdown: 'Inserting formatted text', verify: 'Checking the document against before my edits', undo: 'Undoing my edits to the document', read: 'Reading the document' }[input.action] || 'Working on the document';

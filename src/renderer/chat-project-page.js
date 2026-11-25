@@ -1270,7 +1270,7 @@
         loadJobBoard().then((ok) => {
           if (!holder.isConnected) return;
           if (!ok) { holder.replaceChildren(note(tr('projecttpl.apps.failed', 'Could not read the tracker.'))); return; }
-          page.board = window.chatJobBoard.draw(holder, { api, id, tr, openLink: (url) => window.assistant?.openLink?.(url), toast: (t) => h.toast(t) });
+          page.board = window.chatJobBoard.draw(holder, { api, id, tr, openLink: (url) => window.assistant?.openLink?.(url), toast: (t) => h.toast(t), newChat: (text) => h.newChat(page.data.project, text) }); // (newChat: Find jobs with a job skill of the user's own)
         });
       } else if (v === 'memory') { const m = memoryCard(page.data); m.querySelector('.pjp-memory-more:not([hidden])')?.click(); viewBox.replaceChildren(m, placesCard(page.data)); } // (the notes, then the project's key documents)
       else if (v === 'settings') viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, projectCard(), instructionsCard(page.data), defaultsCard(page.data), permissionsCard(page.data), folderCard(page.data)));
