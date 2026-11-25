@@ -1259,6 +1259,10 @@ if (TEST) global.__notifyClick = { // chat notifications: tell(spec, kind) makes
 // Registered once the app (and so session.defaultSession) exists; a separate whenReady hook so it
 // doesn't touch the app's main startup sequence.
 // Lumen's preloads for web pages, in the main session and each account's ([account tabs] prepareAccountSession).
+const WEBAUTHN_PRELOAD = path.join(__dirname, 'preload', 'webauthn-preload.js');
+// Any session made later without the passkey gate (features/passkeys.js gateSession) gets it once the code that made it has registered
+// its own preloads (setImmediate: a session's maker registers them in the same tick, and a second register of one id would throw).
+app.on('session-created', (ses) => setImmediate(() => { if (app.isReady() && ses === session.defaultSession) return; require('./features/passkeys').gateSession(ses, WEBAUTHN_PRELOAD); })); // (the main session's is in PAGE_PRELOADS)
 const PAGE_PRELOADS = [
   { id: 'lumen-page-dialogs', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') },
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
@@ -1281,6 +1285,7 @@ app.whenReady().then(() => {
   // The AI's hidden reader/search views (agent.js, partition 'claude-reader') load pages nobody
   // sees: they get no permissions at all (camera, location, notifications, …) and no downloads.
   const reader = session.fromPartition('claude-reader');
+  require('./features/passkeys').gateSession(reader, WEBAUTHN_PRELOAD); // (always the hidden API here: passkeys candidate)
   reader.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   reader.setPermissionCheckHandler(() => false);
   reader.on('will-download', (event, item) => { event.preventDefault(); try { item.cancel(); } catch {} });
@@ -11048,7 +11053,7 @@ const passkeys = require('./features/passkeys').createPasskeys({
   // The API at all: hidden (as before) in the AI's own pages; a page Lumen can't place yet keeps it, and the
   // request itself is checked against passkeyContext.
   candidate: (wc) => {
-    if (agentContents.has(wc) || (researchSes && wc.session === researchSes)) return false;
+    if (agentContents.has(wc) || (researchSes && wc.session === researchSes) || wc.session === session.fromPartition('claude-reader')) return false; // (the AI's research and hidden reader pages)
     for (const rec of winRecs) {
       const t = rcAlive(rec) ? tabsOf(rec).find((x) => alive(x) && x.view.webContents === wc) : null;
       if (t) return !(rec.agent || t.isolated || manners.isAiTab(t));
