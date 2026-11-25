@@ -828,7 +828,7 @@ function create(deps) {
     return usable.slice(0, 15).map((s) => ({ label: `${s.title}${takesInput(s) ? '…' : ''}`, click: () => run(s.id, selection) }));
   }
 
-  return { register, store, takeRun, menuTemplate, proposeFromChat, proposeUpdate, expand, summary, learning, promptBlock, useForAI, autoSkills, findAny };
+  return { register, store, takeRun, menuTemplate, proposeFromChat, proposeUpdate, expand, summary, learning, promptBlock, useForAI, autoSkills, findAny, all: () => [...store.list(), ...claudeCode()], changed }; // all, changed: [project templates] Find jobs looks for a job skill and installs one
 }
 
 module.exports = {
