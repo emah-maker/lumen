@@ -313,7 +313,7 @@
     let box = null;
     for (const id of ['clock', 'greeting', 'date']) {
       const el = document.getElementById(id);
-      if (!el || el.hidden) continue;
+      if (!el || el.hidden || typeof el.getBoundingClientRect !== 'function') continue;
       const b = el.getBoundingClientRect();
       if (!b.width || !b.height) continue;
       box = box ? { l: Math.min(box.l, b.left), t: Math.min(box.t, b.top), r: Math.max(box.r, b.right), b: Math.max(box.b, b.bottom) } : { l: b.left, t: b.top, r: b.right, b: b.bottom };
