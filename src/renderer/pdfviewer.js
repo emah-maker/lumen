@@ -43,6 +43,18 @@ const say = (text, actions = []) => {
   el.append(row);
 };
 const nameOf = () => { try { return decodeURIComponent(new URL(base).pathname.split('/').pop() || '') || 'PDF'; } catch { return 'PDF'; } };
+// The name the tab and the header show: the file's own name (what the user saved and looks for: "Chapter 7 final.pdf"), not the
+// title written inside the PDF, which is often stale or another document's ("Chapter 4" in a deck reused for chapter 7). The inner
+// title is used only when the address gives no real name (".../download?id=3", "view", a bare number, a blob: id); it shows on hover otherwise.
+// Pure: test/units/pdf-title-units.js runs it from this file's source.
+function pdfTitle(fileName, metaTitle) {
+  const name = String(fileName || '').trim();
+  const inner = String(metaTitle || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const stem = name.replace(/\.pdf$/i, '');
+  const generic = !name || name === 'PDF' || !/[a-z]/i.test(stem) || /^[0-9a-f-]{16,}$/i.test(stem) || /^(download|view|file|document|content|getfile|attachment|pdf|print|export|index|blob|untitled)$/i.test(stem);
+  if (generic && inner) return { title: inner, tip: name && name !== 'PDF' ? `${inner} (${name})` : inner };
+  return { title: name || 'PDF', tip: inner && inner.toLowerCase() !== stem.toLowerCase() ? `${name}: ${inner}` : name };
+}
 document.title = nameOf();
 $('name').textContent = nameOf();
 
@@ -249,7 +261,7 @@ async function open({ fresh = false } = {}) {
   pageBox.disabled = false;
   $('prev').disabled = true;
   $('next').disabled = doc.numPages < 2;
-  doc.getMetadata().then(({ info }) => { const title = String((info && info.Title) || '').trim(); if (title) { document.title = title; $('name').textContent = title; $('name').title = title; } }).catch(() => {});
+  doc.getMetadata().then(({ info }) => { const shown = pdfTitle(nameOf(), info && info.Title); document.title = shown.title; $('name').textContent = shown.title; $('name').title = shown.tip; }).catch(() => {});
   eventBus.on('pagesinit', () => {
     const z = fragment.get('zoom');
     const zoomValue = z && /^\d+(\.\d+)?$/.test(z.split(',')[0]) ? String(Number(z.split(',')[0]) / 100) : z === 'page-fit' || z === 'page-width' ? z : 'page-width';
