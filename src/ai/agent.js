@@ -652,8 +652,8 @@ const MEMORY_TOOL = { ...memoryLib.TOOL, eager_input_streaming: true };
 // runTools); never to an outside MCP client. Defined here so the module itself stays out of startup; the text is short on purpose.
 const PROJECT_TOOL = {
   name: 'project_files',
-  description: 'Files, pinned pages and websites of this chat\'s project. list; search query; read name (offset: next chunk); links (read a page with read_urls); sites, site_search query site, site_read urls (pages under a website).',
-  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'search', 'read', 'links', 'sites', 'site_search', 'site_read'] }, query: { type: 'string' }, name: { type: 'string' }, offset: { type: 'integer' }, site: { type: 'string' }, urls: { type: 'array', items: { type: 'string' } } }, required: ['action'] },
+  description: 'Files, pinned pages, websites and linked folders of this chat\'s project. list; search query; read name (offset: next chunk); links (read a page with read_urls); sites, site_search query site, site_read urls; folder_list folder path query, folder_read folder path (a linked folder on this computer).',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'search', 'read', 'links', 'sites', 'site_search', 'site_read', 'folder_list', 'folder_read'] }, query: { type: 'string' }, name: { type: 'string' }, offset: { type: 'integer' }, site: { type: 'string' }, urls: { type: 'array', items: { type: 'string' } }, folder: { type: 'string' }, path: { type: 'string' } }, required: ['action'] },
   eager_input_streaming: true,
 };
 // [project templates] applications: the job-applications tracker of the chat's project (features/project-templates.js, kept in the automations
@@ -661,8 +661,8 @@ const PROJECT_TOOL = {
 // of the run's own MCP session, to the CLI engines; never to an outside MCP client. The text is short on purpose.
 const APPLICATIONS_TOOL = {
   name: 'applications',
-  description: 'The project’s job applications tracker. list; check url (applied?); add company role url resume note (after the user submits; stage saved = for later); update url|company stage note resume; search query location job_type (job boards). resume: the tailored copy’s file name.',
-  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update', 'search'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, resume: { type: 'string' }, note: { type: 'string' }, query: { type: 'string' }, location: { type: 'string' }, job_type: { type: 'string', enum: ['internship', 'fulltime', 'parttime', 'contract'] } }, required: ['action'] },
+  description: 'Job tracker. list; check url; add company role url resume note (after the user submits; stage saved: for later); update url|company stage note resume; search query location job_type; remember note (what the user said: "gpa: 3.8", "Why us? answer"). resume: copy name.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update', 'search', 'remember'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, resume: { type: 'string' }, note: { type: 'string' }, query: { type: 'string' }, location: { type: 'string' }, job_type: { type: 'string', enum: ['internship', 'fulltime', 'parttime', 'contract'] } }, required: ['action'] },
   eager_input_streaming: true,
 };
 // [notes] The user's notepad (ai/notes.js, loaded on first use): read it, add to it, never edit or delete. Defined here so the module itself stays
@@ -4830,6 +4830,17 @@ ${prompt}` : prompt), historyImages: [] };
     if (!answer) throw new Error('The user did not allow that change to memory. Only save what the user tells you about themselves.');
   }
 
+  // [about you] A save to the user's profile is the user's own information, as a memory save is: once the chat holds outside content, a card
+  // shows exactly what would be saved first (no Always; Bypass permissions answers it, with a step naming it).
+  async allowProfile(input, { emit, signal, who, external, noAsk, run }) {
+    if (external) throw new Error('Unknown tool: applications');
+    if (!taintHolder(run)?.tainted) return;
+    if (noAsk) throw new Error('Saving to the profile after reading content needs the user to say yes, and nobody is here to ask.');
+    const what = String(input?.note ?? '').slice(0, 400);
+    const answer = await this.askApproval('profile', emit, signal, { action: 'tool', who, title: `${who} wants to save to your profile: ${quote(what, 160)}`, args: what, tainted: true, noAlways: true, guarded: true });
+    if (!answer) throw new Error('The user did not allow saving that to their profile. Only save what the user tells you about themselves.');
+  }
+
   // ---- [project workspace] The files and pinned pages of the chat's project (Projects on lumen://chat). Offered when main marks the chat's settings
   // (settings.projectTools: the project has files or pages), never to an outside agent. The index is already in the context block.
   projectOffered(messages) {
@@ -4843,7 +4854,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (!got) throw new Error('This chat is not in a project.');
     // A website of the project (site_search, site_read): the web search and the page reads the AI has anyway, cut to the website's address by project-context.js;
     // ensureAllowed asked for the same OK as web_search / read_urls before this ran.
-    const deps = { ...got, searchSite: (query, site) => this.projectSiteSearch(query, site), readPages: (urls) => this.runTool('read_urls', { urls }) };
+    const deps = { ...got, searchSite: (query, site) => this.projectSiteSearch(query, site), readPages: (urls) => this.runTool('read_urls', { urls }), tainted: () => this.markTainted(scope) }; // (tainted: [linked folders] a file read from one)
     return projectCtx.runTool(input, deps);
   }
   async projectSiteSearch(query, site) {
@@ -4928,7 +4939,14 @@ ${prompt}` : prompt), historyImages: [] };
       if (!r.ok) throw new Error(r.error || 'The search failed.');
       return require('../features/job-search').describe(r.listings);
     }
-    throw new Error('action is list, check, add, update or search.');
+    if (action === 'remember') { // [about you] a lasting fact the user told the AI, saved to the project's profile (allowProfile asked first when the chat holds outside content)
+      if (!t.remember) throw new Error('This project has no profile to save to.');
+      const r = await t.remember(input);
+      if (!r.ok) throw new Error(r.error || 'Could not save it.');
+      try { scope.gate?.emit?.({ type: 'notice', text: `Saved to your profile: ${r.said}` }); } catch { /* a closed view: it is saved */ }
+      return `Saved to the user's profile: ${r.said}. They can see and change it on the project page (About you).`;
+    }
+    throw new Error('action is list, check, add, update, search or remember.');
   }
   notesOffered(messages) {
     try {
@@ -5488,6 +5506,7 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     if (name === 'memory') await this.allowMemory(input, gate); // [memory]
+    if (name === 'applications' && input?.action === 'remember') await this.allowProfile(input, gate); // [about you]
     if (name === 'project_files' && (input?.action === 'read' || input?.action === 'search' || input?.action === 'site_read')) this.markTainted(run); // [project workspace] a file's text came from somewhere: it counts as content read, like a local file's
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
     if (name === 'word' && WORD_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // [word] a document's words taint web actions, but not the word tool's own edits to a document that was read (src/word tracks its sources)
@@ -7229,7 +7248,13 @@ ${CLI_DESKTOP_RULE}`;
         ? this.askApproval(card.site || 'Microsoft Word', gate.emit, gate.signal, { action: 'content-loss', who: gate.who, title: card.title, args: card.args, upload: { phase: 'before', undone: false } })
         : this.askApproval(card.title, gate.emit, gate.signal, { action: 'app', who: gate.who, title: card.title, args: card.args, noAlways: card.noAlways !== false, upload: { detail: card.detail, allowLabel: card.allowLabel, alwaysLabel: card.alwaysLabel, alwaysTitle: card.alwaysTitle } })), // ('app' cards: answered by Bypass permissions, with a step; Always only where src/word offers it: one saved document)
     };
+    const base = this.projectBaseFiles(gate.run?.chat || taskScope.getStore()?.chat);
+    if (base.length && require('../features/project-about').touchesBase(input, base)) throw new Error('That is the user’s base résumé or cover letter, which is never changed. Make the tailored copy first (open it, then save_as a new file in the project’s Tailored résumés folder) and change only the copy.'); // [about you]
     return this.wordCtl().run(input, ctx);
+  }
+  // [about you] The base résumé and cover letter of the chat's project (its profile): the Word tool never writes to them.
+  projectBaseFiles(chat) {
+    try { return chat ? this.browser.projects?.baseFiles?.(chat) || [] : []; } catch { return []; }
   }
   // ---- [/word]
 

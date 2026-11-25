@@ -669,7 +669,7 @@ function createChatStore({ dir, encrypt, decrypt, decryptAsync = async (v) => de
     if (Number(v.emailAt) > 0) out.emailAt = Number(v.emailAt);
     return Object.keys(out).length ? out : null;
   };
-  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults, temporary, template, profileId, jobSync } = {}) { // temporary: [temp projects] true makes it one, false keeps it as a project; template, profileId: [project templates] the template it was made from and its automation profile
+  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults, temporary, template, profileId, jobSync, folders } = {}) { // temporary: [temp projects] true makes it one, false keeps it as a project; template, profileId: [project templates] the template it was made from and its automation profile
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -693,6 +693,7 @@ function createChatStore({ dir, encrypt, decrypt, decryptAsync = async (v) => de
     if (temporary !== undefined) { if (temporary === true) project.temporary = true; else delete project.temporary; } // [temp projects] main deletes one TEMP_PROJECT_MS after it was last used
     if (template !== undefined) { const tp = /^[a-z][a-z0-9-]{0,39}$/.test(String(template)) ? String(template) : ''; if (tp) project.template = tp; else delete project.template; } // [project templates]
     if (profileId !== undefined) { const pr = /^[a-f0-9]{6,32}$/.test(String(profileId)) ? String(profileId) : ''; if (pr) project.profileId = pr; else delete project.profileId; }
+    if (folders !== undefined) { const f = require('./project-linked-folders').clean(folders); if (f.length) project.folders = f; else delete project.folders; } // [linked folders] folders on this computer or in Drive the AI may read
     if (jobSync !== undefined) { const js = cleanJobSync(jobSync); if (js) project.jobSync = js; else delete project.jobSync; }
     project.updated = now();
     writeIndex();

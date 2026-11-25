@@ -1,0 +1,27 @@
+/* [about you] A project's About you view (renderer/chat-project-about.js). Theme tokens only, so light, dark and the accent follow styles.css. */
+.pab { display: flex; flex-direction: column; gap: var(--cp-3); min-width: 0; color: var(--text); }
+.pab-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--cp-3); align-items: start; }
+.pab-card .pjp-note { margin: 0; }
+.pab-file { display: flex; align-items: center; flex-wrap: wrap; gap: var(--cp-2); padding: var(--sp-3) var(--sp-5); border-radius: 12px; box-shadow: 0 0 0 1px var(--hairline); background: var(--surface); }
+.pab-file-main { flex: 1 1 200px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pab-file-label { font-size: 12.5px; color: var(--muted); }
+.pab-file-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pab-file-name.none { font-weight: 400; color: var(--muted); }
+.pab-file .pab-input { flex: 1 1 220px; }
+.pab-input, .pab-area { width: 100%; box-sizing: border-box; min-height: 34px; padding: var(--sp-2) var(--sp-4); border-radius: 10px; border: 1px solid var(--border); background: var(--field); color: var(--text); font: inherit; font-size: 13.5px; }
+.pab-area { resize: vertical; line-height: 1.45; }
+.pab-input:focus, .pab-area:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.pab-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--cp-3); }
+.pab-group { margin: 0; padding: var(--sp-5) var(--sp-6) var(--sp-6); border: none; border-radius: 12px; box-shadow: 0 0 0 1px var(--hairline); background: var(--surface); display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+.pab-group legend { padding: 0 var(--sp-2); font-weight: 600; font-size: 13px; }
+.pab-field { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--muted); }
+.pab-answers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+.pab-answer { display: flex; align-items: flex-start; gap: var(--cp-2); padding: var(--sp-3) var(--sp-5); border-radius: 12px; box-shadow: 0 0 0 1px var(--hairline); background: var(--surface); }
+.pab-answer.editing { flex-direction: column; align-items: stretch; box-shadow: 0 0 0 2px var(--accent); }
+.pab-answer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 0; border: none; background: none; color: inherit; font: inherit; text-align: left; cursor: text; }
+.pab-answer-main:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.pab-answer-q { font-weight: 500; }
+.pab-answer-a { font-size: 13px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+.pab-empty { margin: 0; padding: var(--sp-5) var(--sp-6); border-radius: 12px; background: var(--hover); color: var(--muted); font-size: 13px; }
+.pab-status { margin: 0; font-size: 12.5px; color: var(--muted); }
+.pab-status:empty { display: none; }

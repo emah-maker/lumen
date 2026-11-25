@@ -65,6 +65,16 @@
     document.body.append(js);
   })));
   window.chatLoadProjectTools = loadTools; // (the New project dialog, chat-projects.js, loads it the same way)
+  // [about you] the About you view's script and stylesheet (chat-project-about.js), the first time it is shown
+  let aboutLoading = null;
+  const loadAbout = () => (window.chatProjectAbout ? Promise.resolve(true) : (aboutLoading ||= new Promise((done) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-project-about.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'chat-project-about.js', onload: () => done(true), onerror: () => { aboutLoading = null; done(false); } });
+    css.dataset.later = '';
+    js.dataset.later = '';
+    document.head.append(css);
+    document.body.append(js);
+  })));
   const icon = (name, className = '') => { const s = el('span', { className: `pjp-ic ${className}`.trim() }); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<svg viewBox="0 0 16 16">${ICON[name]}</svg>`; return s; };
 
   let page = null; // { root, id, ... } while a project page is open
@@ -193,11 +203,13 @@
     const busy = new Set(); // addresses being read
 
     const items = () => [
+      ...(data.project.folders || []).map((d, i) => ({ type: 'folder', key: `d:${d.id}`, added: Number.MAX_SAFE_INTEGER - i, d })), // [linked folders] first: they hold the most
       ...(data.files || []).map((f) => ({ type: 'file', key: `f:${f.id}`, added: f.added || 0, f })),
       ...(data.project.links || []).map((l) => ({ type: l.site ? 'site' : 'page', key: `${l.site ? 's' : 'p'}:${l.url}`, added: l.added || 0, l })),
     ].sort((a, b) => b.added - a.added);
-    const nameOf = (it) => (it.type === 'file' ? it.f.name : it.l.title || hostShown(it.l.url));
+    const nameOf = (it) => (it.type === 'folder' ? it.d.name : it.type === 'file' ? it.f.name : it.l.title || hostShown(it.l.url));
     const metaOf = (it) => {
+      if (it.type === 'folder') return it.d.kind === 'drive' ? tr('projectws.folders.drive', 'Google Drive folder · the AI reads it with the Drive connector') : `${tr('projectws.folders.local', 'Folder')} · ${it.d.path}`; // [linked folders]
       if (it.type === 'file') return [KIND[it.f.kind] || it.f.kind, kb(it.f.size || 0), it.f.chars ? tr('projectws.chars', '{n} characters', { n: it.f.chars.toLocaleString() }) : ''].filter(Boolean).join(' · ') + (it.f.cut ? ` · ${tr('projectws.cut', 'cut: very long')}` : '');
       if (busy.has(it.l.url)) return tr('projectws.sources.reading', 'Reading the page…');
       const host = hostShown(it.l.url);
@@ -213,10 +225,10 @@
     // ---- the rows
     function row(it) {
       const li = el('li', { className: `pjp-row pjp-src ${it.type}` });
-      if (it.type === 'file') li.dataset.file = it.f.id; else li.dataset.url = it.l.url;
+      if (it.type === 'folder') li.dataset.folder = it.d.id; else if (it.type === 'file') li.dataset.file = it.f.id; else li.dataset.url = it.l.url;
       li.dataset.kind = it.type;
-      const lead = it.type === 'file' ? el('span', { className: 'pjp-kind', textContent: (KIND[it.f.kind] || it.f.kind || '').slice(0, 4) }) : favicon(it.l.icon);
-      const key = it.type === 'file' ? it.f.id : it.l.url;
+      const lead = it.type === 'folder' ? icon('folder', 'pjp-kind pjp-kind-folder') : it.type === 'file' ? el('span', { className: 'pjp-kind', textContent: (KIND[it.f.kind] || it.f.kind || '').slice(0, 4) }) : favicon(it.l.icon);
+      const key = it.type === 'folder' ? it.d.id : it.type === 'file' ? it.f.id : it.l.url;
       if (removing === key) {
         const yes = button(tr('projectws.remove', 'Remove'), async () => {
           yes.disabled = true;
@@ -233,7 +245,7 @@
       }
       let main;
       if (editing === key) {
-        const field = el('input', { type: 'text', className: 'pjp-input pjp-rename', value: it.type === 'file' ? it.f.name : it.l.title || '', maxLength: 120, placeholder: it.type === 'file' ? '' : hostShown(it.l.url) });
+        const field = el('input', { type: 'text', className: 'pjp-input pjp-rename', value: it.type === 'folder' ? it.d.name : it.type === 'file' ? it.f.name : it.l.title || '', maxLength: 120, placeholder: it.type === 'file' ? '' : hostShown(it.l.url) });
         field.setAttribute('aria-label', tr('projectws.sources.rename.label', 'Name for {name}', { name: nameOf(it) }));
         let done = false;
         const finish = async (save) => {
@@ -241,10 +253,13 @@
           done = true;
           editing = '';
           const next = field.value.trim();
-          if (save && it.type === 'file' && next && next !== it.f.name) {
+          if (save && it.type === 'folder' && next && next !== it.d.name) {
+            const out = await page.api.projectFolders(page.id, { rename: { id: it.d.id, name: next } }).catch(() => null);
+            if (out && !out.error) setProject(out); else report(tr('projectws.sources.renameFailed', 'Could not rename it.'));
+          } else if (save && it.type === 'file' && next && next !== it.f.name) {
             const out = await page.api.projectFileRename(page.id, it.f.id, next).catch(() => null);
             if (out?.ok) data.files = out.files; else report(out?.error || tr('projectws.sources.renameFailed', 'Could not rename it.'));
-          } else if (save && it.type !== 'file' && next !== (it.l.title || '')) {
+          } else if (save && it.type !== 'file' && it.type !== 'folder' && next !== (it.l.title || '')) {
             const out = await page.api.projectLink(page.id, { rename: { url: it.l.url, title: next } }).catch(() => null);
             if (out && !out.error) setProject(out); else report(tr('projectws.sources.renameFailed', 'Could not rename it.'));
           }
@@ -255,8 +270,8 @@
         main = el('span', { className: 'pjp-row-main' }, field);
         queueMicrotask(() => { field.focus(); field.select(); });
       } else {
-        const text = [el('span', { className: 'pjp-row-name', textContent: nameOf(it), title: it.type === 'file' ? [it.f.name, it.f.summary].filter(Boolean).join('\n') : it.l.url }), el('span', { className: 'pjp-row-meta', textContent: metaOf(it) })];
-        if (it.type === 'file') main = el('span', { className: 'pjp-row-main' }, ...text);
+        const text = [el('span', { className: 'pjp-row-name', textContent: nameOf(it), title: it.type === 'folder' ? it.d.path || '' : it.type === 'file' ? [it.f.name, it.f.summary].filter(Boolean).join('\n') : it.l.url }), el('span', { className: 'pjp-row-meta', textContent: metaOf(it) })];
+        if (it.type === 'folder') { main = el('button', { type: 'button', className: 'pjp-row-main pjp-row-open', title: it.d.path || '' }); main.append(...text); main.onclick = () => page.api.projectFolders(page.id, { open: it.d.id }).catch(() => null); } else if (it.type === 'file') main = el('span', { className: 'pjp-row-main' }, ...text);
         else {
           main = el('button', { type: 'button', className: 'pjp-row-main pjp-row-open', title: it.l.url });
           main.append(...text);
@@ -272,7 +287,8 @@
       return li;
     }
     function rowMenu(it) {
-      const rename = { label: tr('projectws.sources.rename', 'Rename'), icon: svg('pencil'), run: () => { editing = it.type === 'file' ? it.f.id : it.l.url; draw(); } };
+      const rename = { label: tr('projectws.sources.rename', 'Rename'), icon: svg('pencil'), run: () => { editing = it.type === 'folder' ? it.d.id : it.type === 'file' ? it.f.id : it.l.url; draw(); } };
+      if (it.type === 'folder') return [{ label: tr('projectws.sources.open', 'Open'), icon: svg('open'), run: () => page.api.projectFolders(page.id, { open: it.d.id }).catch(() => null) }, rename, { label: tr('projectws.remove', 'Remove'), icon: svg('trash'), run: () => removeFolder(it.d) }]; // [linked folders]
       if (it.type === 'file') return [rename, { label: tr('projectws.remove', 'Remove'), icon: svg('trash'), run: () => { removing = it.f.id; draw(); } }];
       return [
         { label: tr('projectws.sources.open', 'Open'), icon: svg('open'), run: () => window.assistant?.openLink?.(it.l.url) },
@@ -280,6 +296,49 @@
         rename,
         { label: tr('projectws.remove', 'Remove'), icon: svg('trash'), run: () => removeLink(it.l) },
       ];
+    }
+    // [linked folders] unlinking only forgets the folder: nothing in it is touched (Undo links it again)
+    async function removeFolder(d) {
+      const out = await page.api.projectFolders(page.id, { remove: d.id }).catch(() => null);
+      if (!out || out.error) { report(tr('projectws.sources.removeFailed', 'Could not remove it.')); return; }
+      setProject(out);
+      changed();
+      host().undoToast(tr('projectws.folders.removed', 'Unlinked “{name}”. Nothing in it was changed.', { name: d.name }), 8000, async () => {
+        const back = await page.api.projectFolders(page.id, { restore: d }).catch(() => null);
+        if (!back || back.error) return false;
+        setProject(back);
+        draw();
+        host().refresh();
+        return true;
+      });
+    }
+    async function linkFolder() {
+      const out = await page.api.projectFolders(page.id, { add: 'local' }).catch(() => null);
+      if (!out || out.error) { report(out?.error === 'full' ? tr('projectws.folders.full', 'A project links up to 12 folders.') : out?.error === 'home' || out?.error === 'root' ? tr('projectws.folders.tooBig', 'Pick a folder inside it: a whole drive or your home folder would let the AI read everything.') : tr('projectws.folders.failed', 'Could not link that folder.')); return; }
+      setProject(out);
+      changed();
+    }
+    function drivePanel() {
+      const url = el('input', { type: 'url', className: 'pjp-input', placeholder: tr('projectws.folders.drive.placeholder', 'drive.google.com/drive/folders/…') });
+      url.setAttribute('aria-label', tr('projectws.folders.drive.label', 'The Drive folder’s address'));
+      const name = el('input', { type: 'text', className: 'pjp-input', maxLength: 120, placeholder: tr('projectws.folders.drive.name', 'Name (optional)') });
+      name.setAttribute('aria-label', tr('projectws.folders.drive.name', 'Name (optional)'));
+      const go = button(tr('projectws.sources.add.go', 'Add'), async () => {
+        go.disabled = true;
+        const out = await page.api.projectFolders(page.id, { add: 'drive', url: url.value, name: name.value }).catch(() => null);
+        go.disabled = false;
+        if (!out || out.error) { report(out?.error === 'drive' ? tr('projectws.folders.drive.bad', 'That is not a Google Drive folder’s address (it has /folders/ in it).') : out?.error === 'full' ? tr('projectws.folders.full', 'A project links up to 12 folders.') : tr('projectws.folders.failed', 'Could not link that folder.')); url.focus(); return; }
+        setProject(out);
+        closePanel();
+        report('');
+        changed();
+      }, 'primary');
+      const cancel = button(tr('chatpage.project.cancel', 'Cancel'), () => { closePanel(); draw(); add.focus(); });
+      panel.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !isImeEnter(e) && e.target.tagName === 'INPUT') { e.preventDefault(); go.click(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel.click(); } });
+      panel.hidden = false;
+      panel.replaceChildren(el('p', { className: 'pjp-panel-title', textContent: tr('projectws.folders.drive.title', 'Link a Google Drive folder') }), url, name, el('div', { className: 'pjp-line' }, go, cancel), note(tr('projectws.folders.drive.note', 'The AI lists and reads its files with the Drive connector (Google Drive must be connected and on in this project’s Tools). Nothing in it is changed.')));
+      draw();
+      url.focus();
     }
     async function removeLink(l) {
       const out = await page.api.projectLink(page.id, { remove: l.url }).catch(() => null);
@@ -435,6 +494,8 @@
         { label: tr('projectws.sources.menu.page', 'Add a web page…'), icon: svg('page'), run: () => linkPanel('page') },
         { label: tr('projectws.sources.menu.site', 'Add a whole website…'), icon: svg('globe'), run: () => linkPanel('site') },
         { label: tr('projectws.sources.menu.tabs', 'Add open tabs…'), icon: svg('tabs'), run: () => tabsPanel() },
+        { label: tr('projectws.folders.menu.local', 'Link a folder on this computer…'), icon: svg('folder'), run: () => linkFolder() }, // [linked folders]
+        { label: tr('projectws.folders.menu.drive', 'Link a Google Drive folder…'), icon: svg('folder'), run: () => drivePanel() },
       ],
       onClose: () => { if (!document.activeElement || document.activeElement === document.body) add.focus(); },
     });
@@ -564,6 +625,24 @@
       root.body.replaceChildren(el('label', { className: 'pjp-field' }, el('span', { textContent: tr('projectws.defaults.model', 'Model for new chats') }), model), plan.label, say);
     }
     draw();
+    return root;
+  }
+
+  // ---- [about you] the Overview's About you card (a project with a profile, so a Job applications one): how much is filled in, the base
+  // résumé, and a button to the About you view, where it is all edited.
+  function aboutCard(data) {
+    if (!isJob(data.project) && !data.project.profileId) return null;
+    const root = card(tr('about.title', 'About you'), { tip: tr('about.tip', 'What the AI knows about you in this project, so you don’t have to tell it again: your details, base résumé, highlights and saved answers. The AI adds what you tell it; you can change anything.'), actions: [button(tr('about.open', 'Open'), () => page.setView?.('about'))], className: 'pjp-about' });
+    const line = el('p', { className: 'pjp-summary', textContent: tr('projecttpl.apps.loading', 'Loading…') });
+    root.body.append(line);
+    const me = page;
+    page.api.projectAbout?.(data.project.id).then((out) => {
+      if (me !== page || !root.isConnected) return;
+      const a = out?.about;
+      if (!a) { line.textContent = tr('about.none', 'Nothing saved yet.'); return; }
+      line.textContent = [tr('about.filled', '{n} of {total} details', { n: a.filled, total: a.total }), a.resume ? tr('about.resumeIs', 'base résumé: {name}', { name: a.resume.name }) : tr('about.noResume', 'no base résumé yet'), a.answers.length ? tr('about.answersN', '{n} saved answers', { n: a.answers.length }) : ''].filter(Boolean).join(' · ');
+      if (!a.resume) root.body.append(el('div', { className: 'pjp-line' }, button(tr('about.files.choose', 'Choose file…'), () => page.setView?.('about'), 'primary')));
+    }).catch(() => { if (root.isConnected) line.textContent = tr('about.failed', 'Could not read your profile.'); });
     return root;
   }
 
@@ -1189,7 +1268,7 @@
       notice.classList.toggle('temp', Boolean(p.temporary));
     };
     // Overview / Memory / Settings
-    const VIEWS = [...(job ? [['jobs', tr('projecttpl.view.jobs', 'Applications')]] : []), ['overview', tr('projectws.view.overview', 'Overview')], ['tools', tr('projecttools.title', 'Tools')], ['memory', tr('projectws.view.memory', 'Memory')], ['settings', tr('projectws.view.settings', 'Settings')]];
+    const VIEWS = [...(job ? [['jobs', tr('projecttpl.view.jobs', 'Applications')]] : []), ['overview', tr('projectws.view.overview', 'Overview')], ...(job || data.project.profileId ? [['about', tr('about.title', 'About you')]] : []), ['tools', tr('projecttools.title', 'Tools')], ['memory', tr('projectws.view.memory', 'Memory')], ['settings', tr('projectws.view.settings', 'Settings')]];
     const tabs = el('div', { className: 'pjp-tabs' });
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-label', tr('projectws.view.label', 'Project views'));
@@ -1300,7 +1379,15 @@
           page.board = window.chatJobBoard.draw(holder, { api, id, tr, openLink: (url) => window.assistant?.openLink?.(url), toast: (t) => h.toast(t), newChat: (text) => h.newChat(page.data.project, text) }); // (newChat: Find jobs with a job skill of the user's own)
         });
       } else if (v === 'memory') { const m = memoryCard(page.data); m.querySelector('.pjp-memory-more:not([hidden])')?.click(); viewBox.replaceChildren(m, placesCard(page.data)); } // (the notes, then the project's key documents)
-      else if (v === 'tools') { // [project tools] the model and plan first, then the apps, MCP servers and skills
+      else if (v === 'about') { // [about you]
+        const holder = el('div', { className: 'pjp-about-view' });
+        viewBox.replaceChildren(holder);
+        loadAbout().then((ok) => {
+          if (!holder.isConnected) return;
+          if (!ok) { holder.replaceChildren(note(tr('about.failed', 'Could not read your profile.'))); return; }
+          window.chatProjectAbout.view(holder, { api, id, tr, onSaved: (p) => { page.data.project = p; h.refresh(); } });
+        });
+      } else if (v === 'tools') { // [project tools] the model and plan first, then the apps, MCP servers and skills
         const holder = el('div', { className: 'pjp-tools-view' });
         viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, defaultsCard(page.data)), holder);
         loadTools().then((ok) => {
@@ -1312,11 +1399,11 @@
       else { viewBox.replaceChildren(); if (was && was !== 'overview') reload(true); } // (the overview's cards show what changed in the other views)
     }
     page.setView = (v) => { setView(v); tabs.querySelector('.pjp-tab.on')?.focus(); }; // [project tools] the Overview's Tools card
-    page.extras = () => { drawNotice(); if (page.view && page.view !== 'overview' && page.view !== 'tools' && !page.editing.size) setView(page.view); }; // (the Tools view keeps itself: redrawn, a Connect in progress would be lost)
+    page.extras = () => { drawNotice(); if (page.view && !['overview', 'tools', 'about'].includes(page.view) && !page.editing.size) setView(page.view); }; // ([about you] that view keeps itself too: a box being typed in) // (the Tools view keeps itself: redrawn, a Connect in progress would be lost)
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
-    const side = el('aside', { className: 'pjp-side' }, ...[applicationsCard(data)].filter(Boolean), instructions, sourcesCard(data), toolsCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
+    const side = el('aside', { className: 'pjp-side' }, ...[applicationsCard(data), aboutCard(data)].filter(Boolean), instructions, sourcesCard(data), toolsCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
     page.side = side;
     page.sub();
@@ -1392,7 +1479,7 @@
     me.composerText?.setAttribute('placeholder', tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: fresh.project.name }));
     const folderBtn = me.root.querySelector('.pjp-open-folder');
     if (folderBtn) folderBtn.hidden = !fresh.project.folder;
-    const next = [applicationsCard(me.data), instructionsCard(me.data), sourcesCard(me.data), toolsCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
+    const next = [applicationsCard(me.data), aboutCard(me.data), instructionsCard(me.data), sourcesCard(me.data), toolsCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
     me.side.replaceChildren(...next.filter(Boolean));
     me.syncModel?.();
     me.sub?.();

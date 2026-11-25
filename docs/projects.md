@@ -9,6 +9,25 @@ A **project** groups chats and gives the AI things to work from. Its page is the
 - **Continue where you left off**: the latest chats as cards with the last thing said, the time, and a mark while a reply is working or needs your OK. Below them are all the project's chats, with a search that looks in the chats and the project's files.
 - **Overview**: instructions (shown as text; Edit changes them), **Sources**, the folder, defaults and memory. The fine print is in each card's ⓘ tooltip.
 
+## About you: what a job project remembers
+
+A Job applications project keeps what the AI should never have to ask again, on its **About you** tab (the Overview's **About you** card says how much is filled in and opens it):
+
+- **Résumé and cover letter**: your **base résumé** and **cover letter base**, files on this computer you choose (**Choose file…**). They are never changed: for each posting the AI makes a tailored copy in the project's **Tailored résumés** folder and changes only the copy, and the Word tool refuses an edit or a save over a base file. A **résumé in Google Drive** (paste its Drive or Docs link) is read for facts with the Drive connector.
+- **Résumé highlights**: skills, projects and numbers in your own words. The AI may use them and never adds to them.
+- **Your details**, in groups: You (name, email, phone), School (school, degree, major, graduation date, GPA), Work (authorized to work, sponsorship, available from, preferred locations), Links (LinkedIn, GitHub, website) and Address. Each box saves when you leave it.
+- **Saved answers**: answers to application questions you approved ("Why this company?"). Click one to edit it; **Add answer** adds one.
+
+It is the project's automation profile, the one [Automations](automations.md) fill forms from, so **Edit profile**, Automations and this tab change the same thing. Every chat in the project gets it (about 3,000 characters: the details first, then the files, highlights and answers), so the AI uses it instead of asking you. When you tell the AI a new lasting fact about yourself, it saves it there (the applications tool, action `remember`) and the chat says "Saved to your profile: …"; you can change or remove it on the tab. The AI never saves an answer about gender, race, ethnicity, veteran or disability status, salary, a birth date or anything secret: those stay yours to type. After the AI has read a page, an email or a file in that chat, a save asks on a card first (Bypass permissions answers it).
+
+## Linked folders
+
+**Sources → Add** has **Link a folder on this computer…** and **Link a Google Drive folder…** (paste the folder's address, drive.google.com/drive/folders/…, and a name if you like). A linked folder is listed first in Sources, with **Open**, **Rename** and **Remove** (which only unlinks it, with Undo).
+
+- **A folder on this computer**: the AI lists it and reads its files with the project's files tool (`folder_list`, `folder_read`): PDF, Word, PowerPoint, email and text, read with Lumen's own readers. Only inside the folder you linked: never a hidden file, never through a link that points out of it. A whole drive or your home folder can't be linked. What a file says counts as outside content, like a page.
+- **A Google Drive folder**: the AI lists and reads it with the Drive connector (Google Drive must be connected, and on in the project's Tools).
+- Each chat in the project gets the list of linked folders. Nothing in them is copied or changed. Up to 12 per project; they stay on this computer (not in `project.json`).
+
 ## Tools: the apps, MCP servers and skills a project uses
 
 A project chooses which of your tools its chats get. Open its page → **Tools** (or **Manage** on the Overview's **Tools** card):
@@ -41,7 +60,7 @@ For applying to jobs and co-ops:
 
 - **Instructions** for the AI in its chats: your master résumé and cover letter base are never edited, renamed or overwritten. For each posting the AI makes a tailored **copy** with the Word tool, saved in the project's **Tailored résumés** folder as "<Company> - <Role>.docx", and changes only the copy (reordering and rewording bullets, never inventing experience). It checks the tracker before starting on a posting and skips one you already applied to. It fills forms from your profile and saved answers and stops at the final Submit, leaving the submit to you. It drafts long answers ("Why this company?") for you to approve and saves the approved ones to memory for reuse. Questions about gender, race, veteran or disability status, salary and anything legal are left to you.
 - **A "Tailored résumés" folder** in the project's folder (when the project has one).
-- **An automation profile of its own**, named for the project: your résumé and cover letter files, major, start date, location and saved answers, the same profile [Automations](automations.md) fill forms from. An automation made in the project uses it.
+- **An automation profile of its own**, named for the project: your résumé and cover letter files, major, start date, location and saved answers, the same profile [Automations](automations.md) fill forms from. An automation made in the project uses it. Its page shows and edits it as **About you** (see [About you](#about-you-what-a-job-project-remembers)), and its chats get it.
 - **Its own look**: a briefcase in your accent colour in the sidebar and in All projects, and a "Job applications" badge on its page.
 - **The Applications view**, the page it opens on (the dashboard, loaded only when shown). It reads top to bottom: one **action bar** (the views, Check email, Sync now, Export CSV, Edit profile, the Ctrl+K hint and **Add posting**), then **Progress** (the main numbers), then **Needs attention** (email suggestions, follow-ups) beside **Outcomes**, then the view you picked, then **Sources**. It follows your theme: light or dark, and your accent colour (Settings → Appearance).
   - **Ctrl+K** (⌘K on a Mac) while the dashboard shows opens its own command palette: type to filter every action, view, section and application (letters in order, so "bd" finds Boston Dynamics), ↑ ↓ to move, Enter to run, Esc to close. An application opens its card on the board. Everywhere else, and from the address bar, Ctrl+K is still Lumen's command bar.

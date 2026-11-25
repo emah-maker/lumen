@@ -339,7 +339,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project', 'chats:project-templates', 'chats:project-applications', 'chats:project-tools', 'chats:project-connect',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project', 'chats:project-templates', 'chats:project-applications', 'chats:project-tools', 'chats:project-connect', 'chats:project-about', 'chats:project-folders',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -6446,7 +6446,9 @@ const projectBlockFor = (id) => {
     if (!project) return '';
     const files = projectFiles().list(project.id);
     const index = files.length || project.links?.length ? require('./ai/project-context').block({ files, links: project.links || [] }) : '';
-    return [require('./ai/project-instructions').block(project), index].filter(Boolean).join('\n\n');
+    const about = project.profileId ? aboutFor(project) : ''; // [about you] what the user told Lumen about themselves (the project's profile)
+    const folders = project.folders?.length ? require('./features/project-linked-folders').index(project.folders) : ''; // [linked folders]
+    return [require('./ai/project-instructions').block(project), about, index, folders].filter(Boolean).join('\n\n');
   } catch { return ''; }
 };
 // The chat's project as its settings carry it: the context block, the id (memory saved in the chat belongs to the project), whether the
@@ -6457,7 +6459,7 @@ function projectSettingsFor(id) {
     const project = projectForChat(id);
     const block = projectBlockFor(id);
     if (block) out.projectInstructions = block;
-    if (project) { out.projectId = project.id; if (project.links?.length || projectFiles().list(project.id).length) out.projectTools = true; }
+    if (project) { out.projectId = project.id; if (project.links?.length || project.folders?.length || projectFiles().list(project.id).length) out.projectTools = true; } // ([linked folders] read with the same tool)
     if (project?.template && require('./features/project-templates').byId(project.template)?.tracker) out.projectApplications = true; // [project templates] the applications tool
     if (Array.isArray(project?.defaults?.skills)) { out.skillsList = skillsListNow({ only: project.defaults.skills }); out.projectSkills = true; } // [project tools] only the project's skills are listed to the AI
     const work = projectWorkFolderFor(id); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
@@ -9977,10 +9979,11 @@ const agent = new Agent({
       const project = projectForChat(chatIdOfMessages(messages));
       if (!project) return null;
       const store = projectFiles();
-      return { files: store.list(project.id), links: project.links || [], readText: (f) => store.readText(project.id, f.id), readImage: (f) => store.readImage(project.id, f.id) };
+      return { files: store.list(project.id), links: project.links || [], readText: (f) => store.readText(project.id, f.id), readImage: (f) => store.readImage(project.id, f.id), folders: project.folders || [], extract: (name, bytes) => require('./features/project-files').extract(name, bytes) }; // (folders, extract: [linked folders])
     },
     allows: projectAllows,
     onlyApps: projectOnlyApps, // [project tools]
+    baseFiles: (messages) => { const p = projectForChat(chatIdOfMessages(messages)); const prof = p?.profileId ? automations().profile(p.profileId) : null; return prof ? [prof.resumePath, prof.coverLetterPath].filter(Boolean) : []; }, // [about you] never written by the Word tool
     // [project permissions] Sites allowed with "Always" in the chat's project: its chats only (features/permission-mode.js)
     name: (messages) => projectForChat(chatIdOfMessages(messages))?.name || '',
     hostAllowed: (messages, host) => permissionModes.hostAllowed(projectForChat(chatIdOfMessages(messages)), host),
@@ -9997,7 +10000,7 @@ const agent = new Agent({
       if (!p) return null;
       const rt = automations();
       const after = (r) => { if (r?.ok) kickJobSheet(p.id); return r; }; // [project templates] the linked tracker sheet follows
-      return { list: () => rt.applications(p.id), add: (input) => after(rt.logApplication(p.id, { ...input, from: '' })), update: (input) => after(rt.updateApplication(p.id, input)), ...(jobSearchReady() ? { search: (input) => runJobSearch(input) } : {}) };
+      return { list: () => rt.applications(p.id), add: (input) => after(rt.logApplication(p.id, { ...input, from: '' })), update: (input) => after(rt.updateApplication(p.id, input)), about: () => aboutFor(projectById(p.id) || p), remember: (input) => rememberAbout(projectById(p.id) || p, input), ...(jobSearchReady() ? { search: (input) => runJobSearch(input) } : {}) };
     },
   },
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
@@ -13408,6 +13411,89 @@ ipcMain.handle('chats:project-applications', async (_e, id, action, arg) => {
     folder: Boolean(p.folder),
     profile: prof ? { name: prof.name, resume: base(prof.resumePath), cover: base(prof.coverLetterPath), filled: Object.values(prof.fields || {}).filter(Boolean).length } : null,
   };
+});
+// [about you] The project's profile (features/project-about.js): one store with Automations' profile, so the project page, Edit profile and the
+// AI change the same thing. aboutFor: the block each chat of the project gets; rememberAbout: the AI's save (applications tool, remember).
+const aboutLib = () => require('./features/project-about');
+function aboutFor(p) {
+  try { const prof = p?.profileId ? automations().profile(p.profileId) : null; return prof ? aboutLib().block(prof, { tailored: tailoredDir(p) }) : ''; } catch { return ''; }
+}
+function saveAbout(p, patch) {
+  const prof = automations().profile(p.profileId);
+  if (!prof) return { ok: false, error: 'This project has no profile yet.' };
+  const r = automations().saveProfile({ ...prof, ...patch, id: prof.id });
+  if (r?.ok) { syncProjectInstructions(); projectChanged(); }
+  return r;
+}
+function rememberAbout(p, input) {
+  if (!p?.profileId) return { ok: false, error: 'This project has no profile to save to.' };
+  const prof = automations().profile(p.profileId);
+  const r = aboutLib().remember(prof, input);
+  if (!r.ok) return r;
+  const saved = saveAbout(p, r.patch);
+  return saved?.ok ? { ok: true, said: r.said } : { ok: false, error: saved?.error || 'Could not save it.' };
+}
+// The About you card: { } reads; { create: true } makes the project a profile (named for it); { fields }, { highlights }, { answer }, { removeAnswer },
+// { resumeDrive } change it; { pick: 'resume' | 'cover' } asks for a file on this computer (never copied or changed: tailored copies are new files).
+// -> { about: view, project } | { ok: false, error } | null
+ipcMain.handle('chats:project-about', async (event, id, change) => {
+  let p = projectById(String(id));
+  if (!p) return null;
+  const c = change && typeof change === 'object' ? change : {};
+  if (c.create && !(p.profileId && automations().profile(p.profileId))) {
+    const r = automations().saveProfile({ name: p.name.slice(0, 60) });
+    if (!r?.ok) return { ok: false, error: r?.error || 'Could not make a profile.' };
+    p = chats().saveProject({ id: p.id, name: p.name, profileId: r.profile.id }) || p;
+    syncProjectInstructions();
+    projectChanged();
+  }
+  const prof = p.profileId ? automations().profile(p.profileId) : null;
+  if (!prof) return { about: null, project: projectPage(p) };
+  if (c.pick === 'resume' || c.pick === 'cover') {
+    const picked = await electronDialog.showOpenDialog(dialogParent(event), { title: c.pick === 'resume' ? 'Your base résumé' : 'Your cover letter base', properties: ['openFile'], filters: [{ name: 'Documents', extensions: ['docx', 'pdf', 'doc', 'odt', 'rtf', 'txt', 'md'] }] });
+    if (picked.canceled || !picked.filePaths[0]) return { about: aboutLib().view(prof), project: projectPage(p) };
+    const r = saveAbout(p, c.pick === 'resume' ? { resumePath: picked.filePaths[0] } : { coverLetterPath: picked.filePaths[0] });
+    if (!r?.ok) return { ok: false, error: r?.error || 'Could not save it.' };
+  } else if (c.clear === 'resume' || c.clear === 'cover') {
+    saveAbout(p, c.clear === 'resume' ? { resumePath: '' } : { coverLetterPath: '' });
+  } else {
+    const patch = aboutLib().pageChange(prof, c);
+    if (patch) { const r = saveAbout(p, patch); if (!r?.ok) return { ok: false, error: r?.error || 'Could not save it.' }; } else if (Object.keys(c).some((k) => k !== 'create')) return { ok: false, error: 'That could not be saved. Check what you typed.' };
+  }
+  const now = projectById(p.id) || p;
+  return { about: aboutLib().view(automations().profile(now.profileId)), project: projectPage(now) };
+});
+// [linked folders] Sources' folders: { add: 'local' } (asks for a folder), { add: 'drive', url, name } (a Drive folder's address), { remove: id },
+// { rename: { id, name } }, { open: id } (the folder in Explorer / Finder, or in Drive). -> the project, { error }, or null
+ipcMain.handle('chats:project-folders', async (event, id, change) => {
+  const p = projectById(String(id));
+  if (!p || !change || typeof change !== 'object') return null;
+  const lf = require('./features/project-linked-folders');
+  let list = (p.folders || []).map((f) => ({ ...f }));
+  if (change.open) {
+    const f = list.find((x) => x.id === String(change.open));
+    if (!f) return null;
+    if (f.kind === 'drive') openTab(`https://drive.google.com/drive/folders/${f.driveId}`); else await filesShell('open', f.path);
+    return projectPage(p);
+  }
+  if (change.add === 'local') {
+    const dir = await pickFolder(event, 'A folder the AI may read for this project');
+    if (!dir) return projectPage(p);
+    const chk = await projectFolders.checkWorkFolder(dir, { confirmed: false }); // (never a whole drive or the home folder itself: the AI would read everything)
+    if (!chk.ok) return { error: chk.reason || 'folder' };
+    list.push({ kind: 'local', path: chk.real });
+  } else if (change.add === 'drive') {
+    const driveId = lf.driveFolderId(change.url);
+    if (!driveId) return { error: 'drive' };
+    list.push({ kind: 'drive', driveId, name: String(change.name || '').slice(0, 120) });
+  } else if (change.restore && typeof change.restore === 'object') list.push(change.restore); // (Undo of a remove)
+  else if (change.remove) list = list.filter((f) => f.id !== String(change.remove));
+  else if (change.rename?.id) list = list.map((f) => (f.id === String(change.rename.id) ? { ...f, name: String(change.rename.name || '').slice(0, 120) } : f));
+  if (list.length > lf.MAX) return { error: 'full' };
+  const out = chats().saveProject({ id: p.id, name: p.name, folders: list });
+  if (!out) return null;
+  projectChanged();
+  return projectPage(out);
 });
 ipcMain.handle('chats:project-get', async (_e, id) => {
   if (projectById(String(id))?.portable) await syncPortable(String(id)); // [portable projects] what was changed in the folder is picked up first
