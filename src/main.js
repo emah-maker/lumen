@@ -7,6 +7,7 @@ const TEST = require('./test-mode').isTest();
 // Never run from the install folder (the Start-menu shortcut starts us there): a program we start would inherit it and Windows would keep the next update from renaming the folder for as long as it runs (ai/cli-utils.js).
 try { require('./ai/cli-utils').leaveInstallDir(); } catch { /* stays where it is */ }
 if (TEST) require('./test-mode').standInWebStore(); // (an extension test's download server: before the extension library loads and keeps its fetch)
+if (TEST && process.env.LUMEN_TEST_BACKGROUND) require('./test-mode').handsOff({ app, BrowserWindow }); // (a background test run never takes the foreground, whoever asks)
 const perf = TEST ? require('./features/perf-hooks').install(__filename) : { mark() {} }; // startup marks and timer counts (test/e2e/perf-budget.js)
 if (TEST) global.__perf = perf;
 // A test run or a development run never opens the installed Lumen's profile (features/profile-guard.js): its userData is a
