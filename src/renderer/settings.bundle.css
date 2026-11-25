@@ -631,13 +631,14 @@ button.info:active:not(:disabled){transform:none;}
 .cli-cmd{display:flex;gap:var(--sp-3);align-items:flex-start;}
 .cli-cmd pre.code{flex:1;min-width:0;margin:0;}
 .cli-demo{position:relative;margin:var(--sp-5) 0 var(--sp-2);}
-.cli-term{font-family:ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;font-size:12px;line-height:1.7;min-height:calc(7 * 1.7em);padding:var(--sp-4) var(--sp-5);border-radius:var(--r-md);background:#0d1117;color:#e6edf3;overflow-x:auto;}
+.cli-term{--cli-bg:#0d1117;--cli-fg:#e6edf3;--cli-ok:#7ee787;--cli-dim:#8b949e;--cli-note:#79c0ff;}
+.cli-term{font-family:ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;font-size:12px;line-height:1.7;min-height:calc(7 * 1.7em);padding:var(--sp-4) var(--sp-5);border-radius:var(--r-md);background:var(--cli-bg);color:var(--cli-fg);overflow-x:auto;}
 .cli-line{white-space:pre;opacity:0;animation:cli-show 1ms linear var(--start, 0ms) forwards;}
 .cli-line.cmd .cli-typed{display:inline-block;vertical-align:bottom;overflow:hidden;width:0;animation:cli-type var(--dur, 0ms) steps(var(--n, 1), end) var(--start, 0ms) forwards;}
-.cli-line .cli-prompt{color:#7ee787;}
-.cli-line.out{color:#8b949e;}
-.cli-line.ok{color:#7ee787;}
-.cli-line.note{color:#79c0ff;}
+.cli-line .cli-prompt{color:var(--cli-ok);}
+.cli-line.out{color:var(--cli-dim);}
+.cli-line.ok{color:var(--cli-ok);}
+.cli-line.note{color:var(--cli-note);}
 .cli-replay{margin-top:var(--sp-2);}
 .cli-other{margin:var(--sp-3) 0;}
 .cli-other summary{cursor:pointer;color:var(--muted, inherit);}
