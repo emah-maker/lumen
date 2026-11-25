@@ -201,6 +201,37 @@ function makePdf(pages) {
     check('the project\'s chats have the project tool', allowed.projectTools === true);
     await api('projectDefaults', project.id, { plan: false, connectors: true, mcp: true });
 
+    // ======== [project tools] the apps, MCP servers and skills the project's chats get ========
+    const tools0 = await api('projectTools', project.id);
+    check('Tools: every app listed, "every app" until one is switched', tools0?.catalog?.all?.apps === true && ['gmail', 'sheets', 'github', 'canvas'].every((id) => tools0.catalog.apps.some((a) => a.id === id)), JSON.stringify(tools0?.catalog?.all));
+    const tools1 = await api('projectTools', project.id, { kind: 'apps', id: 'gmail', on: true });
+    check('switching Gmail on saves a list with just it (nothing else was connected)', JSON.stringify(tools1?.project?.defaults?.apps) === '["gmail"]' && tools1.catalog.apps.find((a) => a.id === 'gmail').on === true, JSON.stringify(tools1?.project?.defaults));
+    const keptPlan = await api('projectDefaults', project.id, { model: '', plan: true });
+    check('the Defaults card saving the model and plan keeps the list', JSON.stringify(keptPlan?.defaults?.apps) === '["gmail"]' && keptPlan.defaults.plan === true, JSON.stringify(keptPlan?.defaults));
+    await api('projectTools', project.id, { kind: 'skills', id: 'none', on: false });
+    const gate = await app.evaluate(() => {
+      const agent = global.__agent;
+      const cid = global.__chats.id();
+      agent.messages.settings = { adhdMode: true, model: 'claude-opus-5', skillsList: '<skills>\n- x: y\n</skills>', ...global.__projectWorkspace.settingsFor(cid) };
+      const allows = (what) => agent.browser.projects.allows(agent.messages, what);
+      return { gmail: allows('app:gmail'), github: allows('app:github'), any: allows('connectors'), only: agent.browser.projects.onlyApps(agent.messages), skills: agent.messages.settings.skillsList, projectSkills: agent.messages.settings.projectSkills === true };
+    });
+    check('in the project\'s chat: Gmail allowed, GitHub refused, the connector tool lists Gmail only', gate.gmail === true && gate.github === false && gate.any === true && JSON.stringify(gate.only) === '["gmail"]', JSON.stringify(gate));
+    check('…and with no skills picked, none are listed to the AI', gate.projectSkills === true && gate.skills === '', JSON.stringify(gate));
+    await api('projectTools', project.id, { kind: 'apps', id: 'all', on: true });
+    const tools2 = await api('projectTools', project.id, { kind: 'skills', id: 'all', on: true });
+    check('Use all: every app and skill again', !('apps' in (tools2?.project?.defaults || {})) && !('skills' in (tools2?.project?.defaults || {})) && tools2.catalog.all.apps && tools2.catalog.all.skills, JSON.stringify(tools2?.project?.defaults));
+    await api('projectDefaults', project.id, { plan: false });
+    // the New project dialog: a template's apps preset, the ticks win
+    const preset = await api('projectTools', null, { template: 'job-applications' });
+    check('the dialog: Job applications comes with Gmail, Sheets, Drive, Docs and Calendar on', JSON.stringify(preset?.catalog?.apps.filter((a) => a.on).map((a) => a.id).sort()) === JSON.stringify(['calendar', 'docs', 'drive', 'gmail', 'sheets']), JSON.stringify(preset?.catalog?.apps.filter((a) => a.on).map((a) => a.id)));
+    const coding = await api('saveProject', { name: 'Tools from a template', template: 'coding', folderMode: 'none', tools: { apps: ['github', 'notion'] } });
+    check('a new Code project gets the apps ticked in the dialog and plan first', JSON.stringify(coding?.defaults) === JSON.stringify({ plan: true, apps: ['github', 'notion'] }) && coding.template === 'coding', JSON.stringify(coding?.defaults));
+    const blank = await api('saveProject', { name: 'Blank tools', folderMode: 'none' });
+    check('a Blank project left as it is uses every app', !blank?.defaults?.apps, JSON.stringify(blank?.defaults));
+    await api('removeProject', coding.id);
+    await api('removeProject', blank.id);
+
     // ======== a Lumen-owned CLI run is offered project_files; an outside client is not ========
     const cli = await app.evaluate(async () => {
       const agent = global.__agent;

@@ -585,7 +585,7 @@ function create(deps) {
   // when that switch is on. None when Settings → Skills → "Let the AI use skills on its own" is off.
   const autoSkills = () => (prefs().skillsAutoUse === false ? [] : [...store.list().filter((s) => s.autoUse), ...claudeCode()]);
   // The block the system prompt carries (fixed per conversation, like custom instructions), or ''.
-  const promptBlock = () => skillMd().promptListing(autoSkills());
+  const promptBlock = ({ only } = {}) => skillMd().promptListing(Array.isArray(only) ? autoSkills().filter((s) => only.includes(s.name)) : autoSkills()); // only: [project tools] a project's skills, by name
   // The use_skill tool (ai/agent.js): a skill's instructions by name, or the list.
   function useForAI(input = {}) {
     const list = autoSkills();

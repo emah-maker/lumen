@@ -54,6 +54,17 @@
     document.head.append(css);
     document.body.append(js);
   })));
+  // [project tools] the Tools view's script and stylesheet (chat-project-tools.js), the first time a project's tools are shown
+  let toolsLoading = null;
+  const loadTools = () => (window.chatProjectTools ? Promise.resolve(true) : (toolsLoading ||= new Promise((done) => {
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'chat-project-tools.css' });
+    const js = Object.assign(document.createElement('script'), { src: 'chat-project-tools.js', onload: () => done(true), onerror: () => { toolsLoading = null; done(false); } });
+    css.dataset.later = '';
+    js.dataset.later = '';
+    document.head.append(css);
+    document.body.append(js);
+  })));
+  window.chatLoadProjectTools = loadTools; // (the New project dialog, chat-projects.js, loads it the same way)
   const icon = (name, className = '') => { const s = el('span', { className: `pjp-ic ${className}`.trim() }); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<svg viewBox="0 0 16 16">${ICON[name]}</svg>`; return s; };
 
   let page = null; // { root, id, ... } while a project page is open
@@ -532,7 +543,7 @@
       edit.textContent = editing ? tr('projectws.done', 'Done') : tr('projectws.edit', 'Edit');
       const d = data.project.defaults || {};
       if (!editing) {
-        const bits = [label(d.model), d.plan ? tr('projectws.defaults.plan.on', 'Plan first') : '', d.connectors === false ? tr('projectws.defaults.connectors.off', 'No connected accounts') : '', d.mcp === false ? tr('projectws.defaults.mcp.off', 'No MCP tools') : ''].filter(Boolean);
+        const bits = [label(d.model), d.plan ? tr('projectws.defaults.plan.on', 'Plan first') : ''].filter(Boolean); // ([project tools] the apps, servers and skills are on the Tools card)
         root.body.replaceChildren(el('p', { className: 'pjp-summary', textContent: bits.join(' · ') }), say);
         return;
       }
@@ -544,17 +555,32 @@
       model.value = d.model || '';
       const check = (text, on) => { const input = el('input', { type: 'checkbox', checked: on }); return { input, label: el('label', { className: 'pjp-check' }, input, el('span', { textContent: text })) }; };
       const plan = check(tr('projectws.defaults.plan', 'Plan first: the AI only reads and shows a plan before it acts'), d.plan === true);
-      const conn = check(tr('projectws.defaults.connectors', 'Let its chats use my connected accounts (Gmail, Canvas…)'), d.connectors !== false);
-      const mcp = check(tr('projectws.defaults.mcp', 'Let its chats use my MCP servers’ tools'), d.mcp !== false);
       const save = async () => {
-        const out = await page.api.projectDefaults(page.id, { model: model.value, plan: plan.input.checked, connectors: conn.input.checked, mcp: mcp.input.checked }).catch(() => null);
+        const out = await page.api.projectDefaults(page.id, { model: model.value, plan: plan.input.checked }).catch(() => null);
         say.textContent = out ? tr('projectws.saved', 'Saved.') : tr('chatpage.project.failed', 'Could not save the project.');
         if (out) { data.project = out; page.syncModel?.(); }
       };
-      for (const n of [model, plan.input, conn.input, mcp.input]) n.onchange = save;
-      root.body.replaceChildren(el('label', { className: 'pjp-field' }, el('span', { textContent: tr('projectws.defaults.model', 'Model for new chats') }), model), plan.label, conn.label, mcp.label, say);
+      for (const n of [model, plan.input]) n.onchange = save;
+      root.body.replaceChildren(el('label', { className: 'pjp-field' }, el('span', { textContent: tr('projectws.defaults.model', 'Model for new chats') }), model), plan.label, say);
     }
     draw();
+    return root;
+  }
+
+  // ---- [project tools] the Overview's Tools card: what this project's chats get (apps, MCP servers, skills) in a line, the apps it still
+  // needs connected, and Manage, which opens the Tools view (chat-project-tools.js, loaded here the first time).
+  function toolsCard(data) {
+    const root = card(tr('projecttools.title', 'Tools'), { tip: tr('projecttools.tip', 'The apps, MCP servers and skills this project’s chats can use. A new chat here gets these; chats outside the project are not affected.'), actions: [button(tr('projecttools.manageBtn', 'Manage'), () => page.setView?.('tools'))], className: 'pjp-tools' });
+    const line = el('p', { className: 'pjp-summary', textContent: tr('projecttpl.apps.loading', 'Loading…') });
+    root.body.append(line);
+    const me = page;
+    Promise.all([loadTools(), page.api.projectTools ? page.api.projectTools(data.project.id).catch(() => null) : null]).then(([ok, out]) => {
+      if (me !== page || !root.isConnected) return;
+      if (!ok || !out?.catalog) { line.textContent = tr('projecttools.failed', 'Could not read your apps and tools.'); return; }
+      line.textContent = window.chatProjectTools.summary(out.catalog, tr);
+      const missing = out.catalog.all.apps ? [] : out.catalog.apps.filter((a) => a.on && !a.connected);
+      if (missing.length) root.body.append(el('div', { className: 'pjp-line' }, el('span', { className: 'pjp-note pjp-warn', textContent: tr('projecttools.missing', 'Not connected yet: {names}', { names: missing.map((a) => a.name).join(', ') }) }), button(tr('projecttools.connectBtn', 'Connect…'), () => page.setView?.('tools'), 'primary')));
+    });
     return root;
   }
 
@@ -1163,7 +1189,7 @@
       notice.classList.toggle('temp', Boolean(p.temporary));
     };
     // Overview / Memory / Settings
-    const VIEWS = [...(job ? [['jobs', tr('projecttpl.view.jobs', 'Applications')]] : []), ['overview', tr('projectws.view.overview', 'Overview')], ['memory', tr('projectws.view.memory', 'Memory')], ['settings', tr('projectws.view.settings', 'Settings')]];
+    const VIEWS = [...(job ? [['jobs', tr('projecttpl.view.jobs', 'Applications')]] : []), ['overview', tr('projectws.view.overview', 'Overview')], ['tools', tr('projecttools.title', 'Tools')], ['memory', tr('projectws.view.memory', 'Memory')], ['settings', tr('projectws.view.settings', 'Settings')]];
     const tabs = el('div', { className: 'pjp-tabs' });
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-label', tr('projectws.view.label', 'Project views'));
@@ -1229,10 +1255,10 @@
       const group = el('div', { className: 'pjp-type-switch' });
       group.setAttribute('role', 'radiogroup');
       group.setAttribute('aria-label', tr('projecttpl.type', 'Project type'));
-      const choices = [['', tr('projecttpl.type.standard', 'Standard')], [JOB, tr('projecttpl.job-applications', 'Job applications')]];
+      const choices = [['', tr('projecttpl.type.standard', 'Standard')], [JOB, tr('projecttpl.job-applications', 'Job applications')], ['coursework', tr('projecttpl.coursework', 'Coursework')], ['coding', tr('projecttpl.coding', 'Code project')], ['research', tr('projecttpl.research', 'Research')]]; // ([project tools] the tool templates: their instructions only; the apps stay as the Tools view has them)
       for (const [value, label] of choices) {
         const on = (p.template || '') === value;
-        const b = el('button', { type: 'button', className: `pjp-type-opt${on ? ' on' : ''}${value ? ' job' : ''}`, textContent: label });
+        const b = el('button', { type: 'button', className: `pjp-type-opt${on ? ' on' : ''}${value === JOB ? ' job' : ''}`, textContent: label });
         b.setAttribute('role', 'radio');
         b.setAttribute('aria-checked', String(on));
         b.onclick = () => { if (!on) { for (const x of group.children) x.disabled = true; setType(value); } };
@@ -1274,14 +1300,23 @@
           page.board = window.chatJobBoard.draw(holder, { api, id, tr, openLink: (url) => window.assistant?.openLink?.(url), toast: (t) => h.toast(t), newChat: (text) => h.newChat(page.data.project, text) }); // (newChat: Find jobs with a job skill of the user's own)
         });
       } else if (v === 'memory') { const m = memoryCard(page.data); m.querySelector('.pjp-memory-more:not([hidden])')?.click(); viewBox.replaceChildren(m, placesCard(page.data)); } // (the notes, then the project's key documents)
-      else if (v === 'settings') viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, projectCard(), instructionsCard(page.data), defaultsCard(page.data), permissionsCard(page.data), folderCard(page.data)));
+      else if (v === 'tools') { // [project tools] the model and plan first, then the apps, MCP servers and skills
+        const holder = el('div', { className: 'pjp-tools-view' });
+        viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, defaultsCard(page.data)), holder);
+        loadTools().then((ok) => {
+          if (!holder.isConnected) return;
+          if (!ok) { holder.replaceChildren(note(tr('projecttools.failed', 'Could not read your apps and tools.'))); return; }
+          page.tools = window.chatProjectTools.view(holder, { api, id, tr, onSaved: (p) => { page.data.project = p; h.refresh(); } });
+        });
+      } else if (v === 'settings') viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, projectCard(), instructionsCard(page.data), permissionsCard(page.data), folderCard(page.data)));
       else { viewBox.replaceChildren(); if (was && was !== 'overview') reload(true); } // (the overview's cards show what changed in the other views)
     }
-    page.extras = () => { drawNotice(); if (page.view && page.view !== 'overview' && !page.editing.size) setView(page.view); };
+    page.setView = (v) => { setView(v); tabs.querySelector('.pjp-tab.on')?.focus(); }; // [project tools] the Overview's Tools card
+    page.extras = () => { drawNotice(); if (page.view && page.view !== 'overview' && page.view !== 'tools' && !page.editing.size) setView(page.view); }; // (the Tools view keeps itself: redrawn, a Connect in progress would be lost)
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
-    const side = el('aside', { className: 'pjp-side' }, ...[applicationsCard(data)].filter(Boolean), instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
+    const side = el('aside', { className: 'pjp-side' }, ...[applicationsCard(data)].filter(Boolean), instructions, sourcesCard(data), toolsCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
     page.side = side;
     page.sub();
@@ -1357,7 +1392,7 @@
     me.composerText?.setAttribute('placeholder', tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: fresh.project.name }));
     const folderBtn = me.root.querySelector('.pjp-open-folder');
     if (folderBtn) folderBtn.hidden = !fresh.project.folder;
-    const next = [applicationsCard(me.data), instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
+    const next = [applicationsCard(me.data), instructionsCard(me.data), sourcesCard(me.data), toolsCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
     me.side.replaceChildren(...next.filter(Boolean));
     me.syncModel?.();
     me.sub?.();

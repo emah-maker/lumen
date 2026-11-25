@@ -59,7 +59,7 @@ const src = (f) => fs.readFileSync(path.join(__dirname, '..', '..', f), 'utf8');
   const pageSrc = src('src/renderer/chat-project-page.js');
   check('page: the notice for a temporary or archived project, with Keep / Move out of archive', /pjp-notice/.test(pageSrc) && /pjp-keep/.test(pageSrc) && /pjp-unarchive/.test(pageSrc));
   check('page: Overview / Memory / Settings tabs, arrow keys move between them', /\['overview', .*\['memory', .*\['settings', /.test(pageSrc) && /role', 'tablist'/.test(pageSrc) && /ArrowRight/.test(pageSrc));
-  check('page: the Settings view has the project card (keep, pin, archive, export, delete) and the instructions, defaults, permissions and folder', /projectCard\(\), instructionsCard\(page\.data\), defaultsCard\(page\.data\), permissionsCard\(page\.data\), folderCard\(page\.data\)/.test(pageSrc) && ['pjp-pin', 'pjp-archive', 'pjp-delete'].every((k) => pageSrc.includes(k)));
+  check('page: the Settings view has the project card (keep, pin, archive, export, delete) and the instructions, permissions and folder; the Tools view the defaults', /projectCard\(\), instructionsCard\(page\.data\), permissionsCard\(page\.data\), folderCard\(page\.data\)/.test(pageSrc) && /v === 'tools'[\s\S]{0,300}defaultsCard\(page\.data\)/.test(pageSrc) && ['pjp-pin', 'pjp-archive', 'pjp-delete'].every((k) => pageSrc.includes(k)));
   const chatPage = src('src/renderer/chat-page.js');
   check('chat page: the rail and the page get onTemp / onKeep / keep / flag', /onTemp: \(\) => newTempProject\(\)/.test(chatPage) && /onKeep: \(p\) => keepProject\(p\)/.test(chatPage) && /keep: \(p\) => keepProject\(p\), flag: \(p, key, on\) => flagProject\(p, key, on\)/.test(chatPage));
   const en = JSON.parse(src('src/locales/en.json'));

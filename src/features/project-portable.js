@@ -102,9 +102,12 @@ function parseSettings(text) {
   try {
     const j = JSON.parse(String(text));
     const d = j?.defaults && typeof j.defaults === 'object' ? j.defaults : {};
-    return { name: typeof j?.name === 'string' ? j.name.slice(0, 60) : '', description: typeof j?.description === 'string' ? j.description.slice(0, 200) : '', defaults: { ...(typeof d.model === 'string' && d.model ? { model: d.model.slice(0, 120) } : {}), ...(d.plan === true ? { plan: true } : {}), ...(d.connectors === false ? { connectors: false } : {}), ...(d.mcp === false ? { mcp: false } : {}) } };
+    return { name: typeof j?.name === 'string' ? j.name.slice(0, 60) : '', description: typeof j?.description === 'string' ? j.description.slice(0, 200) : '', defaults: { ...(typeof d.model === 'string' && d.model ? { model: d.model.slice(0, 120) } : {}), ...(d.plan === true ? { plan: true } : {}), ...(d.connectors === false ? { connectors: false } : {}), ...(d.mcp === false ? { mcp: false } : {}), ...toolLists(d) } };
   } catch { return null; }
 }
+// [project tools] the apps, MCP servers and skills a project's chats get (features/project-tools.js): kept when the file has the list
+const TOOL_LISTS = [['apps', /^[a-z][a-z0-9_-]{0,39}$/], ['servers', /^[a-z0-9_-]{1,40}$/i], ['skills', /^[a-z0-9][a-z0-9_.-]{0,63}$/i]];
+const toolLists = (d) => Object.fromEntries(TOOL_LISTS.filter(([k]) => Array.isArray(d[k])).map(([k, re]) => [k, [...new Set(d[k].map((x) => String(x ?? '').trim()).filter((x) => re.test(x)))].slice(0, 60)]));
 
 // ---- helpers over the folder
 const exists = async (fsp, p) => { try { await fsp.lstat(p); return true; } catch { return false; } };
