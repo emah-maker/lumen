@@ -11231,7 +11231,7 @@ let freezeCounter = 0;
 // Last resort only: the renderer thaws explicitly at the end of a spring or drag and pings view:freeze-alive while moving.
 const FREEZE_MAX_MS = 6000;
 const freezeTimers = new WeakMap(); // window rec -> timeout
-const snapshotSizer = require('./features/snapshot-size');
+const snapshotSizer = lazy(() => require('./features/snapshot-size')); // (loaded when a tab first freezes)
 function armFreezeTimeout(rec, seq) {
   clearTimeout(freezeTimers.get(rec));
   freezeTimers.set(rec, setTimeout(() => {

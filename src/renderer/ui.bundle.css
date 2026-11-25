@@ -593,7 +593,7 @@ body.chat-full .messages:has(#setup:not([hidden])) .empty-title, body.chat-full 
 .msg.assistant:has(> .reply-regen):hover .reply-regen, .msg.assistant:has(> .reply-regen):hover .reply-copy{opacity:1;}
 .msg.assistant .reply-regen:hover{background:var(--hover, rgba(127,127,127,.12));color:var(--text);}
 .msg.assistant:has(> .reply-regen.labeled){--regen-extra:70px;}
-.msg.assistant:has(> .reply-regen) > .reply-regen.labeled{width:98px;display:inline-flex;align-items:center;justify-content:center;gap:5px;padding:0 var(--sp-3);border:0.5px solid var(--border);color:var(--text);font-family:inherit;font-size:12px;font-weight:500;white-space:nowrap;opacity:1;}
+.msg.assistant:has(> .reply-regen) > .reply-regen.labeled{width:98px;display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:0 var(--sp-3);border:0.5px solid var(--border);color:var(--text);font-family:inherit;font-size:12px;font-weight:500;white-space:nowrap;opacity:1;}
 .msg.assistant:has(> .reply-regen) > .reply-regen.labeled svg{width:14px;height:14px;flex:none;}
 .msg.assistant:has(> .reply-regen) > .reply-regen.labeled:hover{background:var(--hover, rgba(127,127,127,.12));border-color:var(--muted);}
 .msg.assistant:has(> .reply-regen) > .reply-regen.labeled:not(.armed)::after{content:none;}
