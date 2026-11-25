@@ -782,7 +782,7 @@ async function screenshot(agent, wc, input, h) {
     const shot = await captureJpeg(wc, { maxWidth, quality });
     if (shot) {
       const size = { width: shot.width, height: shot.height };
-      const view = await h.runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+      const view = await h.runScript(wc, annotate.VIEW_SCRIPT);
       agent.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
       return [
         { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: shot.data } },
@@ -803,7 +803,7 @@ async function screenshot(agent, wc, input, h) {
   if (input.region) {
     agent.screenshotScale = null; // a crop can't be mapped back for click_at
   } else {
-    const view = await h.runScript(wc, '({ innerWidth, innerHeight, scrollX, scrollY })');
+    const view = await h.runScript(wc, annotate.VIEW_SCRIPT);
     agent.screenshotScale = { wc, ...annotate.shotScaleOf(view, size, wc.getZoomFactor()) };
   }
   return [
