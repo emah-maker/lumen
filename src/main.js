@@ -13169,13 +13169,23 @@ async function sheetsJson(req, target, opts) {
   }
   try { return JSON.parse(res.text || '{}'); } catch { throw new Error('Google Sheets sent something Lumen couldn’t read.'); }
 }
+// The sheet's tabs, and the first (other than skip) whose first row has the tracker's columns (job-sync.js pickTab). -> { tabs, found }
+async function findTrackerTab(req, id, skip = '') {
+  const meta = await sheetsJson(req, `/spreadsheets/${encodeURIComponent(id)}`, { query: { fields: 'sheets.properties.title' } });
+  const tabs = (meta.sheets || []).map((t) => String(t?.properties?.title || '')).filter(Boolean).slice(0, 50);
+  const look = tabs.filter((t) => t !== skip);
+  if (!look.length) return { tabs, found: '' };
+  const got = await sheetsJson(req, `/spreadsheets/${encodeURIComponent(id)}/values:batchGet`, { query: { majorDimension: 'ROWS', ranges: look.map((t) => `${quoteTab(t)}A1:Z1`) } });
+  const rows = (got.valueRanges || []).map((v, i) => ({ tab: look[i], row: (v?.values || [])[0] || [] }));
+  return { tabs, found: jobSyncLib().pickTab(rows) };
+}
 const saveJobSync = (id, change) => { const p = projectById(id); if (p) chats().setJobSync(id, { ...(p.jobSync || {}), ...change }); };
 const jobSheetRuns = new Map(); // project id -> the sync running now (a second asks for the same one)
 function syncJobSheet(projectId) {
   if (jobSheetRuns.has(projectId)) return jobSheetRuns.get(projectId);
   const run = (async () => {
     const p = projectById(projectId);
-    const link = p?.jobSync?.sheet;
+    let link = p?.jobSync?.sheet;
     if (!link) return { ok: false, error: 'No sheet is linked.' };
     const req = sheetsReq();
     if (!req) return { ok: false, connect: 'sheets', error: 'Connect Google Sheets first (Settings → Apps and connections).' };
@@ -13183,9 +13193,13 @@ function syncJobSheet(projectId) {
     const rt = automations();
     try {
       const base = `/spreadsheets/${encodeURIComponent(link.id)}`;
-      const got = await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(link.tab)}A1:Z2000`)}`, { query: { majorDimension: 'ROWS', valueRenderOption: 'FORMATTED_VALUE' } });
-      const sheet = lib.readSheet(got.values || []);
-      if (sheet.error) throw new Error(sheet.error);
+      const read = async (tab) => lib.readSheet((await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(tab)}A1:Z2000`)}`, { query: { majorDimension: 'ROWS', valueRenderOption: 'FORMATTED_VALUE' } })).values || []);
+      let sheet = await read(link.tab);
+      if (sheet.error) { // (the linked tab isn't the tracker, often a summary tab the sheet opens on: the tab that has the columns is used)
+        const tab = await findTrackerTab(req, link.id, link.tab);
+        if (tab.found) { link = { ...link, tab: tab.found }; sheet = await read(link.tab); }
+        if (sheet.error) throw new Error(`${sheet.error}${tab.tabs.length > 1 ? ` None of its tabs has one either (${tab.tabs.join(', ')}).` : ''}`);
+      }
       const plan = lib.plan(rt.applications(projectId), sheet, { tab: link.tab, write: link.write !== false });
       if (plan.cells.length) await sheetsJson(req, `${base}/values:batchUpdate`, { method: 'POST', json: { valueInputOption: 'RAW', data: plan.cells.map((c) => ({ range: c.range, majorDimension: 'ROWS', values: [[c.value]] })) } });
       if (plan.append.length) await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(link.tab)}A1`)}:append`, { method: 'POST', query: { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' }, json: { majorDimension: 'ROWS', values: plan.append.map((a) => a.cells) } });
