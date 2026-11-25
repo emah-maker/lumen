@@ -1,0 +1,272 @@
+// [project templates] The job dashboard: the Applications view of a Job applications project (chat-project-page.js). Loaded the first
+// time a job project's page is opened (with chat-job-board.css), never with the page itself.
+//   window.chatJobBoard.draw(box, ctx) -> { refresh() }
+//     ctx: { api, id, tr(key, english, vars), openLink(url), toast(text) }
+// What it shows: the stat tiles (applied this week and month, total, response rate, interviews, offers, rejections, the average days to
+// an answer, and the last 8 weeks as small bars), the follow-ups due (applied two weeks ago or more, no answer), then one of three views:
+// Board (Saved, Applied, Interview, Offer, Closed: drag a card to move it on, or use its stage menu), Table (sortable) and Timeline (every
+// move, by day). Each row opens its posting and the tailored résumé it used. Everything comes from main ("chats:project-applications"):
+// the tracker is kept on this computer with the automations, encrypted; nothing here is sent anywhere.
+(() => {
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids.filter((k) => k !== null && k !== undefined && k !== false)); return n; };
+  const COLUMNS = [['saved', ['saved']], ['applied', ['applied']], ['interview', ['interview']], ['offer', ['offer']], ['closed', ['rejected', 'withdrawn']]];
+  const STAGE_OF_COLUMN = { saved: 'saved', applied: 'applied', interview: 'interview', offer: 'offer', closed: 'rejected' }; // (a card dropped on Closed is rejected; its menu has Withdrawn)
+  const STAGES = ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'];
+  const VIEWS = ['board', 'table', 'timeline'];
+  const DAY = 86400000;
+  const ICON = {
+    open: '<path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/>',
+    doc: '<path d="M4 2.5h5l3 3v8H4zM9 2.5v3h3M6 9h4M6 11h3"/>',
+    plus: '<path d="M8 3.5v9M3.5 8h9"/>',
+    clock: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/>',
+    board: '<rect x="2.5" y="3" width="3" height="10" rx="1"/><rect x="6.5" y="3" width="3" height="7" rx="1"/><rect x="10.5" y="3" width="3" height="5" rx="1"/>',
+    table: '<rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M2.5 10h11M6.5 3v10"/>',
+    timeline: '<path d="M4.5 2.5v11"/><circle cx="4.5" cy="4.5" r="1.4"/><circle cx="4.5" cy="8" r="1.4"/><circle cx="4.5" cy="11.5" r="1.4"/><path d="M7.5 4.5h6M7.5 8h5M7.5 11.5h6"/>',
+  };
+  const icon = (name) => { const s = el('span', { className: 'jb-ic' }); s.setAttribute('aria-hidden', 'true'); s.innerHTML = `<svg viewBox="0 0 16 16">${ICON[name]}</svg>`; return s; };
+  const remember = {
+    get: (k, d) => { try { return localStorage.getItem(`lumen.jobBoard.${k}`) || d; } catch { return d; } },
+    set: (k, v) => { try { localStorage.setItem(`lumen.jobBoard.${k}`, v); } catch { /* private storage off: the choice lasts this visit */ } },
+  };
+
+  function draw(box, ctx) {
+    const { api, id, tr } = ctx;
+    const stageName = (s) => tr(`projecttpl.stage.${s}`, s);
+    const day = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+    let data = null;
+    let view = VIEWS.includes(remember.get('view', 'board')) ? remember.get('view', 'board') : 'board';
+    let sort = { key: 'at', dir: -1 };
+    const root = el('div', { className: 'jb' });
+    const say = el('p', { className: 'jb-status' });
+    say.setAttribute('role', 'status');
+    box.replaceChildren(root);
+
+    async function load() {
+      const got = await api.projectApplications(id, 'get').catch(() => null);
+      if (!root.isConnected) return;
+      if (!got) { root.replaceChildren(el('p', { className: 'jb-empty', textContent: tr('projecttpl.apps.failed', 'Could not read the tracker.') })); return; }
+      data = got;
+      render();
+    }
+    async function move(key, stage) {
+      const out = await api.projectApplications(id, 'stage', { key, stage }).catch(() => null);
+      if (!out?.ok) say.textContent = tr('jobs.moveFailed', 'Could not move it.');
+      await load();
+    }
+
+    // ---- the parts
+    const linkBtn = (label, iconName, run, className) => { const b = el('button', { type: 'button', className: `jb-link ${className}`, title: label }, icon(iconName)); b.setAttribute('aria-label', label); b.onclick = (ev) => { ev.stopPropagation(); run(); }; return b; };
+    const postingBtn = (e) => (e.url ? linkBtn(tr('jobs.posting', 'Open the posting'), 'open', () => ctx.openLink(e.url), 'jb-posting') : null);
+    const resumeBtn = (e) => (e.resume ? linkBtn(tr('jobs.resume', 'Open the tailored résumé: {name}', { name: e.resume }), 'doc', async () => { const out = await api.projectApplications(id, 'resume', { key: e.key }).catch(() => null); if (!out?.ok) say.textContent = tr('jobs.resumeFailed', 'Could not open the résumé.'); }, 'jb-resume') : null);
+    const stagePill = (s) => el('span', { className: `jb-pill s-${s}`, textContent: stageName(s) });
+    function stageMenu(e) {
+      const sel = el('select', { className: 'jb-stage-select' });
+      sel.setAttribute('aria-label', tr('jobs.stageFor', 'Stage of {name}', { name: [e.company, e.role].filter(Boolean).join(', ') }));
+      for (const s of STAGES) sel.append(el('option', { value: s, textContent: stageName(s), selected: s === e.stage }));
+      sel.onchange = () => move(e.key, sel.value);
+      sel.onclick = (ev) => ev.stopPropagation();
+      return sel;
+    }
+
+    function tiles() {
+      const st = data.stats || {};
+      const tile = (value, label, className = '', hint = '') => { const t = el('div', { className: `jb-tile ${className}`.trim(), title: hint }, el('span', { className: 'jb-tile-n', textContent: value }), el('span', { className: 'jb-tile-l', textContent: label })); return t; };
+      const max = Math.max(1, ...(st.weeks || []));
+      const bars = el('div', { className: 'jb-bars' });
+      bars.setAttribute('role', 'img');
+      bars.setAttribute('aria-label', tr('jobs.weeksLabel', 'Applications per week, the last 8 weeks: {list}', { list: (st.weeks || []).join(', ') }));
+      (st.weeks || []).forEach((n, i) => { const b = el('span', { className: `jb-bar${i === 7 ? ' now' : ''}`, title: tr('jobs.weekBar', '{n} that week', { n }) }); b.style.setProperty('--h', `${Math.round((n / max) * 100)}%`); bars.append(b); });
+      const weeksTile = el('div', { className: 'jb-tile jb-tile-chart' }, bars, el('span', { className: 'jb-tile-l', textContent: tr('jobs.weeks', 'Last 8 weeks') }));
+      return el('div', { className: 'jb-tiles' },
+        tile(String(st.week ?? 0), tr('jobs.week', 'Applied this week'), 'hero'),
+        tile(String(st.month ?? 0), tr('jobs.month', 'This month')),
+        tile(String(st.total ?? 0), tr('jobs.total', 'Total applied'), '', st.saved ? tr('jobs.savedHint', '{n} saved for later', { n: st.saved }) : ''),
+        tile(st.responseRate === null || st.responseRate === undefined ? '–' : `${st.responseRate}%`, tr('jobs.rate', 'Response rate'), 'rate', tr('jobs.rateHint', 'Heard back (an interview, an offer or a rejection) out of all applied')),
+        tile(String(st.interviews ?? 0), tr('jobs.interviews', 'Interviews'), 's-interview'),
+        tile(String(st.offers ?? 0), tr('jobs.offers', 'Offers'), 's-offer'),
+        tile(String(st.rejections ?? 0), tr('jobs.rejections', 'Rejections'), 's-rejected'),
+        tile(st.avgDays === null || st.avgDays === undefined ? '–' : tr('jobs.days', '{n} d', { n: st.avgDays }), tr('jobs.avgDays', 'Avg. days to an answer')),
+        weeksTile);
+    }
+
+    function followUps() {
+      const due = data.followUps || [];
+      if (!due.length) return null;
+      const list = el('ul', { className: 'jb-follow-list' });
+      for (const e of due.slice(0, 6)) {
+        list.append(el('li', { className: 'jb-follow-row' },
+          el('span', { className: 'jb-follow-days', textContent: tr('jobs.waited', '{n} days', { n: e.waited }) }),
+          el('span', { className: 'jb-follow-name' }, el('strong', { textContent: e.company || '?' }), e.role ? el('span', { textContent: ` · ${e.role}` }) : null),
+          el('span', { className: 'jb-grow' }), postingBtn(e), resumeBtn(e), stageMenu(e)));
+      }
+      const head = el('div', { className: 'jb-follow-head' }, icon('clock'), el('strong', { textContent: due.length === 1 ? tr('jobs.follow1', '1 follow-up due') : tr('jobs.followN', '{n} follow-ups due', { n: due.length }) }), el('span', { className: 'jb-muted', textContent: tr('jobs.followNote', 'Applied 2+ weeks ago with no answer. A short, polite check-in helps.') }));
+      return el('section', { className: 'jb-follow' }, head, list, due.length > 6 ? el('p', { className: 'jb-muted', textContent: tr('jobs.followMore', '{n} more in the table.', { n: due.length - 6 }) }) : null);
+    }
+
+    function toolbar() {
+      const switcher = el('div', { className: 'jb-switch' });
+      switcher.setAttribute('role', 'tablist');
+      switcher.setAttribute('aria-label', tr('jobs.views', 'Views'));
+      const names = { board: tr('jobs.board', 'Board'), table: tr('jobs.table', 'Table'), timeline: tr('jobs.timeline', 'Timeline') };
+      for (const v of VIEWS) {
+        const b = el('button', { type: 'button', className: `jb-switch-btn${v === view ? ' on' : ''}` }, icon(v), el('span', { textContent: names[v] }));
+        b.setAttribute('role', 'tab');
+        b.setAttribute('aria-selected', String(v === view));
+        b.onclick = () => { view = v; remember.set('view', v); render(); root.querySelector('.jb-switch-btn.on')?.focus(); };
+        switcher.append(b);
+      }
+      const add = el('button', { type: 'button', className: 'btn small primary jb-add' }, icon('plus'), el('span', { textContent: tr('jobs.add', 'Add posting') }));
+      add.onclick = () => addForm(add);
+      const csv = el('button', { type: 'button', className: 'btn small jb-export', textContent: tr('projecttpl.apps.export', 'Export CSV') });
+      csv.onclick = async () => { const out = await api.projectApplications(id, 'export').catch(() => null); say.textContent = out?.ok ? tr('projecttpl.apps.exported', 'Saved.') : out?.canceled ? '' : tr('projecttpl.apps.exportFailed', 'Could not save the file.'); };
+      const profile = el('button', { type: 'button', className: 'btn small jb-profile', textContent: tr('projecttpl.apps.profile', 'Edit profile') });
+      profile.onclick = () => api.projectApplications(id, 'open').catch(() => null);
+      return el('div', { className: 'jb-toolbar' }, switcher, el('span', { className: 'jb-grow' }), add, csv, profile);
+    }
+
+    function addForm(anchor) {
+      if (root.querySelector('.jb-addform')) { root.querySelector('.jb-addform input').focus(); return; }
+      const company = el('input', { type: 'text', className: 'jb-in', maxLength: 120, placeholder: tr('jobs.company', 'Company') });
+      const role = el('input', { type: 'text', className: 'jb-in', maxLength: 160, placeholder: tr('jobs.role', 'Role') });
+      const url = el('input', { type: 'url', className: 'jb-in jb-in-url', maxLength: 2000, placeholder: tr('jobs.url', 'Posting address (https://…)') });
+      for (const [i, label] of [[company, tr('jobs.company', 'Company')], [role, tr('jobs.role', 'Role')], [url, tr('jobs.url', 'Posting address (https://…)')]]) i.setAttribute('aria-label', label);
+      const stage = el('select', { className: 'jb-in' });
+      stage.setAttribute('aria-label', tr('jobs.stage', 'Stage'));
+      for (const s of ['saved', 'applied']) stage.append(el('option', { value: s, textContent: stageName(s) }));
+      const save = el('button', { type: 'submit', className: 'btn small primary', textContent: tr('jobs.addSave', 'Add') });
+      const cancel = el('button', { type: 'button', className: 'btn small', textContent: tr('chatpage.project.cancel', 'Cancel') });
+      const form = el('form', { className: 'jb-addform' }, company, role, url, stage, save, cancel);
+      cancel.onclick = () => { form.remove(); anchor.focus(); };
+      form.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel.click(); } });
+      form.onsubmit = async (e) => {
+        e.preventDefault();
+        if (!company.value.trim() && !url.value.trim()) { company.focus(); return; }
+        save.disabled = true;
+        const out = await api.projectApplications(id, 'add', { company: company.value, role: role.value, url: url.value, stage: stage.value }).catch(() => null);
+        save.disabled = false;
+        if (!out?.ok) { say.textContent = out?.error || tr('jobs.addFailed', 'Could not add it.'); return; }
+        await load();
+      };
+      root.querySelector('.jb-toolbar').after(form);
+      company.focus();
+    }
+
+    function card(e) {
+      const c = el('article', { className: `jb-card s-${e.stage}`, draggable: true, tabIndex: 0 });
+      c.dataset.key = e.key;
+      c.setAttribute('aria-label', [e.company, e.role, stageName(e.stage)].filter(Boolean).join(', '));
+      const when = e.stage === 'saved' ? tr('jobs.savedOn', 'Saved {when}', { when: day(e.at) }) : tr('jobs.appliedOn', 'Applied {when}', { when: day(e.applied || e.at) });
+      c.append(...[
+        el('div', { className: 'jb-card-top' }, el('strong', { className: 'jb-card-co', textContent: e.company || tr('jobs.noCompany', '(no company)') }), e.stage === 'withdrawn' || e.stage === 'rejected' ? stagePill(e.stage) : null),
+        e.role ? el('div', { className: 'jb-card-role', textContent: e.role }) : null,
+        el('div', { className: 'jb-card-when', textContent: when }),
+        el('div', { className: 'jb-card-foot' }, el('span', { className: 'jb-grow' }), postingBtn(e), resumeBtn(e), stageMenu(e))].filter(Boolean)); // (no role: no line)
+      c.addEventListener('dragstart', (ev) => { ev.dataTransfer.setData('text/x-lumen-job', e.key); ev.dataTransfer.effectAllowed = 'move'; c.classList.add('dragging'); });
+      c.addEventListener('dragend', () => c.classList.remove('dragging'));
+      c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !isImeEnter(ev) && ev.target === c && e.url) ctx.openLink(e.url); });
+      return c;
+    }
+
+    function board() {
+      const wrap = el('div', { className: 'jb-board' });
+      for (const [col, stages] of COLUMNS) {
+        const items = (data.entries || []).filter((e) => stages.includes(e.stage));
+        const title = col === 'closed' ? tr('jobs.closed', 'Closed') : stageName(col);
+        const list = el('div', { className: 'jb-col-list' });
+        for (const e of items) list.append(card(e));
+        if (!items.length) list.append(el('p', { className: 'jb-col-empty', textContent: col === 'saved' ? tr('jobs.savedEmpty', 'Postings to apply to later') : tr('jobs.dropHere', 'Drag a card here') }));
+        const column = el('section', { className: `jb-col c-${col}` }, el('header', { className: 'jb-col-head' }, el('span', { className: 'jb-dot' }), el('span', { className: 'jb-col-title', textContent: title }), el('span', { className: 'jb-col-n', textContent: String(items.length) })), list);
+        column.setAttribute('aria-label', `${title}: ${items.length}`);
+        column.addEventListener('dragover', (ev) => { if (ev.dataTransfer.types.includes('text/x-lumen-job')) { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; column.classList.add('over'); } });
+        column.addEventListener('dragleave', (ev) => { if (!column.contains(ev.relatedTarget)) column.classList.remove('over'); });
+        column.addEventListener('drop', (ev) => {
+          ev.preventDefault();
+          column.classList.remove('over');
+          const key = ev.dataTransfer.getData('text/x-lumen-job');
+          const e = (data.entries || []).find((x) => x.key === key);
+          if (!e || stages.includes(e.stage)) return;
+          const moving = root.querySelector(`.jb-card[data-key="${CSS.escape(key)}"]`);
+          if (moving) { list.querySelector('.jb-col-empty')?.remove(); list.prepend(moving); } // (shown where it was dropped at once; the load that follows has the numbers)
+          move(key, STAGE_OF_COLUMN[col]);
+        });
+        wrap.append(column);
+      }
+      return wrap;
+    }
+
+    function table() {
+      const cols = [['company', tr('jobs.company', 'Company')], ['role', tr('jobs.role', 'Role')], ['stage', tr('jobs.stage', 'Stage')], ['at', tr('jobs.date', 'Date')], ['wait', tr('jobs.answer', 'Answer')], ['links', '']];
+      const waitOf = (e) => (e.respondedAt && e.applied ? (e.respondedAt - e.applied) / DAY : e.applied && e.stage === 'applied' ? (Date.now() - e.applied) / DAY : -1);
+      const val = (e, k) => (k === 'stage' ? STAGES.indexOf(e.stage) : k === 'at' ? e.at || 0 : k === 'wait' ? waitOf(e) : String(e[k] || '').toLowerCase());
+      const rows = [...(data.entries || [])].sort((a, b) => { const x = val(a, sort.key); const y = val(b, sort.key); return (x < y ? -1 : x > y ? 1 : 0) * sort.dir; });
+      const thead = el('tr');
+      for (const [k, label] of cols) {
+        if (k === 'links') { thead.append(el('th', { className: 'jb-th-links' })); continue; }
+        const b = el('button', { type: 'button', className: 'jb-sort', textContent: label });
+        b.onclick = () => { sort = { key: k, dir: sort.key === k ? -sort.dir : k === 'at' || k === 'wait' ? -1 : 1 }; render(); root.querySelector(`.jb-sort[data-k="${k}"]`)?.focus(); };
+        b.dataset.k = k;
+        const th = el('th', { scope: 'col' }, b);
+        th.setAttribute('aria-sort', sort.key === k ? (sort.dir > 0 ? 'ascending' : 'descending') : 'none');
+        if (sort.key === k) b.append(el('span', { className: 'jb-arrow', textContent: sort.dir > 0 ? ' ↑' : ' ↓' }));
+        thead.append(th);
+      }
+      const body = el('tbody');
+      for (const e of rows) {
+        const w = waitOf(e);
+        const answer = e.respondedAt && e.applied ? tr('jobs.answeredIn', 'in {n} d', { n: Math.max(0, Math.round(w)) }) : e.stage === 'applied' && e.applied ? tr('jobs.waiting', 'waiting {n} d', { n: Math.floor(w) }) : '';
+        body.append(el('tr', { className: `s-${e.stage}` },
+          el('td', { className: 'jb-td-co', textContent: e.company || '?' }),
+          el('td', { textContent: e.role || '' }),
+          el('td', {}, stageMenu(e)),
+          el('td', { className: 'jb-td-date', textContent: day(e.at) }),
+          el('td', { className: 'jb-td-wait', textContent: answer }),
+          el('td', { className: 'jb-td-links' }, postingBtn(e), resumeBtn(e))));
+      }
+      const t = el('table', { className: 'jb-table' }, el('thead', {}, thead), body);
+      return el('div', { className: 'jb-table-wrap' }, t);
+    }
+
+    function timeline() {
+      const items = data.timeline || [];
+      if (!items.length) return el('p', { className: 'jb-empty', textContent: tr('jobs.timelineEmpty', 'Nothing has happened yet.') });
+      const what = (it) => {
+        const name = [it.company || '?', it.role].filter(Boolean).join(' · ');
+        return ({ saved: tr('jobs.t.saved', 'Saved {name}', { name }), applied: tr('jobs.t.applied', 'Applied to {name}', { name }), interview: tr('jobs.t.interview', 'Interview with {name}', { name }), offer: tr('jobs.t.offer', 'Offer from {name}', { name }), rejected: tr('jobs.t.rejected', 'Rejected by {name}', { name }), withdrawn: tr('jobs.t.withdrawn', 'Withdrew from {name}', { name }) })[it.stage] || name;
+      };
+      const out = el('ol', { className: 'jb-timeline' });
+      let lastDay = '';
+      for (const it of items) {
+        const d = new Date(it.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+        if (d !== lastDay) { out.append(el('li', { className: 'jb-t-day', textContent: d })); lastDay = d; }
+        const row = el('li', { className: `jb-t-item s-${it.stage}` }, el('span', { className: 'jb-dot' }), el('span', { className: 'jb-t-text', textContent: what(it) }), el('span', { className: 'jb-t-time', textContent: new Date(it.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) }));
+        if (it.url) { row.classList.add('linked'); row.tabIndex = 0; row.setAttribute('role', 'link'); row.onclick = () => ctx.openLink(it.url); row.onkeydown = (ev) => { if (ev.key === 'Enter' && !isImeEnter(ev)) ctx.openLink(it.url); }; }
+        out.append(row);
+      }
+      return out;
+    }
+
+    function profileLine() {
+      const p = data.profile;
+      return el('p', { className: 'jb-profile-line' }, p
+        ? tr('projecttpl.apps.profileLine', 'Profile “{name}”: résumé {resume}, cover letter {cover}.', { name: p.name, resume: p.resume || tr('projecttpl.apps.none', 'not chosen yet'), cover: p.cover || tr('projecttpl.apps.none', 'not chosen yet') })
+        : tr('projecttpl.apps.noProfile', 'No automation profile yet: Edit profile makes one.'));
+    }
+
+    function render() {
+      const empty = !(data.entries || []).length;
+      const parts = [tiles(), followUps(), toolbar(), profileLine()];
+      if (empty) parts.push(el('div', { className: 'jb-empty-state' }, el('strong', { textContent: tr('jobs.emptyTitle', 'No applications yet') }), el('p', { textContent: tr('jobs.emptyText', 'Ask in a chat here: “tailor my résumé for this posting”. After you submit, the AI logs it and it shows up here. Or add a posting yourself to keep it for later.') })));
+      else parts.push(view === 'table' ? table() : view === 'timeline' ? timeline() : board());
+      parts.push(say);
+      root.replaceChildren(...parts.filter(Boolean));
+    }
+
+    root.append(el('p', { className: 'jb-empty', textContent: tr('projecttpl.apps.loading', 'Loading…') }));
+    load();
+    // (a chat logged one: drawn again, but never under a half-typed posting or an open stage menu)
+    const busy = () => Boolean(root.querySelector('.jb-addform')) || (root.contains(document.activeElement) && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName));
+    return { refresh: () => (root.isConnected && !busy() ? load() : null) };
+  }
+
+  window.chatJobBoard = { draw };
+})();

@@ -5,7 +5,12 @@
 //   2. the fields a new project gets from one (what the user typed wins);
 //   3. the applications tracker of a project: the automations log (features/automations.js) cut to the project, plus the applications
 //      the AI logs from a chat (the `applications` tool, ai/agent.js), each with a stage the user or the AI moves on.
-// main.js ("chats:project-save") applies a template when a project is made; the project page shows the tracker (chat-project-page.js).
+//   4. the project type: an existing project switched to a template's type (its instructions added, kept apart from the user's own so
+//      switching back takes them out again) and back to a standard one (the tracker and profile stay, only hidden);
+//   5. the dashboard's numbers: applied this week and month, response rate, interviews, offers, days to a response, follow-ups due, the
+//      timeline, and which tailored résumé a row used.
+// main.js ("chats:project-save") applies a template when a project is made or its type is changed; the project page shows the dashboard
+// (chat-job-board.js, loaded when a job project is opened).
 const crypto = require('crypto');
 const auto = require('./automations');
 
@@ -58,9 +63,53 @@ function fieldsFor(id, typed = {}) {
   };
 }
 
+// ---------- the project type ----------
+
+// What a project's Type setting offers: Standard (no template) and each template.
+const types = () => [{ id: '', name: 'Standard', description: 'A project of your own' }, ...list()];
+const SEP = '\n\n';
+// The template's instructions added to what the project has: in place of empty ones, else after them. Already there: unchanged.
+function withInstructions(existing, t) {
+  const have = String(existing ?? '').replace(/\s+$/, '');
+  if (!t?.instructions) return have;
+  if (!have.trim()) return t.instructions;
+  return have.includes(t.instructions) ? have : `${have}${SEP}${t.instructions}`;
+}
+// And taken out again (switching back): only when they are there as they were added. Edited by the user since, they stay.
+function withoutInstructions(existing, t) {
+  const have = String(existing ?? '');
+  if (!t?.instructions) return have;
+  if (have.trim() === t.instructions) return '';
+  if (have.endsWith(`${SEP}${t.instructions}`)) return have.slice(0, -(SEP.length + t.instructions.length));
+  return have;
+}
+// The fields a project's type change saves: { template, instructions, added }, or null when it is the type it has already (or an unknown
+// type). Nothing else of the project is touched: its files, memory, chats, folder, profile and tracker stay as they are. `added`: the
+// template's instructions are in them now (false when they would not fit after the project's own: the store keeps `max` characters).
+function typeChange(project, type, { max = 4000 } = {}) {
+  const to = type ? byId(type) : null;
+  if (type && !to) return null;
+  const from = project?.template ? byId(project.template) : null;
+  if ((to?.id || '') === (project?.template || '')) return null;
+  let instructions = String(project?.instructions ?? '');
+  if (from) instructions = withoutInstructions(instructions, from);
+  let added = false;
+  if (to) {
+    const next = withInstructions(instructions, to);
+    if (next.length <= max) instructions = next;
+    added = instructions.includes(to.instructions);
+  }
+  return { template: to ? to.id : '', instructions, added };
+}
+
 // ---------- the applications tracker ----------
 
-const STAGES = ['applied', 'interview', 'offer', 'rejected', 'withdrawn'];
+// saved: a posting kept for later, not applied to yet. The board's columns are Saved, Applied, Interview, Offer and Closed (rejected and withdrawn).
+const STAGES = ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'];
+const RESPONSES = new Set(['interview', 'offer', 'rejected']); // what counts as hearing back
+const DAY = 86400000;
+// An entry's own key, for the dashboard's moves (a logged one has an id; an automation's is its run, time and address).
+const entryKey = (e) => String(e?.id || `${e?.runId || ''}:${e?.at || 0}:${e?.url || ''}`);
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
 const line = (v, max) => String(v ?? '').replace(CONTROL, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
@@ -89,17 +138,39 @@ function manualEntry(input, { projectId, now = Date.now() } = {}) {
   const role = line(input?.role, 160);
   if (!company && !url) return { ok: false, error: 'Give the company or the posting\'s address.' };
   const stage = STAGES.includes(input?.stage) ? input.stage : 'applied';
+  const resume = resumeName(input?.resume);
   return {
     ok: true,
-    entry: { at: now, automationId: '', automation: 'In chat', runId: '', url, company, role, status: 'done', need: '', submittedAt: now, note: line(input?.note, 300), filled: [], projectId: String(projectId ?? ''), stage, id: crypto.randomBytes(6).toString('hex') },
+    entry: { at: now, automationId: '', automation: input?.from === 'page' ? 'Added by you' : 'In chat', runId: '', url, company, role, status: 'done', need: '', submittedAt: stage === 'saved' ? 0 : now, note: line(input?.note, 300), filled: [], projectId: String(projectId ?? ''), stage, id: crypto.randomBytes(6).toString('hex'), history: [{ stage, at: now }], ...(RESPONSES.has(stage) ? { respondedAt: now } : {}), ...(resume ? { resume } : {}) },
   };
+}
+// A tailored résumé's file name (no folder: the copies are in the project's "Tailored résumés" folder), or ''.
+function resumeName(v) {
+  const name = String(v ?? '').split(/[\\/]/).pop().replace(CONTROL, '').trim().slice(0, 200);
+  return /\.(docx|pdf|doc|odt|rtf|txt|md)$/i.test(name) && !name.startsWith('.') ? name : '';
+}
+
+// Moves an entry to a stage (in place) and keeps what the numbers need: when it was applied to (a saved one moved on), when the
+// company first answered, and the history the timeline shows. -> the entry
+function setStage(entry, stage, now = Date.now()) {
+  if (!entry || !STAGES.includes(stage) || stage === entry.stage) return entry;
+  if (!Array.isArray(entry.history)) entry.history = entry.stage && (entry.submittedAt || entry.at) ? [{ stage: entry.stage, at: entry.submittedAt || entry.at }] : [];
+  if (stage !== 'saved' && !entry.submittedAt) entry.submittedAt = now;
+  if (stage === 'saved') entry.submittedAt = 0;
+  if (RESPONSES.has(stage) && !entry.respondedAt && entry.submittedAt) entry.respondedAt = now;
+  entry.stage = stage;
+  entry.history.push({ stage, at: now });
+  entry.history = entry.history.slice(-30);
+  entry.updatedAt = now;
+  return entry;
 }
 
 // Moves an application of the project on (by its address, or company and role). Changes the entry in place. -> the entry, or null
-function updateEntry(log, automations, projectId, input) {
+function updateEntry(log, automations, projectId, input, now = Date.now()) {
   const stage = STAGES.includes(input?.stage) ? input.stage : '';
   const note = input?.note === undefined ? undefined : line(input.note, 300);
-  if (!stage && note === undefined) return null;
+  const resume = resumeName(input?.resume);
+  if (!stage && note === undefined && !resume) return null;
   const pid = String(projectId ?? '');
   const mine = new Set((automations || []).filter((a) => a.projectId === pid).map((a) => a.id));
   const ours = (log || []).filter((e) => (e.projectId === pid || mine.has(e.automationId)) && stageOf(e));
@@ -111,9 +182,10 @@ function updateEntry(log, automations, projectId, input) {
     hit = matches[matches.length - 1] || null; // (the newest)
   }
   if (!hit) return null;
-  if (stage) hit.stage = stage;
-  if (note !== undefined) hit.note = note;
-  hit.updatedAt = Date.now();
+  if (!STAGES.includes(hit.stage)) hit.stage = stageOf(hit); // (an automation's entry gets a stage of its own the first time it moves)
+  if (stage) setStage(hit, stage, now);
+  if (note !== undefined) { hit.note = note; hit.updatedAt = now; }
+  if (resume) hit.resume = resume;
   return hit;
 }
 
@@ -132,4 +204,64 @@ function stageCounts(entries) {
   return out;
 }
 
-module.exports = { TEMPLATES, STAGES, list, byId, fieldsFor, stageOf, projectEntries, appliedBefore, manualEntry, updateEntry, describe, stageCounts };
+// ---------- the dashboard's numbers ----------
+
+const round1 = (n) => Math.round(n * 10) / 10;
+// The stat tiles: applied this week (7 days) and month (30), the total, the response rate (heard back / applied, in %), interviews (an
+// interview or an offer reached), offers, rejections, the average days to a first answer, and the last 8 weeks' applications (oldest
+// first) for the small bar chart. A saved posting is not an application. null where there is nothing to work it out from.
+function stats(entries, now = Date.now()) {
+  const all = entries || [];
+  const applied = all.filter((e) => e.stage !== 'saved' && e.submittedAt);
+  const reached = (e, ...st) => st.includes(e.stage) || (Array.isArray(e.history) && e.history.some((h) => st.includes(h.stage)));
+  const heard = applied.filter((e) => e.respondedAt || RESPONSES.has(e.stage));
+  const waits = applied.filter((e) => e.respondedAt && e.respondedAt >= e.submittedAt).map((e) => (e.respondedAt - e.submittedAt) / DAY);
+  const weeks = Array.from({ length: 8 }, (_, i) => {
+    const end = now - (7 - i) * 7 * DAY;
+    return applied.filter((e) => e.submittedAt > end - 7 * DAY && e.submittedAt <= end).length;
+  });
+  return {
+    week: applied.filter((e) => e.submittedAt > now - 7 * DAY).length,
+    month: applied.filter((e) => e.submittedAt > now - 30 * DAY).length,
+    total: applied.length,
+    saved: all.filter((e) => e.stage === 'saved').length,
+    responseRate: applied.length ? Math.round((heard.length / applied.length) * 100) : null,
+    interviews: applied.filter((e) => reached(e, 'interview', 'offer')).length,
+    offers: applied.filter((e) => reached(e, 'offer')).length,
+    rejections: applied.filter((e) => e.stage === 'rejected').length,
+    avgDays: waits.length ? round1(waits.reduce((a, b) => a + b, 0) / waits.length) : null,
+    weeks,
+  };
+}
+
+// Follow-ups due: applied (no answer yet) at least `days` days ago, the longest waiting first, with how many days it has been.
+function followUps(entries, now = Date.now(), days = 14) {
+  return (entries || []).filter((e) => e.stage === 'applied' && e.submittedAt && !e.respondedAt && now - e.submittedAt >= days * DAY)
+    .map((e) => ({ ...e, waited: Math.floor((now - e.submittedAt) / DAY) })).sort((a, b) => a.submittedAt - b.submittedAt);
+}
+
+// The activity timeline: every move of every application (an entry from before the history was kept counts its applying and where it
+// is now), newest first.
+function timeline(entries, max = 80) {
+  const out = [];
+  for (const e of entries || []) {
+    const hist = Array.isArray(e.history) && e.history.length ? e.history : [...(e.submittedAt ? [{ stage: 'applied', at: e.submittedAt }] : []), ...(e.stage !== 'applied' ? [{ stage: e.stage, at: e.updatedAt || e.respondedAt || e.at }] : [])];
+    for (const h of hist) if (h?.at && STAGES.includes(h.stage)) out.push({ at: h.at, stage: h.stage, company: e.company, role: e.role, url: e.url, key: entryKey(e) });
+  }
+  return out.sort((a, b) => b.at - a.at).slice(0, max);
+}
+
+// Which tailored résumé a row used: the one it names when that file is there, else the copy named the way the instructions say
+// ("<Company> - <Role>.docx"), the one with the role in its name first. `names`: the files in the "Tailored résumés" folder. -> a name or ''
+function resumeFor(entry, names) {
+  const files = (names || []).map(String);
+  if (entry?.resume && files.includes(entry.resume)) return entry.resume;
+  const norm = (v) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const company = norm(entry?.company);
+  if (!company) return '';
+  const role = norm(entry?.role);
+  const mine = files.filter((n) => `${norm(n.replace(/\.[^.]+$/, ''))} `.startsWith(`${company} `));
+  return (role && mine.find((n) => norm(n).includes(role))) || mine[0] || '';
+}
+
+module.exports = { TEMPLATES, STAGES, DAY, list, byId, fieldsFor, types, typeChange, withInstructions, withoutInstructions, entryKey, stageOf, setStage, projectEntries, appliedBefore, manualEntry, resumeName, updateEntry, describe, stageCounts, stats, followUps, timeline, resumeFor };

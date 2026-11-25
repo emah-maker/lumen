@@ -18,6 +18,8 @@
   const PENCIL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5z"/></svg>';
   const SHOWN_CHATS = 5; // chats listed under an open project; "Show all" opens its page
   const PIN = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l1.7 3.4 3.8.6-2.7 2.6.6 3.8L8 11.1l-3.4 1.8.6-3.8L2.5 6.5l3.8-.6z"/></svg>';
+  // [project templates] a Job applications project's mark (a briefcase in the job colours) in the rail
+  const BRIEFCASE = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.8a1.3 1.3 0 0 1 1.3-1.3h2.4a1.3 1.3 0 0 1 1.3 1.3V5M2 8.8h12"/></svg>';
   const GRID = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z"/></svg>';
   const CLOCK = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="M8 5v3.2l2 1.3"/></svg>';
   const BOX = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11v3h-11zM3.5 6.5v6h9v-6M6.5 9h3"/></svg>';
@@ -117,12 +119,14 @@
       const open = expanded.has(p.id);
       const wrap = el('div', { className: `cp-pj-item${open ? ' open' : ''}${p.pinned ? ' pinned' : ''}${p.archived ? ' archived' : ''}` });
       wrap.dataset.project = p.id;
-      const row = el('button', { type: 'button', className: `cp-pj${on ? ' on' : ''}`, title: p.name });
+      const job = p.template === 'job-applications';
+      const row = el('button', { type: 'button', className: `cp-pj${on ? ' on' : ''}${job ? ' job' : ''}`, title: job ? `${p.name} · ${tr('projecttpl.job-applications', 'Job applications')}` : p.name });
       row.dataset.id = p.id;
       if (p.folderMissing) { row.title = `${p.name}: ${tr('chatpage.project.folder.missing', 'Folder missing')}`; row.classList.add('folder-missing'); } // [project folders] Locate… / Recreate are in the project's editor
       if (on) row.setAttribute('aria-current', 'page');
       const name = el('span', { className: 'cp-pj-name', textContent: p.name });
-      if (p.pinned) { const mark = icon(PIN); mark.classList.add('cp-pj-pinmark'); mark.title = tr('projectws.list.pinned', 'Pinned'); row.append(icon(FOLDER), name, mark); } else row.append(icon(FOLDER), name);
+      const kind = icon(job ? BRIEFCASE : FOLDER);
+      if (p.pinned) { const mark = icon(PIN); mark.classList.add('cp-pj-pinmark'); mark.title = tr('projectws.list.pinned', 'Pinned'); row.append(kind, name, mark); } else row.append(kind, name);
       if (p.temporary) { // [temp projects] a mark that says when it goes
         const chip = el('span', { className: 'cp-pj-temp', textContent: tr('projectws.temp.chip', 'Temp') });
         if (p.expires) chip.title = expiresText(p.expires);

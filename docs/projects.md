@@ -13,6 +13,8 @@ A **project** groups chats and gives the AI things to work from. Its page is the
 
 **New project** asks what to **Start from**: **Blank** (name it and write its instructions yourself) or a template, a project that starts set up for one kind of work. Leave the name or the instructions empty and the template's are used; anything you type wins. A template only sets a project up: afterwards it is an ordinary project you can change.
 
+A project you already have can become one too: its page → **Settings** → **Type** (**Standard** or **Job applications**), or **⋯** → **Make it a Job applications project**. Switching adds the template's instructions after the project's own (if both would not fit in 4,000 characters, yours stay as they are and Lumen says so), its folder and its automation profile. Nothing else changes: the project's files, chats, memory and folder stay. Switching back to **Standard** hides the job views and takes the template's instructions out again (unless you edited them); the tracker and the profile are kept, so switching back later picks up where you were.
+
 ### Job applications
 
 For applying to jobs and co-ops:
@@ -20,8 +22,17 @@ For applying to jobs and co-ops:
 - **Instructions** for the AI in its chats: your master résumé and cover letter base are never edited, renamed or overwritten. For each posting the AI makes a tailored **copy** with the Word tool, saved in the project's **Tailored résumés** folder as "<Company> - <Role>.docx", and changes only the copy (reordering and rewording bullets, never inventing experience). It checks the tracker before starting on a posting and skips one you already applied to. It fills forms from your profile and saved answers and stops at the final Submit, leaving the submit to you. It drafts long answers ("Why this company?") for you to approve and saves the approved ones to memory for reuse. Questions about gender, race, veteran or disability status, salary and anything legal are left to you.
 - **A "Tailored résumés" folder** in the project's folder (when the project has one).
 - **An automation profile of its own**, named for the project: your résumé and cover letter files, major, start date, location and saved answers, the same profile [Automations](automations.md) fill forms from. An automation made in the project uses it.
-- **The Applications card** on the project's page: the profile in short (**Edit profile** opens Automations), a count per stage, the newest applications (click one to open the posting) and **Export CSV** (the project's rows only, the Status column saying where each one stands).
-- **The applications tool** in the project's chats: `list`, `check` (applied to this posting already? The same posting whatever its tracking parameters), `add` (after you submit: company, role, address, a note) and `update` (a stage: applied, interview, offer, rejected, withdrawn). An automation in the project logs its submits to the same tracker. Everything is kept on this computer with your automations (`automations.json`, encrypted with your system keychain).
+- **Its own look**: a briefcase in violet and teal in the sidebar and in All projects, a "Job applications" badge, and a banner behind the project's name on its page.
+- **The Applications view**, the page it opens on (the dashboard, loaded only when shown):
+  - **Stats**: applied this week and this month, the total, the response rate (heard back, meaning an interview, an offer or a rejection, out of all applied), interviews (every one that reached an interview or an offer), offers, rejections, the average days to a first answer, and the last 8 weeks as small bars. A posting saved for later doesn't count as an application.
+  - **Follow-ups due**: applications from two weeks ago or more with no answer yet, the longest waiting first.
+  - **Board**: Saved, Applied, Interview, Offer and Closed (rejected and withdrawn). Drag a card to another column to move it, or pick its stage from the menu on the card.
+  - **Table**: every application, sorted by any column (company, role, stage, date, how long the answer took or how long it has been waiting).
+  - **Timeline**: every move, newest first, by day.
+  - Each row opens its posting and the **tailored résumé** it used: the copy the AI named for it, or the one in Tailored résumés named "<Company> - <Role>".
+  - **Add posting** keeps one for later (Saved) or logs one you applied to yourself. **Edit profile** opens Automations; **Export CSV** saves the project's rows (the Status column saying where each one stands).
+  - The Overview keeps a short **Applications** card: the profile, a count per stage and the newest few.
+- **The applications tool** in the project's chats: `list`, `check` (applied to this posting already? The same posting whatever its tracking parameters), `add` (after you submit: company, role, address, the tailored résumé's file name, a note; a posting saved for later moves on to applied) and `update` (a stage: saved, applied, interview, offer, rejected, withdrawn). An automation in the project logs its submits to the same tracker. Everything is kept on this computer with your automations (`automations.json`, encrypted with your system keychain).
 
 ## Project memory
 

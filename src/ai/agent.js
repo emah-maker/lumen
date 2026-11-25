@@ -661,8 +661,8 @@ const PROJECT_TOOL = {
 // of the run's own MCP session, to the CLI engines; never to an outside MCP client. The text is short on purpose.
 const APPLICATIONS_TOOL = {
   name: 'applications',
-  description: 'The project’s job applications tracker. list; check url (applied already?); add company role url note (after the user submitted); update url|company stage (applied, interview, offer, rejected, withdrawn) note.',
-  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, note: { type: 'string' } }, required: ['action'] },
+  description: 'The project’s job applications tracker. list; check url (applied already?); add company role url resume note (after the user submitted; stage saved keeps a posting for later); update url|company stage note resume. resume: the tailored copy’s file name.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, resume: { type: 'string' }, note: { type: 'string' } }, required: ['action'] },
   eager_input_streaming: true,
 };
 // [notes] The user's notepad (ai/notes.js, loaded on first use): read it, add to it, never edit or delete. Defined here so the module itself stays
@@ -4899,6 +4899,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (action === 'check') {
       if (!input?.url) throw new Error('check needs the posting’s url.');
       const hit = lib.appliedBefore(t.list(), input.url);
+      if (hit?.stage === 'saved') return `Saved in the tracker, not applied to yet: ${hit.company || '(company?)'}${hit.role ? ` — ${hit.role}` : ''}. After the user submits, add it (it moves to applied).`;
       return hit ? `Already in the tracker: ${hit.company || '(company?)'}${hit.role ? ` — ${hit.role}` : ''}, ${hit.stage}, ${new Date(hit.submittedAt || hit.at).toISOString().slice(0, 10)}. Skip this posting unless the user says otherwise.` : 'Not in the tracker: not applied to yet.';
     }
     if (action === 'add') {

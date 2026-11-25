@@ -58,7 +58,7 @@ const NOW = 1_800_000_000_000;
     check('no project id: nothing', T.projectEntries(log, autos, '').length === 0 && T.projectEntries(log, autos, null).length === 0);
     check('already applied: the same posting whatever its tracking parameters', T.appliedBefore(mine, 'https://boards.greenhouse.io/acme/jobs/1?utm_source=li#apply')?.company === 'Acme');
     check('already applied: another posting, or no address, is not', T.appliedBefore(mine, 'https://boards.greenhouse.io/acme/jobs/2') === null && T.appliedBefore(mine, '') === null && T.appliedBefore(mine, 'not a url') === null);
-    check('counts per stage', J(T.stageCounts(mine)) === J({ applied: 1, interview: 1, offer: 0, rejected: 0, withdrawn: 0 }));
+    check('counts per stage', J(T.stageCounts(mine)) === J({ saved: 0, applied: 1, interview: 1, offer: 0, rejected: 0, withdrawn: 0 }));
     const text = T.describe(mine);
     check('what the AI reads: one line per application, with its stage, date and address', /^2 applications:/.test(text) && /Beta — Design co-op · interview · \d{4}-\d{2}-\d{2} · https:\/\/beta\.com\/9/.test(text), text);
     check('an empty tracker says so', /No applications/.test(T.describe([])));
@@ -105,6 +105,119 @@ const NOW = 1_800_000_000_000;
     check('runtime: Export CSV is the project\'s rows, the Status column saying where each stands', /"Acme","ME co-op","interview"/.test(csv) && csv.split('\r\n').filter(Boolean).length === 2, csv);
     const prof = rt.saveProfile({ name: 'Summer co-op 2027' });
     check('runtime: a template\'s profile is an ordinary automation profile, read back by id', prof.ok && rt.profile(prof.profile.id)?.name === 'Summer co-op 2027' && rt.profile('nope') === null);
+  }
+
+  // ---- the project type: an existing project switched to Job applications and back
+  {
+    const tpl = T.byId('job-applications');
+    check('type: Standard and Job applications are offered', J(T.types().map((t) => t.id)) === J(['', 'job-applications']));
+    const empty = T.typeChange({ instructions: '' }, 'job-applications');
+    check('type: a project with no instructions gets the template\'s', empty.template === 'job-applications' && empty.instructions === tpl.instructions && empty.added === true, J(empty));
+    const own = T.typeChange({ instructions: 'Answer briefly.' }, 'job-applications');
+    check('type: its own instructions stay first, the template\'s go after them', own.instructions === `Answer briefly.\n\n${tpl.instructions}` && own.added, J(own).slice(0, 200));
+    const back = T.typeChange({ template: 'job-applications', instructions: own.instructions }, '');
+    check('type: back to Standard takes them out again, leaving the project\'s own', back.template === '' && back.instructions === 'Answer briefly.', J(back).slice(0, 200));
+    check('type: back from one made from the template empties them (they were all the template\'s)', T.typeChange({ template: 'job-applications', instructions: tpl.instructions }, '').instructions === '');
+    const edited = `${own.instructions} Also: Boston only.`;
+    check('type: instructions the user edited since stay as they are', T.typeChange({ template: 'job-applications', instructions: edited }, '').instructions === edited);
+    check('type: the same type, or an unknown one, is no change', T.typeChange({ template: 'job-applications' }, 'job-applications') === null && T.typeChange({}, '') === null && T.typeChange({}, 'nope') === null);
+    const long = 'x'.repeat(3500);
+    const tooLong = T.typeChange({ instructions: long }, 'job-applications');
+    check('type: when they would not fit (4,000 characters), the project\'s stay untouched and it says so', tooLong.template === 'job-applications' && tooLong.instructions === long && tooLong.added === false);
+    check('type: switching twice adds them once', T.withInstructions(own.instructions, tpl) === own.instructions);
+    // in the chat store: the type set and cleared, nothing else touched
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-project-templates-type-'));
+    const enc = (s) => Buffer.from(s).toString('base64');
+    const dec = (s) => Buffer.from(s, 'base64').toString();
+    const store = createChatStore({ dir, encrypt: enc, decrypt: dec, now: () => NOW });
+    const p = store.saveProject({ name: 'Co-op search', description: 'Fall 2027', instructions: 'Answer briefly.', links: [{ url: 'https://example.com/a', title: 'A' }] });
+    const c1 = T.typeChange(p, 'job-applications');
+    const on = store.saveProject({ id: p.id, name: p.name, ...c1, profileId: 'abcdef123456' });
+    check('type in the store: switched on, the goal line and pages kept', on.template === 'job-applications' && on.description === 'Fall 2027' && J(on.links) === J(p.links) && on.instructions.startsWith('Answer briefly.'), J(on).slice(0, 300));
+    const off = store.saveProject({ id: p.id, name: p.name, ...T.typeChange(on, '') });
+    check('type in the store: switched back, the template gone and the profile kept for next time', !('template' in off) && off.profileId === 'abcdef123456' && off.instructions === 'Answer briefly.', J(off).slice(0, 300));
+  }
+
+  // ---- the dashboard's numbers
+  {
+    const D = T.DAY;
+    const at = (days) => NOW - days * D;
+    const entries = [
+      { id: 'a', company: 'Acme', role: 'ME co-op', stage: 'applied', submittedAt: at(2) },
+      { id: 'b', company: 'Beta', role: 'Design', stage: 'interview', submittedAt: at(20), respondedAt: at(14), history: [{ stage: 'applied', at: at(20) }, { stage: 'interview', at: at(14) }] },
+      { id: 'c', company: 'Cora', role: 'Test', stage: 'offer', submittedAt: at(40), respondedAt: at(30), history: [{ stage: 'applied', at: at(40) }, { stage: 'interview', at: at(30) }, { stage: 'offer', at: at(25) }] },
+      { id: 'd', company: 'Dyno', role: 'Ops', stage: 'rejected', submittedAt: at(10), respondedAt: at(5) },
+      { id: 'e', company: 'Echo', role: 'R&D', stage: 'applied', submittedAt: at(16) },
+      { id: 'f', company: 'Flux', role: 'Later', stage: 'saved', submittedAt: 0, at: at(1) },
+      { id: 'g', company: 'Gale', role: 'Old', stage: 'withdrawn', submittedAt: at(50), history: [{ stage: 'applied', at: at(50) }, { stage: 'interview', at: at(45) }, { stage: 'withdrawn', at: at(44) }], respondedAt: at(45) },
+    ];
+    const st = T.stats(entries, NOW);
+    check('stats: applied this week and this month (a saved posting is not an application)', st.week === 1 && st.month === 4, J(st));
+    check('stats: the total and the saved ones apart', st.total === 6 && st.saved === 1, J(st));
+    check('stats: response rate = heard back / applied (4 of 6: an interview, an offer, a rejection, an interview withdrawn from)', st.responseRate === 67, J(st));
+    check('stats: interviews count every one that reached an interview or an offer, offers and rejections by stage', st.interviews === 3 && st.offers === 1 && st.rejections === 1, J(st));
+    check('stats: average days to a first answer (6, 10, 5 and 5)', st.avgDays === 6.5, J(st));
+    check('stats: the last 8 weeks, oldest first, this week last', st.weeks.length === 8 && st.weeks[7] === 1 && st.weeks.reduce((a, b) => a + b, 0) === 6, J(st.weeks));
+    const none = T.stats([], NOW);
+    check('stats: nothing to work from is no number, not 0% or NaN', none.total === 0 && none.responseRate === null && none.avgDays === null && none.weeks.every((n) => n === 0), J(none));
+    const due = T.followUps(entries, NOW);
+    check('follow-ups: applied 14+ days ago with no answer, the longest waiting first', J(due.map((e) => e.id)) === J(['e']) && due[0].waited === 16, J(due));
+    check('follow-ups: the wait is a setting', J(T.followUps(entries, NOW, 1).map((e) => e.id)) === J(['e', 'a']));
+    const tl = T.timeline(entries);
+    check('timeline: every move, newest first', tl[0].company === 'Flux' && tl[0].stage === 'saved' && tl.filter((x) => x.company === 'Cora').length === 3 && tl.every((x, i) => !i || tl[i - 1].at >= x.at), J(tl.slice(0, 3)));
+    check('timeline: an entry with no history counts its applying and where it is now', J(tl.filter((x) => x.company === 'Dyno').map((x) => x.stage).sort()) === J(['applied', 'rejected']));
+  }
+
+  // ---- stages, saved postings, and the tailored résumé a row used
+  {
+    const e = T.manualEntry({ company: 'Acme', role: 'ME co-op', url: 'https://acme.com/1', stage: 'saved' }, { projectId: 'p1', now: NOW }).entry;
+    check('saved: a posting kept for later has no applied date', e.stage === 'saved' && e.submittedAt === 0 && e.history.length === 1);
+    T.setStage(e, 'applied', NOW + 1000);
+    check('saved → applied: applied now', e.stage === 'applied' && e.submittedAt === NOW + 1000 && !e.respondedAt);
+    T.setStage(e, 'interview', NOW + 5 * T.DAY);
+    T.setStage(e, 'rejected', NOW + 9 * T.DAY);
+    check('the first answer is kept (an interview), not the later rejection', e.respondedAt === NOW + 5 * T.DAY && J(e.history.map((h) => h.stage)) === J(['saved', 'applied', 'interview', 'rejected']));
+    check('an unknown stage changes nothing', T.setStage(e, 'hired', NOW).stage === 'rejected');
+    const files = ['Acme - ME co-op.docx', 'Acme - Test engineer.docx', 'Acmeco - ME co-op.docx', 'Beta - Design.pdf'];
+    check('résumé: the copy named "<Company> - <Role>" is found', T.resumeFor({ company: 'Acme', role: 'Test engineer' }, files) === 'Acme - Test engineer.docx');
+    check('résumé: by the company alone when the role is not in a name; never a company that only starts the same', T.resumeFor({ company: 'Acme', role: 'Intern' }, files) === 'Acme - ME co-op.docx' && T.resumeFor({ company: 'Acm' }, files) === '');
+    check('résumé: the one a row names wins when it is there', T.resumeFor({ company: 'Acme', resume: 'Beta - Design.pdf' }, files) === 'Beta - Design.pdf' && T.resumeFor({ company: 'Zed' }, files) === '');
+    check('résumé: a name only, never a path, and only documents', T.resumeName('C:\\x\\..\\Acme - A.docx') === 'Acme - A.docx' && T.resumeName('evil.exe') === '' && T.resumeName('../.docx') === '');
+  }
+
+  // ---- the dashboard's moves, against a real store
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-project-templates-moves-'));
+    const enc = (s) => Buffer.from(s).toString('base64');
+    const dec = (s) => Buffer.from(s, 'base64').toString();
+    let clock = NOW;
+    const rt = runtime.create({ file: path.join(dir, 'automations.json'), encrypt: enc, decrypt: dec, available: () => true, now: () => clock, saveCsv: async () => ({ ok: true }), changed: () => {} });
+    const saved = rt.logApplication('p1', { company: 'Acme', role: 'ME co-op', url: 'https://acme.com/jobs/9', stage: 'saved', from: 'page' });
+    check('moves: a posting saved from the page', saved.ok && rt.applications('p1')[0].stage === 'saved' && saved.entry.automation === 'Added by you');
+    clock += 1000;
+    const applied = rt.logApplication('p1', { company: 'Acme', url: 'https://acme.com/jobs/9', resume: 'Acme - ME co-op.docx' });
+    check('moves: logging it after submitting moves the saved one on, not a second row', applied.ok && rt.applications('p1').length === 1 && rt.applications('p1')[0].stage === 'applied' && rt.applications('p1')[0].resume === 'Acme - ME co-op.docx', J(rt.applications('p1')));
+    const key = T.entryKey(rt.applications('p1')[0]);
+    clock += 3 * T.DAY;
+    check('moves: dragged to Interview', rt.moveApplication('p1', key, 'interview').ok && rt.applications('p1')[0].stage === 'interview' && rt.applications('p1')[0].respondedAt === clock);
+    check('moves: not another project\'s, not an unknown stage', !rt.moveApplication('p2', key, 'offer').ok && !rt.moveApplication('p1', key, 'hired').ok && !rt.moveApplication('p1', 'nope', 'offer').ok);
+    const reread = runtime.create({ file: path.join(dir, 'automations.json'), encrypt: enc, decrypt: dec, available: () => true, now: () => clock, saveCsv: async () => ({ ok: true }) });
+    check('moves: kept on disk, with the history the timeline shows', J(reread.applications('p1')[0].history.map((h) => h.stage)) === J(['saved', 'applied', 'interview']));
+  }
+
+  // ---- the wiring: the dashboard loads on demand, the type is a project setting, the job look
+  {
+    const src = (f) => fs.readFileSync(path.join(__dirname, '..', '..', f), 'utf8');
+    const page = src('src/renderer/chat-project-page.js');
+    check('wiring: the dashboard is loaded only when shown, marked data-later', /chat-job-board\.js/.test(page) && /dataset\.later = ''/.test(page) && !/chat-job-board/.test(src('src/renderer/chat-page.html')));
+    check('wiring: a job project opens on its Applications view, and Settings has the Type', /\['jobs', tr\('projecttpl\.view\.jobs'/.test(page) && /typeLine\(p, line\)/.test(page));
+    const main = src('src/main.js');
+    check('wiring: main saves a type change through chats:project-save, the dashboard\'s moves through its own channel', /project\?\.type !== undefined/.test(main) && /action === 'stage'/.test(main) && /action === 'resume'/.test(main));
+    check('wiring: the rail and All projects mark a job project', /p\.template === 'job-applications'/.test(src('src/renderer/chat-projects.js')) && /p\.template === 'job-applications'/.test(src('src/renderer/chat-projects-all.js')));
+    const en = require('../../src/locales/en.json');
+    const board = src('src/renderer/chat-job-board.js');
+    const keys = [...board.matchAll(/\btr\('((?:jobs|projecttpl)\.[^']+)'/g)].map((m) => m[1]);
+    check('wiring: every string of the dashboard is in en.json', keys.length > 30 && keys.every((k) => k in en), keys.filter((k) => !(k in en)).join(', '));
   }
 
   // ---- the chat store keeps a project's template and profile

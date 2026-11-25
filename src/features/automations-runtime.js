@@ -438,6 +438,8 @@ function create(deps) {
     const r = templates().manualEntry(input, { projectId, now: now() });
     if (!r.ok) return r;
     const already = r.entry.url ? templates().appliedBefore(applications(projectId), r.entry.url) : null;
+    // A posting saved for later and now applied to moves on (Saved → Applied) instead of being logged twice.
+    if (already?.stage === 'saved' && r.entry.stage !== 'saved') return moveApplication(projectId, templates().entryKey(already), r.entry.stage, { resume: input?.resume });
     if (already) return { ok: false, already, error: 'That posting is in the tracker already.' };
     store.addLog(r.entry);
     save();
@@ -445,8 +447,23 @@ function create(deps) {
     return r;
   }
   function updateApplication(projectId, input) {
-    const entry = templates().updateEntry(store.log(), store.automations(), projectId, input);
+    const entry = templates().updateEntry(store.log(), store.automations(), projectId, input, now());
     if (!entry) return { ok: false, error: 'No application in this project matches that.' };
+    save();
+    changed();
+    return { ok: true, entry };
+  }
+  // The dashboard's drag (or a row's stage menu): one application of the project, by its key, to a stage.
+  function moveApplication(projectId, key, stage, { resume } = {}) {
+    const lib = templates();
+    if (!lib.STAGES.includes(stage)) return { ok: false, error: 'Unknown stage.' };
+    const mine = new Set(lib.projectEntries(store.log(), store.automations(), projectId).map(lib.entryKey));
+    const entry = mine.has(String(key)) ? store.log().find((e) => lib.entryKey(e) === String(key)) : null;
+    if (!entry) return { ok: false, error: 'No application in this project matches that.' };
+    if (!lib.STAGES.includes(entry.stage)) entry.stage = lib.stageOf(entry); // (an automation's entry gets a stage of its own the first time it moves)
+    lib.setStage(entry, stage, now());
+    const file = lib.resumeName(resume);
+    if (file) entry.resume = file;
     save();
     changed();
     return { ok: true, entry };
@@ -463,7 +480,7 @@ function create(deps) {
 
   return {
     init, shutdown, state, start, itemAct, runAct, describe, recordStart, recordStop, saveAutomation, removeAutomation, saveProfile, removeProfile, exportCsv, clearLog,
-    applications, logApplication, updateApplication, exportProjectCsv, // [project templates]
+    applications, logApplication, updateApplication, moveApplication, exportProjectCsv, // [project templates]
     profile: (id) => store.profile(String(id ?? '')),
     pickFile: (kind) => deps.pickFile(kind), runDue, armSchedule,
     // Test hooks (test/e2e/automations.js): nothing in the app itself uses these.

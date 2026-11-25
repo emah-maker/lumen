@@ -93,7 +93,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectMemoryForget: (id, entryId) => ipcRenderer.invoke('chats:project-memory-forget', id, entryId),
       projectPlaces: (id, change) => ipcRenderer.invoke('chats:project-places', id, change), // [project places] { open } | { pin } | { rename } | { remove } | { add }
       projectTemplates: () => ipcRenderer.invoke('chats:project-templates'), // [project templates] the New project dialog's templates
-      projectApplications: (id, action) => ipcRenderer.invoke('chats:project-applications', id, action), // [project templates] the Applications card: get / export / open
+      projectApplications: (id, action, arg) => ipcRenderer.invoke('chats:project-applications', id, action, arg), // [project templates] the job dashboard: get / export / open / stage / add / resume
       projectMemory: (id, change) => ipcRenderer.invoke('chats:project-memory', id, change), // [project memory] { add } | { update: { id, text } } | { pin: { id, on } } | { tidy: [ids] }
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
       projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] { permissionMode, allowedHosts }

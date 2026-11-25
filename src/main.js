@@ -9909,7 +9909,7 @@ const agent = new Agent({
       const p = projectForChat(chatIdOfMessages(messages));
       if (!p) return null;
       const rt = automations();
-      return { list: () => rt.applications(p.id), add: (input) => rt.logApplication(p.id, input), update: (input) => rt.updateApplication(p.id, input) };
+      return { list: () => rt.applications(p.id), add: (input) => rt.logApplication(p.id, { ...input, from: '' }), update: (input) => rt.updateApplication(p.id, input) };
     },
   },
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
@@ -12626,17 +12626,32 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
   let out = chats().saveProject(fields);
   if (!out) { if (made) fs.promises.rmdir(made).catch(() => {}); return null; }
   if (template) out = (await applyProjectTemplate(out, template)) || out;
+  let typed = null;
+  if (fields.id && project?.type !== undefined) { typed = await setProjectType(out, project.type); out = typed?.project || out; } // [project templates] Settings → Type
   syncProjectInstructions();
   pushAttention();
   if (out.portable && out.folder) portableSoon(out.id);
-  return projectPage(out);
+  return typed && !typed.added && out.template ? { ...projectPage(out), typeNote: 'long' } : projectPage(out); // ('long': its own instructions left no room for the template's)
 });
+// [project templates] A project's Type (Standard, or a template's): the template's instructions are added after the project's own (taken out
+// again when it goes back, if they are as they were added), and what applyProjectTemplate adds. The project's files, memory, chats and folder
+// stay as they are; switching back only hides the job views: the tracker and the profile are kept. -> { project, added } or null (no change)
+async function setProjectType(p, type) {
+  const lib = require('./features/project-templates');
+  const change = lib.typeChange(p, String(type || ''));
+  if (!change) return null;
+  let out = chats().saveProject({ id: p.id, name: p.name, template: change.template, instructions: change.instructions });
+  if (!out) return null;
+  if (change.template) out = (await applyProjectTemplate(out, lib.byId(change.template))) || out;
+  return { project: out, added: change.added };
+}
 // [project templates] What a template adds once its project exists: the folders it names in the project's folder ("Tailored résumés"),
 // and an automation profile of its own named for the project (résumé, cover letter and answers: features/automations.js), so an
 // automation made in the project fills forms from it. Each part is best effort: the project is there either way.
 async function applyProjectTemplate(project, template) {
   if (project.folder) for (const name of template.folders || []) await fs.promises.mkdir(path.join(project.folder, name), { recursive: true }).catch(() => {});
   if (!template.profile) return project;
+  if (project.profileId && automations().profile(project.profileId)) return project; // (switched back to this type: its profile is still there)
   try {
     const r = automations().saveProfile({ name: project.name.slice(0, 60) });
     if (r?.ok) return chats().saveProject({ id: project.id, name: project.name, profileId: r.profile.id }) || project;
@@ -13054,20 +13069,47 @@ if (TEST) global.__projectDrive = { fake: (client) => { driveClientOverride = cl
 // [project templates] The New project dialog's templates, and a project's applications tracker (its page's Applications card): the newest
 // entries with a count per stage and its automation profile in short; Export CSV; Edit profile / Make an automation open lumen://automations.
 ipcMain.handle('chats:project-templates', () => require('./features/project-templates').list());
-ipcMain.handle('chats:project-applications', async (_e, id, action) => {
+// The dashboard (renderer/chat-job-board.js) also moves one to a stage (its drag: 'stage', { key, stage }), adds a posting ('add', { company,
+// role, url, stage }: Saved unless said) and opens the tailored résumé a row used ('resume', { key }: a file in the project's "Tailored
+// résumés" folder, never anywhere else). 'get' answers the rows, the stat tiles, the follow-ups due and the timeline.
+const tailoredDir = (p) => (p?.folder ? path.join(p.folder, require('./features/project-templates').byId('job-applications').folders[0]) : '');
+async function tailoredNames(p) {
+  const dir = tailoredDir(p);
+  if (!dir) return [];
+  try { return (await fs.promises.readdir(dir, { withFileTypes: true })).filter((d) => d.isFile() && !d.name.startsWith('~$')).map((d) => d.name).slice(0, 2000); } catch { return []; } // (~$: Word's lock file while one is open)
+}
+ipcMain.handle('chats:project-applications', async (_e, id, action, arg) => {
   const p = projectById(String(id));
   if (!p) return null;
   const lib = require('./features/project-templates');
   if (action === 'export') return automations().exportProjectCsv(p.id);
   if (action === 'open') { managers.open('automations'); return { ok: true }; }
+  if (action === 'stage') { const r = automations().moveApplication(p.id, String(arg?.key ?? ''), String(arg?.stage ?? '')); return { ok: r.ok, error: r.error }; }
+  if (action === 'add') { const r = automations().logApplication(p.id, { company: arg?.company, role: arg?.role, url: arg?.url, stage: lib.STAGES.includes(arg?.stage) ? arg.stage : 'saved', from: 'page' }); return { ok: r.ok, error: r.error }; }
   const entries = automations().applications(p.id);
+  const names = await tailoredNames(p);
+  if (action === 'resume') {
+    const e = entries.find((x) => lib.entryKey(x) === String(arg?.key ?? ''));
+    const name = e ? lib.resumeFor(e, names) : '';
+    if (!name) return { ok: false };
+    const file = path.join(tailoredDir(p), name);
+    if (path.dirname(file) !== tailoredDir(p)) return { ok: false };
+    const err = await filesShell('open', file);
+    return { ok: !err };
+  }
   const prof = p.profileId ? automations().profile(p.profileId) : null;
   const base = (x) => (x ? path.basename(x) : '');
+  const now = Date.now();
+  const row = (e) => ({ key: lib.entryKey(e), company: e.company, role: e.role, url: e.url, stage: e.stage, at: e.submittedAt || e.at, applied: e.submittedAt || 0, respondedAt: e.respondedAt || 0, updatedAt: e.updatedAt || 0, note: e.note, source: e.automation || '', resume: lib.resumeFor(e, names) });
   return {
-    entries: entries.slice(0, 50).map((e) => ({ company: e.company, role: e.role, url: e.url, stage: e.stage, at: e.submittedAt || e.at, note: e.note })),
+    entries: entries.slice(0, 500).map(row),
     total: entries.length,
     counts: lib.stageCounts(entries),
     stages: lib.STAGES,
+    stats: lib.stats(entries, now),
+    followUps: lib.followUps(entries, now).slice(0, 30).map((e) => ({ ...row(e), waited: e.waited })),
+    timeline: lib.timeline(entries, 80),
+    folder: Boolean(p.folder),
     profile: prof ? { name: prof.name, resume: base(prof.resumePath), cover: base(prof.coverLetterPath), filled: Object.values(prof.fields || {}).filter(Boolean).length } : null,
   };
 });

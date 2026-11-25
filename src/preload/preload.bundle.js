@@ -624,7 +624,7 @@ contextBridge.exposeInMainWorld('assistant', {
     pickProjectFolder: () => ipcRenderer.invoke('chats:project-pick-folder'),
     projectFolder: (id, action, arg) => ipcRenderer.invoke('chats:project-folder', id, action, arg),
     projectTemplates: () => ipcRenderer.invoke('chats:project-templates'),
-    projectApplications: (id, action) => ipcRenderer.invoke('chats:project-applications', id, action),
+    projectApplications: (id, action, arg) => ipcRenderer.invoke('chats:project-applications', id, action, arg),
     open: (id) => ipcRenderer.invoke('chats:open', id),
     showTab: (id) => ipcRenderer.invoke('chats:show-tab', id),
     share: (id) => ipcRenderer.invoke('chats:share', id),
