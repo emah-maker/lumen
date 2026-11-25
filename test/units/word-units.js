@@ -25,8 +25,10 @@ const rejects = async (fn) => { try { await fn(); return null; } catch (e) { ret
 const throws = (fn) => { try { fn(); return null; } catch (e) { return e.message; } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const B = String.fromCharCode(92);
-// [word] the one kind of Delete the helper has: table rows and columns (delete_rows / delete_columns, which the user approved); any other Delete is still refused
-const TABLE_DELETES = /\$t\.(Rows|Columns)\.Item\(\$i\)\.Delete\(\)/g;
+// [word] the kinds of Delete the helper has, each after a card the user approved: table rows and columns (delete_rows / delete_columns), the
+// paragraphs and breaks of the delete action ($gone, in Cmd-DeleteParas and Cmd-Unbreak), and the document's text replaced by a checkpoint on restore
+// (in Cmd-Restore); any other Delete is still refused
+const TABLE_DELETES = /\$t\.(Rows|Columns)\.Item\(\$i\)\.Delete\(\)|\$gone\.Delete\(\) \| Out-Null|\$d\.Content\.Delete\(\) \| Out-Null/g;
 const noDelete = (ps) => !/Delete\(/.test(String(ps).replace(TABLE_DELETES, ''));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wnu-'));
 
@@ -36,8 +38,8 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
   // ---- validation and marshalling
   {
     const v = (i) => spec.validate(i);
-    check('actions: the sixteen actions are the whole list', J(spec.ACTIONS) === J(['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show', 'help']));
-    check('validate: an unknown action, no input, an array are refused with a plain sentence', /must be one of/.test(throws(() => v({ action: 'delete' }))) && /Give an action/.test(throws(() => v(null))) && /Give an action/.test(throws(() => v([]))));
+    check('actions: the twenty-two actions are the whole list', J(spec.ACTIONS) === J(['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show', 'inspect', 'delete', 'toc', 'fields', 'checkpoint', 'restore', 'help']));
+    check('validate: an unknown action, no input, an array are refused with a plain sentence', /must be one of/.test(throws(() => v({ action: 'erase' }))) && /Give an action/.test(throws(() => v(null))) && /Give an action/.test(throws(() => v([]))));
     check('validate: list / save / show need nothing', v({ action: 'list' }).action === 'list' && v({ action: 'save' }).action === 'save' && v({ action: 'show', doc: 'Report.docx' }).doc === 'Report.docx');
     for (const text of NASTY) {
       const out = v({ action: 'insert', at: 'after', heading: text.slice(0, 200), text });
@@ -103,8 +105,8 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const cliDef = agent.cliWordToolDefs({ cliWord: true })[0];
     check('CLI engines: the word tool they are given keeps offset, so a long document can be paged', Boolean(cliDef?.input_schema?.properties?.offset) && Boolean(cliDef?.input_schema?.properties?.replace), J(Object.keys(cliDef?.input_schema?.properties || {})));
     const ag = read('src/ai/agent.js');
-    check('lists: tab-free; list / read / open taint web actions (app only); every acting action is in the hands-off list', /TAB_FREE_TOOLS = new Set\([^)]*'word'/.test(ag) && /WORD_READS = new Set\(\['list', 'read', 'open'\]\)/.test(ag) && /WORD_ACTING = new Set\(\['open', 'new', 'show', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as'\]\)/.test(ag));
-    check('hands-off: a changing Word action is refused when the user does not let the AI act, reading still works', /name === 'word' && WORD_ACTING\.has/.test(ag) && new Agent({ handsOff: () => true }).handsOffCheck !== undefined);
+    check('lists: tab-free; list / read / open / inspect / fields taint web actions (app only); every acting action is in the hands-off list (fields when it changes something)', /TAB_FREE_TOOLS = new Set\([^)]*'word'/.test(ag) && /WORD_READS = new Set\(\['list', 'read', 'open', 'inspect', 'fields'\]\)/.test(ag) && (() => { const m = /WORD_ACTING = new Set\(\[([^\]]*)\]\)/.exec(ag); const listed = m ? m[1].match(/'(\w+)'/g).map((x) => x.slice(1, -1)) : []; return [...spec.ACTING].every((a) => a === 'fields' ? /input\?\.action === 'fields' && require\('\.\.\/word\/spec'\)\.fieldsChange\(input\)/.test(ag) : listed.includes(a)) && !listed.includes('inspect') && !listed.includes('checkpoint'); })());
+    check('hands-off: a changing Word action is refused when the user does not let the AI act, reading still works', /name === 'word' && wordActing\(input\)/.test(ag) && spec.fieldsChange({ action: 'fields', unlink: 'toc' }) && !spec.fieldsChange({ action: 'fields' }) && new Agent({ handsOff: () => true }).handsOffCheck !== undefined);
     let msg = null;
     try { new Agent({ handsOff: () => true, bypassPermissions: () => false }).handsOffCheck('word', { action: 'insert' }); } catch (e) { msg = e.message; }
     let msg2;
@@ -293,7 +295,7 @@ const NASTY = ['say "hi" and \'bye\'', '$(whoami) ${env:USERNAME} `n `" $x', 'li
     const nosave = makeRig({ docs: [{ name: 'Document3', path: '', active: true, saved: false, paragraphs: 1, text: '' }] });
     check('save: a never-saved document says to use save_as', /save_as/.test(await rejects(() => nosave.word.run({ action: 'save' }, nosave.ctx)) || ''));
     const bad = makeRig();
-    check('there is no delete or close action at all', !spec.ACTIONS.some((a) => /delete|remove|close|quit|kill/.test(a)) && !/Close\(|\.Quit\(|Delete\(|Remove-Item/.test(read('src/word/host.ps1').replace(/\$script:app\.Quit\(\[ref\]\$no\)/g, '').replace(/\$d\.Close\(\[ref\]\$no\)/g, '').replace(TABLE_DELETES, '')));
+    check('there is no close action, and delete is the one deleting action (its Deletes only in Cmd-DeleteParas, Cmd-Unbreak and Cmd-Restore)', !spec.ACTIONS.some((a) => /remove|close|quit|kill/.test(a)) && spec.ACTIONS.filter((a) => /delete/.test(a)).join() === 'delete' && (() => { const ps = read('src/word/host.ps1'); const owner = (i) => (ps.slice(0, i).match(/\nfunction ([\w-]+)/g) || []).pop() || ''; return [...ps.matchAll(/\$gone\.Delete\(\)/g)].every((m) => /Cmd-(DeleteParas|Unbreak)$/.test(owner(m.index))) && [...ps.matchAll(/\$d\.Content\.Delete\(\)/g)].every((m) => /Cmd-Restore$/.test(owner(m.index))); })() && !/Close\(|\.Quit\(|Delete\(|Remove-Item/.test(read('src/word/host.ps1').replace(/\$script:app\.Quit\(\[ref\]\$no\)/g, '').replace(/\$d\.Close\(\[ref\]\$no\)/g, '').replace(TABLE_DELETES, '')));
     void bad;
   }
 

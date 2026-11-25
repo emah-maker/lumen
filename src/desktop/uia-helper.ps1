@@ -61,6 +61,21 @@ public static class LumenNative {
   public static void Init() { try { SetProcessDPIAware(); } catch { } }
   public static long Foreground() { return GetForegroundWindow().ToInt64(); }
   public static bool Raise(long hwnd) { IntPtr h = new IntPtr(hwnd); if (IsIconic(h)) ShowWindow(h, 9); return SetForegroundWindow(h); }
+  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool attach);
+  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+  // Raise, and when Windows refuses a background process the foreground: once more with this thread's input joined to the foreground window's
+  // (the window that has the keyboard now lets it go). -> whether the window is in front now. (No key is sent for it.)
+  public static bool RaiseHard(long hwnd) {
+    IntPtr h = new IntPtr(hwnd);
+    if (!IsWindow(h)) return false;
+    if (IsIconic(h)) ShowWindow(h, 9);
+    if (SetForegroundWindow(h) && GetForegroundWindow() == h) return true;
+    IntPtr fg = GetForegroundWindow(); uint p; uint other = fg == IntPtr.Zero ? 0 : GetWindowThreadProcessId(fg, out p); uint me = GetCurrentThreadId();
+    bool joined = other != 0 && other != me && AttachThreadInput(me, other, true);
+    try { BringWindowToTop(h); SetForegroundWindow(h); } finally { if (joined) AttachThreadInput(me, other, false); }
+    return GetForegroundWindow() == h;
+  }
   // ---- the live picture of the card (the "frame" command): the window scaled to the card, compared with the last picture sent, a JPEG only when it changed
   public class FrameResult { public string Image, Skip; public bool Same; public int W, H; public long Ms; }
   static byte[] prevPix; static long prevHwnd; static int prevW, prevH;
@@ -367,6 +382,20 @@ function Split-Text([string]$text) {
   return $out
 }
 
+# Keys go to the window in front, and Windows ignores a background helper's SetFocus while another window has the foreground: typing into Word
+# while Lumen (or anything else) was in front stopped at the first key, "the keyboard focus left the app". With raise (Lumen asks for it, having
+# let the helper take the foreground: AllowSetForegroundWindow), the app's window is brought forward once, before the first key and before the
+# field gets the focus. The guard below is unchanged: if the user takes the foreground while it types, it still stops.
+function Bring-Forward($req) {
+  if (-not $req['raise'] -or -not $req['hwnd']) { return }
+  if ($TEST -and $req['test'] -and $req['test']['states']) { return }   # (a test's scripted foreground)
+  Ensure-Native
+  $h = [int64]$req['hwnd']
+  if ([LumenNative]::Foreground() -eq $h) { return }
+  [void][LumenNative]::RaiseHard($h)
+  Start-Sleep -Milliseconds 120
+}
+
 # Sends the pieces one at a time. Before EACH piece: the foreground window must belong to the approved program, the keyboard focus must be in it,
 # and the focused element must not be a password field. The first piece that fails stops everything; what was typed so far is reported.
 function Send-Guarded($pieces, $pids, $req) {
@@ -413,6 +442,7 @@ function Cmd-Invoke($req) {
   $ps.Dispose()
   if ($method -ne 'none') { return @{ method = $method } }
   # No pattern: focus it and press Enter (what a keyboard user would do), guarded like any other keys.
+  Bring-Forward $req
   $e.SetFocus(); Start-Sleep -Milliseconds 80
   $r = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req
   Refuse-Partial $r
@@ -432,6 +462,7 @@ function Cmd-SetText($req) {
     $res = @{ method = $method }
   } else {
     if ($text.Length -gt 500) { throw 'This field has no way to be set directly, and typing key by key is limited to 500 characters. Type it in smaller parts.' }
+    Bring-Forward $req
     $e.SetFocus(); Start-Sleep -Milliseconds 100
     $r = Send-Guarded (Split-Text $text) $t.pids $req
     Refuse-Partial $r
@@ -439,6 +470,7 @@ function Cmd-SetText($req) {
     $res = @{ method = $method; sink = $r.sink }
   }
   if ($req['submit']) {
+    Bring-Forward $req
     $e.SetFocus(); Start-Sleep -Milliseconds 60
     $r2 = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req
     Refuse-Partial $r2
@@ -448,6 +480,7 @@ function Cmd-SetText($req) {
 
 function Cmd-Keys($req) {
   $t = Get-Target $req
+  Bring-Forward $req
   try { $t.el.SetFocus() } catch { }
   Start-Sleep -Milliseconds 120
   $pieces = New-Object System.Collections.ArrayList
@@ -471,6 +504,7 @@ function Cmd-TypeFocus($req) {
   $t = Get-Target $req
   $text = [string]$req['text']
   if ($text.Length -gt 500) { throw 'Typing without an item id is limited to 500 characters a call. Type it in smaller parts.' }
+  Bring-Forward $req   # (the focus inside the app stays where click_at put it)
   $r = Send-Guarded (Split-Text $text) $t.pids $req
   Refuse-Partial $r
   if ($req['submit']) { $r2 = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req; Refuse-Partial $r2 }

@@ -5,9 +5,11 @@
 
 const path = require('path');
 
-const ACTIONS = ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show', 'help'];
-// Changes that open, edit, save or show something: refused in hands-off mode and asked about in a card.
-const EDITS = new Set(['insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track']);
+const ACTIONS = ['list', 'open', 'new', 'read', 'insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'save', 'save_as', 'show', 'inspect', 'delete', 'toc', 'fields', 'checkpoint', 'restore', 'help'];
+// Changes that open, edit, save or show something: refused in hands-off mode and asked about in a card. (fields only lists unless it is given
+// update, unlink or control; checkpoint copies the document to a temp file and changes nothing.)
+const EDITS = new Set(['insert', 'replace', 'style', 'format', 'table', 'image', 'comment', 'track', 'delete', 'toc', 'fields', 'restore']);
+const fieldsChange = (i) => Boolean(i) && (i.update !== undefined || i.unlink !== undefined || i.control !== undefined);
 const SAVES = new Set(['save', 'save_as']);
 const ACTING = new Set(['open', 'new', 'show', ...EDITS, ...SAVES]);
 const STYLES = { normal: 'Normal', 'heading 1': 'Heading 1', 'heading 2': 'Heading 2', 'heading 3': 'Heading 3', 'heading 4': 'Heading 4', 'heading 5': 'Heading 5', 'heading 6': 'Heading 6', title: 'Title', 'list bullet': 'List Bullet', bullet: 'List Bullet', bullets: 'List Bullet', 'list number': 'List Number', numbered: 'List Number', number: 'List Number', quote: 'Quote' };
@@ -118,8 +120,18 @@ function listLines(text) {
   return { text: out.join('\n'), levels: levels.some((n) => n > 1) ? levels : null };
 }
 
-// Where new content goes.
+// Where new content goes: at (end, start, after or section_end a heading), or by number: para (after that paragraph, as inspect numbers them),
+// or under (a heading path "Results > Discussion": at the end of that section).
 function placeOf(input) {
+  if (input.para !== undefined || input.under !== undefined) {
+    if (input.heading !== undefined) fail('Give heading (a paragraph\'s text) or para / under, not both.');
+    if (input.to !== undefined || input.include_fields !== undefined) fail('to and include_fields pick paragraphs to change; new content goes after para, or at the end of under.');
+    const s = scopeOf(input, {});
+    const at = input.at === undefined || input.at === '' ? (s.under ? 'section_end' : 'after') : input.at;
+    if (s.para !== undefined && at !== 'after') fail('With para, new content goes after that paragraph (at "after").');
+    if (s.under && at !== 'section_end') fail('With under, new content goes at the end of that section (at "section_end").');
+    return { at, ...s };
+  }
   const at = input.at === undefined || input.at === '' ? 'end' : input.at;
   if (!AT.includes(at)) fail(`at must be one of ${AT.join(', ')}.`);
   const heading = str(input.heading, 'heading', MAX.find);
@@ -145,6 +157,32 @@ function tableRows(rows) {
 // cells, rows, columns and look change. -> the clean fields (as docx.tableDocx and host.ps1 take them).
 const BORDERS = ['all', 'outside', 'none'];
 const whole = (v, name, lo, hi) => { const n = num(v, name, lo, hi); if (!Number.isInteger(n)) fail(`${name} must be a whole number from ${lo} to ${hi}.`); return n; };
+
+// Which paragraphs an edit is about (replace, style, format, comment, insert with find, inspect, delete): para (a paragraph number, as inspect
+// and read with numbers show them) up to `to`, or under (a heading, or a heading path "Results > Discussion": that heading's whole section).
+// A find then matches only there. include_fields: find also matches inside the table of contents and other fields, which it leaves out by
+// default (their text is Word's own: an update puts it back, and a "References" replace hit the contents line too).
+const SCOPE_ARGS = ['para', 'to', 'under', 'include_fields'];
+function scopeOf(input, out) {
+  let { para, to } = input;
+  const range = typeof para === 'string' ? /^\s*(\d+)\s*(?:-|–|to)\s*(\d+)\s*$/.exec(para) : null; // ("12-15")
+  if (range) { if (to !== undefined) fail('Give para "12-15" or para 12 with to 15, not both.'); [para, to] = [range[1], range[2]]; }
+  if (para !== undefined) out.para = whole(para, 'para (a paragraph number, as inspect shows it)', 1, 1e6);
+  if (to !== undefined) {
+    if (out.para === undefined) fail('to goes with para: para is the first paragraph, to the last.');
+    out.to = whole(to, 'to (the last paragraph number)', 1, 1e6);
+    if (out.to < out.para) fail('to must be para or a later paragraph.');
+  }
+  if (input.under !== undefined) {
+    const parts = String(str(input.under, 'under', 600, { required: true })).split(/\s*>\s*/).map((s) => s.replace(/^#+\s*/, '').trim()).filter(Boolean);
+    if (!parts.length || parts.length > 6 || parts.some((s) => s.length > MAX.find)) fail('under is a heading\'s text, or a heading path such as "Results > Discussion" (at most 6 levels).');
+    if (out.para !== undefined) fail('Give para or under, not both.');
+    out.under = parts;
+  }
+  if (input.include_fields !== undefined) out.fields = bool(input.include_fields, 'include_fields');
+  return out;
+}
+const scoped = (o) => o.para !== undefined || Boolean(o.under);
 function tableOf(input, out) {
   if (input.header !== undefined) out.header = bool(input.header, 'header');
   if (input.widths !== undefined) {
@@ -221,13 +259,13 @@ function pagesOf(input, out) {
   if (input.different_first_page !== undefined) out.firstPage = bool(input.different_first_page, 'different_first_page');
   if (input.page_number_start !== undefined) out.pageStart = whole(input.page_number_start, 'page_number_start', 0, 9999);
   if (input.columns !== undefined) out.columns = whole(input.columns, 'columns', 1, 4);
-  if (input.section_break_before !== undefined) out.sectionBreaks = texts(input.section_break_before, 'section_break_before');
+  if (input.section_break_before !== undefined) out.sectionBreaks = targets(input.section_break_before, 'section_break_before');
   if (input.section_break !== undefined) {
     out.sectionBreak = { 'next page': 'nextPage', next_page: 'nextPage', nextpage: 'nextPage', continuous: 'continuous', 'even page': 'evenPage', even_page: 'evenPage', 'odd page': 'oddPage', odd_page: 'oddPage' }[String(input.section_break).trim().toLowerCase()];
     if (!out.sectionBreak) fail('section_break must be next_page, continuous, even_page or odd_page.');
     if (!out.sectionBreaks) fail('section_break says what kind of break section_break_before makes; give section_break_before too.');
   }
-  if (input.column_break_before !== undefined) out.columnBreaks = texts(input.column_break_before, 'column_break_before');
+  if (input.column_break_before !== undefined) out.columnBreaks = targets(input.column_break_before, 'column_break_before');
   if (input.properties !== undefined) {
     const p = input.properties;
     if (!p || typeof p !== 'object' || Array.isArray(p)) fail('properties is { title, author, subject, keywords } (the document\'s own, shown in File > Info).');
@@ -253,6 +291,8 @@ const MARGINS = { normal: [1, 1, 1, 1], narrow: [0.5, 0.5, 0.5, 0.5], moderate: 
 const MARGIN_HELP = 'margins must be normal, narrow, moderate, wide, or inches: "1", "1 1.25" (top and bottom, then the sides) or "1 1 1 1" (top right bottom left).';
 const num = (v, name, lo, hi) => { const n = typeof v === 'string' && v.trim() !== '' ? Number(v.replace(/\s*(pt|in)$/i, '')) : v; if (typeof n !== 'number' || !Number.isFinite(n) || n < lo || n > hi) fail(`${name} must be a number from ${lo} to ${hi}.`); return n; };
 const texts = (v, name) => { const list = typeof v === 'string' ? [v] : v; if (!Array.isArray(list) || !list.length || list.length > 50 || list.some((t) => typeof t !== 'string' || !t.trim() || t.length > MAX.find)) fail(`${name} must be a list of paragraph texts (each as read shows it).`); return list.map((t) => t.trim()); };
+// Paragraphs named by their text or by their number (as inspect shows them): [ "Results", 14 ].
+const targets = (v, name) => { const list = typeof v === 'string' || typeof v === 'number' ? [v] : v; if (!Array.isArray(list) || !list.length || list.length > 50 || list.some((t) => !(typeof t === 'number' && Number.isInteger(t) && t >= 1 && t <= 1e6) && (typeof t !== 'string' || !t.trim() || t.length > MAX.find))) fail(`${name} must be a list of paragraph texts (as read shows them) or paragraph numbers (as inspect shows them).`); return list.map((t) => (typeof t === 'number' ? t : t.trim())); };
 function marginsOf(v) {
   if (typeof v === 'number') v = String(v);
   if (typeof v !== 'string') fail(MARGIN_HELP);
@@ -276,24 +316,26 @@ function formatOf(input) {
   const style = styleName(input.style); if (style) out.style = style;
   if (input.based_on !== undefined) { if (!out.style) fail('based_on needs style: the name of the style to make or change.'); out.basedOn = styleName(input.based_on, 'based_on style'); }
   const find = str(input.find, 'find', MAX.find); if (find) out.find = find;
-  if (input.paragraphs !== undefined) out.paras = texts(input.paragraphs, 'paragraphs');
+  if (input.paragraphs !== undefined) out.paras = targets(input.paragraphs, 'paragraphs');
   if ([out.style, out.find, out.paras].filter(Boolean).length > 1) fail('Give style or find, not both (nor paragraphs with either): style changes a style, find the paragraphs holding that text, paragraphs the paragraphs with those texts.');
+  scopeOf(input, out);
+  if (scoped(out) && (out.style || out.paras)) fail('para and under pick paragraphs by number or section; style changes a style everywhere and paragraphs picks them by text. Give one of those (find may go with para or under).');
   if (input.list !== undefined) {
     out.list = LISTS[String(input.list).trim().toLowerCase()];
     if (!out.list) fail('list must be bullet, number or none.');
-    if (!out.find && !out.paras) fail('list needs the paragraphs to make a list of: paragraphs (their texts, as read shows them) or find.');
+    if (!out.find && !out.paras && !scoped(out)) fail('list needs the paragraphs to make a list of: paragraphs (their texts, as read shows them), para (and to), under or find.');
   }
   if (input.level !== undefined) { if (!out.list || out.list === 'none') fail('level goes with list (bullet or number).'); out.level = num(input.level, 'level', 1, 9); if (!Number.isInteger(out.level)) fail('level must be a whole number from 1 to 9.'); }
   if (input.margins !== undefined) out.margins = marginsOf(input.margins);
   if (input.orientation !== undefined) { if (!['portrait', 'landscape'].includes(input.orientation)) fail('orientation must be portrait or landscape.'); out.orientation = input.orientation; }
   if (input.section !== undefined) { if (!Number.isInteger(input.section) || input.section < 1) fail('section must be a section number (1 is the first).'); out.section = input.section; }
-  if (input.page_break_before !== undefined) out.breaks = texts(input.page_break_before, 'page_break_before');
+  if (input.page_break_before !== undefined) out.breaks = targets(input.page_break_before, 'page_break_before');
   pagesOf(input, out);
   if (input.headings !== undefined) out.headings = texts(input.headings, 'headings').map((t) => { const m = /^(#{1,6})\s+(.+)$/.exec(t); return m ? { text: m[2].trim(), level: m[1].length } : { text: t, level: 1 }; });
   if (input.toc !== undefined) { if (typeof input.toc !== 'boolean') fail('toc must be true (a table of contents).'); if (input.toc) out.toc = true; }
   const at = str(input.heading, 'heading', MAX.find); if (at) { if (!out.toc) fail('heading (where the table of contents goes) needs toc: true.'); out.tocAt = at; }
   const text = hasAny(out, CHAR_KEYS) || hasAny(out, PARA_KEYS);
-  if ((out.style || out.find || out.paras) && !text && !out.list && !out.basedOn) fail('style, find and paragraphs pick where the change goes; give one of those changes: font, size, bold, italic, underline, color, line_spacing, space_before, space_after, align, indent, first_line, keep_with_next (or list, or based_on for a style). help lists them.');
+  if ((out.style || out.find || out.paras || scoped(out)) && !text && !out.list && !out.basedOn) fail('style, find, paragraphs, para and under pick where the change goes; give one of those changes: font, size, bold, italic, underline, color, line_spacing, space_before, space_after, align, indent, first_line, keep_with_next (or list, or based_on for a style). help lists them.');
   const page = ['header', 'footer', 'firstPage', 'pageStart', 'columns', 'sectionBreaks', 'columnBreaks', 'properties'].some((k) => out[k] !== undefined);
   if (!text && !page && !out.list && !out.basedOn && !out.margins && !out.orientation && !out.breaks && !out.headings && !out.toc) fail('Give something to change: font, size, line_spacing, space_before, space_after, align, indent, margins, orientation, page_break_before, headings, list, toc, header, footer, page_numbers, columns or section_break_before (help lists them all).');
   if (out.section && !out.margins && !out.orientation && !['header', 'footer', 'firstPage', 'pageStart', 'columns'].some((k) => out[k] !== undefined)) fail('section picks where margins, orientation, header, footer, page numbers or columns change; give one of those.');
@@ -304,7 +346,7 @@ function formatOf(input) {
 // not dropped: a model that sent replace's new text as new_text had the found text replaced with nothing, so its edit deleted what it meant to change.
 const BOOKMARK = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const CHAR_ARGS = ['font', 'size', 'bold', 'italic', 'underline', 'color', 'highlight', 'strike'];
-const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic', 'find', 'note', 'ref'], replace: ['find', 'replace', ...CHAR_ARGS, 'whole_word'], style: ['find', 'style', ...CHAR_ARGS, 'link', 'bookmark'], table: ['at', 'heading', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column', 'delete_rows', 'delete_columns'], image: ['at', 'heading', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text'], track: ['on', 'accept', 'reject', 'author', 'find'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before', 'properties'] };
+const EDIT_ARGS = { insert: ['at', 'heading', 'text', 'style', 'bold', 'italic', 'find', 'note', 'ref', ...SCOPE_ARGS], replace: ['find', 'replace', ...CHAR_ARGS, 'whole_word', ...SCOPE_ARGS], style: ['find', 'style', ...CHAR_ARGS, 'link', 'bookmark', ...SCOPE_ARGS], table: ['at', 'heading', 'para', 'under', 'rows', 'caption', 'header', 'widths', 'borders', 'shading', 'align', 'index', 'find', 'cells', 'add_rows', 'add_column', 'delete_rows', 'delete_columns'], image: ['at', 'heading', 'para', 'under', 'image', 'width', 'height', 'wrap', 'align', 'caption', 'alt'], comment: ['find', 'heading', 'comment', 'text', ...SCOPE_ARGS], track: ['on', 'accept', 'reject', 'author', 'find'], format: [...CHAR_ARGS, 'line_spacing', 'space_before', 'space_after', 'align', 'indent', 'first_line', 'keep_with_next', 'style', 'based_on', 'find', 'paragraphs', 'list', 'level', 'margins', 'orientation', 'section', 'page_break_before', 'toc', 'heading', 'headings', 'header', 'footer', 'page_numbers', 'different_first_page', 'page_number_start', 'columns', 'section_break_before', 'section_break', 'column_break_before', 'properties', ...SCOPE_ARGS], inspect: ['find', ...SCOPE_ARGS], delete: ['para', 'to', 'under', 'empty_headings', 'empty', 'breaks'], toc: ['update', 'rebuild', 'levels', 'title', 'para', 'heading'], fields: ['update', 'unlink', 'control', 'unlock', 'text'], checkpoint: ['name', 'list'], restore: ['name'] };
 const ARG_HINT = { replace: 'find (the exact text to change) and replace (the new text; "" deletes it)' };
 
 // input -> { action, ...clean fields } or a WordError with a plain sentence for the AI.
@@ -331,6 +373,8 @@ function validate(input) {
       const off = input.offset === undefined ? 0 : Number(input.offset);
       if (!Number.isInteger(off) || off < 0 || off > 1e7) fail('offset must be a whole number (the next_offset of the last read).');
       out.offset = off;
+      if (input.para !== undefined) { out.offset = whole(input.para, 'para (the paragraph to read from)', 1, 1e7) - 1; if (input.offset !== undefined) fail('Give offset or para, not both.'); }
+      if (input.numbers !== undefined) out.numbers = bool(input.numbers, 'numbers');
       break;
     }
     case 'insert': {
@@ -339,6 +383,7 @@ function validate(input) {
         // in the text: right after the first place find matches, as text, a footnote or endnote, or a cross-reference
         if (input.at !== undefined || input.heading !== undefined || input.style !== undefined) fail('find puts the insert inside a paragraph, right after that text; at, heading and style place new paragraphs. Give one or the other.');
         out.find = str(input.find, 'find', MAX.find);
+        scopeOf(input, out);
         if (input.note !== undefined) { out.note = { footnote: 'footnote', endnote: 'endnote' }[String(input.note).trim().toLowerCase()]; if (!out.note) fail('note must be footnote or endnote.'); }
         if (input.ref !== undefined) {
           out.ref = str(input.ref, 'ref', 60, { required: true }).trim();
@@ -367,11 +412,14 @@ function validate(input) {
       out.replace = str(input.replace, 'replace', MAX.text) ?? '';
       charOf(input, out); // (the new text's look: bold, color, ...)
       if (input.whole_word !== undefined) out.wholeWord = bool(input.whole_word, 'whole_word');
+      scopeOf(input, out);
       break;
     }
     case 'style': {
       if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
-      out.find = str(input.find, 'find', MAX.find, { required: true });
+      scopeOf(input, out);
+      out.find = str(input.find, 'find', MAX.find, { required: !scoped(out) }); // (para or under alone: those whole paragraphs)
+      if (!out.find) delete out.find;
       const style = styleName(input.style); if (style) out.style = style;
       charOf(input, out);
       if (input.link !== undefined) {
@@ -409,6 +457,7 @@ function validate(input) {
       if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
       out.find = str(input.find ?? input.heading, 'find', MAX.find, { required: true });
       out.text = str(input.comment ?? input.text, 'comment', MAX.comment, { required: true });
+      scopeOf(input, out);
       break;
     }
     case 'track': {
@@ -422,6 +471,75 @@ function validate(input) {
       out.review = k;
       if (input.author !== undefined) out.author = str(input.author, 'author', 100, { required: true }).trim();
       if (input.find !== undefined && input.find !== '') out.find = str(input.find, 'find', MAX.find);
+      break;
+    }
+    case 'inspect': {
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      scopeOf(input, out);
+      const find = str(input.find, 'find', MAX.find); if (find) out.find = find;
+      break;
+    }
+    case 'delete': {
+      // paragraphs (para to to, or the section under a heading), the empty headings or empty paragraphs (in those, or the whole document), or the
+      // page, section and column breaks there. The user sees what goes first, and a checkpoint is saved before (restore brings it back).
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      scopeOf(input, out);
+      if (input.empty_headings !== undefined) out.emptyHeadings = bool(input.empty_headings, 'empty_headings');
+      if (input.empty !== undefined) out.empty = bool(input.empty, 'empty');
+      if (input.breaks !== undefined) {
+        out.breaks = input.breaks === true ? 'all' : { page: 'page', pages: 'page', section: 'section', sections: 'section', column: 'column', columns: 'column', all: 'all' }[String(input.breaks).trim().toLowerCase()];
+        if (!out.breaks) fail('breaks must be page, section, column or all (true).');
+        if (out.emptyHeadings || out.empty) fail('breaks goes in a call of its own (para / under pick where; none: the whole document).');
+      }
+      if (out.emptyHeadings === false) delete out.emptyHeadings;
+      if (out.empty === false) delete out.empty;
+      if (!scoped(out) && !out.emptyHeadings && !out.empty && !out.breaks) fail('delete takes para (and to) or under (a heading\'s whole section) for paragraphs; empty_headings true or empty true (in para / under, or the whole document); or breaks page|section|column|all. inspect shows the numbers.');
+      break;
+    }
+    case 'toc': {
+      // a real table of contents: a new one (after para or heading, or at the start; title above it), update: its entries and page numbers, rebuild:
+      // the one there made again in its place (its title and the page around it stay), levels 1-9 or "1-3".
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      if (input.update !== undefined) out.update = bool(input.update, 'update');
+      if (input.rebuild !== undefined) out.rebuild = bool(input.rebuild, 'rebuild');
+      if (out.update && out.rebuild) fail('Give update or rebuild, not both (rebuild updates it too).');
+      if (input.levels !== undefined) {
+        const m = /^\s*(\d)\s*(?:-|–|to)\s*(\d)\s*$/.exec(String(input.levels));
+        const [a, b] = m ? [Number(m[1]), Number(m[2])] : [1, whole(input.levels, 'levels (the heading levels it lists: 3, or "1-3")', 1, 9)];
+        if (a < 1 || b > 9 || b < a) fail('levels is the heading levels it lists: 3 (Heading 1 to 3) or "2-4".');
+        out.upper = a; out.lower = b;
+        if (out.update) fail('levels goes with a new table of contents or rebuild; update keeps its levels.');
+      }
+      if (input.title !== undefined) { out.title = str(input.title, 'title', 200); if (out.update || out.rebuild) fail('title goes on a new table of contents; rebuild keeps the title that is there.'); }
+      if (input.para !== undefined) out.para = whole(input.para, 'para (the paragraph it goes after; 0 is the start)', 0, 1e6);
+      const at = str(input.heading, 'heading', MAX.find); if (at) out.heading = at;
+      if ((out.para !== undefined || out.heading) && (out.update || out.rebuild)) fail('para and heading place a new table of contents; update and rebuild work on the one there.');
+      if (out.para !== undefined && out.heading) fail('Give para or heading, not both.');
+      break;
+    }
+    case 'fields': {
+      // nothing: list the fields and content controls; update: every field (the contents, cross-references, page numbers); unlink: a field (its
+      // number, or "toc") made plain text, so its lines can be edited one by one; control: a content control's text, or unlock it.
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      const picked = ['update', 'unlink', 'control'].filter((k) => input[k] !== undefined);
+      if (picked.length > 1) fail('Give one of update, unlink or control.');
+      if (input.update !== undefined) { out.update = bool(input.update, 'update'); if (!out.update) fail('update must be true (or leave it out to list the fields).'); }
+      if (input.unlink !== undefined) out.unlink = String(input.unlink).trim().toLowerCase() === 'toc' ? 'toc' : whole(input.unlink, 'unlink (a field\'s number from fields, or "toc")', 1, 10000);
+      if (input.control !== undefined) {
+        out.control = whole(input.control, 'control (a content control\'s number from fields)', 1, 10000);
+        if (input.text !== undefined) out.text = str(input.text, 'text', MAX.text) ?? '';
+        if (input.unlock !== undefined) out.unlock = bool(input.unlock, 'unlock');
+        if (out.text === undefined && !out.unlock) fail('control takes text (its new text) or unlock true (so replace and delete can change what is inside).');
+      } else if (input.text !== undefined || input.unlock !== undefined) fail('text and unlock go with control (a content control\'s number from fields).');
+      break;
+    }
+    case 'checkpoint': case 'restore': {
+      if (pathArg !== undefined && pathArg !== '') out.path = checkPath(pathArg);
+      if (input.name !== undefined && input.name !== '') {
+        out.name = typeof input.name === 'number' ? String(input.name) : str(input.name, 'name', 60).trim();
+        if (!/^[\p{L}\p{N} ._'()-]+$/u.test(out.name)) fail('name is a short label of letters, digits and spaces, such as "before toc".');
+      }
+      if (input.list !== undefined) { out.list = bool(input.list, 'list'); if (out.list && out.name) fail('list shows the checkpoints; give it alone.'); }
       break;
     }
     case 'save_as': {
@@ -479,7 +597,8 @@ function formatParts(i = {}) {
 function stepLabel(input = {}, name = '') {
   const a = input?.action;
   const doc = name || (input?.doc ? clip(input.doc, 60) : input?.path && a !== 'save_as' ? baseName(input.path) : 'the document');
-  const where = (i) => (i.at === 'start' ? ' at the start' : i.at === 'after' && i.heading ? ` after “${clip(i.heading, 40)}”` : i.at === 'section_end' && i.heading ? ` at the end of “${clip(i.heading, 40)}”` : ' at the end');
+  const within = (i) => (i.para !== undefined ? (i.to !== undefined && Number(i.to) !== Number(i.para) ? ` in paragraphs ${clip(i.para, 8)}–${clip(i.to, 8)}` : ` in paragraph ${clip(i.para, 12)}`) : i.under ? ` under “${clip(Array.isArray(i.under) ? i.under.join(' > ') : i.under, 50)}”` : '');
+  const where = (i) => (i.para !== undefined ? ` after paragraph ${clip(i.para, 8)}` : i.under ? ` at the end of “${clip(Array.isArray(i.under) ? i.under.join(' > ') : i.under, 50)}”` : i.at === 'start' ? ' at the start' : i.at === 'after' && i.heading ? ` after “${clip(i.heading, 40)}”` : i.at === 'section_end' && i.heading ? ` at the end of “${clip(i.heading, 40)}”` : ' at the end');
   switch (a) {
     case 'list': return 'Looking at the open Word documents';
     case 'open': return `Opening ${baseName(input.path) || 'a document'} in Word`;
@@ -487,18 +606,24 @@ function stepLabel(input = {}, name = '') {
     case 'read': return `Reading ${doc}`;
     case 'insert': if (input.find) return input.ref ? `Writing in ${doc}: a cross-reference to ${clip(input.ref, 30)} after “${clip(input.find, 30)}”` : input.note ? `Writing in ${doc}: a${input.note === 'endnote' ? 'n endnote' : ' footnote'} after “${clip(input.find, 30)}”` : `Writing in ${doc}: text after “${clip(input.find, 30)}”`;
       { const n = lines(input.text); return `Writing in ${doc}: adding ${count(n, 'paragraph', 'paragraphs')}${where(input)}`; }
-    case 'replace': return `Editing ${doc}: replacing “${clip(input.find, 30)}” with “${clip(input.replace, 30)}”`;
-    case 'style': { const extra = formatParts({ ...input, style: undefined, based_on: undefined }); return `Formatting ${doc}: “${clip(input.find, 30)}”${input.style ? ` as ${input.style}` : ''}${extra.length ? `, ${extra.join(', ')}` : ''}`; }
+    case 'replace': return `Editing ${doc}: replacing “${clip(input.find, 30)}” with “${clip(input.replace, 30)}”${within(input)}`;
+    case 'style': { const extra = formatParts({ ...input, style: undefined, based_on: undefined }); return `Formatting ${doc}: ${input.find ? `“${clip(input.find, 30)}”${within(input)}` : within(input).replace(/^ in /, '').replace(/^ under/, 'the paragraphs under') || 'the paragraphs'}${input.style ? ` as ${input.style}` : ''}${extra.length ? `, ${extra.join(', ')}` : ''}`; }
     case 'table': if (input.index !== undefined || input.find) return `Editing ${doc}: ${input.index !== undefined ? `table ${clip(input.index, 6)}` : `the table with “${clip(input.find, 30)}”`}${Array.isArray(input.cells) ? `, ${count(input.cells.length, 'cell', 'cells')}` : ''}${input.add_rows !== undefined ? `, adding ${count(Array.isArray(input.rows) ? input.rows.length : 1, 'row', 'rows')}` : ''}${input.add_column !== undefined ? ', adding a column' : ''}${input.delete_rows !== undefined ? `, deleting ${Array.isArray(input.delete_rows) ? `rows ${input.delete_rows.join('–')}` : `row ${input.delete_rows}`}` : ''}${input.delete_columns !== undefined ? `, deleting ${Array.isArray(input.delete_columns) ? `columns ${input.delete_columns.join('–')}` : `column ${input.delete_columns}`}` : ''}`;
       return `Writing in ${doc}: adding a table of ${count(Array.isArray(input.rows) ? input.rows.length : 0, 'row', 'rows')}${where(input)}`;
     case 'image': { const src = String(input.image || ''); const name = /^https?:/i.test(src) ? (() => { try { return `from ${new URL(src).hostname}`; } catch { return ''; } })() : baseName(src); return `Writing in ${doc}: adding the picture ${name || ''}${input.caption ? ` with the caption “${clip(input.caption, 30)}”` : ''}${where(input)}`.trim(); }
     case 'comment': return `Commenting in ${doc} on “${clip(input.find ?? input.heading, 30)}”`;
-    case 'format': return `Formatting ${doc}: ${formatParts(input).join(', ') || 'the layout'}`;
+    case 'format': return `Formatting ${doc}${within(input)}: ${formatParts(input).join(', ') || 'the layout'}`;
     case 'track': if (input.accept !== undefined || input.reject !== undefined) return `${input.accept !== undefined ? 'Accepting' : 'Rejecting'} ${input.author ? `${clip(input.author, 30)}'s` : 'the'} tracked changes${input.find ? ` around “${clip(input.find, 30)}”` : ''} in ${doc}`;
       return `${input.on ? 'Turning on' : 'Turning off'} tracked changes in ${doc}`;
     case 'save': return `Saving ${doc}`;
     case 'save_as': return `Saving ${doc} as ${baseName(input.path) || 'a new file'}`;
     case 'show': return `Showing ${doc} in Word`;
+    case 'inspect': return `Looking at the formatting in ${doc}${within(input)}`;
+    case 'delete': return input.breaks !== undefined ? `Editing ${doc}: removing ${input.breaks === true || input.breaks === 'all' ? 'the page and section' : clip(input.breaks, 10)} breaks${within(input) || ' in the whole document'}` : input.para !== undefined && !input.empty_headings && !input.emptyHeadings && !input.empty ? `Editing ${doc}: deleting ${within(input).replace(/^ in /, '')}` : `Editing ${doc}: deleting ${input.empty_headings || input.emptyHeadings ? 'the empty headings' : input.empty ? 'the empty paragraphs' : input.under ? 'the section' : 'paragraphs'}${within(input)}`;
+    case 'toc': return input.update ? `Updating the table of contents in ${doc}` : input.rebuild ? `Rebuilding the table of contents in ${doc}` : `Adding a table of contents to ${doc}`;
+    case 'fields': return input.update ? `Updating the fields in ${doc}` : input.unlink !== undefined ? `Editing ${doc}: making ${String(input.unlink).toLowerCase() === 'toc' ? 'the table of contents' : `field ${clip(input.unlink, 6)}`} plain text` : input.control !== undefined ? `Editing ${doc}: content control ${clip(input.control, 6)}${input.unlock ? ', unlocked' : ''}` : `Looking at the fields in ${doc}`;
+    case 'checkpoint': return input.list ? `Looking at the checkpoints of ${doc}` : `Saving a checkpoint of ${doc}${input.name ? ` (“${clip(input.name, 30)}”)` : ''}`;
+    case 'restore': return `Restoring ${doc} to ${input.name ? `the checkpoint “${clip(input.name, 30)}”` : 'its last checkpoint'}`;
     case 'help': return 'Looking up what the Word tool takes';
     default: return 'Using Word';
   }
@@ -525,6 +650,12 @@ const HELP = [
   'table (new): rows [[cells]], at, heading, header (first row repeats on each page, bold; default true), widths [inches per column], borders all|outside|none, shading (the header row\'s fill: lightgray, #D9E2F3...), align left|center|right.',
   'table (one that is there): index (1 is the first table, in reading order) or find (text in one of its cells), then cells [[row, col, "text"]] (1-based, counted after the rows and column this call adds), add_rows (after row n: 0 top, "end" bottom) with rows [[cells]], add_column (after column n, "end"; fill it with cells), header, widths, borders, shading, align. delete_rows / delete_columns: 3 or [2, 4] (a call of its own; the user sees what goes first; never every row or column).',
   'image: image (a file path or an https address), at, heading, width / height (inches; one keeps the shape), wrap inline|square|tight|top_bottom|behind|front, align left|center|right, caption ("Figure N: " is added, numbered by Word), alt (text for screen readers). table (new) takes caption too ("Table N: ", above it).',
+  'targets (replace, style, format, comment, insert with find, inspect, delete): para (a paragraph number, as inspect and read numbers: true show them) and to (the last), or under (a heading, or a path "Results > Discussion": that section). find then matches only there, and skips the table of contents and fields unless include_fields true. style and format with para / under alone change those whole paragraphs; insert, table and image with para go after it, with under at the end of that section.',
+  'inspect: para / to / under / find (default: the first 40 paragraphs): each paragraph\'s number, style, font, size, bold, spacing before / after, line spacing, alignment, page / section breaks, page, list, and whether it is in the table of contents, a field, a content control or a table; and the body font (Normal) and the page setup.',
+  'delete: para (and to), or under (that heading and its section); empty_headings true or empty true (in para / under, or everywhere); breaks page|section|column|all (in para / under, or everywhere). The user sees what goes first; a checkpoint is saved before, so restore brings it back. page_break_before / section_break_before in format take paragraph numbers too.',
+  'toc: a real table of contents: title, levels (3, or "1-3"), para (the paragraph it goes after; 0 the start) or heading; update true (its entries and page numbers); rebuild true (made again in its place: its title and the page layout stay; levels).',
+  'fields: lists the fields (TOC, REF, PAGE, SEQ...) and content controls with numbers; update true updates every field and table of contents; unlink n or "toc" makes a field plain text, so one line of a table of contents can be edited or deleted; control n with text (its new text) or unlock true (so replace and delete can change it).',
+  'checkpoint: name (optional): a copy of the document now, kept while Lumen runs; list true shows them. restore: name (default the last): the document back as it was then (what is there now is saved as a checkpoint first). Use them around big edits instead of undo.',
   'save; save_as: path (.docx or .pdf). show.',
 ];
 function help(topic) {
@@ -537,4 +668,4 @@ const OFF_TEXT = 'Using Microsoft Word is off. The user can turn it on in Settin
 const NO_WORD = 'Microsoft Word is not installed on this computer, so it cannot be driven. Documents can still be read (action read with path to a .docx file), and a .docx file can get new paragraphs, headings and tables written straight into it (insert or table with path), without Word.';
 const NOT_WINDOWS = 'Using Word works on Windows for now. On this computer a .docx file can still be read (action read with path) and given new paragraphs, headings and tables (insert or table with path).';
 
-module.exports = { help, listLines, ACTIONS, EDITS, SAVES, ACTING, STYLES, MAX, WordError, validate, checkPath, sameDoc, kind, stepLabel, wrap, defang, baseName, clip, OFF_TEXT, NO_WORD, NOT_WINDOWS, OPEN_EXT };
+module.exports = { help, listLines, fieldsChange, ACTIONS, EDITS, SAVES, ACTING, STYLES, MAX, WordError, validate, checkPath, sameDoc, kind, stepLabel, wrap, defang, baseName, clip, OFF_TEXT, NO_WORD, NOT_WINDOWS, OPEN_EXT };
