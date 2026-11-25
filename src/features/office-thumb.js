@@ -4,7 +4,7 @@
 // the first page, the top-left cells of the first sheet, the first slide. A hidden window loads the viewer page, main hands it the parsed file
 // (features/office-viewer.js, slides-viewer.js: the first slide only, or the first screenful), and the window is captured and shrunk to a PNG.
 //
-//   create({ BrowserWindow, cacheDir, officeRender, slidesRender, encrypt, decrypt, available })
+//   create({ BrowserWindow, cacheDir, officeRender, slidesRender, encrypt, decrypt, decryptAsync?, available })
 //     .thumbOf(file) -> Promise<{ dataUrl, w, h } | null>    `file` is an absolute path Lumen already trusts (a card's, an upload's, a Files entry)
 //
 // The window is as locked down as a tab showing the same page: sandboxed, no preload and no Node, no permissions, no windows, no navigation, no
@@ -41,7 +41,7 @@ const READY = `new Promise((resolve) => {
 // The slide viewer's own chrome and the gaps around the first slide are not part of a thumbnail.
 const SLIDE_CSS = 'header, #notes, #thumbs, .caption { display: none !important } html, body { overflow: hidden !important } main { padding: 0 !important; gap: 0 !important; margin: 0 !important } .frame { width: 100% !important } .slide { border-radius: 0 !important; box-shadow: none !important; outline: 0 !important }';
 
-function create({ BrowserWindow, cacheDir, officeRender, slidesRender, encrypt, decrypt, available = () => false }) {
+function create({ BrowserWindow, cacheDir, officeRender, slidesRender, encrypt, decrypt, decryptAsync = null, available = () => false }) {
   const memory = new Map(); // key -> { dataUrl, w, h } | null (a failure is remembered too: not tried again for the same file version)
   const pending = new Map(); // key -> Promise
   let chain = Promise.resolve();
@@ -61,7 +61,7 @@ function create({ BrowserWindow, cacheDir, officeRender, slidesRender, encrypt, 
     const f = diskFile(key);
     if (!f) return null;
     try {
-      const png = Buffer.from(decrypt(await fs.promises.readFile(f, 'utf8')), 'base64');
+      const png = Buffer.from(await (decryptAsync || decrypt)(await fs.promises.readFile(f, 'utf8')), 'base64');
       if (png.length < 25 || png.readUInt32BE(0) !== 0x89504e47) return null;
       const w = png.readUInt32BE(16);
       const h = png.readUInt32BE(20);

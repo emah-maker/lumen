@@ -147,7 +147,7 @@ const files = (dir) => fs.readdirSync(dir).filter((n) => /^[a-f0-9]{16}\.json$/.
   const firstUserData = main.indexOf("app.getPath('userData')");
   check('main.js applies the profile guard before the first userData read', guardAt > 0 && guardAt < firstUserData, `${guardAt} ${firstUserData}`);
   check('main.js never calls clearAll', !/chats\(\)\.clearAll\(/.test(main));
-  check('main.js does not save (or clear) chats before the app is ready', /!app\.isReady\(\) \|\| !safeStorage\.isEncryptionAvailable\(\)\) return;/.test(main));
+  check('main.js does not save (or clear) chats before the app is ready (the secret box opens only after it)', /!secretBox\.isReady\(\) \|\| !secretBox\.available\(\)\) return;/.test(main) && /app\.whenReady\(\)\.then\(async \(\) => \{[\s\S]{0,800}await secretBox\.start\(/.test(main));
 }
 
 fs.rmSync(root, { recursive: true, force: true });

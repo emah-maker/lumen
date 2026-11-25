@@ -22,6 +22,7 @@ Lumen.exe (main process: main.js)
 - **`src/main.js`** owns the window, the tabs array, sessions, menus, IPC and the startup order. Larger areas live in `src/features/` and in top-level modules (`src/ai/agent.js`, `src/browser/tab-groups.js`, `src/settings/settings-backend.js`, …) that `src/main.js` wires up with small dependency objects.
 - **One running copy per profile.** A second launch hands its arguments (links, files) to the first and exits (`src/features/instance.js`).
 - **Settings and state** live in `settings.json` in the profile folder, written atomically (`src/settings/settings-file.js`). See the [settings reference](settings.md).
+- **Secrets** (API keys, chats, passwords, memory, tokens) are encrypted by one secret box (`src/features/secret-box.js`): an AES-256-GCM key locked by the OS keychain with Electron's asynchronous `safeStorage` calls, opened once at start before any store is read. Values from before it (one keychain blob each) are warmed at start or read with `decryptAsync`; a read that can't be answered yet throws a `transient` error, which stores treat as "not now", never as empty. A while after the first start on a new version, `src/features/secret-migrate.js` (loaded only then, from the start-up queue) saves every old-format value again in the new format, each checked to read back first; `secretsMigrated` records when all have moved.
 
 ## The UI and the tabs
 

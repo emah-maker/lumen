@@ -79,7 +79,7 @@ async function extract(name, bytes) {
 const newFileId = () => crypto.randomBytes(6).toString('hex');
 
 // deps: { dir, encrypt(text) -> string, decrypt(string) -> text, available() -> boolean, now() }
-function createProjectFilesStore({ dir, encrypt, decrypt, available = () => true, now = () => Date.now() }) {
+function createProjectFilesStore({ dir, encrypt, decrypt, decryptAsync = async (v) => decrypt(v), available = () => true, now = () => Date.now() }) {
   const metas = new Map(); // project id -> [meta] (cached after the first read)
   const unreadable = new Set(); // projects whose index could not be read: never written over
 
@@ -119,7 +119,7 @@ function createProjectFilesStore({ dir, encrypt, decrypt, available = () => true
     await fs.promises.writeFile(tmp, JSON.stringify({ enc: encrypt(JSON.stringify(value)) }));
     await fs.promises.rename(tmp, file);
   };
-  const readBlob = async (pid, id) => JSON.parse(decrypt(JSON.parse(await fs.promises.readFile(fileOf(pid, id), 'utf8')).enc));
+  const readBlob = async (pid, id) => JSON.parse(await decryptAsync(JSON.parse(await fs.promises.readFile(fileOf(pid, id), 'utf8')).enc)); // (an old-format file: read through the keychain)
 
   const copy = (m) => ({ ...m });
   const list = (pid) => (ID_RE.test(String(pid)) ? readIndex(pid).map(copy) : []);

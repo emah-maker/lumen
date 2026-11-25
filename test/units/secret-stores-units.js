@@ -64,12 +64,12 @@ const noKeychain = { available: () => false, encrypt: () => { throw new Error('n
     const dir = tmp(); const file = path.join(dir, 'external-apps.json');
     const key = crypto.randomBytes(32);
     const storage = {
-      isEncryptionAvailable: () => true,
-      encryptString: (s) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key, iv); const body = Buffer.concat([c.update(s, 'utf8'), c.final()]); return Buffer.concat([iv, c.getAuthTag(), body]); },
-      decryptString: (b) => { const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); },
+      available: () => true,
+      encrypt: (s) => { const iv = crypto.randomBytes(12); const c = crypto.createCipheriv('aes-256-gcm', key, iv); const body = Buffer.concat([c.update(s, 'utf8'), c.final()]); return Buffer.concat([iv, c.getAuthTag(), body]).toString('base64'); },
+      decrypt: (b64) => { const b = Buffer.from(b64, 'base64'); const d = crypto.createDecipheriv('aes-256-gcm', key, b.subarray(0, 12)); d.setAuthTag(b.subarray(12, 28)); return Buffer.concat([d.update(b.subarray(28)), d.final()]).toString('utf8'); },
     };
     const timers = [];
-    const mk = () => createExternalApps({ file, tokenDir: path.join(dir, 'tokens'), safeStorage: storage, setTimer: (fn) => { const t = { fn, unref() {} }; timers.push(t); return t; }, clearTimer: (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); } });
+    const mk = () => createExternalApps({ file, tokenDir: path.join(dir, 'tokens'), cipher: storage, setTimer: (fn) => { const t = { fn, unref() {} }; timers.push(t); return t; }, clearTimer: (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); } });
     let ext = mk();
     check('external apps: no file is a fresh start', ext.list().length === 0 && asides(file).length === 0 && !fs.existsSync(file));
     ext.add({ name: 'Cursor', app: 'cursor' });

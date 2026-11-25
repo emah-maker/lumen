@@ -48,11 +48,11 @@ const fakeClient = (app) => app.evaluate(() => {
     { role: 'user', content: [{ type: 'text', text: '<browser_state>\nActive tab id: 1\n</browser_state>\n\nlegacy question about tides' }] },
     { role: 'assistant', content: [{ type: 'text', text: 'Legacy answer.' }] },
   ] };
-  const legacy = await app.evaluate(({ app: electronApp, safeStorage }, text) => ({
-    userData: electronApp.getPath('userData'),
-    available: safeStorage.isEncryptionAvailable(),
-    enc: safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(text).toString('base64') : null,
-  }), JSON.stringify(snapshot));
+  // (one keychain blob, the format every version before the secret box wrote: features/secret-box.js reads it back)
+  const legacy = await app.evaluate(async ({ app: electronApp, safeStorage }, text) => {
+    const available = await safeStorage.isAsyncEncryptionAvailable();
+    return { userData: electronApp.getPath('userData'), available, enc: available ? (await safeStorage.encryptStringAsync(text)).toString('base64') : null };
+  }, JSON.stringify(snapshot));
   check('OS encryption is available for this test', legacy.available, 'safeStorage unavailable');
   await app.close();
   legacy.file = path.join(legacy.userData, 'chat.json');
