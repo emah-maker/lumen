@@ -107,25 +107,7 @@ function ensureElectronBinary() {
   if (r.status !== 0) { console.error('Electron install failed'); process.exit(1); }
 }
 
-// chromium-switches-units reads the whole Electron executable (250 MB). On GitHub's Windows runners that first read of a freshly
-// written file was sometimes slow enough to run into the 120 s suite timeout while two other suites competed for the disk, and a
-// rerun passed (Defender is off on those runners, so it is a slow cold disk read, not a scan). Read it once here, alone, before
-// any suite starts, so the cold read is paid by nobody's timeout and shows in the log.
-function warmElectronBinary() {
-  const dir = path.join(__dirname, '..', '..', 'node_modules', 'electron');
-  const pathFile = path.join(dir, 'path.txt');
-  const rel = fs.existsSync(pathFile) ? fs.readFileSync(pathFile, 'utf8') : '';
-  const bin = rel ? path.join(dir, 'dist', rel) : '';
-  if (!bin || !fs.existsSync(bin)) return;
-  const started = Date.now();
-  const buf = Buffer.alloc(8 * 1024 * 1024);
-  const fd = fs.openSync(bin, 'r');
-  let bytes = 0;
-  try { for (let n; (n = fs.readSync(fd, buf, 0, buf.length, bytes)) > 0;) bytes += n; } finally { fs.closeSync(fd); }
-  console.log(`Read the Electron binary once (${(bytes / 1048576).toFixed(0)} MB) in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
-}
-
-(jobs > 1 ? (ensureElectronBinary(), warmElectronBinary(), runParallel()) : runSerial()).then((results) => {
+(jobs > 1 ? (ensureElectronBinary(), runParallel()) : runSerial()).then((results) => {
   results.sort((a, b) => (a.name < b.name ? -1 : 1));
   const failed = results.filter((r) => !r.ok);
   console.log('\n=== summary');
