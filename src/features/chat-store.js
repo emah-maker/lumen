@@ -650,6 +650,11 @@ function createChatStore({ dir, encrypt, decrypt, decryptAsync = async (v) => de
       if (d.plan === true) out.plan = true;
       if (d.connectors === false) out.connectors = false;
       if (d.mcp === false) out.mcp = false;
+      // [project tools] which connected apps, MCP servers and skills its chats get (features/project-tools.js; unset: every one, [] none)
+      for (const [key, re] of [['apps', /^[a-z][a-z0-9_-]{0,39}$/], ['servers', /^[a-z0-9_-]{1,40}$/i], ['skills', /^[a-z0-9][a-z0-9_.-]{0,63}$/i]]) {
+        if (!Array.isArray(d[key])) continue;
+        out[key] = [...new Set(d[key].map((x) => String(x ?? '').trim()).filter((x) => re.test(x)))].slice(0, 60);
+      }
     }
     return out;
   };

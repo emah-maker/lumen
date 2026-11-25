@@ -550,7 +550,7 @@ function create({
   const usesShared = (id) => connected[id]?.config?.shared === true;
 
   // ---- the AI's tool
-  const defs = ({ readOnly = false } = {}) => { const d = registry.toolDef({ readOnly }); return d ? [d] : []; }; // readOnly: background tasks and routines
+  const defs = ({ readOnly = false, only = null } = {}) => { const d = registry.toolDef({ readOnly, only }); return d ? [d] : []; }; // only: [project tools] a project's apps // readOnly: background tasks and routines
   const validate = (input) => registry.validate(input);
   const label = (input) => registry.stepLabel(input);
   const isWrite = (input) => Boolean(registry.get(input?.app)?.actions?.[input?.action]?.write);

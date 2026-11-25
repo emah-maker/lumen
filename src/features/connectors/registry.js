@@ -436,8 +436,9 @@ const lineFor = (c) => `${c.id}: ${Object.entries(c.actions).map(([n, a]) => sig
 
 // The tool definition, or null when nothing is connected. Short on purpose: action "help" gives an app's details.
 // readOnly (background tasks and routines): the writes are left out, and the description says nothing changes.
-function toolDef({ readOnly = false } = {}) {
-  const ids = connectedIds();
+// only: [project tools] the connector ids a project's chat may use (null or unset: every connected one).
+function toolDef({ readOnly = false, only = null } = {}) {
+  const ids = Array.isArray(only) ? connectedIds().filter((id) => only.includes(id)) : connectedIds();
   if (!ids.length) return null;
   const view = (c) => ({ ...c, actions: Object.fromEntries(Object.entries(offeredActions(c)).filter(([, a]) => !readOnly || !a.write)) });
   return {

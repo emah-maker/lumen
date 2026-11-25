@@ -9,11 +9,31 @@ A **project** groups chats and gives the AI things to work from. Its page is the
 - **Continue where you left off**: the latest chats as cards with the last thing said, the time, and a mark while a reply is working or needs your OK. Below them are all the project's chats, with a search that looks in the chats and the project's files.
 - **Overview**: instructions (shown as text; Edit changes them), **Sources**, the folder, defaults and memory. The fine print is in each card's ⓘ tooltip.
 
+## Tools: the apps, MCP servers and skills a project uses
+
+A project chooses which of your tools its chats get. Open its page → **Tools** (or **Manage** on the Overview's **Tools** card):
+
+- **The model and Plan first** for new chats, at the top (the same as the Defaults card).
+- **Apps and connections**: every app from Settings → Apps and connections, each with its status (Connected, Not connected, Needs sign-in) and a switch. The ones on come first; **Show all apps** has the rest.
+  - **Until you switch one**, the project uses every app you connect, including ones you connect later. Switching one off turns that into a list: the apps on now stay on, and an app you connect later stays off in this project until you switch it on. **Use every app** goes back.
+  - **Connect** on an app that isn't connected yet: Google (Drive, Sheets, Docs, Calendar, Tasks, Contacts), Microsoft (Outlook, OneDrive, Outlook Calendar), Gmail, Canvas (when Lumen finds your school's address in your tabs) and the MCP cards (Linear, Atlassian, Sentry…) sign in in your browser from there, and the app is switched on in the project. An app that needs a token or an address typed (GitHub, Notion, Todoist, Zotero, a calendar's secret address) opens Settings → Apps and connections instead; come back when it says Connected.
+- **MCP servers**: the servers you added yourself (Settings → AI → MCP servers), each with a switch. Their tools are sent with every message, so a project that doesn't need one can leave it off. A server an app card added (Linear, for example) is listed as that app.
+- **Skills**: the skills the AI may use on its own (Settings → Skills). Switched to a list, only those are listed to the AI in the project's chats.
+
+What it does: in the project's chats the AI is offered only the project's apps (the `connector` tool lists just those) and servers, a call to any other is refused, and only its skills are listed. Chats outside the project are not affected. The Overview's **Tools** card says what is on in one line ("Gmail, Google Sheets and 2 more · All MCP servers · All skills") and names the apps that are on but not connected yet, with **Connect…**. The lists are kept with the project and in its folder's `project.json` (`"apps"`, `"servers"`, `"skills"` under `"defaults"`); a list left out means every one. Nothing is connected or signed in on its own.
+
 ## Templates
 
-**New project** asks what to **Start from**: **Blank** (name it and write its instructions yourself) or a template, a project that starts set up for one kind of work. Leave the name or the instructions empty and the template's are used; anything you type wins. A template only sets a project up: afterwards it is an ordinary project you can change.
+**New project** asks what to **Start from**: **Blank** (name it and write its instructions yourself) or a template, a project that starts set up for one kind of work. Leave the name or the instructions empty and the template's are used; anything you type wins. Below the templates, **Tools and connections** lists the apps the new project's chats will get: a template's come ticked, tick or untick any, and **Connect** one you haven't signed in to yet. Left as it is on Blank, the project uses every app you connect. A template only sets a project up: afterwards it is an ordinary project you can change.
 
-A project you already have can become one too: its page → **Settings** → **Type** (**Standard** or **Job applications**), or **⋯** → **Make it a Job applications project**. Switching adds the template's instructions after the project's own (if both would not fit in 4,000 characters, yours stay as they are and Lumen says so), its folder and its automation profile. Nothing else changes: the project's files, chats, memory and folder stay. Switching back to **Standard** hides the job views and takes the template's instructions out again (unless you edited them); the tracker and the profile are kept, so switching back later picks up where you were.
+| Template | Its apps | Also |
+| --- | --- | --- |
+| **Job applications** | Gmail, Google Sheets, Drive, Docs, Calendar | The dashboard, tracker, résumé folder and profile below |
+| **Coursework** | Canvas, Google Calendar, Google Tasks, Drive, Docs | Instructions for assignments and deadlines |
+| **Code project** | GitHub | Plan first; instructions for reading before changing and asking before pushing |
+| **Research** | Zotero, Drive, Docs, Notion | Instructions to cite every claim and never invent a reference |
+
+A project you already have can become one too: its page → **Settings** → **Type** (**Standard**, **Job applications**, **Coursework**, **Code project** or **Research**; a type adds its instructions, and its apps stay as the Tools tab has them), or **⋯** → **Make it a Job applications project**. Switching adds the template's instructions after the project's own (if both would not fit in 4,000 characters, yours stay as they are and Lumen says so), its folder and its automation profile. Nothing else changes: the project's files, chats, memory and folder stay. Switching back to **Standard** hides the job views and takes the template's instructions out again (unless you edited them); the tracker and the profile are kept, so switching back later picks up where you were.
 
 ### Job applications
 
@@ -98,7 +118,8 @@ The tabs under the header switch what the page shows (arrow keys move between th
 
 - **Overview**: everything described above, the chats on the left and the cards on the right.
 - **Memory**: the project's notes on their own, all of them, with the same Add, edit, Pin and Forget, then its Key documents.
-- **Settings**: first the project as a whole (Keep as project for a temporary one, Pin to top, Archive, Export project…, Delete project), then the instructions, the defaults, the permissions and the folder.
+- **Tools**: the model and Plan first, then the apps, MCP servers and skills its chats get (see [Tools](#tools-the-apps-mcp-servers-and-skills-a-project-uses)).
+- **Settings**: first the project as a whole (Keep as project for a temporary one, Pin to top, Archive, Export project…, Delete project), then the instructions, the permissions and the folder.
 
 An archived project's page says so above the tabs, with **Move out of archive**.
 
@@ -129,7 +150,7 @@ The browser's AI sidebar uses the same projects. A strip under its header shows 
   - The ⋯ menu: **Open** and **Re-read the page** (the title and icon again: from a tab that has it open, otherwise one request, only when you click) for pages and websites, **Rename** for any row (a name you give is kept when you re-read), **Remove** (a page or website shows Undo; a file asks first, because its text cannot be brought back). The search box above the chats looks in the sources too.
   - Pages pinned in earlier versions show up here unchanged; one with no title shows its site and path, and Re-read gives it a title.
 - **Memory**: when Memory is on, notes the AI saves in a project chat belong to that project only (see [Project memory](#project-memory)).
-- **Defaults**: a model for new chats, plan-first, and switches for connectors and MCP tools.
+- **Defaults**: a model for new chats and plan-first. Which apps, MCP servers and skills its chats get is on the **Tools** tab (see [Tools](#tools-the-apps-mcp-servers-and-skills-a-project-uses)).
 - **Permissions**: how much the AI asks in the project's chats (**Use default** follows Settings → AI; or Ask, Auto-allow actions, Bypass permissions), and the sites allowed with **Always allow <site> in <project>** on a site card in its chats, each with Remove. The sidebar's bolt menu says "…, from project <name>" while the project's level applies, and choosing a level there in a project's chat asks **Only in <project>** or **Everywhere**. These stay on this computer: they are not synced and not written to `project.json`, so a folder can't switch Bypass on. Background tasks and routines still bypass only with Settings → AI → **Bypass in background tasks and routines too**.
 
 ## How the AI uses them
@@ -152,7 +173,7 @@ Nothing about a project depends on Lumen, on one AI provider or on one tool. A p
 ```
 
 - **sources.md** looks like `- [Python docs](https://docs.python.org/3/) — whole site` for a website and `- [Title](https://example.com/page)` for a page. A bare address (`- https://example.com/`) and other bullets work too; any other line is yours and is ignored.
-- **project.json** is `{ "format": 1, "description": "...", "defaults": { "model": "...", "plan": true, "connectors": false, "mcp": false } }` (a key is left out when it has its usual value).
+- **project.json** is `{ "format": 1, "description": "...", "defaults": { "model": "...", "plan": true, "apps": ["gmail", "sheets"], "servers": ["files"], "skills": ["job-search"] } }` (a key is left out when it has its usual value; a list left out means every one, `[]` none; the older `"connectors": false` and `"mcp": false` still mean none).
 - **Edits from outside are picked up** when you open the project, when Lumen's window gets focus again and when you change something in Lumen (Folder card: **Check the folder**). Edit `INSTRUCTIONS.md` (or `AGENTS.md`), drop a PDF, Word file, text file or picture into `Sources/`, or add a line to `sources.md`. A file edited in `Sources/` is read again; one deleted from it leaves the project; sub-folders, hidden files and types Lumen cannot read are ignored. Nothing watches the folder while Lumen is in the background.
 - **When both sides changed** since the last pass, the newer one wins and the other text is kept beside it as `INSTRUCTIONS.conflict-<date>.md` (likewise `sources`, `project`). A file you remove in Lumen moves to `Sources/Removed/`. Nothing is written twice: a second pass over an unchanged folder does nothing.
 - **It is a switch.** It is on for a new project whose folder Lumen makes. For a project you already have it is off until you turn it on (the editor's folder section, or the Folder card), and turning it on says that the files are **not encrypted** and that files you added earlier are not copied out (Lumen keeps only their text, encrypted). Turning it off leaves the files where they are. A project without a folder has **Save project to a folder**, which makes the folder and turns it on.

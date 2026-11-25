@@ -77,13 +77,25 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     await inPage(`document.querySelector('#cp-projects .cp-pj-item[data-project="${seeded}"] .cp-pj').click()`);
     await waitFor(async () => (await inPage("document.querySelector('#cp-project-page .pjp-title')?.value")) === 'Thesis', 15000);
     const tabs = await inPage("[...document.querySelectorAll('#cp-project-page .pjp-tab')].map((b) => b.textContent + ':' + b.getAttribute('aria-selected'))");
-    check('the page has Overview / Memory / Settings tabs, Overview selected', JSON.stringify(tabs) === JSON.stringify(['Overview:true', 'Memory:false', 'Settings:false']), JSON.stringify(tabs));
+    check('the page has Overview / Tools / Memory / Settings tabs, Overview selected', JSON.stringify(tabs) === JSON.stringify(['Overview:true', 'Tools:false', 'Memory:false', 'Settings:false']), JSON.stringify(tabs));
+    // [project tools] the Tools view: the model and plan first, then the apps (each with a switch and Connect), MCP servers and skills
+    await inPage("document.querySelector('#cp-project-page .pjp-tab[data-view=\"tools\"]').click()");
+    check('Tools: Defaults, then Apps and connections with a switch per app and Connect for one not connected', await waitFor(() => inPage("(() => { const v = document.querySelector('#cp-project-page .pjp-view'); return Boolean(v && v.querySelector('.pjp-defaults') && v.querySelector('.ptl-card .ptl-row [role=switch]') && v.querySelector('.ptl-connect') && /MCP servers/.test(v.innerText) && /Skills/.test(v.innerText)); })()"), 15000), await inPage("document.querySelector('#cp-project-page .pjp-view')?.innerText.slice(0, 400)"));
+    check('Tools: until one is switched, every connected app is on here', /Every app you connect is on here/.test(await inPage("document.querySelector('#cp-project-page .pjp-view').innerText")));
+    await inPage("(() => { const sw = document.querySelector('#cp-project-page .ptl-row[data-key=\"apps:gmail\"] [role=switch]'); sw.focus(); sw.click(); })()"); // (focused first, as a keyboard user's would be)
+    check('switching Gmail on in Tools saves a list with it, and the switch says so', await waitFor(async () => JSON.stringify((await projects()).find((p) => p.id === seeded)?.defaults?.apps) === '["gmail"]' && (await inPage("document.querySelector('#cp-project-page .ptl-row[data-key=\"apps:gmail\"] [role=switch]')?.getAttribute('aria-checked')")) === 'true'), JSON.stringify((await projects()).find((p) => p.id === seeded)?.defaults));
+    check('…keeps the focus on that switch (keyboard)', (await inPage("document.activeElement?.closest('[data-key]')?.dataset.key")) === 'apps:gmail');
+    check('…and says Gmail still needs connecting', /connect it to use it here/.test(await inPage("document.querySelector('#cp-project-page .ptl-row[data-key=\"apps:gmail\"]').innerText")));
+    await inPage("[...document.querySelectorAll('#cp-project-page .ptl-card .pjp-link')].find((b) => b.textContent === 'Use every app').click()");
+    check('Use every app goes back to every one', await waitFor(async () => !('apps' in ((await projects()).find((p) => p.id === seeded)?.defaults || {}))));
+    await inPage("document.querySelector('#cp-project-page .pjp-tab[data-view=\"overview\"]').click()");
+    check('the Overview has a Tools card that says what is on', await waitFor(() => inPage("/All connected apps|Every connected app|No apps connected yet/.test(document.querySelector('#cp-project-page .pjp-side .pjp-tools')?.innerText || '')")), await inPage("document.querySelector('#cp-project-page .pjp-side .pjp-tools')?.innerText"));
     await inPage("document.querySelector('#cp-project-page .pjp-tab[data-view=\"memory\"]').click()");
     check('Memory: the notes card on its own, the overview hidden', (await inPage("document.querySelector('#cp-project-page .pjp-cols').hidden && Boolean(document.querySelector('#cp-project-page .pjp-view .pjp-memory'))")) === true);
     await inPage("document.querySelector('#cp-project-page .pjp-tab[data-view=\"memory\"]').focus(); document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))");
     check('ArrowRight moves to Settings', (await inPage("document.activeElement?.dataset.view === 'settings' && document.querySelector('#cp-project-page .pjp-tab[data-view=\"settings\"]').getAttribute('aria-selected') === 'true'")) === true);
     const settingsText = await inPage("document.querySelector('#cp-project-page .pjp-view').innerText");
-    check('Settings: the project card (pin, archive, export, delete), then instructions, defaults and folder', ['Pin to top', 'Archive', 'Export project…', 'Delete project', 'Instructions', 'Defaults'].every((w) => settingsText.includes(w)), settingsText.slice(0, 400));
+    check('Settings: the project card (pin, archive, export, delete), then instructions, permissions and folder (the defaults are on Tools)', ['Pin to top', 'Archive', 'Export project…', 'Delete project', 'Instructions', 'Permissions'].every((w) => settingsText.includes(w)) && !settingsText.includes('Defaults'), settingsText.slice(0, 400));
     await inPage("document.querySelector('#cp-project-page .pjp-view .pjp-pin').click()");
     check('Pin to top in Settings pins the project', await waitFor(async () => (await projects()).find((p) => p.id === seeded)?.pinned === true));
     check('...and the card then offers Unpin', await waitFor(async () => (await inPage("document.querySelector('#cp-project-page .pjp-view .pjp-pin')?.textContent")) === 'Unpin'));
