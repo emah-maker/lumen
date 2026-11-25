@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Web.Extensions, System.Windows.Forms, System.Drawing
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Web.Extensions, System.Windows.Forms, System.Drawing
 $A = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $ser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
@@ -148,6 +148,23 @@ public static class LumenNative {
   }
   public static void Button(string b, bool down) { uint f = b == "right" ? (down ? 0x0008u : 0x0010u) : b == "middle" ? (down ? 0x0020u : 0x0040u) : (down ? 0x0002u : 0x0004u); Send(f, 0, 0, 0); }
   public static void Wheel(int delta, bool horizontal) { Send(horizontal ? 0x01000u : 0x0800u, 0, 0, unchecked((uint)delta)); }
+  // ---- without the system pointer: window messages posted to the window at a point (the person's mouse never moves)
+  [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr h, ref POINT p);
+  [DllImport("user32.dll")] static extern IntPtr ChildWindowFromPointEx(IntPtr h, POINT p, uint flags);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder sb, int max);
+  // The deepest visible child of the approved window at a screen point (CWP_SKIPINVISIBLE | CWP_SKIPTRANSPARENT): the window a click there
+  // reaches, found from the app's own window down, so another window covering the spot is never the one written to.
+  public static long DeepChild(long hwnd, int x, int y) {
+    IntPtr h = new IntPtr(hwnd);
+    for (int i = 0; i < 32; i++) { POINT p; p.X = x; p.Y = y; ScreenToClient(h, ref p); IntPtr c = ChildWindowFromPointEx(h, p, 0x0001 | 0x0004); if (c == IntPtr.Zero || c == h) break; h = c; }
+    return h.ToInt64();
+  }
+  public static string ClassOf(long hwnd) { System.Text.StringBuilder sb = new System.Text.StringBuilder(256); GetClassName(new IntPtr(hwnd), sb, 256); return sb.ToString(); }
+  static IntPtr Pack(int x, int y) { return new IntPtr(unchecked((int)(((uint)(y & 0xffff) << 16) | (uint)(x & 0xffff)))); }
+  // Button and move messages carry the point in the window's client coordinates; the wheel carries it in screen coordinates.
+  public static bool PostClient(long hwnd, uint msg, uint wp, int sx, int sy) { IntPtr h = new IntPtr(hwnd); POINT p; p.X = sx; p.Y = sy; ScreenToClient(h, ref p); return PostMessage(h, msg, new IntPtr((long)wp), Pack(p.X, p.Y)); }
+  public static bool PostScreen(long hwnd, uint msg, uint wp, int sx, int sy) { return PostMessage(new IntPtr(hwnd), msg, new IntPtr((long)wp), Pack(sx, sy)); }
 }
 '@
   [LumenNative]::Init()
@@ -420,39 +437,60 @@ function Refuse-Partial($r) {
   if ($r.stopped) { throw "Stopped: the keyboard focus left the app (the user or another window took it). $($r.sent) of $($r.total) characters were typed before that. The rest was NOT typed. Use focus_app and check the app before trying again.$tail" }
 }
 
-function Cmd-Invoke($req) {
-  $t = Get-Target $req
-  $e = Get-El $req['el']
-  if (-not $e.Current.IsEnabled) { throw 'That item is disabled.' }
-  # Invoke can wait for a dialog it opens to close: run it on its own thread and answer after a moment either way.
+# Invoke, Toggle, Select (and Expand when asked) on an element, on its own thread: Invoke can wait for a dialog it opens to close, so the
+# answer comes after a moment either way ('pending'). 'none': the element has none of these.
+function Invoke-Patterns($e, [bool]$expand) {
   $ps = [PowerShell]::Create()
   if ($script:rs -and $script:rs.RunspaceStateInfo.State -eq 'Opened' -and $script:rs.RunspaceAvailability -eq 'Available') { $ps.Runspace = $script:rs }
   [void]$ps.AddScript({
-    param($e)
+    param($e, $expand)
     $p = $null
     if ($e.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$p)) { $p.Invoke(); return 'invoke' }
     if ($e.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$p)) { $p.Toggle(); return 'toggle' }
     if ($e.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$p)) { $p.Select(); return 'select' }
-    if ($e.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$p)) { if ($p.Current.ExpandCollapseState -eq 'Expanded') { $p.Collapse() } else { $p.Expand() }; return 'expand' }
+    if ($expand -and $e.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$p)) { if ($p.Current.ExpandCollapseState -eq 'Expanded') { $p.Collapse() } else { $p.Expand() }; return 'expand' }
     return 'none'
-  }).AddArgument($e)
+  }).AddArgument($e).AddArgument($expand)
   $async = $ps.BeginInvoke()
-  if (-not $async.AsyncWaitHandle.WaitOne(3500)) { return @{ method = 'invoke'; note = 'It is still working or opened a dialog that waits for an answer. Read the app again.' } }
+  if (-not $async.AsyncWaitHandle.WaitOne(3500)) { return 'pending' }
   $method = [string]($ps.EndInvoke($async) | Select-Object -Last 1)
   $ps.Dispose()
-  if ($method -ne 'none') { return @{ method = $method } }
+  return $method
+}
+
+# Where an element is in its window, as fractions of the window (both rectangles come from UI Automation, so the display scale cancels out):
+# Lumen draws the AI's cursor there (cursor.js). Empty when either rectangle is unknown.
+function Frac-Of($e, $win) {
+  try {
+    $b = $e.Current.BoundingRectangle; $w = $win.Current.BoundingRectangle
+    if ($b.IsEmpty -or $w.IsEmpty -or $w.Width -le 0 -or $w.Height -le 0) { return @{} }
+    $fx = ($b.X + [Math]::Min($b.Width / 2, 40) - $w.X) / $w.Width; $fy = ($b.Y + $b.Height / 2 - $w.Y) / $w.Height
+    if ($fx -lt 0 -or $fx -gt 1 -or $fy -lt 0 -or $fy -gt 1) { return @{} }
+    return @{ fx = [Math]::Round($fx, 4); fy = [Math]::Round($fy, 4) }
+  } catch { return @{} }
+}
+
+function Cmd-Invoke($req) {
+  $t = Get-Target $req
+  $e = Get-El $req['el']
+  if (-not $e.Current.IsEnabled) { throw 'That item is disabled.' }
+  $at = Frac-Of $e $t.el
+  $method = Invoke-Patterns $e $true
+  if ($method -eq 'pending') { return @{ method = 'invoke'; note = 'It is still working or opened a dialog that waits for an answer. Read the app again.'; fx = $at.fx; fy = $at.fy } }
+  if ($method -ne 'none') { return @{ method = $method; fx = $at.fx; fy = $at.fy } }
   # No pattern: focus it and press Enter (what a keyboard user would do), guarded like any other keys.
   Bring-Forward $req
   $e.SetFocus(); Start-Sleep -Milliseconds 80
   $r = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req
   Refuse-Partial $r
-  return @{ method = 'keys' }
+  return @{ method = 'keys'; fx = $at.fx; fy = $at.fy }
 }
 
 function Cmd-SetText($req) {
   $t = Get-Target $req
   $e = Get-El $req['el']
   $text = [string]$req['text']
+  $at = Frac-Of $e $t.el
   $vp = $null
   $forceKeys = ($TEST -and $req['forceKeys'])
   if (-not $forceKeys -and $e.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$vp) -and -not $vp.Current.IsReadOnly) {
@@ -475,6 +513,7 @@ function Cmd-SetText($req) {
     $r2 = Send-Guarded @(@{ keys = '{ENTER}'; n = 1 }) $t.pids $req
     Refuse-Partial $r2
   }
+  $res['fx'] = $at.fx; $res['fy'] = $at.fy
   return $res
 }
 
@@ -534,13 +573,18 @@ function Cmd-Mouse($req) {
     [void]$pts.Add(@($sx, $sy))
   }
   $covered = { foreach ($q in $pts) { if ($t.pids -notcontains [int][LumenNative]::PidAt($q[0], $q[1])) { return $true } }; return $false }
-  if (& $covered) { [void][LumenNative]::Raise($hwnd); Start-Sleep -Milliseconds 150 }
-  if (& $covered) { throw 'Another window covers that point, so nothing was clicked. Use focus_app to bring the app forward, then take a new screenshot.' }
   $button = [string]$req['button']; if (@('left', 'right', 'middle') -notcontains $button) { $button = 'left' }
   $sink = New-Object System.Collections.ArrayList
   $sinking = ($TEST -and $req['test'] -and $req['test']['sink'])
-  $do = { param($op, $a, $b) if ($sinking) { [void]$sink.Add("$op $a $b") } else { switch ($op) { 'move' { [LumenNative]::Move($a, $b) } 'down' { [LumenNative]::Button($a, $true) } 'up' { [LumenNative]::Button($a, $false) } 'wheel' { [LumenNative]::Wheel($a, $b) } } } }
   $p0 = $pts[0]
+  # Three ways, tried in this order by Lumen (src/desktop/index.js), one call each: 'uia' and 'post' never move the person's pointer;
+  # 'real' does, and Lumen puts it back. A way that does not fit answers skip (with why) and nothing is sent.
+  $via = [string]$req['via']; if (@('uia', 'post', 'real') -notcontains $via) { $via = 'real' }
+  if ($via -eq 'uia') { return Mouse-Uia $req $t $pts $button $covered }
+  if ($via -eq 'post') { return Mouse-Post $req $t $pts $button $sink $sinking }
+  if (& $covered) { [void][LumenNative]::Raise($hwnd); Start-Sleep -Milliseconds 150 }
+  if (& $covered) { throw 'Another window covers that point, so nothing was clicked. Use focus_app to bring the app forward, then take a new screenshot.' }
+  $do = { param($op, $a, $b) if ($sinking) { [void]$sink.Add("$op $a $b") } else { switch ($op) { 'move' { [LumenNative]::Move($a, $b) } 'down' { [LumenNative]::Button($a, $true) } 'up' { [LumenNative]::Button($a, $false) } 'wheel' { [LumenNative]::Wheel($a, $b) } } } }
   switch ([string]$req['op']) {
     'click' {
       & $do 'move' $p0[0] $p0[1]; Start-Sleep -Milliseconds 40
@@ -564,7 +608,100 @@ function Cmd-Mouse($req) {
     default { throw "Unknown mouse action $($req['op'])" }
   }
   Start-Sleep -Milliseconds 120
-  return @{ at = $pts.ToArray(); sink = $sink.ToArray() }
+  return @{ method = 'mouse'; at = $pts.ToArray(); sink = $sink.ToArray() }
+}
+
+# 'uia': a single left click, or a scroll, done through UI Automation on the element at the point (the person's pointer never moves).
+# Only where the approved program is what shows at the point, never on a password field, and only Invoke / Toggle / Select for a click
+# (a text field is left to 'post', which puts the caret where the click is) and ScrollPattern for a scroll. Anything else: skip.
+function Mouse-Uia($req, $t, $pts, $button, $covered) {
+  $op = [string]$req['op']
+  if ($op -eq 'drag') { return @{ skip = 'a drag has no UI Automation pattern' } }
+  if ($op -eq 'click' -and ($button -ne 'left' -or $req['double'])) { return @{ skip = 'only a single left click has a UI Automation pattern' } }
+  if (& $covered) { return @{ skip = 'another window covers the point' } }
+  $p0 = $pts[0]
+  $el = $null
+  $pt = New-Object System.Windows.Point($p0[0], $p0[1])
+  try { $el = $A::FromPoint($pt) } catch { }
+  if ($el -eq $null) { return @{ skip = 'no element at the point' } }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  # FromPoint can stop at a host pane (a WinUI island such as Windows 11 Notepad's tab strip): go down to the deepest child whose rectangle holds the point.
+  for ($d = 0; $d -lt 12; $d++) {
+    $next = $null; $c = $null; $n = 0
+    try { $c = $walker.GetFirstChild($el) } catch { }
+    while ($c -ne $null -and $n -lt 200) { try { $b = $c.Current.BoundingRectangle; if (-not $b.IsEmpty -and $b.Contains($pt)) { $next = $c; break } } catch { }; try { $c = $walker.GetNextSibling($c) } catch { $c = $null }; $n++ }
+    if ($next -eq $null) { break }
+    $el = $next
+  }
+  try { if ($t.pids -notcontains [int]$el.Current.ProcessId) { return @{ skip = 'the element belongs to another program' } } } catch { return @{ skip = 'the element is gone' } }
+  if (Test-PwElement $el) { return @{ skip = 'a password field' } }
+  if ($op -eq 'scroll') {
+    $dy = [int]$req['dy']; $dx = [int]$req['dx']
+    $cur = $el
+    for ($i = 0; $i -lt 8 -and $cur -ne $null; $i++) {
+      $sp = Pat $cur ([System.Windows.Automation.ScrollPattern]::Pattern)
+      if ($sp -ne $null -and ((-not $dy) -or $sp.Current.VerticallyScrollable) -and ((-not $dx) -or $sp.Current.HorizontallyScrollable)) {
+        $no = [System.Windows.Automation.ScrollAmount]::NoAmount
+        for ($k = 0; $k -lt 3 * [Math]::Abs($dy); $k++) { $sp.Scroll($no, $(if ($dy -gt 0) { [System.Windows.Automation.ScrollAmount]::SmallIncrement } else { [System.Windows.Automation.ScrollAmount]::SmallDecrement })) }
+        for ($k = 0; $k -lt 3 * [Math]::Abs($dx); $k++) { $sp.Scroll($(if ($dx -gt 0) { [System.Windows.Automation.ScrollAmount]::SmallIncrement } else { [System.Windows.Automation.ScrollAmount]::SmallDecrement }), $no) }
+        return @{ method = 'uia-scroll'; at = $pts.ToArray() }
+      }
+      try { $cur = $walker.GetParent($cur) } catch { $cur = $null }
+      if ($cur -ne $null -and $t.pids -notcontains [int]$cur.Current.ProcessId) { break }
+    }
+    return @{ skip = 'nothing scrollable through UI Automation at the point' }
+  }
+  # A click on a label or icon inside a button or list item counts as a click on that item: up to two such parents are asked.
+  $cur = $el
+  for ($i = 0; $i -lt 3 -and $cur -ne $null; $i++) {
+    if (-not $cur.Current.IsEnabled) { return @{ skip = 'the element is disabled' } }
+    $m = Invoke-Patterns $cur $false
+    if ($m -eq 'pending') { return @{ method = 'uia-invoke'; at = $pts.ToArray(); note = 'It is still working or opened a dialog that waits for an answer.' } }
+    if ($m -ne 'none') { return @{ method = "uia-$m"; at = $pts.ToArray() } }
+    $ct = ($cur.Current.ControlType.ProgrammaticName -replace '^ControlType\.', '')
+    if (@('Text', 'Image') -notcontains $ct) { break }
+    try { $cur = $walker.GetParent($cur) } catch { $cur = $null }
+    if ($cur -ne $null -and $t.pids -notcontains [int]$cur.Current.ProcessId) { break }
+  }
+  return @{ skip = 'the element at the point has no Invoke, Toggle or Select' }
+}
+
+# Windows whose input comes from the system pointer only, not from window messages: Store (UWP / WinUI) content and input sites.
+$REALONLY = @('Windows.UI.Core.CoreWindow', 'ApplicationFrameInputSinkWindow', 'Windows.UI.Input.InputSite.WindowClass', 'Microsoft.UI.Content.DesktopChildSiteBridge', 'InputSite')
+
+# 'post': the click, drag or wheel as window messages posted to the approved window's own child at the point (found from the app's window
+# down, so it reaches the app even under another window, and never another program). The person's pointer never moves.
+function Mouse-Post($req, $t, $pts, $button, $sink, $sinking) {
+  $hwnd = [int64]$req['hwnd']
+  $p0 = $pts[0]
+  $h = [LumenNative]::DeepChild($hwnd, $p0[0], $p0[1])
+  if ($t.pids -notcontains [int][LumenNative]::OwnerPid($h)) { return @{ skip = 'the window at the point belongs to another program' } }
+  $cls = [LumenNative]::ClassOf($h)
+  if ($REALONLY -contains $cls) { return @{ skip = "this app takes only real mouse input ($cls)" } }
+  $msg = @{ left = @(0x0201, 0x0202, 0x0203, 0x0001); right = @(0x0204, 0x0205, 0x0206, 0x0002); middle = @(0x0207, 0x0208, 0x0209, 0x0010) }[$button]
+  $post = { param($m, $wp, $x, $y, $screen) if ($sinking) { [void]$sink.Add("post $m $wp $x $y") } elseif ($screen) { [void][LumenNative]::PostScreen($h, $m, $wp, $x, $y) } else { [void][LumenNative]::PostClient($h, $m, $wp, $x, $y) } }
+  switch ([string]$req['op']) {
+    'click' {
+      & $post 0x0200 0 $p0[0] $p0[1] $false
+      & $post $msg[0] $msg[3] $p0[0] $p0[1] $false; & $post $msg[1] 0 $p0[0] $p0[1] $false
+      if ($req['double']) { Start-Sleep -Milliseconds 40; & $post $msg[2] $msg[3] $p0[0] $p0[1] $false; & $post $msg[1] 0 $p0[0] $p0[1] $false }
+    }
+    'drag' {
+      $p1 = $pts[1]
+      & $post 0x0200 0 $p0[0] $p0[1] $false
+      & $post $msg[0] $msg[3] $p0[0] $p0[1] $false; Start-Sleep -Milliseconds 40
+      for ($i = 1; $i -le 12; $i++) { & $post 0x0200 $msg[3] ([int]($p0[0] + ($p1[0] - $p0[0]) * $i / 12)) ([int]($p0[1] + ($p1[1] - $p0[1]) * $i / 12)) $false; Start-Sleep -Milliseconds 16 }
+      & $post $msg[1] 0 $p1[0] $p1[1] $false
+    }
+    'scroll' {
+      $dy = [int]$req['dy']; $dx = [int]$req['dx']
+      if ($dy) { & $post 0x020A ([uint32](((-120 * $dy) -band 0xffff) * 65536)) $p0[0] $p0[1] $true }
+      if ($dx) { & $post 0x020E ([uint32](((120 * $dx) -band 0xffff) * 65536)) $p0[0] $p0[1] $true }
+    }
+    default { throw "Unknown mouse action $($req['op'])" }
+  }
+  Start-Sleep -Milliseconds 120
+  return @{ method = 'post'; at = $pts.ToArray(); sink = $sink.ToArray() }
 }
 
 # The card's live picture. The caller names the window, the program it was approved for and the title it was approved with. Every call checks
