@@ -199,4 +199,18 @@ function createPasskeys(deps) {
   };
 }
 
-module.exports = { createPasskeys };
+// Every session's pages get the gate (browser/webauthn-gate.js), not only the sessions Lumen remembered to give it. A page with no gate
+// keeps Chromium's own WebAuthn, which on Windows goes straight to Windows Security: the AI's hidden reader (session 'claude-reader')
+// had none, so a Canvas read sent on to Microsoft's sign-in popped "Sign in with a passkey" by itself. -> true when it was added now.
+const GATE_ID = 'lumen-webauthn-gate';
+function gateSession(ses, filePath) {
+  try {
+    if (!ses || typeof ses.registerPreloadScript !== 'function') return false;
+    const have = typeof ses.getPreloadScripts === 'function' ? ses.getPreloadScripts() : [];
+    if ((have || []).some((p) => p && p.id === GATE_ID)) return false;
+    ses.registerPreloadScript({ id: GATE_ID, type: 'frame', filePath });
+    return true;
+  } catch { return false; }
+}
+
+module.exports = { createPasskeys, gateSession, GATE_ID };

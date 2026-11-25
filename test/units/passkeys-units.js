@@ -254,6 +254,15 @@ const okGet = (rpId) => ({ hr: 0, result: { credentialId: credId, authenticatorD
     check('timeout: when it passes, Windows is asked to cancel and the page gets NotAllowedError', s.native.calls[0].cancelled === 1 && r.error.name === 'NotAllowedError', JSON.stringify(r));
   }
 
+  // ---- every session's pages get the gate (the AI's hidden reader had none: Microsoft's sign-in reached Windows Security on its own)
+  {
+    const { gateSession, GATE_ID } = require('../../src/features/passkeys');
+    const fakeSes = (ids = []) => { const list = ids.map((id) => ({ id })); return { list, getPreloadScripts: () => list, registerPreloadScript(p) { if (list.some((x) => x.id === p.id)) throw new Error('dup'); list.push(p); return p.id; } }; };
+    const bare = fakeSes(['lumen-select-contrast']);
+    check('gate: a session without it (the reader) gets it, as a frame preload', gateSession(bare, 'x.js') === true && bare.list.some((p) => p.id === GATE_ID && p.type === 'frame' && p.filePath === 'x.js'));
+    check('gate: a session that has it already is left alone (no second register, which would throw)', gateSession(bare, 'x.js') === false && bare.list.filter((p) => p.id === GATE_ID).length === 1);
+    check('gate: nothing to register on, or a throw, is no crash', gateSession(null, 'x.js') === false && gateSession({ registerPreloadScript() { throw new Error('gone'); } }, 'x.js') === false);
+  }
   // ---- nothing sensitive was logged
   const all = printed.join('\n');
   const secrets = [b64u(challenge), challenge.toString('hex'), b64u(credId), credId.toString('hex'), b64u(userId)];
