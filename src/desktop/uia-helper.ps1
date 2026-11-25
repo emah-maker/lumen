@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Web.Extensions, System.Windows.Forms, System.Drawing
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Web.Extensions, System.Windows.Forms, System.Drawing
 $A = [System.Windows.Automation.AutomationElement]
 $TS = [System.Windows.Automation.TreeScope]
 $ser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
@@ -587,11 +587,20 @@ function Mouse-Uia($req, $t, $pts, $button, $covered) {
   if (& $covered) { return @{ skip = 'another window covers the point' } }
   $p0 = $pts[0]
   $el = $null
-  try { $el = $A::FromPoint((New-Object System.Windows.Point($p0[0], $p0[1]))) } catch { }
+  $pt = New-Object System.Windows.Point($p0[0], $p0[1])
+  try { $el = $A::FromPoint($pt) } catch { }
   if ($el -eq $null) { return @{ skip = 'no element at the point' } }
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  # FromPoint can stop at a host pane (a WinUI island such as Windows 11 Notepad's tab strip): go down to the deepest child whose rectangle holds the point.
+  for ($d = 0; $d -lt 12; $d++) {
+    $next = $null; $c = $null; $n = 0
+    try { $c = $walker.GetFirstChild($el) } catch { }
+    while ($c -ne $null -and $n -lt 200) { try { $b = $c.Current.BoundingRectangle; if (-not $b.IsEmpty -and $b.Contains($pt)) { $next = $c; break } } catch { }; try { $c = $walker.GetNextSibling($c) } catch { $c = $null }; $n++ }
+    if ($next -eq $null) { break }
+    $el = $next
+  }
   try { if ($t.pids -notcontains [int]$el.Current.ProcessId) { return @{ skip = 'the element belongs to another program' } } } catch { return @{ skip = 'the element is gone' } }
   if (Test-PwElement $el) { return @{ skip = 'a password field' } }
-  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
   if ($op -eq 'scroll') {
     $dy = [int]$req['dy']; $dx = [int]$req['dx']
     $cur = $el

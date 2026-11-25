@@ -803,6 +803,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('route: the pointer is NOT put back when the person moved it meanwhile (it is no longer where the AI left it)', moves.length === 0 && /left where you moved it/.test(out2), J([moves, out2]));
   }
   {
+    // the helper's pixels are not Lumen's (it is DPI-aware, Lumen may see the display scaled): where the AI left the pointer is worked out from
+    // Lumen's own view of the window and the point's fractions, so the pointer still goes back
+    const rect = [0, 200, 1280, 920]; // (Lumen's pixels; the picture is 1280x720, so x, y map 1:1 plus the window's top)
+    const { rig, moves, st } = routeRig({ route: () => ({ method: 'mouse', at: [[960, 600]] }), api: { windowRect: () => rect } });
+    await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
+    rig.store.mouseHook = async () => { st.cur = { x: 640, y: 400 }; }; // the pointer at x 639.5, y 200 + 199.5 in Lumen's pixels
+    const out = await rig.d.run({ action: 'click_at', args: { x: 639, y: 199, real_mouse: true } }, rig.ctx);
+    check('route: the pointer goes back even when the helper reports the point in other (DPI-aware) pixels than Lumen sees', J(moves) === J([[50, 60]]) && /put back where it was/.test(out), J([moves, out]));
+  }
+  {
     const { rig, moves, vias } = routeRig({ route: () => ({ method: 'mouse' }) });
     await rig.d.run({ action: 'screenshot_app', args: { name: 'word' } }, rig.ctx);
     const out = await rig.d.run({ action: 'click_at', args: { x: 10, y: 20, real_mouse: true } }, rig.ctx);

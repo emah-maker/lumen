@@ -520,7 +520,7 @@ function createDesktop(deps = {}) {
           try {
             const r = await getClient().call('mouse', { ...call, via }, { timeoutMs: 15000 });
             done = { ...r, via };
-          } finally { restored = putBack(w, home, done?.at); }
+          } finally { restored = putBack(w, home, endAt(w, win.hwnd, frac(points[points.length - 1])) || done?.at?.[done.at.length - 1]); }
           return;
         }
       });
@@ -535,14 +535,22 @@ function createDesktop(deps = {}) {
     return `Did: ${what} in ${win.name}, ${ROUTE_WORDS[via]}${tried}.${back}${via !== 'real' ? ' If nothing changed, the app may ignore that way: pass real_mouse: true to use the real pointer.' : ''} Take a screenshot_app to see the result (the same picture size keeps the coordinates).`;
   }
 
+  // Where the AI left the pointer, in the same pixels as winapi's cursor() (the window's rectangle as Lumen sees it, and the point's fractions):
+  // the helper's own pixels can differ from Lumen's when the two processes see the display scale differently.
+  function endAt(w, hwnd, f) {
+    let r;
+    try { r = w?.windowRect?.(hwnd) || null; } catch { r = null; }
+    return r ? [r[0] + f.fx * (r[2] - r[0]), r[1] + f.fy * (r[3] - r[1])] : null;
+  }
+
   // After a real-mouse fallback: the pointer goes back where the person left it, unless they moved it meanwhile (it is no longer where the
   // AI left it). -> true (put back), false (left: the person moved it), null (nothing to do or no way to tell).
-  function putBack(w, home, at) {
+  function putBack(w, home, end) {
     if (!home || !w?.setCursor) return null;
     let pos;
     try { pos = w.cursor?.() || null; } catch { pos = null; }
-    const end = Array.isArray(at) && at.length ? at[at.length - 1] : null;
-    if (pos && end && (Math.abs(pos.x - end[0]) > HOME_PX || Math.abs(pos.y - end[1]) > HOME_PX)) return false;
+    const at = Array.isArray(end) && end.length === 2 ? end : null;
+    if (pos && at && (Math.abs(pos.x - at[0]) > HOME_PX || Math.abs(pos.y - at[1]) > HOME_PX)) return false;
     try { return w.setCursor(home.x, home.y) ? true : null; } catch { return null; }
   }
 
