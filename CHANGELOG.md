@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **Startup loads one module fewer.** The tab-freeze image resizer now loads the first time a tab freezes instead of on every start, which keeps the start-up module count at its budget now that the encrypted-storage module (secret box) loads at start.
+- **Two release checks no longer fail by timing.** Nothing changes in the browser. `close-ai-tab-by-user` typed into a sidebar that was still closing for the new tab, so the message never went; it now opens the sidebar on the tab in front first. `spotify-ui` now names its Spotify stand-in at launch (`LUMEN_TEST_SPOTIFY_WEB_URL`, test runs only) so the card's player view can't start on the real site first.
 
 - **Codex chats really get the Word tool now.** After the last fix, Codex still said "Both tools are unavailable" when a chat turned to a Word document: the new Codex process Lumen started for the message read Lumen's tool list while it was connecting, before the message was tied to it, so the list had no chat and no word tool. A kept Codex, Grok Build or Antigravity process now knows its chat from the start. Tried with the real Codex and Word: Codex opened the document, added the title and paragraphs, and asked before saving. Tests: `test/units/codex-warm-units.js`.
 

@@ -65,6 +65,11 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
     const userClose = (id) => app.evaluate((_e, i) => global.__closeTabInteractive(i), id);
     const second = await app.evaluate((_e, w) => global.__windows.open(w, 'about:blank').id, main.id); // a second user tab
     await waitFor(async () => (await wins())[0].tabs.length === 2);
+    // The sidebar is open per tab and the new tab comes to the front with its own sidebar closed: open it there, so the composer is shown (typing
+    // into it while the UI was still following the switch sent the Enter to the page body, and the message was never sent).
+    await app.evaluate((_e, id) => global.__tabChats.setSidebar(id, true), second);
+    await waitFor(async () => (await wins())[0].activeId === second);
+    await waitFor(() => ui.evaluate(() => !document.body.classList.contains('sidebar-hidden') && !document.body.classList.contains('sidebar-moving') && document.getElementById('prompt').offsetParent !== null));
 
     // 1. A run is still going and has opened a tab; the user closes that tab.
     await app.evaluate(() => { global.__hold.A = new Promise((r) => { global.__release = r; }); global.__plans.A = 1; });
