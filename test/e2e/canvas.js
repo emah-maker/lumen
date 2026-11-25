@@ -35,6 +35,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
     try { out.parentDoc = parent.document.title; } catch (e) { out.parentDoc = 'blocked'; }
     try { out.storage = typeof localStorage.length; } catch (e) { out.storage = 'blocked'; }
     try { out.origin = String(location.origin); } catch (e) { out.origin = 'err'; }
+    out.maxWidth = getComputedStyle(document.body).maxWidth; out.layer = [...document.styleSheets].some((s) => [...s.cssRules].some((r) => r.name === 'lumen-base'));
     fetch('${base}/fetch').then(() => { out.fetch = 'reached'; }, () => { out.fetch = 'blocked'; }).then(() => {
       const img = new Image(); img.src = '${base}/img';
       const form = document.createElement('form'); form.action = '${base}/form'; form.method = 'post'; document.body.append(form);
@@ -80,6 +81,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('it cannot reach the chat page, its API or its storage', result?.parentAssistant === 'blocked' && result?.parentDoc === 'blocked' && result?.storage === 'blocked', JSON.stringify(result));
   check('its origin is opaque (a file: origin, but storage and the parent are blocked above)', ['null', 'file://'].includes(result?.origin), JSON.stringify(result));
   check('fetch is blocked', result?.fetch === 'blocked', JSON.stringify(result));
+  check('plain HTML (no CSS of its own) previews with Lumen base styles, in their layer', result?.layer === true && result?.maxWidth === '760px', JSON.stringify(result));
   await sleep(500);
   check('nothing reached the network (fetch, image, form, popup)', hits.length === 0, JSON.stringify(hits));
   const stillChat = await app.evaluate(() => global.__chatPage.tabs().filter((t) => t.chat).length);
@@ -97,6 +99,25 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await inPage("document.querySelector('#canvas .cv-grip').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))");
   const after = await inPage("document.getElementById('canvas').getBoundingClientRect().width");
   check('the grip resizes with the arrow keys', after > before, `${before} -> ${after}`);
+  // Split, edit, versions, widths, expand
+  const tabBy = (name) => `[...document.querySelectorAll('#canvas .cv-tab')].find((b) => b.textContent === '${name}').click()`;
+  const btnBy = (name) => `[...document.querySelectorAll('#canvas .cv-btn')].find((b) => b.textContent === '${name}').click()`;
+  await inPage(tabBy('Split'));
+  check('Split shows the editor beside the preview', await waitFor(() => inPage("(() => { const c = document.getElementById('canvas'); return c.querySelector('.cv-body').dataset.view === 'split' && !c.querySelector('.cv-edit').hidden && Boolean(c.querySelector('iframe')); })()")), 'split');
+  await inPage("(() => { const t = document.querySelector('#canvas .cv-edit'); t.value = t.value.replace('hello canvas', 'edited canvas'); t.dispatchEvent(new Event('input')); })()");
+  check('an edit makes a version once typing pauses', await waitFor(() => inPage("/version 2 of 2/.test(document.querySelector('#canvas .cv-meta').textContent)"), 4000), await inPage("document.querySelector('#canvas .cv-meta').textContent"));
+  await inPage(btnBy('Undo'));
+  check('Undo goes back to the code from the reply', await inPage("(() => { const c = document.getElementById('canvas'); return c.querySelector('.cv-edit').value.includes('hello canvas') && /version 1 of 2/.test(c.querySelector('.cv-meta').textContent); })()"), await inPage("document.querySelector('#canvas .cv-meta').textContent"));
+  await inPage(btnBy('Redo'));
+  check('Redo brings the edit back, and Copy takes the edited code', await inPage("document.querySelector('#canvas .cv-edit').value.includes('edited canvas')"), 'redo');
+  await inPage("[...document.querySelectorAll('#canvas .cv-seg-btn')].find((b) => b.textContent === 'Phone').click()");
+  check('Phone narrows the preview to 390 px', await inPage("Math.round(document.querySelector('#canvas .cv-stage').getBoundingClientRect().width) === 390"), await inPage("document.querySelector('#canvas .cv-stage').getBoundingClientRect().width"));
+  await inPage("[...document.querySelectorAll('#canvas .cv-seg-btn')].find((b) => b.textContent === 'Full').click()");
+  await inPage("document.querySelector('#canvas .cv-expand').click()");
+  check('Expand gives the canvas the whole chat area', await inPage("(() => { const c = document.getElementById('canvas'); const m = document.querySelector('.cp-main'); return c.classList.contains('cv-wide') && Math.abs(c.getBoundingClientRect().width - m.getBoundingClientRect().width) < 2; })()"), 'expand');
+  await inPage("document.getElementById('canvas').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+  check('Esc leaves Expand and keeps the panel open', await inPage("(() => { const c = document.getElementById('canvas'); return !c.hidden && !c.classList.contains('cv-wide'); })()"), 'esc');
+  await inPage(tabBy('Preview'));
   await inPage("document.querySelector('#canvas .cv-close').click()");
   check('Close hides the panel', await inPage("document.getElementById('canvas').hidden && !document.body.classList.contains('canvas-open')"), 'still open');
 

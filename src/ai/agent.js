@@ -4053,12 +4053,14 @@ ${prompt}` : prompt), historyImages: [] };
     }
     let made;
     // The card's status line while a picture is made: who is making it, and a slow provider's own steps (agy: starting, drawing).
-    const status = (text) => { try { scope.gate?.emit?.({ type: 'status', text }); } catch { /* cosmetic */ } };
+    // image: the chat's picture card (renderer/gen-images.js pending) follows it: who is making it, then done or why it failed.
+    const status = (text, image) => { try { scope.gate?.emit?.({ type: 'status', text, ...(image ? { image } : {}) }); } catch { /* cosmetic */ } };
+    const making = (key) => ({ state: 'making', provider: imageRouter.labelOf(key), prompt: prompt.slice(0, 300), edit: Boolean(source) });
     try {
-      made = await this.routeImage({ prompt, source, signal: scope.signal, current: scope.chat.settings?.model, onTry: (key) => status(`Making your picture with ${imageRouter.labelOf(key)}…`), onProgress: (key, text) => status(text) });
-      status('');
+      made = await this.routeImage({ prompt, source, signal: scope.signal, current: scope.chat.settings?.model, onTry: (key) => status(`Making your picture with ${imageRouter.labelOf(key)}…`, making(key)), onProgress: (key, text) => status(text, making(key)) });
+      status('', { state: 'done' });
     } catch (err) { // [image routing] a diagram the engine declined or could not make: the model draws it as SVG
-      status('');
+      status('', err?.code === 'aborted' ? { state: 'done' } : { state: 'failed', message: String(err?.userMessage || err?.message || '').slice(0, 400) });
       if ((err?.code === 'refused' || err?.code === 'failed') && (scope.chat.diagramAsk || genImages.diagramishIntent(prompt))) {
         throw Object.assign(new Error(`${err.userMessage || err.message} Do not retry it with an image model. Tell the user in one line that the picture engine could not make it, then draw it yourself: ${imageRouter.DIAGRAM_NOTE}`), { code: err.code });
       }
@@ -4196,14 +4198,14 @@ ${prompt}` : prompt), historyImages: [] };
     const begin = (key) => {
       if (!started) { started = true; emit({ type: 'turn_start' }); }
       const first = this.imageSetting(); // a provider picked in Settings that is passed over: said, never a silent swap
-      emit({ type: 'status', text: first !== 'auto' && key !== first ? `Making your picture with ${imageRouter.labelOf(key)} (${imageRouter.labelOf(first)} isn’t available)…` : `Making your picture with ${imageRouter.labelOf(key)}…` });
+      emit({ type: 'status', text: first !== 'auto' && key !== first ? `Making your picture with ${imageRouter.labelOf(key)} (${imageRouter.labelOf(first)} isn’t available)…` : `Making your picture with ${imageRouter.labelOf(key)}…`, image: { state: 'making', provider: imageRouter.labelOf(key), prompt: String(ask.shown || ask.prompt || '').slice(0, 300) } });
     };
     const reply = (content) => { const r = { role: 'assistant', content }; producedBy.set(r, picked); messages.push(r); };
     let made;
     try {
-      made = await this.routeImage({ prompt: ask.prompt, signal, current: picked, onTry: begin, onProgress: (key, text) => { if (started) emit({ type: 'status', text }); } });
+      made = await this.routeImage({ prompt: ask.prompt, signal, current: picked, onTry: begin, onProgress: (key, text) => { if (started) emit({ type: 'status', text, image: { state: 'making', provider: imageRouter.labelOf(key), prompt: String(ask.shown || ask.prompt || '').slice(0, 300) } }); } });
     } catch (err) {
-      if (started) emit({ type: 'status', text: '' });
+      if (started) emit({ type: 'status', text: '', image: err?.code === 'aborted' ? { state: 'done' } : { state: 'failed', message: String(err?.userMessage || err?.message || '').slice(0, 400) } });
       if (err.code === 'none' && !err.missing) return false;
       if (err.code === 'none') { emit({ type: 'turn_start' }); emit({ type: 'text', text: err.userMessage }); reply([{ type: 'text', text: err.userMessage }]); return true; } // the chosen provider is not connected and nothing else makes pictures: said
       if (err.code === 'aborted') throw new Error('Stopped');
@@ -4211,7 +4213,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (err.code === 'refused') { const text = err.userMessage || err.message; emit({ type: 'text', text }); reply([{ type: 'text', text }]); return true; }
       throw Object.assign(new Error(err.userMessage || err.message), err.provider ? { __provider: err.provider } : {});
     }
-    emit({ type: 'status', text: '' });
+    emit({ type: 'status', text: '', image: { state: 'done' } });
     const blocks = await this.keepImages(made.images.map((i) => ({ ...i, credit: made.credit })), emit, { alt: ask.shown || ask.prompt });
     const content = [...(made.said ? [{ type: 'text', text: made.said }] : []), ...blocks];
     if (made.said) emit({ type: 'text', text: made.said });
