@@ -379,6 +379,37 @@
     let makeFolder = false;
     drawFolder();
 
+    // [project templates] A new project can start from a template (features/project-templates.js): Blank, or one that comes set up
+    // (Job applications: instructions, a "Tailored résumés" folder, an automation profile and an applications tracker). Left empty, the
+    // name and instructions are the template's; what is typed wins.
+    let template = '';
+    const pick = el('div', { className: 'cp-pj-templates', hidden: true });
+    pick.setAttribute('role', 'radiogroup');
+    pick.setAttribute('aria-label', tr('projecttpl.label', 'Start from'));
+    const tplNote = el('p', { className: 'cp-pj-note', hidden: true });
+    if (!project && typeof api.projectTemplates === 'function') {
+      api.projectTemplates().then((list) => {
+        if (!Array.isArray(list) || !list.length || !back.isConnected) return;
+        const choices = [{ id: '', name: tr('projecttpl.blank', 'Blank'), description: tr('projecttpl.blank.desc', 'Name it and write its instructions yourself') }, ...list];
+        const buttons = choices.map((c) => {
+          const b = el('button', { type: 'button', className: 'cp-pj-template' }, el('strong', { textContent: c.id ? tr(`projecttpl.${c.id}`, c.name) : c.name }), el('span', { textContent: c.id ? tr(`projecttpl.${c.id}.desc`, c.description) : c.description }));
+          b.setAttribute('role', 'radio');
+          b.onclick = () => {
+            template = c.id;
+            for (const x of buttons) x.setAttribute('aria-checked', String(x === b));
+            name.placeholder = c.id ? tr(`projecttpl.${c.id}`, c.name) : tr('chatpage.project.name', 'Project name');
+            text.placeholder = c.id ? tr('projecttpl.instructions', 'Left empty, the template’s instructions are used. Anything you write here replaces them.') : tr('chatpage.project.hint', 'How should the AI work in this project? For example: answer in a formal tone, or the audience is first-year students.');
+            tplNote.hidden = !c.id;
+            tplNote.textContent = c.id === 'job-applications' ? tr('projecttpl.job-applications.note', 'Comes with instructions for tailored résumé copies (your master résumé is never edited), a “Tailored résumés” folder, its own automation profile for filling forms, and an applications tracker.') : '';
+          };
+          b.setAttribute('aria-checked', String(!c.id));
+          return b;
+        });
+        pick.replaceChildren(...buttons);
+        pick.hidden = false;
+      }).catch(() => {});
+    }
+
     if (project) {
       const del = el('button', { type: 'button', className: 'btn cp-pj-delete', textContent: tr('chatpage.project.delete', 'Delete project') });
       let armed = false;
@@ -390,7 +421,7 @@
       };
       row.prepend(del);
     }
-    box.append(heading, name, text, note, folderBox, row);
+    box.append(heading, pick, tplNote, name, text, note, folderBox, row);
     back.append(box);
     const close = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
     const onKey = (e) => {
@@ -430,9 +461,9 @@
     }
     box.onsubmit = async (e) => {
       e.preventDefault();
-      if (!name.value.trim()) { name.focus(); return; }
+      if (!name.value.trim() && !template) { name.focus(); return; }
       save.disabled = true;
-      const payload = { id: project?.id, name: name.value, instructions: text.value, mirror: mirrorOn, portable: portableOn };
+      const payload = { id: project?.id, name: name.value.trim() || name.placeholder, instructions: text.value, mirror: mirrorOn, portable: portableOn, ...(template ? { template } : {}) };
       if (!project) { if (pickedFolder) { payload.folderMode = 'existing'; payload.folder = pickedFolder; payload.confirmed = confirmed; } }
       else if (pickedFolder) { payload.folder = pickedFolder; payload.confirmed = confirmed; }
       else if (makeFolder && !project.folder) payload.folderMode = 'new';

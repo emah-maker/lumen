@@ -656,6 +656,15 @@ const PROJECT_TOOL = {
   input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'search', 'read', 'links', 'sites', 'site_search', 'site_read'] }, query: { type: 'string' }, name: { type: 'string' }, offset: { type: 'integer' }, site: { type: 'string' }, urls: { type: 'array', items: { type: 'string' } } }, required: ['action'] },
   eager_input_streaming: true,
 };
+// [project templates] applications: the job-applications tracker of the chat's project (features/project-templates.js, kept in the automations
+// store). Offered only in a project made from a template with a tracker (settings.projectApplications, set by main), to the API chats and, as an extra
+// of the run's own MCP session, to the CLI engines; never to an outside MCP client. The text is short on purpose.
+const APPLICATIONS_TOOL = {
+  name: 'applications',
+  description: 'The project’s job applications tracker. list; check url (applied already?); add company role url note (after the user submitted); update url|company stage (applied, interview, offer, rejected, withdrawn) note.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, note: { type: 'string' } }, required: ['action'] },
+  eager_input_streaming: true,
+};
 // [notes] The user's notepad (ai/notes.js, loaded on first use): read it, add to it, never edit or delete. Defined here so the module itself stays
 // out of startup; the text is short on purpose (every request pays for it). Sidebar API chats only, like the board: not listed to MCP clients or the CLI engines.
 const NOTES_INTENT = /\bnotepad\b|\b(?:my|the|these|those|saved|quick|your) notes\b|\bnotes? (?:app|about|on|from)\b|\b(?:add|put|save|write|jot|append|keep|store)\b[^.\n]{0,40}\b(?:to|in|into|on) (?:my |the |a )?notes?\b/i;
@@ -702,6 +711,7 @@ function slimTool(tool) {
 const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
 const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
 const OTHER_NOTES = slimTool(NOTES_TOOL); // [notes]
+const OTHER_APPLICATIONS = slimTool(APPLICATIONS_TOOL); // [project templates]
 const OTHER_READING = slimTool(READING_LIST_TOOL); // [reading list]
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
@@ -1117,7 +1127,7 @@ const isContextError = fallback.isContextError; // one matcher for every "too lo
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false, filesInApps = 'auto' } = {}) { // project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false, applications = false, filesInApps = 'auto' } = {}) { // applications: [project templates] the applications tool is offered; project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -1132,7 +1142,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : ''), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL, REVIEW_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], applications ? [APPLICATIONS_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL, REVIEW_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -1161,6 +1171,7 @@ TOOL_SCHEMAS.propose_plan = planMode.PLAN_TOOL.input_schema; // [plan mode] offe
 TOOL_SCHEMAS.memory = MEMORY_TOOL.input_schema; // [memory]
 TOOL_SCHEMAS.project_files = PROJECT_TOOL.input_schema; // [project workspace]
 TOOL_SCHEMAS.notes = NOTES_TOOL.input_schema; // [notes]
+TOOL_SCHEMAS.applications = APPLICATIONS_TOOL.input_schema; // [project templates]
 
 const KEY_CODES = {
   Enter: 'Enter', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
@@ -1202,7 +1213,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files', 'review_round']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files', 'applications', 'review_round']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -4321,7 +4332,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), applications: this.applicationsOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.effortFor('anthropic', messages.settings), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -4374,7 +4385,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
+      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.applicationsOffered(messages) ? [OTHER_APPLICATIONS] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
       signal,
       emit,
       noTools,
@@ -4873,6 +4884,35 @@ ${prompt}` : prompt), historyImages: [] };
 
   // The tool is listed only when the conversation is about the notepad (the tool list is paid for in every request): the user's latest words mention
   // their notes, or the chat has already used it (a call in the history keeps its tool).
+  // [project templates] The applications tracker, in a project made from a template that has one.
+  applicationsOffered(messages) {
+    try { return messages?.settings?.projectApplications === true && Boolean(this.browser.projects?.applications); } catch { return false; }
+  }
+  async applicationsTool(input) {
+    const scope = taskScope.getStore();
+    if (!scope?.chat || scope.gate?.external || !this.applicationsOffered(scope.chat)) throw new Error('This chat’s project has no applications tracker.');
+    const t = this.browser.projects.applications(scope.chat);
+    if (!t) throw new Error('This chat is not in a project.');
+    const lib = require('../features/project-templates');
+    const action = String(input?.action || '');
+    if (action === 'list') return lib.describe(t.list());
+    if (action === 'check') {
+      if (!input?.url) throw new Error('check needs the posting’s url.');
+      const hit = lib.appliedBefore(t.list(), input.url);
+      return hit ? `Already in the tracker: ${hit.company || '(company?)'}${hit.role ? ` — ${hit.role}` : ''}, ${hit.stage}, ${new Date(hit.submittedAt || hit.at).toISOString().slice(0, 10)}. Skip this posting unless the user says otherwise.` : 'Not in the tracker: not applied to yet.';
+    }
+    if (action === 'add') {
+      const r = t.add(input);
+      if (!r.ok) throw new Error(r.error || 'Could not log it.');
+      return `Logged: ${r.entry.company || r.entry.url}${r.entry.role ? ` — ${r.entry.role}` : ''} (${r.entry.stage}).`;
+    }
+    if (action === 'update') {
+      const r = t.update(input);
+      if (!r.ok) throw new Error(r.error || 'Could not update it.');
+      return `Updated: ${r.entry.company || r.entry.url} is now ${r.entry.stage}.`;
+    }
+    throw new Error('action is list, check, add or update.');
+  }
   notesOffered(messages) {
     try {
       for (let i = messages.length - 1, seen = 0; i >= 0 && i >= messages.length - 40; i--) {
@@ -5324,6 +5364,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'memory') return memoryLib.stepLabel(input); // [memory]
       if (name === 'project_files') return projectCtx.stepLabel(input); // [project workspace]
       if (name === 'notes') return require('./notes').stepLabel(input); // [notes]
+      if (name === 'applications') return ({ list: 'Reading the applications tracker', check: 'Checking the applications tracker', add: `Logging the application${input?.company ? ` to ${input.company}` : ''}`, update: `Updating the application${input?.company ? ` to ${input.company}` : ''}` })[input?.action] || 'Applications tracker'; // [project templates]
       if (name === 'research_board') return { add: 'Adding to the research board', quote: 'Pinning a quote', star: 'Starring a source', remove: 'Removing a source', list: 'Reading the research board', cite: `Formatting citations (${input.style || 'apa'})` }[input.action] || 'Using the research board';
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
       if (name === 'document') return { outline: 'Reading the document outline', select_section: `Selecting the section ${quote(String(input.heading || ''), 40)}`, move_section: `Moving the section ${quote(String(input.heading || ''), 40)}`, replace: `Replacing ${quote(String(input.find || ''), 40)}`, style: 'Applying a style', insert_markdown: 'Inserting formatted text', verify: 'Checking the document against before my edits', undo: 'Undoing my edits to the document', read: 'Reading the document' }[input.action] || 'Working on the document';
@@ -8346,6 +8387,7 @@ ${same}
       case 'memory': return this.memoryTool(input); // [memory]
       case 'project_files': return this.projectFilesTool(input); // [project workspace]
       case 'notes': return this.notesTool(input); // [notes]
+      case 'applications': return this.applicationsTool(input); // [project templates]
       case 'document': { // [document tool]
         const store = this.docStore();
         store.docInternal = true;
@@ -8587,4 +8629,4 @@ const EXTERNAL_TOOLS = OTHER_TOOLS;
 // What prewarm() routes when the composer is empty: a typical short first browser prompt (light tier).
 const PREWARM_GUESS = 'open a page';
 
-module.exports = { historyFor, producedBy, NOTES_TOOL, PROJECT_TOOL_DEF: OTHER_PROJECT, setMemorySource, memoryEdited, slimTabRow, requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };
+module.exports = { historyFor, producedBy, NOTES_TOOL, PROJECT_TOOL_DEF: OTHER_PROJECT, APPLICATIONS_TOOL_DEF: OTHER_APPLICATIONS, setMemorySource, memoryEdited, slimTabRow, requestFor, Agent, pageDebugShared, handoffTurns, missedItems, withoutImages, historyChars, hasImages, cliSystemPrompt, systemFor, grokBuildNote, antigravityNote, codexNote, transcriptFor, normalizeUrl, validateInput, MODELS, LEGACY_MODELS, DEFAULT_MODEL, EXTERNAL_TOOLS, PAGE_BLOCK, fitContext, parseSearchHtml, settleAfterAction, DOM_QUIET, domQuiet, loadPage };

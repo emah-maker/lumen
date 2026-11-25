@@ -338,7 +338,7 @@ const UI_ONLY_IPC = new Set([
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
-  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project',
+  'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project', 'chats:project-templates', 'chats:project-applications',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
@@ -6374,12 +6374,13 @@ function projectSettingsFor(id) {
     const block = projectBlockFor(id);
     if (block) out.projectInstructions = block;
     if (project) { out.projectId = project.id; if (project.links?.length || projectFiles().list(project.id).length) out.projectTools = true; }
+    if (project?.template && require('./features/project-templates').byId(project.template)?.tracker) out.projectApplications = true; // [project templates] the applications tool
     const work = projectWorkFolderFor(id); // [work folder] the project's folder the chat works in (a folder picked for the chat itself wins, agent.js)
     if (work) out.projectWorkFolder = work;
   } catch { /* no project settings: the chat goes on as any other */ }
   return out;
 }
-const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder'];
+const PROJECT_SETTING_KEYS = ['projectInstructions', 'projectId', 'projectTools', 'projectWorkFolder', 'projectApplications'];
 // The open chat's settings follow its project (a chat opened, moved into a project, or its project edited).
 function syncProjectInstructions() {
   const follow = (messages, id) => {
@@ -9903,6 +9904,13 @@ const agent = new Agent({
       const saved = chats().setProjectPermissions(p.id, { allowedHosts: [...(p.allowedHosts || []), h] });
       return Boolean(saved);
     },
+    // [project templates] The applications tool's tracker for the chat's project (features/automations-runtime.js), or null outside one.
+    applications: (messages) => {
+      const p = projectForChat(chatIdOfMessages(messages));
+      if (!p) return null;
+      const rt = automations();
+      return { list: () => rt.applications(p.id), add: (input) => rt.logApplication(p.id, input), update: (input) => rt.updateApplication(p.id, input) };
+    },
   },
 }, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
@@ -12593,6 +12601,9 @@ async function pickFolder(event, title, defaultPath) {
 // 'none' makes none). Answers the project, { error } for a folder that cannot be used ('root' and 'home' want `confirmed: true`), or null.
 ipcMain.handle('chats:project-save', async (_e, project) => {
   const fields = projectFields(project);
+  // [project templates] A new project made from a template (features/project-templates.js): its name, goal line and instructions unless typed.
+  const template = !fields.id && project?.template ? require('./features/project-templates').byId(project.template) : null;
+  if (template) Object.assign(fields, require('./features/project-templates').fieldsFor(template.id, fields));
   let made = '';
   try {
     const use = async (dir, confirmed) => { const chk = await projectFolders.checkWorkFolder(String(dir || ''), { confirmed: confirmed === true }); if (!chk.ok) throw Object.assign(new Error(chk.reason), { reason: chk.reason }); return chk.real; };
@@ -12612,13 +12623,26 @@ ipcMain.handle('chats:project-save', async (_e, project) => {
     if (made) fs.promises.rmdir(made).catch(() => {});
     return { error: err.reason || 'folder', message: String(err.message).slice(0, 200) };
   }
-  const out = chats().saveProject(fields);
+  let out = chats().saveProject(fields);
   if (!out) { if (made) fs.promises.rmdir(made).catch(() => {}); return null; }
+  if (template) out = (await applyProjectTemplate(out, template)) || out;
   syncProjectInstructions();
   pushAttention();
   if (out.portable && out.folder) portableSoon(out.id);
   return projectPage(out);
 });
+// [project templates] What a template adds once its project exists: the folders it names in the project's folder ("Tailored résumés"),
+// and an automation profile of its own named for the project (résumé, cover letter and answers: features/automations.js), so an
+// automation made in the project fills forms from it. Each part is best effort: the project is there either way.
+async function applyProjectTemplate(project, template) {
+  if (project.folder) for (const name of template.folders || []) await fs.promises.mkdir(path.join(project.folder, name), { recursive: true }).catch(() => {});
+  if (!template.profile) return project;
+  try {
+    const r = automations().saveProfile({ name: project.name.slice(0, 60) });
+    if (r?.ok) return chats().saveProject({ id: project.id, name: project.name, profileId: r.profile.id }) || project;
+  } catch { /* no profile (ten already, or the store can't be written): the page offers to pick one */ }
+  return project;
+}
 // [project workspace] Deleting a project can be undone for a while (the page's toast): the project, its chats' membership, its memory and its
 // files all wait; once the time is over the files go. (A project's folder on disk, and what is in it, is never touched.)
 const PROJECT_UNDO_MS = 12000;
@@ -13027,6 +13051,26 @@ ipcMain.handle('chats:drive-import', async (_e, folderId) => {
 });
 if (TEST) global.__projectDrive = { fake: (client) => { driveClientOverride = client; projectDriveSvc = null; }, state: () => driveStore.all(), saveNow: (id) => driveSaveNow(id), files: async (id) => (await driveFilesFor(projectById(id))).map((f) => f.name) };
 // Everything the project page shows about one project.
+// [project templates] The New project dialog's templates, and a project's applications tracker (its page's Applications card): the newest
+// entries with a count per stage and its automation profile in short; Export CSV; Edit profile / Make an automation open lumen://automations.
+ipcMain.handle('chats:project-templates', () => require('./features/project-templates').list());
+ipcMain.handle('chats:project-applications', async (_e, id, action) => {
+  const p = projectById(String(id));
+  if (!p) return null;
+  const lib = require('./features/project-templates');
+  if (action === 'export') return automations().exportProjectCsv(p.id);
+  if (action === 'open') { managers.open('automations'); return { ok: true }; }
+  const entries = automations().applications(p.id);
+  const prof = p.profileId ? automations().profile(p.profileId) : null;
+  const base = (x) => (x ? path.basename(x) : '');
+  return {
+    entries: entries.slice(0, 50).map((e) => ({ company: e.company, role: e.role, url: e.url, stage: e.stage, at: e.submittedAt || e.at, note: e.note })),
+    total: entries.length,
+    counts: lib.stageCounts(entries),
+    stages: lib.STAGES,
+    profile: prof ? { name: prof.name, resume: base(prof.resumePath), cover: base(prof.coverLetterPath), filled: Object.values(prof.fields || {}).filter(Boolean).length } : null,
+  };
+});
 ipcMain.handle('chats:project-get', async (_e, id) => {
   if (projectById(String(id))?.portable) await syncPortable(String(id)); // [portable projects] what was changed in the folder is picked up first
   const p = projectById(String(id));
@@ -14358,7 +14402,7 @@ const aiAgents = setupAiAgents({
   app, ipcMain, agent, readSettings, writeSettings, ui, automationPlan, isWebUrl, openTab, closeTab, switchTab, isAiTab: (id) => manners.isAiTab(tabAnywhere(id)?.t), tabOff: (id) => manners.isKeptOff(tabAnywhere(id)?.t), // [ai off-tab]
   tools: EXTERNAL_TOOLS,
   connectorTools: (chat) => (!chat || projectAllows(chat, 'connectors') ? connectorsFacade.defs() : []), // [connectors] offered only to runs Lumen owns (features/ai-agents.js runTools); [project workspace] a project can turn them off
-  projectTools: (chat) => (chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), // [project workspace] project_files, to a run in a project chat that has files or pinned pages
+  projectTools: (chat) => [...(chat?.settings?.projectTools === true ? [require('./ai/agent').PROJECT_TOOL_DEF] : []), ...(chat?.settings?.projectApplications === true ? [require('./ai/agent').APPLICATIONS_TOOL_DEF] : [])], // [project templates] applications, in a project made from a template with a tracker; // [project workspace] project_files, to a run in a project chat that has files or pinned pages
   desktopTools: (chat) => agent.cliDesktopToolDefs(chat), // [desktop apps] the desktop tool, to a run whose chat may use other apps (agent.js cliDesktopNote)
   wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)

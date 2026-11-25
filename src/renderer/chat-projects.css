@@ -27,6 +27,15 @@
 .cp-pj-text { resize: vertical; min-height: 120px; line-height: 1.45; }
 .cp-pj-input:focus, .cp-pj-text:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .cp-pj-note { margin: 0; font-size: 12px; color: var(--muted); }
+/* [project templates] Start from: Blank or a template */
+.cp-pj-templates { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-4); }
+.cp-pj-template { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: 10px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.cp-pj-template strong { font-size: 13px; font-weight: 600; }
+.cp-pj-template span { font-size: 12px; color: var(--muted); }
+.cp-pj-template:hover { border-color: var(--accent); }
+.cp-pj-template[aria-checked="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cp-pj-template:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (forced-colors: active) { .cp-pj-template[aria-checked="true"] { border: 2px solid Highlight; } }
 .cp-pj-buttons { display: flex; justify-content: flex-end; gap: var(--cp-2); margin-top: var(--cp-1); }
 .cp-pj-delete { margin-right: auto; color: var(--danger); }
 

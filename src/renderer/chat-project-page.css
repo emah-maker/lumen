@@ -255,3 +255,9 @@ button.pjp-hit { cursor: pointer; }
 
 /* [project drive] the Save to Drive line in Settings */
 .pjp-drive .pjp-drive-say { flex: 1; min-width: 200px; font-size: 13px; color: var(--muted); }
+/* [project templates] the Applications card */
+.pjp-apps-list .pjp-row-main { flex-wrap: nowrap; }
+.pjp-apps-list .pjp-place-loc { flex-basis: auto; flex-shrink: 0; margin-left: auto; }
+.pjp-stage { flex-shrink: 0; height: 20px; padding: 0 var(--sp-3); font-size: 11.5px; }
+.pjp-stage.interview, .pjp-stage.offer { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.pjp-stage.rejected, .pjp-stage.withdrawn { color: var(--muted); }

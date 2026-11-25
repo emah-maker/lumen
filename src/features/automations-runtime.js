@@ -430,6 +430,28 @@ function create(deps) {
   function removeProfile(id) { const ok = store.removeProfile(String(id)); changed(); return { ok }; }
   async function exportCsv() { return deps.saveCsv(auto.toCsv(store.log())); }
   function clearLog() { store.clearLog(); changed(); return { ok: true }; }
+  // [project templates] A project's applications tracker (features/project-templates.js): its own entries and its automations', the
+  // ones the AI logs from a chat (the applications tool), a stage moved on, and the project's rows as CSV.
+  const templates = () => require('./project-templates');
+  const applications = (projectId) => templates().projectEntries(store.log(), store.automations(), projectId);
+  function logApplication(projectId, input) {
+    const r = templates().manualEntry(input, { projectId, now: now() });
+    if (!r.ok) return r;
+    const already = r.entry.url ? templates().appliedBefore(applications(projectId), r.entry.url) : null;
+    if (already) return { ok: false, already, error: 'That posting is in the tracker already.' };
+    store.addLog(r.entry);
+    save();
+    changed();
+    return r;
+  }
+  function updateApplication(projectId, input) {
+    const entry = templates().updateEntry(store.log(), store.automations(), projectId, input);
+    if (!entry) return { ok: false, error: 'No application in this project matches that.' };
+    save();
+    changed();
+    return { ok: true, entry };
+  }
+  async function exportProjectCsv(projectId) { return deps.saveCsv(auto.toCsv(applications(projectId).map((e) => ({ ...e, status: e.stage })))); } // (the Status column says where each one stands)
 
   function init() { store.load(); armSchedule(); }
   function shutdown() {
@@ -441,6 +463,8 @@ function create(deps) {
 
   return {
     init, shutdown, state, start, itemAct, runAct, describe, recordStart, recordStop, saveAutomation, removeAutomation, saveProfile, removeProfile, exportCsv, clearLog,
+    applications, logApplication, updateApplication, exportProjectCsv, // [project templates]
+    profile: (id) => store.profile(String(id ?? '')),
     pickFile: (kind) => deps.pickFile(kind), runDue, armSchedule,
     // Test hooks (test/e2e/automations.js): nothing in the app itself uses these.
     store, active: () => active, scheduleTimer: () => scheduleTimer,

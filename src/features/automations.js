@@ -497,6 +497,7 @@ function logEntry(run, item, automation, { now = Date.now() } = {}) {
     at: now, automationId: run.automationId, automation: oneLine(automation?.name || run.name, 80), runId: run.id, url: item.url, company: item.company, role: item.role,
     status: item.status, need: item.need || '', submittedAt: item.submittedAt || 0, note: oneLine(item.note, 300),
     filled: (item.filled || []).map((f) => ({ label: oneLine(f.label, LIMITS.field), value: oneLine(f.value, 300), source: f.source })).slice(0, 80),
+    ...(automation?.projectId ? { projectId: automation.projectId } : {}), // [project templates] the project's applications tracker (features/project-templates.js)
   };
 }
 

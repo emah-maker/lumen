@@ -652,7 +652,7 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     }
     return out;
   };
-  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults, temporary } = {}) { // temporary: [temp projects] true makes it one, false keeps it as a project
+  function saveProject({ id, name, description, instructions, folder, folderCreated, mirror, portable, workFolder, links, defaults, temporary, template, profileId } = {}) { // temporary: [temp projects] true makes it one, false keeps it as a project; template, profileId: [project templates] the template it was made from and its automation profile
     const idx = readIndex();
     const clean = cleanText(name, MAX_NAME).replace(/\s+/g, ' ');
     if (idx.degraded || !clean) return null;
@@ -674,6 +674,8 @@ function createChatStore({ dir, encrypt, decrypt, available = () => true, limit 
     if (links !== undefined) { const l = cleanLinks(links); if (l.length) project.links = l; else delete project.links; }
     if (defaults !== undefined) { const d = cleanDefaults(defaults); if (Object.keys(d).length) project.defaults = d; else delete project.defaults; }
     if (temporary !== undefined) { if (temporary === true) project.temporary = true; else delete project.temporary; } // [temp projects] main deletes one TEMP_PROJECT_MS after it was last used
+    if (template !== undefined) { const tp = /^[a-z][a-z0-9-]{0,39}$/.test(String(template)) ? String(template) : ''; if (tp) project.template = tp; else delete project.template; } // [project templates]
+    if (profileId !== undefined) { const pr = /^[a-f0-9]{6,32}$/.test(String(profileId)) ? String(profileId) : ''; if (pr) project.profileId = pr; else delete project.profileId; }
     project.updated = now();
     writeIndex();
     return { ...project };

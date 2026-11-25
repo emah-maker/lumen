@@ -685,6 +685,48 @@
   // (ai/project-places.js). Open, rename (click the name), pin, remove; documents first, then the folders and sites the chats keep coming back to.
   const PLACE_KIND = { file: 'File', pdf: 'PDF', doc: 'Word', sheet: 'Sheet', slides: 'Slides', drive: 'Drive', onedrive: 'OneDrive', web: 'Web', folder: 'Folder', site: 'Site' };
   const SHOWN_PLACES = 6;
+  // ---- [project templates] Applications: a project made from the Job applications template (features/project-templates.js). Its
+  // automation profile in short (Edit profile opens lumen://automations), a count per stage, the newest applications (the AI logs them
+  // with the applications tool; its automations' submits count too) and Export CSV. Drawn empty first, filled when the tracker answers.
+  function applicationsCard(data) {
+    if (data.project?.template !== 'job-applications' || typeof page.api.projectApplications !== 'function') return null;
+    const root = card(tr('projecttpl.apps', 'Applications'), { tip: tr('projecttpl.apps.tip', 'The applications in this project: the ones the AI logged after you submitted, and the ones its automations submitted. Kept on this computer with your automations, encrypted.'), className: 'pjp-apps' });
+    const say = status();
+    const id = page.id;
+    const day = (t) => (t ? new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
+    root.head.append(
+      button(tr('projecttpl.apps.profile', 'Edit profile'), () => page.api.projectApplications(id, 'open').catch(() => null)),
+      button(tr('projecttpl.apps.export', 'Export CSV'), async () => {
+        const out = await page.api.projectApplications(id, 'export').catch(() => null);
+        say.textContent = out?.ok ? tr('projecttpl.apps.exported', 'Saved.') : out?.canceled ? '' : tr('projecttpl.apps.exportFailed', 'Could not save the file.');
+      }),
+    );
+    root.body.append(note(tr('projecttpl.apps.loading', 'Loading…')));
+    page.api.projectApplications(id, 'get').then((t) => {
+      if (!t || !root.isConnected) return;
+      const parts = [];
+      const p = t.profile;
+      parts.push(note(p ? tr('projecttpl.apps.profileLine', 'Profile “{name}”: résumé {resume}, cover letter {cover}.', { name: p.name, resume: p.resume || tr('projecttpl.apps.none', 'not chosen yet'), cover: p.cover || tr('projecttpl.apps.none', 'not chosen yet') }) : tr('projecttpl.apps.noProfile', 'No automation profile yet: Edit profile makes one.')));
+      const counts = (t.stages || []).filter((st) => t.counts?.[st]).map((st) => `${t.counts[st]} ${tr(`projecttpl.stage.${st}`, st)}`);
+      parts.push(note(t.total ? counts.join(' · ') : tr('projecttpl.apps.empty', 'Nothing yet. Ask in a chat here: “tailor my résumé for this posting”, and after you submit, the AI logs it.')));
+      if (t.entries?.length) {
+        const list = el('ul', { className: 'pjp-list pjp-apps-list' });
+        for (const e of t.entries.slice(0, 12)) {
+          const li = el('li', { className: 'pjp-row pjp-app' });
+          const label = el('span', { className: 'pjp-row-text', textContent: [e.company || '?', e.role].filter(Boolean).join(' — '), title: e.url || '' });
+          if (e.url) { label.tabIndex = 0; label.setAttribute('role', 'link'); label.onclick = () => window.assistant?.openLink?.(e.url); label.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !isImeEnter(ev)) window.assistant?.openLink?.(e.url); }); }
+          li.append(el('div', { className: 'pjp-row-main' }, el('span', { className: `pjp-chip pjp-stage ${e.stage}`, textContent: tr(`projecttpl.stage.${e.stage}`, e.stage) }), label, el('span', { className: 'pjp-place-loc', textContent: day(e.at) })));
+          list.append(li);
+        }
+        parts.push(list);
+        if (t.total > 12) parts.push(note(tr('projecttpl.apps.more', '{n} more in the CSV.', { n: t.total - 12 })));
+      }
+      parts.push(say);
+      root.body.replaceChildren(...parts);
+    }).catch(() => { root.body.replaceChildren(note(tr('projecttpl.apps.failed', 'Could not read the tracker.'))); });
+    return root;
+  }
+
   function placesCard(data) {
     const root = card(tr('projectws.places', 'Key documents'), { tip: tr('projectws.places.tip', 'Where this project’s documents are: what its chats opened, read or edited, most used first. Each chat in the project gets this list, so the AI can open the right one straight away. Kept on this computer, encrypted.'), className: 'pjp-places' });
     const say = status();
@@ -1184,7 +1226,7 @@
     page.recent = recentSection();
     const main = [composer(data), page.recent, chatsSection()];
     const instructions = instructionsCard(data);
-    const side = el('aside', { className: 'pjp-side' }, instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
+    const side = el('aside', { className: 'pjp-side' }, ...[applicationsCard(data)].filter(Boolean), instructions, sourcesCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
     page.side = side;
     page.sub();
@@ -1257,8 +1299,8 @@
     me.composerText?.setAttribute('placeholder', tr('projectws.compose.placeholder', 'Start a chat in {name}…', { name: fresh.project.name }));
     const folderBtn = me.root.querySelector('.pjp-open-folder');
     if (folderBtn) folderBtn.hidden = !fresh.project.folder;
-    const next = [instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
-    me.side.replaceChildren(...next);
+    const next = [applicationsCard(me.data), instructionsCard(me.data), sourcesCard(me.data), folderCard(me.data), defaultsCard(me.data), permissionsCard(me.data), memoryCard(me.data), placesCard(me.data)]; // (the same cards as the first draw, permissions included)
+    me.side.replaceChildren(...next.filter(Boolean));
     me.syncModel?.();
     me.sub?.();
     me.extras?.(); // [temp projects] the notice, and the Memory or Settings view when one is open

@@ -55,7 +55,7 @@ A scheduled automation starts by itself at its times while Lumen is open. A time
 
 ## The tracker
 
-**Tracker** lists every page an automation finished (up to 2,000): the date, company, role and status, with what was filled. **Export CSV** saves it as a spreadsheet file (Date, Automation, Company, Role, Status, Submitted, Address, Filled, Note). The company and role are read from the page's title and heading, best effort. **Clear** empties the tracker; exported files are kept.
+**Tracker** lists every page an automation finished (up to 2,000): the date, company, role and status, with what was filled. **Export CSV** saves it as a spreadsheet file (Date, Automation, Company, Role, Status, Submitted, Address, Filled, Note). The company and role are read from the page's title and heading, best effort. **Clear** empties the tracker; exported files are kept. An automation that belongs to a project made from the **Job applications** template also shows its submits on that project's Applications card, next to the ones the AI logged from its chats ([Projects → Templates](projects.md#templates)).
 
 ## What is kept, and where
 

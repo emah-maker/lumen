@@ -9,6 +9,20 @@ A **project** groups chats and gives the AI things to work from. Its page is the
 - **Continue where you left off**: the latest chats as cards with the last thing said, the time, and a mark while a reply is working or needs your OK. Below them are all the project's chats, with a search that looks in the chats and the project's files.
 - **Overview**: instructions (shown as text; Edit changes them), **Sources**, the folder, defaults and memory. The fine print is in each card's ⓘ tooltip.
 
+## Templates
+
+**New project** asks what to **Start from**: **Blank** (name it and write its instructions yourself) or a template, a project that starts set up for one kind of work. Leave the name or the instructions empty and the template's are used; anything you type wins. A template only sets a project up: afterwards it is an ordinary project you can change.
+
+### Job applications
+
+For applying to jobs and co-ops:
+
+- **Instructions** for the AI in its chats: your master résumé and cover letter base are never edited, renamed or overwritten. For each posting the AI makes a tailored **copy** with the Word tool, saved in the project's **Tailored résumés** folder as "<Company> - <Role>.docx", and changes only the copy (reordering and rewording bullets, never inventing experience). It checks the tracker before starting on a posting and skips one you already applied to. It fills forms from your profile and saved answers and stops at the final Submit, leaving the submit to you. It drafts long answers ("Why this company?") for you to approve and saves the approved ones to memory for reuse. Questions about gender, race, veteran or disability status, salary and anything legal are left to you.
+- **A "Tailored résumés" folder** in the project's folder (when the project has one).
+- **An automation profile of its own**, named for the project: your résumé and cover letter files, major, start date, location and saved answers, the same profile [Automations](automations.md) fill forms from. An automation made in the project uses it.
+- **The Applications card** on the project's page: the profile in short (**Edit profile** opens Automations), a count per stage, the newest applications (click one to open the posting) and **Export CSV** (the project's rows only, the Status column saying where each one stands).
+- **The applications tool** in the project's chats: `list`, `check` (applied to this posting already? The same posting whatever its tracking parameters), `add` (after you submit: company, role, address, a note) and `update` (a stage: applied, interview, offer, rejected, withdrawn). An automation in the project logs its submits to the same tracker. Everything is kept on this computer with your automations (`automations.json`, encrypted with your system keychain).
+
 ## Project memory
 
 With **Memory** on (Settings → AI → Instructions and memory), a project keeps notes of its own next to your general memory. Only the project's chats see them.

@@ -215,6 +215,8 @@ contextBridge.exposeInMainWorld('assistant', {
     newInProject: (projectId) => ipcRenderer.invoke('chats:new-in-project', projectId),
     pickProjectFolder: () => ipcRenderer.invoke('chats:project-pick-folder'),
     projectFolder: (id, action, arg) => ipcRenderer.invoke('chats:project-folder', id, action, arg),
+    projectTemplates: () => ipcRenderer.invoke('chats:project-templates'), // [project templates] the New project dialog's templates
+    projectApplications: (id, action) => ipcRenderer.invoke('chats:project-applications', id, action), // [project templates] the Applications card: get / export / open
     open: (id) => ipcRenderer.invoke('chats:open', id), // also "Move chat to this tab"
     showTab: (id) => ipcRenderer.invoke('chats:show-tab', id), // "Open chat in its tab"
     share: (id) => ipcRenderer.invoke('chats:share', id), // "Also show in this tab" (the chat stays in the tabs it was in)
