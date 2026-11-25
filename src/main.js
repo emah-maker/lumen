@@ -1069,6 +1069,29 @@ app.on('login', (event, webContents, details, authInfo, callback) => {
   });
 });
 
+// Client certificates (TLS client auth): never Electron's default of sending the first one in the store unasked (on Windows a
+// Windows Hello-protected work-account key, so Microsoft's sign-in popped a Windows Security face prompt for the wrong account on
+// every Canvas read). The AI's tabs, background tasks and agent windows get none; a user's tab asks once per site (browser/client-certs.js).
+const clientCerts = lazy(() => require('./browser/client-certs').createClientCerts({
+  isUserTab: (wc) => { if (agentContents.has(wc)) return false; const tab = tabByContents(wc); return Boolean(tab) && !manners.isAiTab(tab); },
+  ask: async ({ owner, host, labels }) => {
+    const { response } = await dialogs.showMessageBox(null, {
+      type: 'question',
+      message: t('dialog.clientCert', { host }),
+      detail: t('dialog.clientCert.detail'),
+      buttons: [t('dialog.clientCert.none'), ...labels],
+      defaultId: 0,
+      cancelId: 0,
+      owner,
+    });
+    return response - 1; // (0, Don't send -> -1)
+  },
+}));
+app.on('select-client-certificate', (event, webContents, url, list, callback) => {
+  event.preventDefault();
+  clientCerts().select(webContents, url, list, callback);
+});
+
 // ---------- page-first keys: Ctrl+S, Ctrl+P, Ctrl+F... reach the page before Lumen's own action (features/page-first-keys.js) ----------
 // The preload (preload/page-first-keys-preload.js) says it runs in a frame, then reports each Ctrl / Cmd chord once the page has had it.
 // Frames are named by process and routing id (a WebFrameMain object is not a stable key).
