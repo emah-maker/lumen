@@ -89,6 +89,7 @@ const OFFERS = [
 
 // Settings keys added since the card learned to list settings (0.5.65) that it leaves out on purpose, and why.
 const QUIET = {
+  secretsMigrated: 'Lumen records it itself, once its secrets are saved in the new format',
   secureDnsCustom: 'only matters with a custom secure DNS server, typed in its row',
   newTabHiddenTiles: 'the new-tab page records the tiles removed from it',
   extensionPins: 'pinned from the puzzle menu; Lumen records the order',

@@ -560,6 +560,19 @@ async function secretWarmChat() {
   } catch { /* no chats yet */ }
 }
 
+// [secret migration] Once, a while after the first start on this version (the start-up queue): every secret still in the old
+// format is saved again in the new one (features/secret-migrate.js, loaded only then). `secretsMigrated` (the version) is
+// recorded only when every value moved; until then each start tries again, and so does a start that read old-format values anyway
+// (a profile restored from a backup). Values already moved are skipped.
+const SECRET_MIGRATION_DELAY_MS = 20000;
+function runSecretMigration() {
+  if (!secretBox.available() || (readSettings().secretsMigrated && !secretBox.staleCount())) return Promise.resolve(null);
+  return require('./features/secret-migrate').migrateSecrets({ box: secretBox, userData: app.getPath('userData'), readSettings, writeSettings, chats, log: (m) => console.warn(m) })
+    .then((r) => { if (!r.failed) writeSettings({ ...readSettings(), secretsMigrated: app.getVersion() }); return r; })
+    .catch((err) => { console.warn(`secret migration: ${err?.message || err}`); return null; });
+}
+if (TEST) global.__secretMigrate = () => runSecretMigration();
+
 // The picker and every agent step look keys up, so decrypted keys are remembered by their encrypted text (a new key is new text).
 const decrypted = new Map();
 function decryptKey(enc) {
@@ -14943,7 +14956,7 @@ app.whenReady().then(async () => {
   startup.add('model lists', () => perfMode.later(() => { for (const provider of Object.keys(providers.PROVIDERS)) if (providerKey(provider)) refreshModels(provider); }), { priority: 3 }); // nothing waits for them
   startup.add('folder sync', () => { if (readSettings().syncFolder?.on) syncService().start(); }, { priority: 6 }); // [sync] off by default: nothing is loaded unless the person turned it on
   startup.add('update check', () => updates.start(), { priority: 4 }); // first check after a short delay (longer in Performance mode), then every few hours
-  startup.add('old-format chats', () => { chats().upgradeLegacy().catch(() => {}); }, { priority: 7 }); // [secret box] chat files saved before Electron 45, written again in the new format (in the background)
+  startup.add('secret migration', () => { setTimeout(() => runSecretMigration(), SECRET_MIGRATION_DELAY_MS).unref?.(); }, { priority: 7 }); // [secret migration] secrets saved before Electron 45, saved again in the new format (in the background, well after the first page: its module is not a start-up one)
   startup.add('GPU check', () => { setTimeout(() => perfMode.checkGpu(), 5000).unref?.(); }, { priority: 2 }); // the GPU process has reported by then
   firstTabLoaded.then(() => startup.release());
 });

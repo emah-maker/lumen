@@ -67,12 +67,36 @@ const launch = async (profile, stderr) => {
   check('memory.json saved before the update reads back', read.memory === 'Prefers metric units', read.memory);
   check('passwords.bin saved before the update reads back', read.password === 'hunter2', read.password);
   check('the key file was not replaced', fs.readFileSync(path.join(ud, 'secret-box.key')).equals(keyBefore));
+  // The one-time migration (the start-up queue runs it a while after the first tab; run here at once, which may be its second run)
+  const migration = await app.evaluate(async () => { await global.__secretMigrate(); const r = await global.__secretMigrate(); global.__settingsFlush(); return r; });
+  check('migration: a run after it has finished has nothing left to do (null: skipped, or nothing moved and nothing failed)', migration === null || (migration.failed === 0 && migration.migrated === 0), JSON.stringify(migration));
   await app.close();
+  const NEW = { test: (b64) => Buffer.from(String(b64), 'base64').subarray(0, 4).toString('latin1') === 'LSB1' }; // the new format's header
+  const after = JSON.parse(fs.readFileSync(path.join(ud, 'settings.json'), 'utf8'));
+  check('migration: the API key in settings.json is in the new format', NEW.test(after.keys?.openai || ''), String(after.keys?.openai).slice(0, 12));
+  check('migration: memory.json is in the new format', NEW.test(JSON.parse(fs.readFileSync(path.join(ud, 'memory.json'), 'utf8')).enc), 'old');
+  check('migration: passwords.bin is in the new format', fs.readFileSync(path.join(ud, 'passwords.bin')).subarray(0, 4).toString('latin1') === 'LSB1', 'old');
+  check('migration: secretsMigrated records the version, once every value moved', typeof after.secretsMigrated === 'string' && after.secretsMigrated.length > 0, after.secretsMigrated);
 
-  // 3. A restart opens the same key: what this version wrote still reads
+  // 3. A restart opens the same key: what this version wrote, and what the migration moved, still reads
   app = await launch(profile, stderr);
-  const again = await app.evaluate((_e, enc) => { try { return global.__secretBox.decrypt(enc); } catch (e) { return `ERR ${e.message}`; } }, read.fresh);
-  check('a value written by this version reads after a restart', again === 'written by this version', again);
+  const again = await app.evaluate(({ app: electronApp }, enc) => {
+    const fsm = process.mainModule.require('fs');
+    const p = process.mainModule.require('path');
+    const ud3 = electronApp.getPath('userData');
+    const box = global.__secretBox;
+    const tryRead = (fn) => { try { return fn(); } catch (e) { return `ERR ${e.message}`; } };
+    return {
+      fresh: tryRead(() => box.decrypt(enc)),
+      openai: tryRead(() => box.decrypt(JSON.parse(fsm.readFileSync(p.join(ud3, 'settings.json'), 'utf8')).keys.openai)),
+      memory: tryRead(() => JSON.parse(box.decrypt(JSON.parse(fsm.readFileSync(p.join(ud3, 'memory.json'), 'utf8')).enc)).entries[0].text),
+      password: tryRead(() => JSON.parse(box.decrypt(fsm.readFileSync(p.join(ud3, 'passwords.bin')))).entries[0].password),
+      stale: box.staleCount(),
+    };
+  }, read.fresh);
+  check('a value written by this version reads after a restart', again.fresh === 'written by this version', again.fresh);
+  check('after the migration and a restart: the API key, memory and passwords read the same', again.openai === 'sk-openai-saved-before-the-update' && again.memory === 'Prefers metric units' && again.password === 'hunter2', JSON.stringify(again));
+  check('after the migration, a start finds no old-format value left to read', again.stale === 0, again.stale);
   await app.close();
 
   const deprecated = stderr.join('').split(/\r?\n/).filter((l) => /safeStorage\.(encryptString|decryptString|isEncryptionAvailable)' is deprecated/.test(l));

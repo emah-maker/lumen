@@ -996,11 +996,14 @@ function createChatStore({ dir, encrypt, decrypt, decryptAsync = async (v) => de
   // [secret box] Chat files still in the format written before Electron 45 (one keychain blob each) are written again in the new
   // one, one at a time in the background, so that a load() that can't wait (a chat opened from a tab, an export) finds them
   // readable. The text is not changed: it is decrypted, encrypted again and checked before the file is replaced, and a file
-  // written meanwhile (a save) or with a save still waiting is left as it is. Returns how many were rewritten.
-  async function upgradeLegacy({ gapMs = 30 } = {}) {
+  // written meanwhile (a save) or with a save still waiting is left as it is. The old file is kept as <id>.json.bak until the new
+  // one has been read back from disk and checked (a failed check puts it back). Returns how many were rewritten
+  // ({ done, failed } with `report`: a chat that could not be moved stays in the old format and counts as failed).
+  async function upgradeLegacy({ gapMs = 30, report = false } = {}) {
     const idx = readIndex();
-    if (idx.degraded || !available()) return 0;
+    if (idx.degraded || !available()) return report ? { done: 0, failed: idx.degraded ? 1 : 0 } : 0;
     let done = 0;
+    let failed = 0;
     for (const { id } of [...idx.chats]) {
       const file = chatFile(id);
       if (jobs.has(id)) continue;
@@ -1009,16 +1012,24 @@ function createChatStore({ dir, encrypt, decrypt, decryptAsync = async (v) => de
       let enc;
       try { enc = JSON.parse(raw)?.enc; } catch { continue; }
       if (typeof enc !== 'string' || !isLegacy(enc)) continue;
+      const bak = `${file}.bak`;
       try {
         const text = await decryptAsync(enc);
         const next = encrypt(text);
-        if (decrypt(next) !== text) continue;
+        if (decrypt(next) !== text) throw new Error('the new file did not read back');
         const unchanged = () => { if (jobs.has(id)) return false; try { return fs.readFileSync(file, 'utf8') === raw; } catch { return false; } };
-        if (await writeAtomicAsync(file, next, unchanged)) done++;
-      } catch { /* left in the old format: read through the keychain as before */ }
+        await fsp.writeFile(bak, raw);
+        if (await writeAtomicAsync(file, next, unchanged)) {
+          let ok = false;
+          try { ok = decrypt(JSON.parse(await fsp.readFile(file, 'utf8')).enc) === text; } catch { ok = false; }
+          if (!ok) { await fsp.copyFile(bak, file); throw new Error('the new file did not read back from disk'); }
+          done++;
+        }
+        await fsp.rm(bak, { force: true });
+      } catch { failed++; /* left in the old format (or put back from .bak): read through the keychain as before */ }
       await sleep(gapMs);
     }
-    return done;
+    return report ? { done, failed } : done;
   }
 
   // [auto-delete chats] A chat another writer on this profile added to the index: never deleted by anything automatic here.
