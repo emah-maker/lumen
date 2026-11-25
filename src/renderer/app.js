@@ -1818,14 +1818,14 @@ function renderTabs(state) {
 let lastLayoutSig = null;
 function layoutSig(state) {
   const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
+  const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.aiShown ? 1 : 0}.${x.split || 0}`).join(',');
   return `${state.activeId}#${groups}#${tabs}`;
 }
 
 // [ai manners] The sidebar's toggle (ui-prefs.js sets window.lumenHideAiTabs): the tabs the AI opened are left out of the strip, except the one
 // in front (and one being dragged), and one playing sound (its speaker button would vanish), so nothing you are using vanishes. They stay open; the toggle shows how many are out of sight.
 function aiHiddenTab(tab, state) {
-  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.aiForUser && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+  return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.aiForUser && !tab.aiShown && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
 }
 const hideAiButton = $('hide-ai-tabs');
 // What the toggle reports, counted from the same rule the strip draws by: `hidden` tabs are out of the strip; `shown` are the AI's tabs that are
@@ -1950,7 +1950,9 @@ function renderTabsNow(state) {
       wanted.push(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id && !aiHiddenTab(t, state)).length, crowded, before.get(`g${group.id}`)?.el));
     }
     currentGroup = group ? group.id : null;
-    if (group?.collapsed && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id)) continue; // the active tab (and one being dragged) stays
+    // The active tab (and one being dragged) stays, and an AI tab the user has been to or a reply named (aiShown, main.js aiTabShown): the folded
+    // "AI tabs" label shows those beside it, so the tab the AI pointed you to is still one click away after you switch away from it.
+    if (group?.collapsed && tab.id !== state.activeId && !tab.aiShown && drag?.id !== tab.id && !drag?.group?.includes(tab.id)) continue;
     wanted.push(updateTabEl(before.get(String(tab.id))?.el || createTabEl(tab.id), tab, group, state.activeId));
   }
   const keep = new Set(wanted);

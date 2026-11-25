@@ -11247,14 +11247,14 @@ if (next) renderTabsNow(next);
 let lastLayoutSig = null;
 function layoutSig(state) {
 const groups = (state.groups || []).map((g) => `${g.id}:${g.name}:${g.color}:${g.collapsed ? 1 : 0}`).join('|');
-const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.split || 0}`).join(',');
+const tabs = state.tabs.map((x) => `${x.id}.${x.groupId || 0}.${x.pinned ? 1 : 0}.${x.audible || x.muted ? 1 : 0}.${x.sleeping ? 1 : 0}.${aiHiddenTab(x, state) ? 1 : 0}.${x.aiShown ? 1 : 0}.${x.split || 0}`).join(',');
 return `${state.activeId}#${groups}#${tabs}`;
 }
 
 
 
 function aiHiddenTab(tab, state) {
-return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.aiForUser && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
+return window.lumenHideAiTabs === true && Boolean(tab.aiOpened) && !tab.aiForUser && !tab.aiShown && !tab.audible && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id);
 }
 const hideAiButton = $('hide-ai-tabs');
 
@@ -11379,7 +11379,9 @@ if (group && currentGroup !== group.id) {
 wanted.push(groupLabel(group, state.tabs.filter((t) => t.groupId === group.id && !aiHiddenTab(t, state)).length, crowded, before.get(`g${group.id}`)?.el));
 }
 currentGroup = group ? group.id : null;
-if (group?.collapsed && tab.id !== state.activeId && drag?.id !== tab.id && !drag?.group?.includes(tab.id)) continue;
+
+
+if (group?.collapsed && tab.id !== state.activeId && !tab.aiShown && drag?.id !== tab.id && !drag?.group?.includes(tab.id)) continue;
 wanted.push(updateTabEl(before.get(String(tab.id))?.el || createTabEl(tab.id), tab, group, state.activeId));
 }
 const keep = new Set(wanted);
