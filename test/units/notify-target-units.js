@@ -1,5 +1,5 @@
 // Which tab a clicked chat notification opens, and the notification being kept alive (features/notify-target.js), plain Node.
-const { pickTab, createKeeper } = require('../../src/features/notify-target');
+const { pickTab, pickPage, createKeeper } = require('../../src/features/notify-target');
 
 let failures = 0;
 const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
@@ -52,6 +52,12 @@ check('order: a tab named twice is looked up once', asked === 1, String(asked));
   const it = k.keep({}, 'clicked'); k.clicked(it);
   check('activation: a clicked notification is not opened again', k.takeActivation() === null);
 }
+
+// A chat kept in a full-page chat tab: its click goes to that page, never the sidebar
+check('page: the chat page on the chat is picked', pickPage({ chatId: 'c1', pages: [{ id: 3, chat: 'c2' }, { id: 4, chat: 'c1' }] }) === 4);
+check('page: a run sent from a page that has since moved to another chat goes back to that page', pickPage({ chatId: 'c1', fromPage: true, senderPage: 3, pages: [{ id: 3, chat: 'c2' }] }) === 3);
+check('page: a sidebar run with no page on its chat picks no page (the sidebar opens as before)', pickPage({ chatId: 'c1', fromPage: false, senderPage: null, pages: [{ id: 3, chat: 'c2' }] }) === null);
+check('page: a page that was closed is not picked, nor anything with no pages', pickPage({ chatId: 'c1', fromPage: true, senderPage: 9, pages: [{ id: 3, chat: 'c2' }] }) === null && pickPage({ chatId: 'c1' }) === null);
 
 console.log(failures ? `\n${failures} check(s) FAILED` : '\nall notify-target checks passed');
 process.exit(failures ? 1 : 0);
