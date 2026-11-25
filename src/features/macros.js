@@ -10,7 +10,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { readStoreFile } = require('../settings/settings-file'); // (a file that can't be read is kept aside, never overwritten)
-const shortcutsHelp = require('./shortcuts-help');
+// The Keyboard Shortcuts list is read only when a macro's shortcut is checked (a save or an import), so it loads then, not at startup
+// (test/e2e/perf-budget.js: every module at startup counts).
+let shortcutsHelpMod = null;
+const shortcutsHelp = new Proxy({}, { get: (_t, key) => (shortcutsHelpMod ||= require('./shortcuts-help'))[key] });
 
 const FORMAT = 'lumen-macros';
 const MAX_MACROS = 100;
