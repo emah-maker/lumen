@@ -402,6 +402,22 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('thumbnails are re-authorized on a fresh window list: a window that turned into a bank (or another program) is not captured again, and the session ends', shots() === before && !rig.d.active() && rig.events[rig.events.length - 1].status === 'stopped', J([shots(), before, rig.d.active()]));
   }
   {
+    // keys go to the window in front: Lumen lets the helper take the foreground and asks it to raise the app before the first key (typing into Word
+    // while another window had the focus stopped at the first key)
+    const allowed = [];
+    const api = { ok: true, cursor: () => ({ x: 0, y: 0 }), pidUnderCursor: () => 0, foregroundPid: () => 0, escapeDown: () => false, mouseDown: () => false, typing: () => false, allowForeground: () => { allowed.push(1); return true; } };
+    const rig = makeRig({ apps: [word], allowed: allowWord, winapi: api });
+    await rig.d.run({ action: 'read_app', args: { name: 'word' } }, rig.ctx);
+    await rig.d.run({ action: 'type', args: { element: 'e2', text: 'hello' } }, rig.ctx);
+    await rig.d.run({ action: 'press_keys', args: { keys: 'ctrl+s' } }, rig.ctx);
+    const keyCalls = rig.calls.filter(([c]) => c === 'settext' || c === 'keys');
+    check('focus: type and press_keys ask the helper to raise the app (raise: true) after Lumen allowed it the foreground', keyCalls.length === 2 && keyCalls.every(([, a]) => a.raise === true && a.hwnd === word.hwnd) && allowed.length >= 2, J([keyCalls, allowed]));
+    const ps = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'desktop', 'uia-helper.ps1'), 'utf8');
+    const cmd = (name) => { const at = ps.indexOf(`function ${name}($req) {`); return at < 0 ? '' : ps.slice(at, ps.indexOf('\n}', at)); };
+    const raiseCode = ps.slice(ps.indexOf('public static bool RaiseHard'), ps.indexOf('public static bool RaiseHard') + 900);
+    check('focus (helper): Bring-Forward raises the window (AttachThreadInput when SetForegroundWindow is refused, no key sent for it) before the field gets the focus, in settext, keys, typefocus and the Enter fallback; the per-piece guard is unchanged', /AttachThreadInput\(me, other, true\)/.test(raiseCode) && !/keybd_event|SendInput\(/.test(raiseCode) && /function Bring-Forward\(\$req\) \{\s*if \(-not \$req\['raise'\]/.test(ps) && /Bring-Forward \$req\s+\$e\.SetFocus\(\)/.test(cmd('Cmd-SetText')) && /Bring-Forward \$req\s+try \{ \$t\.el\.SetFocus\(\)/.test(cmd('Cmd-Keys')) && /Bring-Forward \$req/.test(cmd('Cmd-TypeFocus')) && /Bring-Forward \$req\s+\$e\.SetFocus\(\)/.test(cmd('Cmd-Invoke')) && /if \(\$pids -notcontains \[int\]\$st\.fgPid\) \{ \$why = 'focus'; break \}/.test(ps));
+  }
+  {
     // click / type / keys
     const rig = makeRig({ apps: [word], allowed: allowWord });
     check('click before reading: the AI is told to read first', /Read the app first/.test(await rejects(() => rig.d.run({ action: 'click', args: { element: 'e3' } }, rig.ctx))));

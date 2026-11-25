@@ -38,5 +38,6 @@ After every edit the tool re-reads the document's export and compares it with th
 - Equations and pictures are counted from the export's HTML; an equation Docs exports as a picture counts as a picture.
 - A general "did the AI wipe my text" check cannot measure a canvas editor like Docs; this tool and the guard on Docs keys cover that gap for Google Docs.
 - Word Online and Notion are not supported by the tool yet.
+- A Microsoft Word document is the `word` tool's ([The AI working in Microsoft Word](word.md)). It works on Word's own paragraphs: it can target one paragraph by number or by heading path, leave the table of contents out of a find, read each paragraph's formatting (`inspect`), delete paragraphs and breaks, rebuild the table of contents, edit fields and content controls, and keep checkpoints to restore.
 
 The code is `src/ai/document-tool.js` (the actions) and `src/ai/doc-edit.js` (the checks); tests are `test/units/doc-edit-units.js` and `test/e2e/document-tool.js`.
