@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.107 (2026-11-25)
+
 - **Startup loads one module fewer.** The tab-freeze image resizer now loads the first time a tab freezes instead of on every start, which keeps the start-up module count at its budget now that the encrypted-storage module (secret box) loads at start.
 - **Two release checks no longer fail by timing.** Nothing changes in the browser. `close-ai-tab-by-user` typed into a sidebar that was still closing for the new tab, so the message never went; it now opens the sidebar on the tab in front first. `spotify-ui` now names its Spotify stand-in at launch (`LUMEN_TEST_SPOTIFY_WEB_URL`, test runs only) so the card's player view can't start on the real site first.
 
