@@ -14,6 +14,21 @@ function cssClip(rect, zoom) {
   const z = zoom > 0 ? zoom : 1;
   return { x: rect.x / z, y: rect.y / z, width: Math.max(1, rect.width / z), height: Math.max(1, rect.height / z), scale: 1 };
 }
+// Page.captureScreenshot's clip is in document coordinates: { x: 0, y: 0 } is the top of the page, not of what the tab shows. On a scrolled page a clip
+// from there lies outside the viewport, and Chromium then lays the page out beyond its view for the capture; on a tab that is not drawn (an AI tab
+// behind the one in front) it was left drawn shifted down, a gray band above the page and its scrollbar, until something laid it out again. So every
+// clip here is placed on the visual viewport (viewClip) and taken with captureBeyondViewport off, and a tab that was clipped is laid out afresh when it
+// next comes to the front (checkPageSize, source 'show'), whatever the size reads say.
+const clipped = new WeakSet(); // webContents a clipped capture ran on since it was last laid out afresh
+async function viewClip(dbg, { x = 0, y = 0, width, height, scale = 1 }) {
+  let v = null;
+  try { v = (await dbg.sendCommand('Page.getLayoutMetrics'))?.cssVisualViewport || null; } catch { /* no metrics: from the page's top */ }
+  return { x: (v?.pageX || 0) + x, y: (v?.pageY || 0) + y, width, height, scale };
+}
+function shoot(wc, dbg, params) {
+  if (params.clip) { clipped.add(wc); params = { ...params, captureBeyondViewport: false }; }
+  return dbg.sendCommand('Page.captureScreenshot', params);
+}
 
 // A page that is not drawn (its window was hidden after it had been shown, or its view taken out of the window) answers no capture at all:
 // Page.captureScreenshot, capturePage() and the screencast all wait for a frame that never comes. The AI's screenshot then hung until the MCP
@@ -82,8 +97,8 @@ async function viaDevToolsNow(wc, rect) {
   if (!dbg.isAttached()) { dbg.attach('1.3'); attachedHere = true; } // attached already (automation): share it
   try {
     const params = { format: 'png', fromSurface: true };
-    if (rect) params.clip = cssClip(rect, wc.getZoomFactor?.() || 1);
-    const shot = await inTime(wc, dbg.sendCommand('Page.captureScreenshot', params));
+    if (rect) params.clip = await viewClip(dbg, cssClip(rect, wc.getZoomFactor?.() || 1));
+    const shot = await inTime(wc, shoot(wc, dbg, params));
     return nativeImage().createFromBuffer(Buffer.from(shot.data, 'base64'));
   } finally {
     if (attachedHere) { try { dbg.detach(); } catch {} }
@@ -268,7 +283,7 @@ async function streamThumb(wc, { fps = 15, quality = 70, width = 340, onFrame, o
       if (ended) return;
       const t0 = performance.now();
       try {
-        const shot = await oneAtATime(wc, () => dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } })); // (in the page's queue: a clip taken while another capture is in flight left the page laid out at the clip's size)
+        const shot = await oneAtATime(wc, async () => shoot(wc, dbg, { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: await viewClip(dbg, { width: cssW, height: cssH, scale: 1 }) })); // (in the page's queue: a clip taken while another capture is in flight left the page laid out at the clip's size)
         const data = shot && typeof shot.data === 'string' ? shot.data : '';
         if (data.length > 90000) q = Math.max(25, q - 10); else if (data.length < 40000) q = Math.min(Math.min(quality, 60), q + 5); // (about 30-65 KB a frame)
         if (!ended && data && data !== lastData && !(data.length * 0.75 <= 9000 && isBlankFrame(data))) { lastData = data; try { onFrame(data); } catch { /* the listener's own */ } }
@@ -306,7 +321,7 @@ async function viaProtocolNow(wc, { lowRes = false, maxBytes = 45000, state = nu
     if (frame && frame.length * 0.75 <= (lowRes ? Math.max(maxBytes, 90000) : 260000)) { if (state && lowRes) state.small = true; return frame; } // (small: the compositor scaled it to the card's small size)
     maxBytes = lowRes ? Math.max(maxBytes, 90000) : 260000; // (a sharp frame is the page's own pixels: about 60-200 KB, a few per second)
     for (const q of lowRes ? [38, 28, 20] : [66, 52, 40, 30]) {
-      const shot = await inTime(wc, dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: { x: 0, y: 0, width: cssW, height: cssH, scale: 1 } }));
+      const shot = await inTime(wc, shoot(wc, dbg, { format: 'jpeg', quality: q, fromSurface: true, optimizeForSpeed: true, clip: await viewClip(dbg, { width: cssW, height: cssH, scale: 1 }) }));
       if (shot && typeof shot.data === 'string' && shot.data.length * 0.75 <= maxBytes) return shot.data;
     }
   } catch { /* try the screenshot path */ } finally {
@@ -382,12 +397,14 @@ async function checkPageSize(view, { shown = () => true, skip = () => false, rel
     let inner = null;
     try { inner = await wc.executeJavaScript('[innerWidth, innerHeight]', false); } catch { return null; }
     const zoom = wc.getZoomFactor?.() || 1;
-    const layoutOff = layoutMismatch(inner, bounds, zoom);
+    const wasClipped = source === 'show' && clipped.has(wc);
+    const layoutOff = layoutMismatch(inner, bounds, zoom) || wasClipped;
     // (a view that is only not drawn right now, a window behind others or a tab that just came back, reads empty once: confirmed after a repaint before the page is relaid out, a resize the page sees)
     let smaller = layoutOff ? false : await surfaceSmaller(view);
     if (smaller) { try { wc.invalidate?.(); } catch { /* going away */ } await new Promise((r) => { const h = setTimeout(r, 120); h.unref?.(); }); smaller = shown() && await surfaceSmaller(view); }
     if (!shown() || (!layoutOff && !smaller)) return null;
     lastFix.set(view, now());
+    clipped.delete(wc);
     const dbg = wc.debugger;
     let cleared = false;
     try {
@@ -400,7 +417,7 @@ async function checkPageSize(view, { shown = () => true, skip = () => false, rel
     view.setBounds({ ...b, width: Math.max(1, b.width - 1) });
     const timer = setTimeout(() => { try { relayout(); } catch { /* going away */ } }, 60);
     timer.unref?.();
-    const entry = { at: new Date(t).toISOString(), source, kind: layoutOff ? 'layout' : 'surface', inner, bounds: { width: bounds.width, height: bounds.height }, zoom, cleared };
+    const entry = { at: new Date(t).toISOString(), source, kind: wasClipped ? 'clipped' : layoutOff ? 'layout' : 'surface', inner, bounds: { width: bounds.width, height: bounds.height }, zoom, cleared };
     try { log(entry); } catch { /* diagnostics are best effort */ }
     return entry;
   } catch { return null; }
@@ -483,7 +500,7 @@ async function captureJpegNow(wc, { maxWidth, quality }) {
       const size = frame ? jpegSize(frame) : null;
       if (size) return { data: frame, ...size };
     }
-    const shot = await inTime(wc, dbg.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } }));
+    const shot = await inTime(wc, shoot(wc, dbg, { format: 'jpeg', quality, fromSurface: true, optimizeForSpeed: true, clip: { x: v.pageX, y: v.pageY, width: v.clientWidth, height: v.clientHeight, scale } }));
     return shot?.data ? { data: shot.data, width, height } : null;
   } catch (err) {
     if (err?.notDrawn) throw err;
@@ -493,4 +510,4 @@ async function captureJpegNow(wc, { maxWidth, quality }) {
   }
 }
 
-module.exports = { CAPTURE_MS, NOT_DRAWN, inTime, checkPageSize, captureJpeg, jpegSize, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+module.exports = { viewClip, shoot, clippedSinceShown: (wc) => clipped.has(wc), CAPTURE_MS, NOT_DRAWN, inTime, checkPageSize, captureJpeg, jpegSize, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
