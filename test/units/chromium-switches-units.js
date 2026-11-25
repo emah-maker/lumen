@@ -69,7 +69,9 @@ else {
   // once it is known again, or gone from src/). Empty since 2026-11-23: WebContentsForceDark went in #998, remote-debugging-address after it.
   const KNOWN_DEAD = {};
   const DEAD = 'disable-direct-composition-video-overlays';
+  const scanStart = Date.now();
   const found = inBinary(bin, [...words, DEAD]);
+  console.log(`INFO  scanned the Electron binary in ${Date.now() - scanStart} ms`);
   const missing = [...words].filter((w) => !found.has(w));
   const fresh = missing.filter((w) => !(w in KNOWN_DEAD));
   check(`every launch switch and feature name is in the shipped Electron (${words.size} names, ${missing.length} known dead)`, fresh.length === 0, fresh.join(', '));
