@@ -180,14 +180,16 @@ const okGet = (rpId) => ({ hr: 0, result: { credentialId: credId, authenticatorD
     const wc = wcOf();
     const f = top();
     const r1 = await s.ask(wc, f, { kind: 'get', id: 'g1', options: getOpts(), frame: { activation: false } });
-    check('gesture: a document\'s first ceremony may come without a click (cancelled by the user -> NotAllowedError)', s.native.calls.length === 1 && r1.error.name === 'NotAllowedError', JSON.stringify(r1));
+    check('gesture: a request on page load (no click) is refused before Windows (Microsoft sign-in popped Windows Hello for a remembered account)', s.native.calls.length === 0 && r1.error.name === 'NotAllowedError', JSON.stringify(r1));
     const r2 = await s.ask(wc, f, { kind: 'get', id: 'g2', options: getOpts(), frame: { activation: false } });
-    check('gesture: the next one without a click is refused before Windows (no prompt spam)', s.native.calls.length === 1 && r2.error.name === 'NotAllowedError', JSON.stringify(r2));
+    check('gesture: the next one without a click is refused too (no prompt spam)', s.native.calls.length === 0 && r2.error.name === 'NotAllowedError', JSON.stringify(r2));
     await s.ask(wc, f, { kind: 'get', id: 'g3', options: getOpts(), frame: { activation: true } });
-    check('gesture: with a click it goes through', s.native.calls.length === 2, '');
+    check('gesture: with a click it goes through', s.native.calls.length === 1, '');
     const f2 = frame('https://login.example.com', 'https://login.example.com/other', null, [1, 1]);
     await s.ask(wc, f2, { kind: 'get', id: 'g4', options: getOpts(), frame: { activation: false } });
-    check('gesture: a new document in the frame gets its one again', s.native.calls.length === 3, '');
+    check('gesture: a new document gets no free one either', s.native.calls.length === 1, '');
+    await s.ask(wc, f2, { kind: 'create', id: 'g5', options: createOpts(), frame: { activation: false } });
+    check('gesture: creating a passkey without a click is refused too', s.native.calls.length === 1, '');
   }
 
   // ---- Windows' answers
