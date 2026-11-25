@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Background test runs no longer take over the computer (for contributors).** With `LUMEN_TEST_BACKGROUND=1`, a test that opened a routine or finished a connector sign-in went through `focusApp`, which called `app.focus({ steal: true })` and forced an off-screen test window to the front, taking the keyboard and mouse from whatever the person was using. `src/test-mode.js` `handsOff` now makes every such call harmless in a background test run: `app.focus`, window `focus` and `moveTop` do nothing, and `show()` shows without activating. `npm test` also stops this checkout's leftover Electron processes after each suite (a suite killed on its timeout used to leave its app running). `test/units/test-hands-off-units.js`.
+
 - **Opening a crafted email can't stall Lumen.** postal-mime, which reads saved emails (.eml), is updated to 4.2.1, which fixes very slow parsing of certain encoded headers.
 - **The AI can't reach more credential files.** With "Let the AI use files on this computer" on, it now also refuses Claude Code, Codex and Gemini sign-ins, browser password and cookie databases, and Windows alternate-stream paths such as `.env::$DATA`. Tests in `test/units/device-access-units.js`.
 - **Uploading files from your computer asks for each new file.** With "Let the AI use files on this computer" on, approving one upload to a site no longer lets the AI send other files there without asking; attached files still ask once per site. Tests in `test/units/device-access-units.js`.
