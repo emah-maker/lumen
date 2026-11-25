@@ -218,7 +218,7 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
   }
 
   // A new kept process with its session: resumed (sessionId) or new. Resolves the process, or throws (nothing sent).
-  async function start({ systemPrompt, sessionId = null, model = 'default', spare = false, fullAccess = false, effort = '' }, slot = {}) {
+  async function start({ systemPrompt, sessionId = null, model = 'default', spare = false, fullAccess = false, effort = '', chat = null }, slot = {}) {
     const prepared = await engine.prepare({ fullAccess }); // the locked-down config.toml, unless this process is for full access
     engine.prep = null;
     if (!prepared?.bin) throw new Error('not installed');
@@ -235,6 +235,10 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
       kind: 'grokbuild',
       background: false,
       active: null,
+      // [tools] The chat this process serves (the message that started or claimed it): its tool list is read when the process
+      // connects, before the turn sets `active`, so features/ai-agents.js runTools takes the chat from here then. A process
+      // started without one (a prewarm) lists no chat tools, and toolsMissing replaces it when the chat needs them.
+      chat: chat || null,
       owns: (t) => Boolean(t && !p.disposed && !p.exited && t.length === tag.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(tag))),
       callBegin(a = p.owner.active) { if (!a) return; a.tools++; a.inflight++; clearTimeout(a.dog); },
       callEnd(a = p.owner.active) { if (!a) return; a.inflight = Math.max(0, a.inflight - 1); a.arm?.(); },
@@ -338,10 +342,11 @@ function createGrokWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS, 
     // tool was unavailable"). That process goes and a new one resumes the same thread with the full list, as Claude Code does (#914;
     // features/ai-agents.js toolsMissing).
     if (p && toolsMissing?.(p.tag, scope?.chat)) { p.busy = false; dispose(p); stats.toolRestarts++; p = null; }
+    if (p && scope?.chat) p.owner.chat = scope.chat; // [tools] (a reused process: the chat object of this message)
     if (p) stats.reused++;
     else {
       emit({ type: 'status', text: 'Starting Grok Build…' }); // the working line says why it waits (cleared on the first output)
-      try { p = await starting({ systemPrompt, sessionId: resume ? sessionId : null, model, claimed: true, fullAccess, effort }); } catch { stats.fallbacks++; return null; }
+      try { p = await starting({ systemPrompt, sessionId: resume ? sessionId : null, model, claimed: true, fullAccess, effort, chat: scope?.chat }); } catch { stats.fallbacks++; return null; }
     }
     p.spare = false;
     p.used = ++used;

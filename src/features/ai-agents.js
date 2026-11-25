@@ -410,7 +410,8 @@ function setupAiAgents(deps) {
   const runTools = (session) => {
     if (!(session?.engine && ownsSession(session) && ![...bgEngines].some((e) => e.owns(session.engine)))) return [];
     const owner = engineForSession(session);
-    const chat = (owner?.activeOf ? owner.activeOf(session.engine) : owner?.active)?.scope?.chat || null;
+    // [tools] A kept Codex / Grok Build / Antigravity process lists the tools as it connects, before its turn is active: the chat it was started for (owner.chat).
+    const chat = (owner?.activeOf ? owner.activeOf(session.engine) : owner?.active)?.scope?.chat || owner?.chat || null;
     return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || []), ...(deps.wordTools?.(chat) || []), ...(deps.desktopTools?.(chat) || []), ...(deps.skillTools?.(chat) || []), ...(deps.mcpServerTools?.(chat) || [])];
   };
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
