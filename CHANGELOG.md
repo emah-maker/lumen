@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.109 (2026-11-25)
+
 - **The AI's highlights stay on what it meant in a PDF you scroll.** Marks the AI placed from a screenshot landed off by however far you scrolled the PDF between its screenshot and its drawing (a highlight of T₀ and p₀ landed on the lines below). The PDF viewer's own scrolling now counts, so marks follow the page.
 - **The PDF viewer shows the file's name.** A PDF whose inner title was stale (a chapter 7 file titled "Chapter 4" inside) showed that title on its tab, its header and to the AI. The tab and header now show the file name; the inner title shows on hover, and is used only when the address has no real name (a download link or a blob).
 
