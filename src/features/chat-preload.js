@@ -99,6 +99,8 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       projectDefaults: (id, defaults) => ipcRenderer.invoke('chats:project-defaults', id, defaults),
       projectTools: (id, change) => ipcRenderer.invoke('chats:project-tools', id, change), // [project tools] the Tools view: { catalog }, or one switched: { kind, id, on }
       projectConnect: (id, connectorId) => ipcRenderer.invoke('chats:project-connect', id, connectorId), // [project tools] Connect from the project page
+      projectAbout: (id, change) => ipcRenderer.invoke('chats:project-about', id, change), // [about you] the project's profile: read, { create }, { fields }, { highlights }, { answer }, { removeAnswer }, { resumeDrive }, { pick }, { clear }
+      projectFolders: (id, change) => ipcRenderer.invoke('chats:project-folders', id, change), // [linked folders] { add: 'local' } | { add: 'drive', url, name } | { remove } | { rename } | { open }
       projectPermissions: (id, patch) => ipcRenderer.invoke('chats:project-permissions', id, patch), // [project permissions] { permissionMode, allowedHosts }
       projectFlag: (id, key, on) => ipcRenderer.invoke('chats:project-flag', id, key, on), // [project list] 'pinned' | 'archived'
       projectDrive: (id, change) => ipcRenderer.invoke('chats:project-drive', id, change), // [project drive] { on } | { save }

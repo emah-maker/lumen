@@ -229,6 +229,42 @@ function makePdf(pages) {
     check('a new Code project gets the apps ticked in the dialog and plan first', JSON.stringify(coding?.defaults) === JSON.stringify({ plan: true, apps: ['github', 'notion'] }) && coding.template === 'coding', JSON.stringify(coding?.defaults));
     const blank = await api('saveProject', { name: 'Blank tools', folderMode: 'none' });
     check('a Blank project left as it is uses every app', !blank?.defaults?.apps, JSON.stringify(blank?.defaults));
+
+    // ======== [about you] a Job applications project remembers the user; [linked folders] and reads the folders it is pointed at ========
+    const job = await api('saveProject', { name: 'Co-op hunt', template: 'job-applications', folderMode: 'none' });
+    check('a job project gets a profile of its own', Boolean(job?.profileId), JSON.stringify(job).slice(0, 200));
+    const about0 = await api('projectAbout', job.id);
+    check('About you: the groups, nothing filled yet', about0?.about?.groups?.length === 5 && about0.about.filled === 0, JSON.stringify(about0?.about).slice(0, 300));
+    const about1 = await api('projectAbout', job.id, { fields: { school: 'Northeastern University', gradDate: 'May 2028', locations: 'Boston' } });
+    const about2 = await api('projectAbout', job.id, { answer: { question: 'Why this company?', answer: 'I build cars.' } });
+    check('About you: fields and a saved answer are saved to the profile', about1?.about?.filled === 3 && about2?.about?.answers?.[0]?.answer === 'I build cars.', JSON.stringify(about2?.about).slice(0, 300));
+    const linkedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-linked-'));
+    fs.writeFileSync(path.join(linkedDir, 'notes.txt'), 'Résumé notes: SolidWorks.');
+    const withFolder = await api('projectFolders', job.id, { restore: { kind: 'local', path: linkedDir } });
+    const withDrive = await api('projectFolders', job.id, { add: 'drive', url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUv', name: 'Job docs' });
+    check('Sources: a local folder and a Drive folder linked', withFolder?.folders?.length === 1 && withDrive?.folders?.length === 2 && withDrive.folders[1].driveId === '1AbCdEfGhIjKlMnOpQrStUv', JSON.stringify(withDrive?.folders));
+    check('a Drive address that is not a folder is refused', (await api('projectFolders', job.id, { add: 'drive', url: 'https://example.com' }))?.error === 'drive');
+    await startIn(job.id);
+    const inJob = await app.evaluate(async () => {
+      const agent = global.__agent;
+      const cid = global.__chats.id();
+      const block = global.__projectWorkspace.blockFor(cid);
+      agent.messages.settings = { adhdMode: true, model: 'claude-opus-5', ...global.__projectWorkspace.settingsFor(cid) };
+      const t = agent.browser.projects.applications(agent.messages);
+      const saved = await t.remember({ note: 'gpa: 3.8' }); // (as the tool sends it)
+      const refused = await t.remember({ note: 'What is your gender? x' });
+      const files = await agent.browser.projects.files(agent.messages);
+      return { block, saved, refused, after: t.about(), folders: files?.folders?.length || 0, tools: agent.messages.settings.projectTools === true, base: agent.browser.projects.baseFiles(agent.messages) };
+    });
+    check('each chat in the project gets what the user told Lumen about themselves', /<about_user>/.test(inJob.block) && /Graduation date: May 2028/.test(inJob.block) && /Why this company\?/.test(inJob.block), inJob.block.slice(0, 600));
+    check('…and the linked folders, with how to read them', /Folders linked to this project/.test(inJob.block) && /Google Drive folder 1AbCdEfGhIjKlMnOpQrStUv/.test(inJob.block));
+    check('the AI saves a new fact to the profile (applications remember)', inJob.saved?.ok === true && /GPA: 3\.8/.test(inJob.after), JSON.stringify(inJob.saved));
+    check('…but never a sensitive question', inJob.refused?.ok === false);
+    check('the project_files tool gets the linked folders', inJob.folders === 2 && inJob.tools === true);
+    check('no base résumé yet: nothing the Word tool is kept from', Array.isArray(inJob.base) && inJob.base.length === 0);
+    check('the page shows the change the AI made', (await api('projectAbout', job.id))?.about?.groups.find((g) => g.id === 'school').fields.find((f) => f.key === 'gpa').value === '3.8');
+    await api('removeProject', job.id);
+    await startIn(project.id); // (the checks below work in the first project's chat again)
     await api('removeProject', coding.id);
     await api('removeProject', blank.id);
 

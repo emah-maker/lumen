@@ -196,6 +196,7 @@ const PROFILE_FIELDS = [
   { key: 'workAuth', match: /authori[sz]ed to work|work authori[sz]ation|legally (authori[sz]ed|eligible)|eligible to work/ },
   { key: 'sponsorship', match: /sponsor/ },
   { key: 'startDate', match: /start date|available to start|availability|when can you start/ },
+  { key: 'locations', match: /preferred (work )?locations?|location preferences?|where (would|do) you (like|want|prefer) to work|desired locations?/ }, // [about you] the places the user wants to work
 ];
 const PROFILE_KEYS = PROFILE_FIELDS.map((f) => f.key);
 // Questions only ever answered from an answer the user saved for that question: never from the boxes above, never guessed.
@@ -228,6 +229,8 @@ function normalizeProfile(input, { now = Date.now() } = {}) {
     resumePath: filePath(r.resumePath), // a file on this computer, only ever put into a page's file field: never copied or changed
     coverLetterPath: filePath(r.coverLetterPath),
     coverLetterTemplate: clean(r.coverLetterTemplate).slice(0, LIMITS.template),
+    highlights: clean(r.highlights).trim().slice(0, LIMITS.text), // [about you] résumé facts the AI may use: skills, projects, numbers (the user's own words)
+    resumeDrive: isObject(r.resumeDrive) && /^[A-Za-z0-9_-]{10,100}$/.test(String(r.resumeDrive.id)) ? { id: String(r.resumeDrive.id), name: oneLine(r.resumeDrive.name, 120) || 'Résumé in Drive' } : null, // [about you] a résumé kept in Google Drive: read for facts, never changed
     answers: dedupeAnswers((Array.isArray(r.answers) ? r.answers : []).filter(isObject).map((a) => ({ question: oneLine(a.question, LIMITS.field), answer: clean(a.answer).trim().slice(0, LIMITS.value) }))),
     updatedAt: now,
   };

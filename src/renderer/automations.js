@@ -52,7 +52,7 @@ const NEED = {
 const FIELD_LABELS = {
   firstName: 'First name', lastName: 'Last name', fullName: 'Full name', email: 'Email', phone: 'Phone', address: 'Street address', city: 'City', state: 'State', zip: 'ZIP code', country: 'Country',
   linkedin: 'LinkedIn', github: 'GitHub', website: 'Website or portfolio', school: 'School', degree: 'Degree', major: 'Major', gradDate: 'Graduation date', gpa: 'GPA',
-  workAuth: 'Authorized to work here?', sponsorship: 'Need visa sponsorship?', startDate: 'Earliest start date',
+  workAuth: 'Authorized to work here?', sponsorship: 'Need visa sponsorship?', startDate: 'Earliest start date', locations: 'Preferred locations',
 };
 
 async function act(fn, ok) {

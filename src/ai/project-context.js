@@ -233,7 +233,24 @@ async function runTool(input = {}, deps) {
       const note = s.more ? `\n[characters ${s.from}-${s.end} of ${s.total}; read again with offset:${s.end} for the next part]` : s.from ? `\n[end of file: characters ${s.from}-${s.end} of ${s.total}]` : '';
       return wrap(f.name, `${s.text || '(this file has no text)'}${note}`);
     }
-    default: throw new Error('action must be list, search, read, links, sites, site_search or site_read.');
+    // [linked folders] a folder on this computer the user linked to the project (features/project-linked-folders.js): list it, read a file in it
+    case 'folder_list':
+    case 'folder_read': {
+      const lf = require('../features/project-linked-folders');
+      const folders = deps.folders || [];
+      if (!folders.length) return 'This project has no linked folders. The user can link one under Sources (Add → Link a folder).';
+      const f = lf.pick(folders, input.folder);
+      if (!f) throw new Error(`Say which folder: folder is its number or name. Linked: ${lf.clean(folders).map((x, i) => `${i + 1}. ${x.name}`).join(', ')}.`);
+      if (f.kind === 'drive') return `${f.name} is a Google Drive folder: use connector drive files with folder_id ${f.driveId}, then read a file by its id.`;
+      if (action === 'folder_list') return lf.list(f, { sub: input.path, match: input.query, limit: input.limit });
+      if (!deps.extract) throw new Error('Reading a linked folder is not available here.');
+      const got = await lf.read(f, input.path, { extract: deps.extract });
+      deps.tainted?.(); // (what a file says is outside content, as a page's is)
+      const s = slice(got.text, input.offset);
+      const more = s.more ? `\n[characters ${s.from}-${s.end} of ${s.total}; read again with offset:${s.end} for the next part]` : '';
+      return wrap(`${f.name}/${got.name}`, `${s.text || '(this file has no text)'}${more}`);
+    }
+    default: throw new Error('action must be list, search, read, links, sites, site_search, site_read, folder_list or folder_read.');
   }
 }
 
@@ -244,6 +261,8 @@ function stepLabel(input = {}) {
     case 'sites': return 'Checking the project’s websites';
     case 'search': return `Searching project files for “${oneLine(input.query, 60)}”`;
     case 'read': return `Reading project file ${oneLine(input.name, 60)}`;
+    case 'folder_list': return `Looking in a linked folder${input.path ? ` (${oneLine(input.path, 50)})` : ''}`;
+    case 'folder_read': return `Reading ${oneLine(input.path, 60)} from a linked folder`;
     case 'links': return 'Checking the project’s pinned pages';
     default: return 'Looking at the project’s files';
   }
