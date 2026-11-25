@@ -109,7 +109,8 @@ function ensureElectronBinary() {
 
 // chromium-switches-units reads the whole Electron executable (250 MB). On GitHub's Windows runners that first read of a freshly
 // written file was sometimes slow enough to run into the 120 s suite timeout while two other suites competed for the disk, and a
-// rerun passed. Read it once here, alone, before any suite starts, so the cold read (antivirus scan, disk cache) is paid by nobody's timeout.
+// rerun passed (Defender is off on those runners, so it is a slow cold disk read, not a scan). Read it once here, alone, before
+// any suite starts, so the cold read is paid by nobody's timeout and shows in the log.
 function warmElectronBinary() {
   const dir = path.join(__dirname, '..', '..', 'node_modules', 'electron');
   const pathFile = path.join(dir, 'path.txt');
