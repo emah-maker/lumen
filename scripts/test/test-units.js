@@ -11,6 +11,8 @@ const { suiteTmp } = require('./test-tmp'); // each suite gets its own TEMP fold
 
 const TEST_DIR = path.join(__dirname, '..', '..', 'test', 'units');
 const TIMEOUT_MS = Number(process.env.LUMEN_UNIT_TIMEOUT_MS) || 120000;
+// After a suite's process exits, how long to wait for the rest of its output before taking its exit status (runParallel).
+const EXIT_GRACE_MS = 2000;
 
 // Suites that match the globs below or are named in EXTRA but must not run here.
 const EXCLUDE = {
@@ -87,6 +89,16 @@ function runParallel() {
         };
         child.on('error', (err) => end(null, null, err));
         child.on('close', (status, signal) => end(status, signal, null));
+        // A suite is over when its process exits, not only when its pipes close. On Windows a suite started at the same moment as this one
+        // can inherit this one's stdout pipe handle (CreateProcess passes every inheritable handle), so 'close' waited for that neighbour:
+        // chromium-switches-units printed "All passed" in under a second and was still killed at 120 s on GitHub's Windows runners. After
+        // 'exit', a short grace lets the rest of its output arrive, then the suite ends with the status it exited with.
+        child.on('exit', (status, signal) => {
+          setTimeout(() => {
+            if (!ended) out += `\nNOTE  ${name} exited (${status ?? signal}) but its output pipe was still open ${EXIT_GRACE_MS / 1000} s later (another process holds it): ended on the exit\n`;
+            end(status, signal, null);
+          }, EXIT_GRACE_MS);
+        });
       }
     };
     next();
