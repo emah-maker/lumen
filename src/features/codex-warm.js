@@ -250,7 +250,7 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
   }
 
   // A new kept process with its thread: resumed (sessionId) or new. Resolves the process, or throws (nothing sent).
-  async function start({ chatId, sessionId = null, spare = false, fullAccess = false }, slot = {}) {
+  async function start({ chatId, sessionId = null, spare = false, fullAccess = false, chat = null }, slot = {}) {
     if (process.env.LUMEN_CODEX_MCP === 'stdio') throw new Error('stdio bridge');
     const prepared = await engine.prepare();
     if (!prepared?.spec) throw new Error('not installed');
@@ -269,6 +269,10 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
       kind: 'codex',
       background: false,
       active: null,
+      // [tools] The chat this process serves (the message that started or claimed it): its tool list is read when the process
+      // connects, before the turn sets `active`, so features/ai-agents.js runTools takes the chat from here then. A process
+      // started without one (a prewarm) lists no chat tools, and toolsMissing replaces it when the chat needs them.
+      chat: chat || null,
       owns: (t) => Boolean(t && !p.disposed && !p.exited && t.length === tag.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(tag))),
       callBegin(a = p.owner.active) { if (!a) return; a.tools++; a.inflight++; clearTimeout(a.dog); },
       callEnd(a = p.owner.active) { if (!a) return; a.inflight = Math.max(0, a.inflight - 1); a.arm?.(); },
@@ -378,10 +382,11 @@ function createCodexWarm({ engine, enabled = () => true, idleMs = () => IDLE_MS,
     if (p && toolsMissing?.(p.tag, scope?.chat)) { p.busy = false; dispose(p); stats.restarts++; stats.toolRestarts++; p = null; }
     // A reasoning effort chosen earlier stays on a thread until another is chosen: back to Codex's own default needs a new process.
     if (p && p.effort && !effort) { p.busy = false; dispose(p); stats.restarts++; p = null; }
+    if (p && scope?.chat) p.owner.chat = scope.chat; // [tools] (a reused process: the chat object of this message)
     if (p) stats.reused++;
     else {
       emit({ type: 'status', text: 'Starting Codex…' }); // the working line says why it waits (cleared on the first output)
-      try { p = await starting({ chatId, sessionId: resume ? sessionId : null, claimed: true, fullAccess }); } catch { stats.fallbacks++; return null; }
+      try { p = await starting({ chatId, sessionId: resume ? sessionId : null, claimed: true, fullAccess, chat: scope?.chat }); } catch { stats.fallbacks++; return null; }
     }
     p.spare = false;
     p.used = ++used;

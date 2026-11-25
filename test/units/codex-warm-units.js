@@ -203,19 +203,28 @@ const spec = { found: true, command: process.execPath, args: [], path: process.e
       const two = await send(engine, { chat, sessionId: one.out.sessionId });
       check('tools: a chat that needs nothing new keeps its process (asked with that process\'s own tag and the chat)', two.out.text === 'warm reply 2' && fake.apps().length === 1 && asked.length === 1 && asked[0][0] === tagOf(fake.apps()[0]) && asked[0][1] === chat && pool.stats.toolRestarts === 0, J({ apps: fake.apps().length, asked: asked.length }));
       chat.cliWord = true; // (agent.js cliWordNote: this message is about a Word document)
-      const three = await send(engine, { chat, sessionId: two.out.sessionId });
+      const threeP = send(engine, { chat, sessionId: two.out.sessionId });
+      await until(() => fake.apps()[1], 3000);
       const second = fake.apps()[1];
+      // [tools] The new process lists Lumen's tools while it connects (thread/resume), before its turn is active: its owner already names
+      // the chat, so features/ai-agents.js runTools gives that list the word tool. (Without it the real Codex said "Both tools are unavailable".)
+      const early = { chat: pool.owner(tagOf(second))?.chat, active: pool.owner(tagOf(second))?.active ?? null };
+      const three = await threeP;
+      check('tools: the replacement process names the chat before its turn starts (the tool list is read then)', early.chat === chat && early.active === null, J({ chat: early.chat === chat, active: Boolean(early.active) }));
       check('tools: the chat turned to Word, so the kept process that was never given the word tool goes and a new one resumes the same thread', fake.apps().length === 2 && three.out.text === 'warm reply 1' && three.out.sessionId === one.out.sessionId && second.requests.some((m) => m.method === 'thread/resume') && pool.stats.toolRestarts === 1 && pool.stats.restarts === 1, J({ apps: fake.apps().length, stats: pool.stats, text: three.out.text, sid: three.out.sessionId }));
       givenWord.add(tagOf(second));
       const four = await send(engine, { chat, sessionId: three.out.sessionId });
       check('tools: the new process listed the word tool, so the next message reuses it', fake.apps().length === 2 && four.out.text === 'warm reply 2' && pool.stats.toolRestarts === 1, J({ apps: fake.apps().length, stats: pool.stats, text: four.out.text }));
+      check('tools: the first message\'s own process names its chat too', pool.owner(tagOf(second))?.chat === chat);
       const quiet = setup();
       const q1 = await send(quiet.engine, { chat: { cliWord: true } });
       const q2 = await send(quiet.engine, { chat: { cliWord: true }, sessionId: q1.out.sessionId });
       check('tools: without a toolsMissing check the process is kept as before', quiet.fake.apps().length === 1 && q2.out.text === 'warm reply 2' && quiet.pool.stats.toolRestarts === 0);
       const src = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', 'ai-agents.js'), 'utf8');
       check('tools: Lumen gives the Codex, Grok Build and Antigravity kept processes the same toolsMissing check as Claude Code', (src.match(/toolsMissing: \(tag, chat\) => toolsMissing\(tag, chat\)/g) || []).length === 3 && /createCodexWarm\(\{[\s\S]{0,400}toolsMissing: \(tag, chat\) => toolsMissing/.test(src) && /createGrokWarm\(\{[\s\S]{0,400}toolsMissing: \(tag, chat\) => toolsMissing/.test(src) && /createAgyWarm\(\{[\s\S]{0,400}toolsMissing: \(tag, chat\) => toolsMissing/.test(src));
-      for (const f of ['grok-warm', 'agy-warm']) { const s = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', `${f}.js`), 'utf8'); check(`tools: ${f} ends a kept process that lacks a tool the chat needs, before reusing it`, /toolsMissing = null \}\) \{/.test(s) && /let p = await find\([^)]*\);[\s\S]{0,800}if \(p && toolsMissing\?\.\(p\.tag, scope\?\.chat\)\) \{ p\.busy = false; dispose\(p\);[^}]*p = null; \}\s+if \(p\) stats\.reused\+\+;/.test(s)); }
+      for (const f of ['grok-warm', 'agy-warm']) { const s = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'features', `${f}.js`), 'utf8'); check(`tools: ${f} ends a kept process that lacks a tool the chat needs, before reusing it`, /toolsMissing = null \}\) \{/.test(s) && /let p = await find\([^)]*\);[\s\S]{0,800}if \(p && toolsMissing\?\.\(p\.tag, scope\?\.chat\)\) \{ p\.busy = false; dispose\(p\);[^}]*p = null; \}\s+if \(p && scope\?\.chat\) p\.owner\.chat = scope\.chat;[^\n]*\s+if \(p\) stats\.reused\+\+;/.test(s));
+        check(`tools: ${f}'s new process names the chat it was started for, before it lists the tools`, /chat = null \}, slot = \{\}\) \{/.test(s) && /active: null,[\s\S]{0,600}chat: chat \|\| null,/.test(s) && /claimed: true[^)]*chat: scope\?\.chat \}\)/.test(s)); }
+      check('tools: runTools takes the chat from a kept process\'s owner when no turn is active yet', /\?\.scope\?\.chat \|\| owner\?\.chat \|\| null;/.test(src));
     }
 
     // ---- off: exactly today's behaviour
