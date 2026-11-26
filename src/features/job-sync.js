@@ -42,16 +42,23 @@ function mapHeader(row) {
 }
 
 // A Status cell -> a stage ('' when it says nothing the tracker knows: the entry keeps its own).
+// The cell's lead decides ("Applied Nov 6", "Closed — posting removed", "Found Oct 26, verified open (…, onsite)"): what follows a
+// bracket, a dash or a semicolon is a note, and a note's "onsite" or "screening" is not an interview. Only a lead that says nothing
+// known falls back to the whole cell.
+function stageOfText(s) {
+  if (/\boffer/.test(s)) return 'offer';
+  if (/reject|not selected|declined by|turned down|no longer (being )?consider|unsuccessful/.test(s)) return 'rejected';
+  if (/withdr|\bskip|not interested|\bclosed\b|\bexpired\b|pass(ed)? on|\bdrop/.test(s)) return 'withdrawn';
+  if (/interview|phone screen|\bscreen(ing)? (call|scheduled|booked|done)|\bassessment\b|\boa\b|coding challenge|final round|super ?day/.test(s)) return 'interview';
+  if (/appl(ied|ication (sent|submitted))|submitted|\bsent\b|waiting|pending|in review|under review/.test(s)) return 'applied';
+  if (/not started|to apply|not applied|backup|blocked|saved|planned|todo|to do|wishlist|maybe|researching|draft|\bfound\b|\bqueued?\b|verified open|shortlist/.test(s)) return 'saved';
+  return '';
+}
 function stageFromStatus(text) {
   const s = clean(text, 120).toLowerCase();
   if (!s) return 'saved';
-  if (/\boffer/.test(s)) return 'offer';
-  if (/reject|not selected|declined by|turned down|no longer (being )?consider|unsuccessful/.test(s)) return 'rejected';
-  if (/withdr|\bskip|not interested|\bclosed\b|pass(ed)? on|\bdrop/.test(s)) return 'withdrawn';
-  if (/interview|phone screen|\bonsite|on-site|\bscreen(ing)?\b|assessment|\boa\b|coding challenge|final round/.test(s)) return 'interview';
-  if (/appl(ied|ication (sent|submitted))|submitted|\bsent\b|waiting|pending|in review|under review/.test(s)) return 'applied';
-  if (/not started|to apply|not applied|backup|blocked|saved|planned|todo|to do|wishlist|maybe|researching|draft/.test(s)) return 'saved';
-  return '';
+  const lead = s.split(/\s*(?:[([—–;]|\s-\s)/)[0].trim();
+  return stageOfText(lead) || (lead !== s ? stageOfText(s) : '');
 }
 // What the tracker writes in a Status cell for a stage.
 const STATUS_TEXT = { saved: 'Not started', applied: 'Applied', interview: 'Interview', offer: 'Offer', rejected: 'Rejected', withdrawn: 'Withdrawn' };
@@ -143,21 +150,29 @@ function plan(entries, sheet, { tab = '', write = true, now = Date.now() } = {})
       const entry = made.entry;
       entry.automation = 'Google Sheet';
       if (r.stage !== 'saved') { entry.submittedAt = r.applied || now; entry.history = [{ stage: 'applied', at: entry.submittedAt }, ...(r.stage !== 'applied' ? [{ stage: r.stage, at: now }] : [])]; if (['interview', 'offer', 'rejected'].includes(r.stage)) entry.respondedAt = now; }
-      entry.sheet = { status: r.status, row: r.row };
+      entry.sheet = { status: r.status, row: r.row, stage: r.stage };
       out.add.push(entry);
       continue;
     }
     used.add(e);
     const key = T.entryKey(e);
     const last = e.sheet?.status;
+    // entry.sheet.stage: the stage that Status was read as last time. Moved in Lumen = the entry is at another stage since. Without one
+    // (kept before there was one) it counts as not moved: a Lumen move is written to the sheet within seconds (kickJobSheet), so a
+    // difference left over is a cell read differently now (the reading got better), and the sheet's word must win, not be overwritten.
+    const readAs = e.sheet?.stage;
+    const movedHere = Boolean(readAs) && e.stage !== readAs;
     if (last === undefined || last !== r.status) { // first seen, or changed in the sheet: the sheet's word
       if (r.stage && r.stage !== e.stage) out.moves.push({ key, stage: r.stage, sheetStatus: r.status, applied: r.applied });
-      out.seen.push({ key, sheetStatus: r.status, row: r.row });
-    } else if (write && header.status !== undefined && STATUS_TEXT[e.stage] && r.stage !== e.stage) { // moved in Lumen: written to the sheet
+      out.seen.push({ key, sheetStatus: r.status, row: r.row, stage: r.stage || e.stage });
+    } else if (!movedHere && r.stage && r.stage !== e.stage) { // the same cell, read differently now: the sheet's word, nothing written
+      out.moves.push({ key, stage: r.stage, sheetStatus: r.status, applied: r.applied });
+      out.seen.push({ key, sheetStatus: r.status, row: r.row, stage: r.stage });
+    } else if (write && movedHere && header.status !== undefined && STATUS_TEXT[e.stage] && r.stage !== e.stage) { // moved in Lumen: written to the sheet
       out.cells.push({ range: `${prefix}${col(header.status)}${r.row}`, value: STATUS_TEXT[e.stage] });
       if (header.applied !== undefined && !r.applied && e.submittedAt) out.cells.push({ range: `${prefix}${col(header.applied)}${r.row}`, value: day(e.submittedAt) });
-      out.seen.push({ key, sheetStatus: STATUS_TEXT[e.stage], row: r.row });
-    } else out.seen.push({ key, sheetStatus: r.status, row: r.row });
+      out.seen.push({ key, sheetStatus: STATUS_TEXT[e.stage], row: r.row, stage: e.stage });
+    } else out.seen.push({ key, sheetStatus: r.status, row: r.row, stage: readAs || r.stage || e.stage });
   }
   if (write) {
     const width = Math.max(...Object.values(header), 0) + 1;
@@ -183,13 +198,28 @@ function plan(entries, sheet, { tab = '', write = true, now = Date.now() } = {})
 const ATS = /(^|\.)(myworkday(jobs)?|workday|greenhouse(-mail)?|lever|icims|smartrecruiters|ashbyhq|ashby|workablemail|workable|jobvite|taleo|successfactors|bamboohr|breezy|recruitee|jazzhr|applytojob|hire\.lever|paradox|oraclecloud|ultipro|ukg|eightfold|avature|phenom(people)?|brassring|myworkdaysite|gmail|outlook|hotmail|yahoo|icloud|linkedin|indeed|handshake|joinhandshake)\.(com|io|co|net|org)$/i;
 const KINDS = ['applied', 'interview', 'offer', 'rejected'];
 // One message (from, subject, snippet) -> { kind, company } or null when it isn't about an application.
-function classifyEmail(msg) {
+// Words that put an email in a job search: a rejection or an interview needs one besides its own words, so a newsletter's
+// "unfortunately" or a podcast "interview" isn't filed as one.
+const JOB_WORDS = /\b(applicat\w*|apply(ing)?|applied|candidac\w*|candidates?|positions?|roles?|internships?|interns?|co-?ops?|opportunit\w*|recruit\w*|hiring|jobs?|resume|talent)\b/;
+// A forward ("Fwd: Application received") is about the original sender's email: its subject without the prefix, and the
+// sender from the forwarded header in the snippet when it shows ("From: Acme Careers <jobs@acme.com>"), never the forwarder.
+function unforward(msg) {
+  const subject = clean(msg?.subject, 300);
+  const m = /^\s*(?:(?:fw|fwd)\s*:\s*)+/i.exec(subject);
+  if (!m) return msg;
+  const snippet = clean(msg?.snippet, 600);
+  const from = (/\bfrom:\s*(.+?<[^>]+>)/i.exec(snippet) || [])[1] || '';
+  return { ...msg, subject: subject.slice(m[0].length), from, snippet: snippet.replace(/-+\s*forwarded message\s*-+/i, ' ') };
+}
+function classifyEmail(raw) {
+  const msg = unforward(raw);
   const subject = clean(msg?.subject, 300);
   const text = `${subject} ${clean(msg?.snippet, 600)}`.toLowerCase();
+  const job = JOB_WORDS.test(text);
   let kind = '';
-  if (/unfortunately|not (to )?(be )?mov(e|ing) forward|other candidates|decided (not to|to pursue)|will not be (moving|proceeding|advancing)|regret to inform|position has been filled|not been selected|were not selected|no longer (being )?consider|not a (fit|match) at this time|move forward with (other|another)/.test(text)) kind = 'rejected';
+  if (job && /unfortunately|not (to )?(be )?mov(e|ing) forward|other candidates|decided (not to|to pursue)|will not be (moving|proceeding|advancing)|regret to inform|position has been filled|not been selected|were not selected|no longer (being )?consider|not a (fit|match) at this time|move forward with (other|another)/.test(text)) kind = 'rejected';
   else if (/pleased to (offer|extend)|offer letter|extend (you )?an offer|(job|internship|co-?op) offer\b|offer of employment/.test(text)) kind = 'offer';
-  else if (/\binterview|phone screen|schedule (a|an|your) (call|time|chat|conversation|meeting)|your availability|next (steps|round) (in|of|for) (the|your)|coding (challenge|assessment)|online assessment|hirevue|codesignal|hackerrank|take-?home|invite you to/.test(text)) kind = 'interview';
+  else if (/hirevue|codesignal|hackerrank|coding (challenge|assessment)|online assessment/.test(text) || (job && /\binterview|phone screen|schedule (a|an|your) (call|time|chat|conversation|meeting)|your availability|next (steps|round) (in|of|for) (the|your)|take-?home|invite you to/.test(text))) kind = 'interview';
   else if (/thank(s| you) for (applying|your application|your interest in|submitting)|application (received|submitted|confirmation|has been (received|submitted))|(we('ve| have)|has been) received your application|successfully (applied|submitted)|your application (to|for|at) /.test(text)) kind = 'applied';
   if (!kind) return null;
   return { kind, company: companyOf(msg) };
@@ -237,7 +267,16 @@ function emailSuggestions(entries, messages, done = []) {
   }
   return out;
 }
-// The Gmail search: the last 120 days of mail that looks like an application's (the classifier decides).
-const GMAIL_QUERY = 'newer_than:120d -in:chats (subject:(application OR applying OR applied OR interview OR offer OR candidacy OR "next steps" OR "your interest") OR "thank you for applying" OR "unfortunately")';
+// The Gmail search: the last 120 days of mail that looks like an application's (the classifier decides), not Promotions, Social or Forums.
+const GMAIL_QUERY = 'newer_than:120d -in:chats (subject:(application OR applying OR applied OR interview OR offer OR candidacy OR "next steps" OR "your interest") OR "thank you for applying" OR "unfortunately") -category:promotions -category:social -category:forums';
 
-module.exports = { HEADERS, STATUS_TEXT, KINDS, GMAIL_QUERY, mapHeader, pickTab, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions, colName: col };
+// The message in Gmail on the web, in the account that was searched (authuser picks it when several are signed in). Gmail opens a
+// message by its API id under #all. '' for an id that isn't one.
+function gmailLink(id, account = '') {
+  const mid = String(id || '');
+  if (!/^[0-9a-f]{6,32}$/i.test(mid)) return '';
+  const who = /^[^\s@]+@[^\s@]+$/.test(String(account || '')) ? `?authuser=${encodeURIComponent(account)}` : '';
+  return `https://mail.google.com/mail/${who}#all/${mid}`;
+}
+
+module.exports = { HEADERS, STATUS_TEXT, KINDS, GMAIL_QUERY, gmailLink, mapHeader, pickTab, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions, colName: col };

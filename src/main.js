@@ -13280,7 +13280,8 @@ async function checkJobEmail(projectId) {
     const ids = GV.messageIds(await g.api(`/users/me/messages?${params}`), 60);
     const msgs = (await Promise.all(ids.map((mid) => g.api(GV.messagePath(mid)).catch(() => null)))).map((m) => GV.normalizeMessage(m)).filter(Boolean).map((m) => ({ ...m, from: m.address && m.address !== m.from ? `${m.from} <${m.address}>` : m.from }));
     const p = projectById(projectId);
-    const found = lib.emailSuggestions(automations().applications(projectId), msgs, p?.jobSync?.emailDone || []);
+    const account = (await g.api('/users/me/profile?fields=emailAddress').catch(() => null))?.emailAddress || '';
+    const found = lib.emailSuggestions(automations().applications(projectId), msgs, p?.jobSync?.emailDone || []).map((s) => ({ ...s, link: lib.gmailLink(s.id, account) })); // (a click opens it in Gmail)
     jobEmailFound.set(projectId, found);
     saveJobSync(projectId, { emailAt: Date.now() });
     return { ok: true, suggestions: found, checked: msgs.length };

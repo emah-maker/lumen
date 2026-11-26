@@ -137,5 +137,16 @@ for (const [mode, i, t] of [['light', 0, light], ['dark', 1, { ...light, ...dark
   check('palette: still loaded only with the dashboard (not part of the page\'s start)', !/chat-job-board/.test(src('src/renderer/chat-page.html')));
 }
 
+// ---- layout: the view right under the switcher, long columns folded, emails open in Gmail
+{
+  const js = src('src/renderer/chat-job-board.js');
+  const order = ['actionBar()', "section('view'", "section('attention'", 'progress()'].map((s) => js.indexOf(s, js.indexOf('function render()')));
+  check('layout: the chosen view comes right after the action bar, before Needs attention and Progress', order.every((n) => n > 0) && order[0] < order[1] && order[1] < order[2] && order[2] < order[3], JSON.stringify(order));
+  check('layout: a long column shows a few and a "Show all" button (Closed fewer), remembered per column', /const cap = col === 'closed' \? 3 : 6/.test(js) && /remember\.get\(`open\.\$\{col\}`/.test(js) && /jobs\.showAll/.test(js) && /aria-expanded/.test(js));
+  check('layout: a card is three lines (the date shares the line with the controls)', /el\('div', \{ className: 'jb-card-foot' \}, el\('span', \{ className: 'jb-card-when'/.test(js));
+  check('email: a suggestion with a link opens it in Gmail', /main\.onclick = \(\) => ctx\.openLink\(s\.link\)/.test(js) && /link: lib\.gmailLink\(s\.id, account\)/.test(src('src/main.js')));
+  check('email: Check email scrolls to what it found', /action === 'check-email' && out\.suggestions\?\.length\) root\.querySelector\('\.jb-sug-box'\)\?\.scrollIntoView/.test(js));
+}
+
 console.log(failures ? `\n${failures} failed` : '\nAll job dashboard checks passed.');
 process.exit(failures ? 1 : 0);
