@@ -809,8 +809,11 @@ body.chat-full .setup { text-align: left; }
 .msg { margin: var(--sp-8) 0; }
 /* Long conversations: messages scrolled far out of view aren't laid out or painted. The newest few are always
    rendered (so scroll-to-bottom measures real heights), and the clip margin keeps a reply's copy/regenerate
-   buttons, which sit just outside its box, from being cut off. */
-.messages > .msg:not(:nth-last-child(-n+4)) { content-visibility: auto; contain-intrinsic-size: auto 160px; overflow-clip-margin: 44px; }
+   buttons, which sit just outside its box, from being cut off. Every message has contain-intrinsic-size "auto", the newest ones too, so
+   each keeps a remembered size from the frames it was drawn: a message that slips out of the newest few as the reply adds a block keeps
+   its real height, instead of the 160 px stand-in for a frame (your message drawn 176 px tall, everything under it jumping down and back). */
+.messages > .msg { contain-intrinsic-size: auto 160px; }
+.messages > .msg:not(:nth-last-child(-n+4)) { content-visibility: auto; overflow-clip-margin: 44px; }
 .msg.user {
   margin-left: var(--sp-20); padding: var(--sp-4) var(--sp-6); border-radius: var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl); background: var(--field); white-space: pre-wrap; word-wrap: break-word;
   box-shadow: inset 0 1px 0 var(--highlight); transform-origin: bottom right;
