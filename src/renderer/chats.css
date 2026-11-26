@@ -4,6 +4,10 @@
   padding: 0 var(--sp-10) var(--sp-2); font-size: 11px; color: color-mix(in srgb, var(--muted) 55%, var(--text)); font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* [no shift] Its room is kept while it is empty (a new chat, before the first reply's usage is in): the line appearing as
+   that reply ends would push the whole chat down under the reader's eyes. Empty, it is a blank line of the same height. */
+body:not(.chat-page) .chat-usage[hidden] { display: block !important; visibility: hidden; } /* (over the global [hidden] rule; the chat page has no such line) */
+.chat-usage[hidden]::before { content: "\00a0"; }
 
 #chat-history.active { color: var(--accent); background: var(--accent-soft); }
 
