@@ -8,7 +8,8 @@
 //    pills (two steps at once, then one), the agents' lines (short and very long), their clocks and tool counts (1 to 128) change and an agent
 //    finishes (its row stays, a line high)
 //  - a second agent's row opens smoothly (an animation), not in one jump
-//  - the run ends: the card says Done, and its height changes once, gliding (an animation on the card)
+//  - the run ends: the card says Done and keeps its height while it is on screen (the answer under it does not move); once it is scrolled
+//    out of view it lets the empty room go, and comes back smaller
 // LUMEN_SHOT_DIR=<folder> also saves a picture of the sidebar with the card at work, and done.
 // Hidden: LUMEN_TEST_BACKGROUND=1 (run it through scripts/test/e2e-lock.js).
 require('../helpers/_tmp-cleanup');
@@ -122,7 +123,7 @@ const LONG = 'Reading the second half of the PDF on Gaussian elimination with pa
     check('the churn went through many status lines while working', churn.length > 30 && statuses.size >= 4 && churn.every((s) => s.state === 'working'), JSON.stringify({ n: churn.length, statuses: [...statuses] }));
     check('...and the card kept its height to the pixel all the while', churn.length > 30 && hi - lo < 0.5, JSON.stringify({ lo, hi, jumps: churn.filter((s, i) => i && Math.abs(s.h - churn[i - 1].h) >= 0.5).slice(0, 6) }));
 
-    // ---- 4. the run ends: Done, the height changes once, gliding
+    // ---- 4. the run ends: Done, the height kept while on screen, let go once out of view
     await send(...[...open].map(finish), agent('a2', { state: 'done', endedAt: Date.now(), tools: 120, summary: 'Built the 4.3 deck.' }));
     await app.evaluate(() => global.__release?.());
     v = await waitFor(async () => { const x = await card(); return x?.state === 'completed' ? x : null; }, 15000);
@@ -132,7 +133,27 @@ const LONG = 'Reading the second half of the PDF on Gaussian elimination with pa
     const after = await ui.evaluate(() => { window.__steady.done = true; return window.__steady.samples.filter((s) => s.phase === 'end'); });
     const done = after.filter((s) => s.state === 'completed');
     const first = done[0];
-    check('...its height glides to the new one (an animation on the card), it does not snap', Boolean(first) && (Math.abs(first.h - after.filter((s) => s.state !== 'completed').at(-1).h) < 0.5 || done.some((s) => s.cardAnims > 0)), JSON.stringify(after.slice(-8)));
+    const lastWorking = after.filter((s) => s.state !== 'completed').at(-1);
+    check('...it keeps its height to the pixel while on screen (what is under it stays put)', Boolean(first && lastWorking) && done.every((s) => Math.abs(s.h - lastWorking.h) < 0.5), JSON.stringify({ working: lastWorking?.h, done: [...new Set(done.map((s) => s.h))] }));
+    // Scrolled out of view (room under it, the list at its foot): it lets the room go, and what is on screen does not move.
+    const gone = await ui.evaluate(async () => {
+      const box = document.getElementById('messages');
+      const c = [...box.querySelectorAll('.act-card')].at(-1);
+      const pad = Object.assign(document.createElement('div'), { className: 'nojump-pad' });
+      pad.style.height = '4000px';
+      box.append(pad);
+      box.scrollTop = box.scrollHeight;
+      const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+      await frame();
+      const y0 = pad.getBoundingClientRect().top; // (the frame it scrolled: the card still keeps its room, the observer has not run)
+      const keptAtFirst = c.dataset.kept || '';
+      let padMoved = 0;
+      for (let i = 0; i < 40; i++) { await frame(); padMoved = Math.max(padMoved, Math.abs(pad.getBoundingClientRect().top - y0)); }
+      const out = { keptAtFirst, kept: c.dataset.kept || '', min: c.style.minHeight, h: c.getBoundingClientRect().height, padMoved: Math.round(padMoved * 10) / 10 };
+      pad.remove();
+      return out;
+    });
+    check('...scrolled out of view, it lets the room go (smaller than it was), with nothing on screen moving', gone.keptAtFirst === '1' && !gone.kept && !gone.min && gone.h < lastWorking.h - 1 && gone.padMoved <= 1, JSON.stringify({ ...gone, was: lastWorking?.h }));
     check('no page errors', errors.length === 0, errors.join(' | '));
   } catch (err) {
     failures++;

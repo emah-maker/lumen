@@ -4,7 +4,8 @@
 // 160 px stand-in height (styles.css .messages > .msg): the user's two-line message drew 176 px tall, everything under it 122 px lower.
 //  - every frame (animations off: only layout counts), each element that was in the chat the frame before is where it was: the user's
 //    message, the card and its rows, the words already said. Only the working line (always last) moves as things are added above it.
-//  - the run's end is not checked here: the card settling once is live-card-steady.js's.
+//  - the run ends: the card says Done and keeps its height while on screen (step-ui.js keep), so the answer under it and the user's message
+//    do not move either (inside the card, its rows settle; that is the card's own, live-card-steady.js)
 // Real Lumen with a model held open by the test; the reply's events are sent into the window (main's 'agent:event', with the run's id).
 // Hidden: LUMEN_TEST_BACKGROUND=1, a temp profile. $LUMEN_ROOT runs another checkout (to see the check fail on the old code).
 require('../helpers/_tmp-cleanup');
@@ -68,10 +69,11 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
           const r = e.getBoundingClientRect();
           if (!r.height) continue;
           let id = ids.get(e); if (!id) { id = next++; ids.set(e, id); }
-          now.set(id, { y: r.top - top, x: r.left, what: `${e.tagName.toLowerCase()}.${[...e.classList].slice(0, 2).join('.')} "${e.textContent.trim().slice(0, 30)}"` });
+          now.set(id, { inCard: Boolean(e.closest('.act-card')) && !e.matches('.act-card'), y: r.top - top, x: r.left, what: `${e.tagName.toLowerCase()}.${[...e.classList].slice(0, 2).join('.')} "${e.textContent.trim().slice(0, 30)}"` });
         }
         for (const [id, p] of prev) {
           const c = now.get(id);
+          if (c && out.phase === 'the run ends' && p.inCard) continue; // (the card's own rows settle at the end)
           if (c && (Math.abs(c.y - p.y) > 1 || Math.abs(c.x - p.x) > 1)) out.moves.push(`${out.phase}: ${c.what} moved ${Math.round(c.x - p.x)},${Math.round(c.y - p.y)}`);
         }
         prev = now;
@@ -103,12 +105,14 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
     await sleep(200);
     await phase('the answer'); await stream('Here is how they compare:\n\n- **Dell XPS 14**: best screen, 9 hours, $1,699.\n- **ThinkPad X1 Carbon**: best keyboard, 13 hours, $1,549.\n\nI would get the **ThinkPad**.');
     await sleep(400);
+    await phase('the run ends');
+    await app.evaluate(() => global.__release?.());
+    await waitFor(() => ui.evaluate(() => document.querySelector('#messages .act-card')?.dataset.state === 'completed'), 15000);
+    await sleep(800);
     const r = await ui.evaluate(() => { window.__jump.done = true; return { moves: window.__jump.moves, frames: window.__jump.frames, users: document.querySelectorAll('#messages .msg.user').length, card: Boolean(document.querySelector('#messages .act-card')) }; });
     check('the run drew its card under the user\'s message (and the frames were watched)', r.card && r.users === 1 && r.frames > 60, JSON.stringify({ card: r.card, users: r.users, frames: r.frames }));
     const moved = r.moves.filter((m) => !/^[^:]+: \S*\.working/.test(m));
-    check('nothing already in the chat moved as the reply added words, steps and thinking', moved.length === 0, `${moved.length} moves: ${moved.slice(0, 12).join(' | ')}`);
-    await app.evaluate(() => global.__release?.());
-    await sleep(500);
+    check('nothing already in the chat moved as the reply added words, steps and thinking, nor when it ended', moved.length === 0, `${moved.length} moves: ${moved.slice(0, 12).join(' | ')}`);
     check('no page errors', errors.length === 0, errors.join(' | '));
   } finally {
     await app.close().catch(() => {});
