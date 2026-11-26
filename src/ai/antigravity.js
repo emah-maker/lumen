@@ -181,10 +181,7 @@ const sidebarDirFor = (userData) => path.join(userData, 'antigravity-sidebar');
 //    copied from the main home before each run when the main one is newer, and back after the run when agy refreshed it.
 // A chat's home is removed when the chat is deleted (removeChatHome), and homes of chats that no longer exist are pruned
 // (pruneChatHomes).
-const chatsDirFor = (userData) => path.join(userData, 'antigravity-chats');
-const SAFE_KEY = /^[A-Za-z0-9_-]{1,64}$/;
-const chatKey = (chatId) => (SAFE_KEY.test(String(chatId)) ? String(chatId) : crypto.createHash('sha256').update(String(chatId)).digest('hex').slice(0, 32));
-const chatHomeFor = (userData, chatId) => (chatId ? path.join(chatsDirFor(userData), chatKey(chatId)) : null);
+const { chatsDirFor, chatKey, chatHomeFor, removeChatHome, pruneChatHomes } = require('./cli-utils').chatHomes('antigravity-chats');
 const SAFE_SESSION = /^[A-Za-z0-9_.-]{1,128}$/;
 // Under .gemini: what a new chat home does not take from the main home (forward slashes, relative to .gemini).
 const CHAT_SEED_SKIP = new Set(['config/mcp_config.json', 'antigravity-cli/log', 'antigravity-cli/crashes', 'antigravity-cli/updater', 'antigravity-cli/cli.log', 'antigravity-cli/history.jsonl', 'antigravity-cli/conversations', 'antigravity-cli/brain', 'antigravity-cli/implicit', 'antigravity-cli/conversation_summaries.db', 'antigravity-cli/conversation_summaries.db-wal', 'antigravity-cli/conversation_summaries.db-shm']);
@@ -249,23 +246,6 @@ async function prepareChatHome({ mainHome, home, sessionId = null }) {
 // After a run: a sign-in file agy refreshed in the chat's home goes back to the main home (the next new chat starts from it).
 async function returnAuth({ mainHome, home }) {
   for (const f of AUTH_FILES) await copyIfNewer(path.join(home, '.gemini', f), path.join(mainHome, '.gemini', f));
-}
-
-// A deleted chat's home goes with it.
-async function removeChatHome(userData, chatId) {
-  const home = chatHomeFor(userData, chatId);
-  if (!home) return false;
-  try { await fs.promises.rm(home, { recursive: true, force: true, maxRetries: 3 }); return true; } catch { return false; }
-}
-
-// Homes of chats not in `keep` (chat ids that still exist or are running) are removed. Resolves the keys removed.
-async function pruneChatHomes(userData, keep) {
-  const kept = new Set([...(keep || [])].filter(Boolean).map(chatKey));
-  let names = [];
-  try { names = await fs.promises.readdir(chatsDirFor(userData)); } catch { return []; }
-  const gone = names.filter((n) => !kept.has(n));
-  for (const n of gone) { try { await fs.promises.rm(path.join(chatsDirFor(userData), n), { recursive: true, force: true, maxRetries: 3 }); } catch { /* in use: next time */ } }
-  return gone;
 }
 
 // The stdio form of the same file (LUMEN_AGY_MCP=stdio): Lumen's bridge process, which names this run by its tag.

@@ -1437,7 +1437,6 @@ function evidenceOf(d) {
   const hint = d.siteHint && !knowledge.BROAD_HINTS.has(d.siteHint) ? d.siteHint : '';
   return (d.evidence = { words, concepts, places, site, hint });
 }
-const CJK_KEY = /[^\u0000-ɏ]/;
 // Every way two or more of the tabs c (doc indices) hold something in common: [{ holders: [doc index] }].
 function supportsOf(c, docs) {
   const ev = c.map((i) => evidenceOf(docs[i]));

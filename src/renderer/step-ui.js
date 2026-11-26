@@ -641,34 +641,6 @@
     if (card.surface === 'browser' && card.tab) { Promise.resolve(api?.openPreview?.({ tabId: card.tab.tabId ?? null, url: card.tab.url || '' })).catch(() => {}); return; }
     if (card.file && card.surface !== 'browser') { const f = card.file; Promise.resolve(api?.files?.open?.(f.id, f.canTab ? 'tab' : f.canSystem ? 'system' : 'reveal')).catch(() => {}); }
   }
-  function setThumb(card, src) {
-    if (!src) return;
-    card.siteMode = false;
-    card.shot.dataset.mode = 'frame';
-    if (card.img.getAttribute('src') !== src) swapFrame(card, src);
-    if (card.shot.hidden) { card.shot.hidden = false; card.img.alt = tr('card.thumb.alt'); }
-  }
-  // A new frame is decoded off to the side and swapped in when it is ready, so a live stream (about 12 a second) never makes the card or the chat
-  // wait on a decode; frames that arrive while one decodes are dropped but the newest. The first picture (nothing shown yet) goes in at once.
-  function swapFrame(card, src) {
-    if (!card.img.getAttribute('src') || typeof Image !== 'function') { card.img.src = src; return; }
-    card.nextSrc = src;
-    if (card.decoding) return;
-    const next = () => {
-      const want = card.nextSrc;
-      card.nextSrc = null;
-      if (!want) { card.decoding = false; return; }
-      card.decoding = true;
-      const g = card.frameGen || 0;
-      const pic = new Image();
-      pic.src = want;
-      Promise.resolve(pic.decode?.()).catch(() => {}).then(() => {
-        if ((card.frameGen || 0) === g && card.img.getAttribute('src') !== want) card.img.src = want;
-        next();
-      });
-    };
-    next();
-  }
   const dropFrames = (card) => { card.frameGen = (card.frameGen || 0) + 1; card.nextSrc = null; };
   // The page preview of a Word card (when Word's own window cannot be shown): the paragraphs around the last change, drawn as a small page; text only.
   function setPage(card, page) {
@@ -701,31 +673,6 @@
     if (card.img2.getAttribute('src') !== src) card.img2.src = src;
     card.shot2.hidden = false;
     if (!card.img2.alt) card.img2.alt = tr('card.thumb.alt2');
-  }
-  // The AI moved to another tab: the old picture must not stay under the new tab's name. A blank (the picture comes in a moment).
-  function setPending(card) {
-    card.siteMode = false;
-    if (card.shot.hidden) return;
-    card.shot.dataset.mode = 'pending';
-    dropFrames(card);
-    card.img.removeAttribute('src');
-  }
-  // The tab only gave blank (one-colour) frames, e.g. a viewer drawn on a canvas in a hidden view: never a solid rectangle. The last good picture
-  // of the same tab stays; otherwise "Reading <name>" with the tab's icon, while the tab's chip stays.
-  function setBlank(card, event) {
-    card.siteMode = false;
-    if (card.shot.dataset.mode === 'frame' && card.img.getAttribute('src') && card.goodTab === (event.tabId ?? null)) return;
-    card.shot.hidden = false;
-    card.shot.dataset.mode = 'site';
-    dropFrames(card);
-    card.img.removeAttribute('src');
-    let name = event.title || '';
-    if (!name) { try { name = new URL(event.url).host; } catch { /* none */ } }
-    card.siteName.textContent = tr('card.site.reading', { site: name });
-    const icon = typeof event.favicon === 'string' ? event.favicon : '';
-    card.siteIco.hidden = !icon;
-    if (icon) card.siteIco.src = icon; else card.siteIco.removeAttribute('src');
-    card.shot.style.maxWidth = '';
   }
   // The tab the AI works in: "Reading <name>" with the tab's icon (a click goes to the tab), never a picture of it. The name follows the tab.
   function setTabRow(card, event) {

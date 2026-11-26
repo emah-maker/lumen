@@ -279,4 +279,4 @@ function gmailLink(id, account = '') {
   return `https://mail.google.com/mail/${who}#all/${mid}`;
 }
 
-module.exports = { HEADERS, STATUS_TEXT, KINDS, GMAIL_QUERY, gmailLink, mapHeader, pickTab, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions, colName: col };
+module.exports = { HEADERS, STATUS_TEXT, KINDS, GMAIL_QUERY, gmailLink, mapHeader, pickTab, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions };

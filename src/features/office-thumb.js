@@ -28,7 +28,6 @@ const MEMORY_MAX = 60;
 const DISK_MAX = 300;
 
 const extOf = (file) => { const m = /\.([A-Za-z0-9]{1,6})$/.exec(String(file)); return m ? m[1].toLowerCase() : ''; };
-const isOfficeFile = (file) => Boolean(KIND_OF[extOf(file)]);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Waits for the viewer page to say it is ready, its pictures to load and two frames to paint; null on timeout.
@@ -171,4 +170,4 @@ function create({ BrowserWindow, cacheDir, officeRender, slidesRender, encrypt, 
   return { thumbOf, close: closeWindow, stats: () => ({ memory: memory.size, pending: pending.size, window: Boolean(win && !win.isDestroyed()) }) };
 }
 
-module.exports = { create, isOfficeFile, extOf, SIZES };
+module.exports = { create, extOf, SIZES };

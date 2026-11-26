@@ -458,14 +458,6 @@
     if (why && why.id === toId) whyChip(g.sid, to, why.reason);
     window.widgetAct(toId, 'cycle');
   }
-  // Met the end of the stack: the end dot pulses so the resistance reads as deliberate, not stuck.
-  function pulseEnd(card) {
-    if (!card) return;
-    flashRail(card);
-    card.classList.add('rail-end');
-    clearTimeout(card._endT);
-    card._endT = setTimeout(() => card.classList.remove('rail-end'), 650);
-  }
   // The rail shows fully for a moment (iOS shows its page indicator when the page changes, then lets it fade).
   function flashRail(card) {
     if (!card) return;

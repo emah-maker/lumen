@@ -7,7 +7,6 @@
 const PER_TAB_CHARS = 6000;
 const TOTAL_CHARS = 40000;
 const MAX_TABS = 20; // most tabs one message or one read_tabs call takes
-const CONFIRM_ALL_OVER = 8; // "@all tabs" with more tabs than this asks once per chat (renderer)
 const MAX_TITLE = 80;
 
 const isReadableUrl = (url) => /^(https?|file):/i.test(String(url || ''));
@@ -95,4 +94,4 @@ function summaryLine(tabs) {
   return { read: read.length, other, names };
 }
 
-module.exports = { PER_TAB_CHARS, TOTAL_CHARS, MAX_TABS, CONFIRM_ALL_OVER, isReadableUrl, hostOf, ineligible, perTabBudget, labelOf, cleanIds, renderTabs, messageBlock, summaryLine };
+module.exports = { PER_TAB_CHARS, TOTAL_CHARS, MAX_TABS, isReadableUrl, hostOf, ineligible, perTabBudget, labelOf, cleanIds, renderTabs, messageBlock, summaryLine };

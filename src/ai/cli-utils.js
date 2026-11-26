@@ -311,4 +311,30 @@ function fullAccessRejected(text, { name, setting }) {
   return { text: `${name} didn't accept the options Lumen uses to give it full access to this computer (${String(text).trim().split('\n')[0].slice(0, 160)}). Nothing ran. Update ${name}, or turn off "${setting}" in Settings → AI.` };
 }
 
-module.exports = { installRoot, insideInstall, leaveInstallDir, testBlocksRealCli, spawn, spawnSync, execFile, execFileSync, hiddenOptions, isTransient, retryProbe, probe, exists, startChild, startFailure, describeStart, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected };
+// Per-chat homes of a CLI engine (codex.js, antigravity.js): <userData>/<dirName>/<key>, one per chat. The key is the chat id when it is a
+// safe folder name, else a hash of it. A deleted chat's home goes with it (removeChatHome); homes of chats not in `keep` are pruned
+// (pruneChatHomes, resolving the keys removed). A folder still in use stays until next time.
+function chatHomes(dirName) {
+  const path = require('path');
+  const SAFE_KEY = /^[A-Za-z0-9_-]{1,64}$/;
+  const chatsDirFor = (userData) => path.join(userData, dirName);
+  const chatKey = (chatId) => (SAFE_KEY.test(String(chatId)) ? String(chatId) : require('crypto').createHash('sha256').update(String(chatId)).digest('hex').slice(0, 32));
+  const chatHomeFor = (userData, chatId) => (chatId ? path.join(chatsDirFor(userData), chatKey(chatId)) : null);
+  const rm = (dir) => fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 });
+  async function removeChatHome(userData, chatId) {
+    const home = chatHomeFor(userData, chatId);
+    if (!home) return false;
+    try { await rm(home); return true; } catch { return false; }
+  }
+  async function pruneChatHomes(userData, keep) {
+    const kept = new Set([...(keep || [])].filter(Boolean).map(chatKey));
+    let names;
+    try { names = await fs.promises.readdir(chatsDirFor(userData)); } catch { return []; }
+    const gone = names.filter((n) => !kept.has(n));
+    for (const n of gone) { try { await rm(path.join(chatsDirFor(userData), n)); } catch { /* in use: next time */ } }
+    return gone;
+  }
+  return { chatsDirFor, chatKey, chatHomeFor, removeChatHome, pruneChatHomes };
+}
+
+module.exports = { installRoot, insideInstall, leaveInstallDir, testBlocksRealCli, spawn, spawnSync, execFile, execFileSync, hiddenOptions, isTransient, retryProbe, probe, exists, startChild, startFailure, describeStart, lookup, killTree, engineModel, validModel, usageOf, perTurnResult, FLAG_REJECTED, fullAccessRejected, chatHomes };

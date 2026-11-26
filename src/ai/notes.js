@@ -18,7 +18,6 @@ const MAX_APPEND = 250000; // one add
 const MAX_IMAGE = 8 * 1024 * 1024;
 const ID_RE = /^[a-f0-9]{8}$/;
 const IMAGE_RE = /^[a-f0-9]{16}\.(?:png|jpg|gif|webp)$/;
-const IMAGE_LINE = /^!\[([^\]\n]*)\]\(note-image:([a-f0-9]{16}\.(?:png|jpg|gif|webp))\)\s*$/;
 const MEDIA_KEEP_MS = 24 * 3600 * 1000; // an unreferenced picture is kept this long (an undone delete, a note just edited)
 
 // Text a note keeps: no control characters but tab and newline, one kind of line end, cut to a size.
@@ -228,4 +227,4 @@ function runTool(input, ctx) {
 }
 const stepLabel = (input) => ({ list: 'Looking at your notes', search: 'Searching your notes', read: 'Reading a note', append: 'Adding to your notes', create: 'Writing a new note' }[input?.action] || 'Using your notes');
 
-module.exports = { createNotesStore, runTool, stepLabel, titleOf, snippetOf, mergeAppended, clean, IMAGE_LINE, MAX_TEXT, MAX_NOTES, MAX_APPEND };
+module.exports = { createNotesStore, runTool, stepLabel, titleOf, snippetOf, mergeAppended, clean, MAX_TEXT, MAX_NOTES, MAX_APPEND };
