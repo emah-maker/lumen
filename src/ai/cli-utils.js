@@ -76,7 +76,7 @@ const REAL_CLI = /^(claude|codex|grok|agy|ant|antigravity|gh)$/i;
 function testBlocksRealCli(file) {
   if (!process.versions.electron || !process.defaultApp || process.env.CLAUDE_BROWSER_TEST !== '1' || process.env.LUMEN_TEST_REAL_CLIS === '1') return false;
   const path = require('path');
-  const name = path.basename(String(file)).replace(/.(exe|cmd|bat|ps1)$/i, '');
+  const name = path.basename(String(file)).replace(/\.(exe|cmd|bat|ps1)$/i, '');
   if (!REAL_CLI.test(name)) return false;
   const tmp = path.resolve(require('os').tmpdir()).toLowerCase();
   const inTmp = (p) => path.resolve(p).toLowerCase().startsWith(tmp + path.sep);

@@ -18,6 +18,9 @@ const { findClaude } = require('../../src/ai/claude-code');
   const cleanEnv = () => {
     const env = { ...process.env, CLAUDE_BROWSER_TEST: '1', ANTHROPIC_CONFIG_DIR: fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-setup-ant-')) };
     for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY']) delete env[k];
+    // No CLI engine is "installed" either, whatever this machine has on its PATH (a real claude here made nothing-connected connected).
+    const none = (n) => path.join(os.tmpdir(), `lumen-setup-no-such-${n}-binary`);
+    Object.assign(env, { LUMEN_CLAUDE_BIN: none('claude'), LUMEN_GROK_BIN: none('grok'), LUMEN_AGY_BIN: none('agy'), LUMEN_CODEX_BIN: none('codex') });
     return env;
   };
 
@@ -40,13 +43,16 @@ const { findClaude } = require('../../src/ai/claude-code');
     const dom = await ui.evaluate(() => ({
       pickerHidden: document.querySelector('.model-picker')?.hidden,
       setupHidden: document.getElementById('setup').hidden,
-      options: [...document.querySelectorAll('.setup-option .setup-name')].map((e) => e.textContent),
-      ccDisabled: document.getElementById('setup-claude-code').disabled,
+      // the options shown (Grok Build, Antigravity and Codex are offered only once found on this computer: chat-core.js refreshSetup)
+      options: [...document.querySelectorAll('.setup-option')].filter((o) => !o.hidden).map((o) => o.querySelector('.setup-name')?.textContent),
+      ccMissing: document.getElementById('setup-claude-code').classList.contains('missing'),
+      ccGet: !document.getElementById('setup-claude-code-get')?.hidden,
     }));
     check('picker is hidden, not just empty', dom.pickerHidden === true, JSON.stringify(dom));
     check('setup card is visible', dom.setupHidden === false, JSON.stringify(dom));
-    check('three equal options: API key, OpenRouter, Claude Code', JSON.stringify(dom.options) === JSON.stringify(['Add an API key', 'Sign in with OpenRouter', 'Use your own Claude Code']), JSON.stringify(dom.options));
-    check('Claude Code option is disabled (not installed here)', dom.ccDisabled === true, dom.ccDisabled);
+    check('three equal options: Claude Code, OpenRouter, API key (no CLI engine found here)', JSON.stringify(dom.options) === JSON.stringify(['Use your own Claude Code', 'Sign in with OpenRouter', 'Add an API key']), JSON.stringify(dom.options));
+    // Not installed: still clickable (a click looks again), marked missing, with the link to get it.
+    check('Claude Code option is marked missing, with the link to get it (not installed here)', dom.ccMissing === true && dom.ccGet === true, JSON.stringify(dom));
 
     check('no UI errors (nothing connected)', errors.length === 0, errors.join('; '));
     await app.close();
@@ -66,9 +72,10 @@ const { findClaude } = require('../../src/ai/claude-code');
 
     let s = await ui.evaluate(() => window.assistant.getSettings());
     for (let i = 0; i < 30 && s.models.length === 0; i++) { await sleep(300); s = await ui.evaluate(() => window.assistant.getSettings()); }
-    check('only the connected provider\'s models are listed', s.models.length > 0 && s.models.every((m) => m.id.startsWith('openai:')), JSON.stringify(s.models));
-    check('OpenAI defaults used (the fake key fails, falls back)', s.models.map((m) => m.id).sort().join() === ['openai:gpt-5.6', 'openai:gpt-5.6-mini'].sort().join(), JSON.stringify(s.models));
-    check('a connected model is selected and ready', s.model?.startsWith('openai:') && s.ready === true, JSON.stringify(s));
+    const real = s.models.filter((m) => !m.auto); // (Auto, which picks among the connected models, is listed first once any is connected)
+    check('only the connected provider\'s models are listed (beside Auto)', real.length > 0 && real.every((m) => m.id.startsWith('openai:')) && s.models.filter((m) => m.auto).every((m) => m.id === 'auto'), JSON.stringify(s.models.map((m) => m.id)));
+    check('OpenAI defaults used (the fake key fails, falls back)', real.map((m) => m.id).sort().join() === ['openai:gpt-5.6', 'openai:gpt-5.6-mini'].sort().join(), JSON.stringify(real.map((m) => m.id)));
+    check('a connected model is selected and ready', (s.model === 'auto' || s.model?.startsWith('openai:')) && s.ready === true, JSON.stringify({ model: s.model, ready: s.ready }));
 
     const dom = await ui.evaluate(() => ({
       pickerHidden: document.querySelector('.model-picker')?.hidden,
@@ -87,16 +94,17 @@ const { findClaude } = require('../../src/ai/claude-code');
     if (!bin) {
       console.log('SKIP  Claude Code connect flow: the claude CLI is not installed on this machine');
     } else {
-      const app = await electron.launch({ args: [path.join(__dirname, '..', '..')], env: cleanEnv() });
+      // The real CLI on purpose (this scenario is why setup.js is a manual suite): its path, and the test's real-CLI block lifted.
+      const app = await electron.launch({ args: [path.join(__dirname, '..', '..')], env: { ...cleanEnv(), LUMEN_CLAUDE_BIN: bin, LUMEN_TEST_REAL_CLIS: '1' } });
       const ui = await app.firstWindow();
       const errors = [];
       ui.on('pageerror', (e) => errors.push(e.message));
       await ui.waitForSelector('.tab');
       await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
 
-      let disabled = true;
-      for (let i = 0; i < 30 && disabled; i++) { await sleep(300); disabled = await ui.evaluate(() => document.getElementById('setup-claude-code').disabled); }
-      check('Claude Code option becomes enabled once detected', disabled === false, 'still disabled after 9s');
+      let missing = true;
+      for (let i = 0; i < 30 && missing; i++) { await sleep(300); missing = await ui.evaluate(() => document.getElementById('setup-claude-code').classList.contains('missing')); }
+      check('Claude Code option is no longer marked missing once detected', missing === false, 'still missing after 9s');
       // With Claude Code the only thing connected in this env, main already made it the fallback
       // model the moment it was detected (same as OpenAI alone in scenario 2) — so the setup card
       // may already be hidden here. The click still has to work regardless (a real click, if the
