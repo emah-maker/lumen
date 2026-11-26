@@ -278,6 +278,9 @@ function stats(entries, now = Date.now()) {
     interviews: applied.filter((e) => reached(e, 'interview', 'offer')).length,
     offers: applied.filter((e) => reached(e, 'offer')).length,
     rejections: applied.filter((e) => e.stage === 'rejected').length,
+    waiting: applied.filter((e) => e.stage === 'applied').length, // (applied, nothing back yet)
+    closed: all.filter((e) => e.stage === 'withdrawn').length, // (withdrawn, skipped, or the posting closed: applied to or not)
+    answered: waits.length, // (how many answers have a date: what the average is of)
     avgDays: waits.length ? round1(waits.reduce((a, b) => a + b, 0) / waits.length) : null,
     weeks,
   };

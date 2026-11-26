@@ -84,6 +84,37 @@ function parseDate(text, now = Date.now()) {
   return 0;
 }
 
+// The first date in a cell's text ("Applied Nov 6", "Rejected Nov 4", "SUBMITTED Nov 23 (#36) via …", "confirmed Oct 23, 2026") -> ms, or 0.
+const MONTH_DATE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.? (\d{1,2})(?:st|nd|rd|th)?\b(?:,? (\d{4})\b)?/i;
+function dateIn(text, now = Date.now()) {
+  const s = clean(text, 300);
+  const m = MONTH_DATE.exec(s);
+  if (m) return parseDate(`${m[1]} ${m[2]}${m[3] ? ` ${m[3]}` : ''}`, now);
+  const n = /\b(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/.exec(s);
+  return n ? parseDate(n[1], now) : 0;
+}
+// When a row says it was applied to, and when the answer came, from its own cells (the sheet is the truth; nothing is made up):
+//   applied:  the Date Applied cell, else the Status cell's date when it says applied ("Applied Nov 6"), else a Notes "Submitted Nov 5" /
+//             "Applied Nov 6" / "SUBMITTED Nov 23"
+//   answered: the Status cell's date when it is an answer ("Rejected Nov 4", "Interview Dec 2", "Offer Dec 9")
+function rowDates({ applied = '', status = '', notes = '', stage = '' }, now = Date.now()) {
+  const lead = clean(status, 120).split(/\s*(?:[([—–;]|\s-\s)/)[0];
+  const said = dateIn(lead, now);
+  const fromNotes = (/\b(?:submitted|applied)\b[^.;]{0,12}?((?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2}(?:,? \d{4})?|\d{1,2}\/\d{1,2}\/\d{2,4})/i.exec(clean(notes, 300)) || [])[1] || '';
+  return {
+    applied: parseDate(applied, now) || (stage === 'applied' ? said : 0) || (stage !== 'saved' && fromNotes ? dateIn(fromNotes, now) : 0),
+    answered: ['interview', 'offer', 'rejected'].includes(stage) ? said : 0,
+  };
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// What the tracker writes in a Status cell: the stage's word and, when it knows one, the day, the way the sheet says it ("Rejected Nov 4").
+function statusText(stage, at = 0) {
+  const word = STATUS_TEXT[stage] || '';
+  if (!word || stage === 'saved' || !at) return word;
+  const d = new Date(at);
+  return `${word} ${MONTHS[d.getMonth()]} ${d.getDate()}`;
+}
+
 // The sheet's values (rows of cells, the header first) -> { header, rows: [{ row (1-based, as the sheet numbers it), company, role, location,
 // url, status, stage, applied, notes }] }. A row with neither a company nor an address is skipped.
 function readSheet(values, now = Date.now()) {
@@ -98,7 +129,10 @@ function readSheet(values, now = Date.now()) {
     const url = auto.webUrl(cell(r, 'url')) || '';
     if (!company && !url) return;
     const status = cell(r, 'status');
-    rows.push({ row: i + 2, company, role: cell(r, 'role'), location: cell(r, 'location'), url, status, stage: stageFromStatus(status), applied: parseDate(cell(r, 'applied'), now), notes: cell(r, 'notes') });
+    const stage = stageFromStatus(status);
+    const notes = cell(r, 'notes');
+    const { applied, answered } = rowDates({ applied: cell(r, 'applied'), status, notes, stage }, now);
+    rows.push({ row: i + 2, company, role: cell(r, 'role'), location: cell(r, 'location'), url, status, stage, applied, answered, notes });
   });
   return { header, rows };
 }
@@ -137,7 +171,7 @@ const day = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getD
 // but the tracker's stage isn't what it says -> the tracker's is written. A Status the tracker can't read ("Ask Sam") moves nothing and is
 // never overwritten unless the stage changed in Lumen.
 function plan(entries, sheet, { tab = '', write = true, now = Date.now() } = {}) {
-  const out = { add: [], moves: [], seen: [], cells: [], append: [] };
+  const out = { add: [], moves: [], seen: [], cells: [], append: [], dates: [] };
   const { header, rows } = sheet;
   const prefix = tab ? `'${String(tab).replace(/'/g, "''")}'!` : '';
   const used = new Set();
@@ -149,7 +183,14 @@ function plan(entries, sheet, { tab = '', write = true, now = Date.now() } = {})
       if (!made.ok) continue;
       const entry = made.entry;
       entry.automation = 'Google Sheet';
-      if (r.stage !== 'saved') { entry.submittedAt = r.applied || now; entry.history = [{ stage: 'applied', at: entry.submittedAt }, ...(r.stage !== 'applied' ? [{ stage: r.stage, at: now }] : [])]; if (['interview', 'offer', 'rejected'].includes(r.stage)) entry.respondedAt = now; }
+      // (its dates are the sheet's: an answer with no day in the sheet has none here either, so the average wait isn't made of import times)
+      if (r.stage === 'withdrawn' && !r.applied) { entry.submittedAt = 0; delete entry.respondedAt; } // (closed or skipped, never applied to as far as the sheet says: not an application)
+      else if (r.stage !== 'saved') {
+        entry.submittedAt = entry.at = r.applied || (r.answered && r.answered <= now ? r.answered : now);
+        entry.history = [{ stage: 'applied', at: entry.submittedAt }, ...(r.stage !== 'applied' ? [{ stage: r.stage, at: r.answered || now }] : [])];
+        delete entry.respondedAt;
+        if (r.answered && ['interview', 'offer', 'rejected'].includes(r.stage)) entry.respondedAt = Math.max(r.answered, entry.submittedAt);
+      }
       entry.sheet = { status: r.status, row: r.row, stage: r.stage };
       out.add.push(entry);
       continue;
@@ -163,16 +204,30 @@ function plan(entries, sheet, { tab = '', write = true, now = Date.now() } = {})
     const readAs = e.sheet?.stage;
     const movedHere = Boolean(readAs) && e.stage !== readAs;
     if (last === undefined || last !== r.status) { // first seen, or changed in the sheet: the sheet's word
-      if (r.stage && r.stage !== e.stage) out.moves.push({ key, stage: r.stage, sheetStatus: r.status, applied: r.applied });
+      if (r.stage && r.stage !== e.stage) out.moves.push({ key, stage: r.stage, sheetStatus: r.status, applied: r.applied, answered: r.answered });
       out.seen.push({ key, sheetStatus: r.status, row: r.row, stage: r.stage || e.stage });
     } else if (!movedHere && r.stage && r.stage !== e.stage) { // the same cell, read differently now: the sheet's word, nothing written
-      out.moves.push({ key, stage: r.stage, sheetStatus: r.status, applied: r.applied });
+      out.moves.push({ key, stage: r.stage, sheetStatus: r.status, applied: r.applied, answered: r.answered });
       out.seen.push({ key, sheetStatus: r.status, row: r.row, stage: r.stage });
     } else if (write && movedHere && header.status !== undefined && STATUS_TEXT[e.stage] && r.stage !== e.stage) { // moved in Lumen: written to the sheet
-      out.cells.push({ range: `${prefix}${col(header.status)}${r.row}`, value: STATUS_TEXT[e.stage] });
+      const word = statusText(e.stage, e.stage === 'applied' ? e.submittedAt : ['interview', 'offer', 'rejected'].includes(e.stage) ? e.respondedAt || e.updatedAt : e.updatedAt);
+      out.cells.push({ range: `${prefix}${col(header.status)}${r.row}`, value: word, status: true });
       if (header.applied !== undefined && !r.applied && e.submittedAt) out.cells.push({ range: `${prefix}${col(header.applied)}${r.row}`, value: day(e.submittedAt) });
-      out.seen.push({ key, sheetStatus: STATUS_TEXT[e.stage], row: r.row, stage: e.stage });
+      out.seen.push({ key, sheetStatus: word, row: r.row, stage: e.stage });
     } else out.seen.push({ key, sheetStatus: r.status, row: r.row, stage: readAs || r.stage || e.stage });
+    // The sheet's days win over the ones Lumen guessed (the time of a sync, before the sheet's dates were read): Date Applied, or the
+    // Status cell's "Applied Nov 6"; an answer's "Rejected Nov 4" when the entry is (or is being moved) at that stage.
+    const moved = out.moves.some((m) => m.key === key);
+    const stageNow = moved ? r.stage : e.stage;
+    const fix = {};
+    if (r.applied && stageNow !== 'saved' && e.submittedAt !== r.applied) fix.submittedAt = r.applied;
+    if (r.answered && stageNow === r.stage && e.respondedAt !== r.answered) fix.respondedAt = r.answered;
+    // A closed row an older sync counted as applied (its "applied" stamped in the same moment as its closing, by that sync): the sheet
+    // gives no applied day, so it was never an application.
+    const hist = Array.isArray(e.history) ? e.history : [];
+    const madeUp = hist.length === 2 && hist[0].stage === 'applied' && hist[1].stage === 'withdrawn' && hist[0].at === hist[1].at;
+    if (stageNow === 'withdrawn' && !r.applied && e.submittedAt && e.automation === 'Google Sheet' && madeUp) fix.submittedAt = 0;
+    if (Object.keys(fix).length) out.dates.push({ key, ...fix });
   }
   if (write) {
     const width = Math.max(...Object.values(header), 0) + 1;
@@ -182,14 +237,48 @@ function plan(entries, sheet, { tab = '', write = true, now = Date.now() } = {})
       const put = (f, v) => { if (header[f] !== undefined) cells[header[f]] = v; };
       put('company', e.company || '');
       put('role', e.role || '');
-      put('status', STATUS_TEXT[e.stage] || '');
+      const word = statusText(e.stage, e.stage === 'applied' ? e.submittedAt : e.respondedAt || e.updatedAt);
+      put('status', word);
       put('url', e.url || '');
       put('applied', e.submittedAt ? day(e.submittedAt) : '');
       put('notes', e.note || '');
-      out.append.push({ key: T.entryKey(e), cells, status: STATUS_TEXT[e.stage] || '' });
+      out.append.push({ key: T.entryKey(e), cells, status: word });
     }
   }
   return out;
+}
+
+// ---------- the sheet's own numbers ----------
+
+// A summary tab (a Dashboard of COUNTIF formulas, say) -> its blocks of numbers, as the sheet lays them out:
+//   Odds,Listings by odds / High,23 / Med,51 ... / Region,Listings by region / Boston area,65 ... / Missing apply link / none
+// -> [{ title: 'Listings by odds', rows: [{ label: 'High', value: '23', n: 23 }, ...] }, ..., { title: 'Missing apply link', text: 'none' }]
+// A row ending in a number is a line of the block above it; any other row starts a block (its last cell is the title: "Listings by
+// odds", not the column's "Odds"); a one-cell row right under a title with no lines yet is that block's answer. Empty blocks are dropped.
+const NUM = /^[-+]?[$€£]?\d[\d,]*(\.\d+)?\s*%?$/;
+function sheetMetrics(values, tabName = '') {
+  const blocks = [];
+  let cur = null;
+  let textOk = false;
+  for (const raw of Array.isArray(values) ? values.slice(0, 200) : []) {
+    const cells = (Array.isArray(raw) ? raw : []).map((c) => clean(c, 80)).filter(Boolean);
+    if (!cells.length) { textOk = false; continue; }
+    const last = cells[cells.length - 1];
+    if (cells.length >= 2 && NUM.test(last)) {
+      if (!cur) { cur = { title: clean(tabName, 60), rows: [] }; blocks.push(cur); }
+      if (cur.rows.length < 24) cur.rows.push({ label: cells.slice(0, -1).join(' · ').slice(0, 80), value: last, n: Number(last.replace(/[^\d.-]/g, '')) || 0 });
+      textOk = false;
+    } else if (cells.length === 1 && cur && textOk && !cur.rows.length && !cur.text) {
+      cur.text = cells[0];
+      textOk = false;
+    } else {
+      cur = { title: last.slice(0, 60), rows: [] };
+      blocks.push(cur);
+      textOk = true;
+    }
+  }
+  if (!blocks.some((b) => b.rows.length)) return []; // (a tab of words only, notes say, has no numbers to show)
+  return blocks.filter((b) => b.rows.length || b.text).slice(0, 12);
 }
 
 // ---------- email ----------
@@ -279,4 +368,4 @@ function gmailLink(id, account = '') {
   return `https://mail.google.com/mail/${who}#all/${mid}`;
 }
 
-module.exports = { HEADERS, STATUS_TEXT, KINDS, GMAIL_QUERY, gmailLink, mapHeader, pickTab, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions };
+module.exports = { HEADERS, STATUS_TEXT, statusText, dateIn, rowDates, sheetMetrics, KINDS, GMAIL_QUERY, gmailLink, mapHeader, pickTab, stageFromStatus, parseDate, readSheet, same, plan, classifyEmail, companyOf, emailSuggestions };

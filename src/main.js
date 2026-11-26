@@ -13341,8 +13341,21 @@ function syncJobSheet(projectId) {
       if (plan.cells.length) await sheetsJson(req, `${base}/values:batchUpdate`, { method: 'POST', json: { valueInputOption: 'RAW', data: plan.cells.map((c) => ({ range: c.range, majorDimension: 'ROWS', values: [[c.value]] })) } });
       if (plan.append.length) await sheetsJson(req, `${base}/values/${encodeURIComponent(`${quoteTab(link.tab)}A1`)}:append`, { method: 'POST', query: { valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS' }, json: { majorDimension: 'ROWS', values: plan.append.map((a) => a.cells) } });
       const r = rt.applySheetPlan(projectId, plan, { appended: plan.append });
-      saveJobSync(projectId, { sheet: { ...link, at: Date.now(), error: '' } });
-      return { ok: true, ...r, written: plan.cells.filter((c) => Object.values(lib.STATUS_TEXT).includes(c.value)).length, appended: plan.append.length, rows: sheet.rows.length };
+      // The sheet's own numbers: its other tabs (a Dashboard of counts, say) read as blocks (job-sync.js sheetMetrics), shown on the
+      // dashboard as the sheet has them. Best effort: a tab that can't be read leaves the last numbers.
+      let metrics = link.metrics || [];
+      try {
+        const meta = await sheetsJson(req, base, { query: { fields: 'sheets.properties.title' } });
+        const others = (meta.sheets || []).map((t) => String(t?.properties?.title || '')).filter((t) => t && t !== link.tab).slice(0, 6);
+        if (others.length) {
+          const got = await sheetsJson(req, `${base}/values:batchGet`, { query: { majorDimension: 'ROWS', valueRenderOption: 'FORMATTED_VALUE', ranges: others.map((t) => `${quoteTab(t)}A1:H80`) } });
+          metrics = (got.valueRanges || []).map((v, i) => ({ tab: others[i], values: v?.values || [] }))
+            .filter((t) => !lib.pickTab([{ tab: t.tab, row: t.values[0] || [] }])) // (another tracker-like tab is rows, not numbers)
+            .map((t) => ({ tab: t.tab, blocks: lib.sheetMetrics(t.values, t.tab) })).filter((t) => t.blocks.length);
+        } else metrics = [];
+      } catch { /* the numbers stay as they were */ }
+      saveJobSync(projectId, { sheet: { ...link, at: Date.now(), error: '', metrics } });
+      return { ok: true, ...r, written: plan.cells.filter((c) => c.status).length, appended: plan.append.length, rows: sheet.rows.length };
     } catch (err) {
       const error = String(err?.message || err).slice(0, 200);
       saveJobSync(projectId, { sheet: { ...link, error } });

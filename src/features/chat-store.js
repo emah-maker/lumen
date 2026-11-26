@@ -664,7 +664,9 @@ function createChatStore({ dir, encrypt, decrypt, decryptAsync = async (v) => de
     if (!v || typeof v !== 'object') return null;
     const out = {};
     const s = v.sheet;
-    if (s && /^[A-Za-z0-9_-]{20,100}$/.test(String(s.id))) out.sheet = { id: String(s.id), tab: cleanText(s.tab, 100), write: s.write !== false, at: Number(s.at) || 0, ...(s.error ? { error: cleanText(s.error, 200) } : {}) };
+    // metrics: the sheet's own numbers from its other tabs (job-sync.js sheetMetrics), only text and numbers, bounded
+    const metrics = (Array.isArray(s?.metrics) ? s.metrics : []).slice(0, 6).map((t) => ({ tab: cleanText(t?.tab, 100), blocks: (Array.isArray(t?.blocks) ? t.blocks : []).slice(0, 12).map((b) => ({ title: cleanText(b?.title, 60), rows: (Array.isArray(b?.rows) ? b.rows : []).slice(0, 24).map((r) => ({ label: cleanText(r?.label, 80), value: cleanText(r?.value, 40), n: Number.isFinite(Number(r?.n)) ? Number(r.n) : 0 })), ...(b?.text ? { text: cleanText(b.text, 80) } : {}) })).filter((b) => b.rows.length || b.text) })).filter((t) => t.blocks.length);
+    if (s && /^[A-Za-z0-9_-]{20,100}$/.test(String(s.id))) out.sheet = { id: String(s.id), tab: cleanText(s.tab, 100), write: s.write !== false, at: Number(s.at) || 0, ...(s.error ? { error: cleanText(s.error, 200) } : {}), ...(metrics.length ? { metrics } : {}) };
     if (Array.isArray(v.emailDone)) out.emailDone = v.emailDone.map(String).filter((x) => /^[0-9a-f]{6,32}$/i.test(x)).slice(-1000);
     if (Number(v.emailAt) > 0) out.emailAt = Number(v.emailAt);
     return Object.keys(out).length ? out : null;

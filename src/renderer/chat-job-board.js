@@ -149,7 +149,7 @@
       sel.onclick = (ev) => ev.stopPropagation();
       return sel;
     }
-    const tile = (value, label, { className = '', hint = '', big = false } = {}) => el('div', { className: `jb-panel jb-tile ${className}`.trim(), title: hint }, el('span', { className: big ? 'jb-display jb-tile-n' : 'jb-tile-n', textContent: value }), el('span', { className: 'jb-tile-l', textContent: label }));
+    const tile = (value, label, { className = '', hint = '', big = false, extra = null } = {}) => el('div', { className: `jb-panel jb-tile ${className}`.trim(), title: hint }, el('span', { className: big ? 'jb-display jb-tile-n' : 'jb-tile-n', textContent: value }), el('span', { className: 'jb-tile-l', textContent: label }), extra);
 
     // Progress: the main numbers
     function progress() {
@@ -168,15 +168,53 @@
           tile(st.responseRate === null || st.responseRate === undefined ? '–' : `${st.responseRate}%`, tr('jobs.rate', 'Response rate'), { className: 'rate', hint: tr('jobs.rateHint', 'Heard back (an interview, an offer or a rejection) out of all applied'), big: true }),
           weeksTile));
     }
-    // Outcomes: what came back
+    // Outcomes: what came back. The numbers are the tracker's (the sheet's Status cells, when one is linked: the truth); what the last
+    // email check found and isn't applied yet shows under them ("+2 in email"), a click away from the emails, so an email never changes a
+    // number on its own.
     function outcomes() {
       const st = data.stats || {};
-      return section('outcomes', tr('jobs.sec.outcomes', 'Outcomes'), '',
+      const waiting = (kind) => (src?.suggestions || []).filter((s) => s.kind === kind).length;
+      const inEmail = (kind) => {
+        const n = waiting(kind);
+        if (!n) return null;
+        const b = el('button', { type: 'button', className: 'jb-tile-more', textContent: tr('jobs.inEmail', '+{n} in email', { n }) });
+        b.title = tr('jobs.inEmailHint', 'Found in your email, not applied yet. Check them in Needs attention.');
+        b.onclick = () => root.querySelector('.jb-sug-box')?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+        return b;
+      };
+      const avg = st.avgDays === null || st.avgDays === undefined ? '–' : tr('jobs.days', '{n} d', { n: st.avgDays });
+      return section('outcomes', tr('jobs.sec.outcomes', 'Outcomes'), st.answered ? tr('jobs.avgOf', 'Avg. from {n} dated answers', { n: st.answered }) : '',
         el('div', { className: 'jb-tiles' },
-          tile(String(st.interviews ?? 0), tr('jobs.interviews', 'Interviews'), { className: 's-interview' }),
-          tile(String(st.offers ?? 0), tr('jobs.offers', 'Offers'), { className: 's-offer' }),
-          tile(String(st.rejections ?? 0), tr('jobs.rejections', 'Rejections'), { className: 's-rejected' }),
-          tile(st.avgDays === null || st.avgDays === undefined ? '–' : tr('jobs.days', '{n} d', { n: st.avgDays }), tr('jobs.avgDays', 'Avg. days to an answer'))));
+          tile(String(st.interviews ?? 0), tr('jobs.interviews', 'Interviews'), { className: 's-interview', extra: inEmail('interview') }),
+          tile(String(st.offers ?? 0), tr('jobs.offers', 'Offers'), { className: 's-offer', extra: inEmail('offer') }),
+          tile(String(st.rejections ?? 0), tr('jobs.rejections', 'Rejections'), { className: 's-rejected', extra: inEmail('rejected') }),
+          tile(String(st.waiting ?? 0), tr('jobs.out.waiting', 'Waiting to hear back'), { hint: tr('jobs.out.waitingHint', 'Applied, no interview, offer or rejection yet') }),
+          tile(String(st.closed ?? 0), tr('jobs.out.closed', 'Closed or skipped'), { hint: tr('jobs.out.closedHint', 'Withdrawn, skipped, or the posting closed') }),
+          tile(avg, tr('jobs.avgDays', 'Avg. days to an answer'), { hint: tr('jobs.avgHint', 'From the day you applied to the first interview, offer or rejection, for the answers with a date') })));
+    }
+
+    // From your sheet: the linked sheet's own numbers (its Dashboard tab's counts, say: main reads its other tabs on each sync, job-sync.js
+    // sheetMetrics), as the sheet lays them out: one card per block, a bar per line, so nothing in the sheet is left off the dashboard.
+    function sheetNumbers() {
+      const tabs = (src?.sheet?.metrics || []).filter((t) => t?.blocks?.length);
+      if (!tabs.length) return null;
+      const cards = el('div', { className: 'jb-sheet-grid' });
+      for (const t of tabs) {
+        for (const b of t.blocks) {
+          const card = el('div', { className: 'jb-panel jb-sheet-card' }, el('strong', { className: 'jb-sub', textContent: b.title || t.tab }));
+          if (b.text) card.append(el('span', { className: 'jb-sheet-text', textContent: b.text }));
+          const max = Math.max(1, ...(b.rows || []).map((r) => Math.abs(r.n) || 0));
+          const list = el('ul', { className: 'jb-sheet-rows' });
+          for (const r of b.rows || []) {
+            const bar = el('span', { className: 'jb-sheet-bar' }, el('i'));
+            bar.firstChild.style.width = `${Math.round(((Math.abs(r.n) || 0) / max) * 100)}%`;
+            list.append(el('li', { className: 'jb-sheet-row' }, el('span', { className: 'jb-sheet-label', textContent: r.label }), bar, el('span', { className: 'jb-sheet-n', textContent: r.value })));
+          }
+          if (b.rows?.length) card.append(list);
+          cards.append(card);
+        }
+      }
+      return section('sheet', tr('jobs.sec.sheet', 'From your sheet'), tabs.map((t) => t.tab).join(' · '), cards);
     }
 
     function followUps() {
@@ -531,6 +569,7 @@
         section('view', viewTitle, '', content), // (right under the switcher: picking a view changes what is next to it, not something a screen below)
         attention.length ? el('div', { className: 'jb-pair' }, section('attention', tr('jobs.sec.attention', 'Needs attention'), '', ...attention), outcomes()) : outcomes(), // (side by side on a wide page)
         progress(),
+        sheetNumbers(),
         src ? section('sources', tr('jobs.sec.sources', 'Sources'), '', sources(), profileLine()) : section('sources', tr('jobs.sec.sources', 'Sources'), '', profileLine()),
       ];
       root.replaceChildren(...parts.filter(Boolean));

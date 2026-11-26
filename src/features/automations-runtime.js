@@ -454,14 +454,16 @@ function create(deps) {
     return { ok: true, entry };
   }
   // The dashboard's drag (or a row's stage menu): one application of the project, by its key, to a stage.
-  function moveApplication(projectId, key, stage, { resume } = {}) {
+  function moveApplication(projectId, key, stage, { resume, at } = {}) {
     const lib = templates();
     if (!lib.STAGES.includes(stage)) return { ok: false, error: 'Unknown stage.' };
     const mine = new Set(lib.projectEntries(store.log(), store.automations(), projectId).map(lib.entryKey));
     const entry = mine.has(String(key)) ? store.log().find((e) => lib.entryKey(e) === String(key)) : null;
     if (!entry) return { ok: false, error: 'No application in this project matches that.' };
     if (!lib.STAGES.includes(entry.stage)) entry.stage = lib.stageOf(entry); // (an automation's entry gets a stage of its own the first time it moves)
-    lib.setStage(entry, stage, now());
+    // at: when it happened, if not now (an email's date: a rejection counts from the day it came, not the day it was applied here)
+    const when = Number(at) > 0 ? Math.max(Math.min(Number(at), now()), entry.submittedAt || 0) : now();
+    lib.setStage(entry, stage, when);
     const file = lib.resumeName(resume);
     if (file) entry.resume = file;
     save();
@@ -479,8 +481,16 @@ function create(deps) {
       const e = real(m.key);
       if (!e) continue;
       if (!lib.STAGES.includes(e.stage)) e.stage = lib.stageOf(e);
-      lib.setStage(e, m.stage, at);
+      lib.setStage(e, m.stage, m.answered && m.answered <= at ? m.answered : at); // (on the day the sheet says, when it says one)
       if (m.applied && m.stage !== 'saved' && (!e.submittedAt || e.submittedAt === at)) e.submittedAt = m.applied;
+    }
+    // The sheet's own days (job-sync.js plan: Date Applied, "Applied Nov 6", "Rejected Nov 4") over the ones a sync guessed.
+    for (const d of p.dates || []) {
+      const e = real(d.key);
+      if (!e) continue;
+      if (d.submittedAt === 0) { e.submittedAt = 0; delete e.respondedAt; if (Array.isArray(e.history)) e.history = e.history.filter((h) => h.stage !== 'applied'); } // (a closed row never applied to)
+      else if (d.submittedAt) e.submittedAt = d.submittedAt;
+      if (d.respondedAt) e.respondedAt = Math.max(d.respondedAt, e.submittedAt || 0);
     }
     for (const s of p.seen || []) { const e = real(s.key); if (e) e.sheet = { status: s.sheetStatus, row: s.row, ...(s.stage ? { stage: s.stage } : {}) }; } // (stage: what the cell was read as)
     for (const a of appended) { const e = real(a.key); if (e) e.sheet = { status: a.status, row: 0, stage: e.stage }; }
@@ -490,7 +500,7 @@ function create(deps) {
   }
   // An email's suggestion applied: the entry it matched moved on, or a new application (company from the email).
   function applyEmail(projectId, s) {
-    if (s?.key) return moveApplication(projectId, s.key, s.stage);
+    if (s?.key) return moveApplication(projectId, s.key, s.stage, { at: s.at });
     const r = templates().manualEntry({ company: s?.company, role: s?.role, stage: s?.stage, from: 'email', note: s?.subject ? `Email: ${s.subject}` : '' }, { projectId, now: now() });
     if (!r.ok) return r;
     if (s.at && r.entry.stage !== 'saved') { r.entry.submittedAt = r.entry.at = Math.min(Number(s.at) || now(), now()); r.entry.history = [{ stage: r.entry.stage, at: r.entry.submittedAt }]; if (r.entry.respondedAt) r.entry.respondedAt = r.entry.submittedAt; }
