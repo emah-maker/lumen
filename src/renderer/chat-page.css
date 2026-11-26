@@ -96,6 +96,11 @@ body.chat-page .composer-bar { margin-inline: 0; } /* the round buttons 12 px in
 
 /* folded: out of the way and out of the tab order (chat-page.js sets inert) */
 body.cp-rail-hidden .cp-list { margin-left: calc(-1 * var(--cp-rail)); visibility: hidden; transition: margin-left var(--t-smooth) var(--ease-out), visibility 0s var(--t-smooth); }
+/* with the sidebar hidden, its Show button and New chat fade in at the header's start */
+body.cp-rail-hidden .sidebar-head > .icon-btn:is(#cp-rail-open, #cp-rail-new) { animation: cp-fade var(--t-base) ease-out; }
+/* a remembered choice is where the page starts, with no slide; Settings → Reduce motion (and Performance mode) hide and show it at once */
+body.cp-booting .cp-list, body.cp-booting.cp-rail-hidden .cp-list, :root.pref-reduce-motion body .cp-list { transition: none; }
+:root.pref-reduce-motion body.cp-rail-hidden .sidebar-head > .icon-btn { animation: none; }
 /* a narrow window: the rail is a drawer over the conversation, with a scrim behind it */
 body.cp-narrow .cp-list { position: absolute; z-index: 60; top: 0; bottom: 0; left: 0; box-shadow: 8px 0 32px -12px rgb(0 0 0 / 0.35); }
 body.cp-narrow.cp-rail-hidden .cp-list { box-shadow: none; }

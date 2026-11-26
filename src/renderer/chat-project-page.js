@@ -1334,7 +1334,8 @@
       b.onclick = () => document.getElementById(target)?.click();
       return b;
     };
-    const railBtn = ctl('rail', tr('chatpage.rail.show', 'Show chat list (Ctrl+Shift+S)'), 'cp-rail-open', 'pjp-rail-open');
+    const railBtn = ctl('rail', tr('chatpage.rail.show', 'Show sidebar'), 'cp-rail-open', 'pjp-rail-open');
+    railBtn.title = document.getElementById('cp-rail-open')?.title || railBtn.title; // (with its key: Ctrl+B or ⌘B)
     const fullBtn = ctl('expand', tr('chatpage.full.title', 'Full screen (F11)'), 'cp-fullscreen', 'cp-full-btn pjp-full');
     fullBtn.setAttribute('aria-pressed', String(Boolean(document.fullscreenElement)));
     if (document.fullscreenElement) { fullBtn.title = tr('chatpage.full.exit.title', 'Exit full screen (F11 or Esc)'); fullBtn.setAttribute('aria-label', tr('chatpage.full.exit', 'Exit full screen')); }

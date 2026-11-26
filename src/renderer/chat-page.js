@@ -46,8 +46,10 @@
   window.chatList = { refreshUsage, open: () => $('cp-items').querySelector('.chat-open')?.focus(), close() {} };
   api.onUsage(refreshUsage);
 
-  // ---- the rail: always there on a wide window, folded with its button or Ctrl+Shift+S, a drawer below 800px
+  // ---- the rail (the sidebar of chats and projects): always there on a wide window, hidden with its button, Ctrl+B / ⌘B or
+  // Ctrl+Shift+S, a drawer below 800px. The choice is kept (localStorage, in the profile) and the page starts with it, without a slide.
   const narrowQuery = window.matchMedia('(max-width: 799px)');
+  const railKey = document.documentElement.classList.contains('platform-darwin') ? '⌘B' : 'Ctrl+B';
   const RAIL_KEY = 'lumen.chatpage.rail';
   const store = { get() { try { return localStorage.getItem(RAIL_KEY); } catch { return null; } }, set(v) { try { localStorage.setItem(RAIL_KEY, v); } catch { /* not kept */ } } };
   let collapsed = store.get() === 'collapsed'; // the user's choice on a wide window
@@ -63,9 +65,14 @@
     rail.inert = hidden; // (a folded rail is out of the tab order and the accessibility tree)
     $('cp-scrim').hidden = !(narrowQuery.matches && drawerOpen);
     $('cp-rail-open').hidden = !hidden;
+    $('cp-rail-new').hidden = !hidden; // (with the sidebar hidden, New chat sits beside its Show button, as on claude.ai and ChatGPT)
     $('cp-rail-open').setAttribute('aria-expanded', String(!hidden));
     $('cp-rail-close').setAttribute('aria-expanded', String(!hidden));
   }
+  $('cp-rail-open').title = t('chatpage.rail.show.title', { key: railKey });
+  $('cp-rail-close').title = t('chatpage.rail.hide.title', { key: railKey });
+  $('cp-rail-new').title = `${tr('sidebar.newChat', 'New chat')} (${document.documentElement.classList.contains('platform-darwin') ? '⌘⇧O' : t('chatpage.newChat.shortcut')})`;
+  $('cp-rail-new').onclick = () => $('new-chat').click();
   function toggleRail(force) {
     const show = typeof force === 'boolean' ? force : railHidden();
     if (narrowQuery.matches) drawerOpen = show;
@@ -110,14 +117,13 @@
   }
   document.addEventListener('fullscreenchange', applyFull);
   $('cp-fullscreen').onclick = toggleFull;
-  $('cp-rail-full').onclick = toggleFull;
   const newChat = () => { $('new-chat').click(); };
   const shortcut = (what) => { if (what === 'rail') toggleRail(); else if (what === 'new') newChat(); else if (what === 'full') toggleFull(); };
   document.addEventListener('cp:shortcut', (e) => shortcut(e.detail)); // main hands these two keys over (main.js handleShortcut)
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); shortcut('rail'); }
+    if (mod && !e.altKey && ((e.shiftKey && e.key.toLowerCase() === 's') || (!e.shiftKey && e.code === 'KeyB'))) { e.preventDefault(); shortcut('rail'); }
     else if (mod && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'o') { e.preventDefault(); shortcut('new'); }
     else if (e.key === 'Escape' && narrowQuery.matches && drawerOpen && rail.contains(document.activeElement)) { e.preventDefault(); toggleRail(false); }
     else if (e.key === 'Escape' && isFull() && !document.querySelector('[role="menu"]:not([hidden]), [role="dialog"]:not([hidden]), dialog[open]')) { e.preventDefault(); toggleFull(); }
