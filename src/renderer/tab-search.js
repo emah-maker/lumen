@@ -38,6 +38,8 @@ const tabSearch = (() => {
   let panel = null;
   let input = null;
   let list = null;
+  let aiChip = null;
+  let aiOnly = false; // [ai tab finder] the "Tabs the AI opened" filter
 
   const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
 
@@ -49,7 +51,14 @@ const tabSearch = (() => {
     input.setAttribute('aria-controls', 'tab-search-results');
     list = Object.assign(document.createElement('ul'), { id: 'tab-search-results', className: 'tab-search-results' });
     list.setAttribute('role', 'listbox');
-    panel.append(input, list);
+    // [ai tab finder] "Tabs the AI opened": only the tabs the AI opened, under the chat that opened each (typing "@ai" does the same)
+    aiChip = Object.assign(document.createElement('button'), { type: 'button', className: 'tab-search-ai-filter', id: 'tab-search-ai', hidden: true });
+    aiChip.setAttribute('aria-pressed', 'false');
+    aiChip.addEventListener('mousedown', (e) => e.preventDefault()); // (the focus stays in the box)
+    aiChip.addEventListener('click', () => { aiOnly = !aiOnly; selected = 0; render(); });
+    const bar = Object.assign(document.createElement('div'), { className: 'tab-search-filters' });
+    bar.append(aiChip);
+    panel.append(input, bar, list);
     document.body.append(panel);
     input.addEventListener('input', () => { selected = 0; render(); });
     input.addEventListener('keydown', onKey);
@@ -60,12 +69,23 @@ const tabSearch = (() => {
 
   const isOpen = () => Boolean(panel && !panel.hidden);
 
+  // `chat`: the name of the chat that opened the tab ('' for an AI tab with none, null for a tab the AI did not open). The AI's tabs come
+  // newest first under the filter (the strip's order otherwise).
+  const tr = (key, english, vars) => { const s = window.t(key, vars); return s && s !== key ? s : english.replace(/\{(\w+)\}/g, (_, k) => vars?.[k] ?? ''); };
+  const aiTab = (t) => Boolean(t.aiOpened) || (t.aiChat !== null && t.aiChat !== undefined);
   function items() {
-    const open = state.tabs.map((t) => ({ kind: 'open', id: t.id, title: t.title, url: t.url, favicon: t.favicon, audible: t.audible, active: t.id === state.activeId }));
+    const open = state.tabs.map((t) => ({ kind: 'open', id: t.id, title: t.title, url: t.url, favicon: t.favicon, audible: t.audible, active: t.id === state.activeId, ai: aiTab(t), chat: aiTab(t) ? t.aiChat || '' : null }));
+    const { aiOnly: typed, text: q } = tabSearchMatch.parseQuery(input.value);
+    if (aiOnly || typed) {
+      const mine = tabSearchMatch.rank(q, open.filter((x) => x.ai).reverse());
+      return tabSearchMatch.byChat(mine).flatMap((s) => s.items.map((item) => ({ ...item, kind: 'ai' })));
+    }
     const gone = closed.map((c) => ({ kind: 'closed', index: c.index, title: c.title, url: c.url }));
-    const q = input.value;
     return [...tabSearchMatch.rank(q, open), ...tabSearchMatch.rank(q, gone).slice(0, 10)];
   }
+  const sectionKey = (item) => (item.kind === 'ai' ? `ai:${item.chat}` : item.kind);
+  const sectionName = (item) => (item.kind === 'open' ? window.t('tabSearch.open') : item.kind === 'closed' ? window.t('tabSearch.closed')
+    : item.chat ? tr('tabSearch.fromChat', 'From “{chat}”', { chat: item.chat }) : tr('tabSearch.fromAi', 'Opened by the AI'));
 
   function row(item, i) {
     const li = document.createElement('li');
@@ -84,6 +104,10 @@ const tabSearch = (() => {
       Object.assign(document.createElement('span'), { className: 'tab-search-title', textContent: item.title || item.url || window.t('tabSearch.newTab') }),
       Object.assign(document.createElement('span'), { className: 'tab-search-host', textContent: hostOf(item.url) }),
     );
+    if (item.ai && item.kind === 'open') { // [ai tab finder] which chat opened it, beside the address (under the filter the section says so)
+      const host = text.lastChild;
+      host.append(Object.assign(document.createElement('span'), { className: 'tab-search-ai', textContent: item.chat ? tr('tabSearch.aiChat', 'AI · {chat}', { chat: item.chat }) : tr('tabSearch.ai', 'AI') }));
+    }
     li.append(icon, text);
     if (item.audible) li.append(Object.assign(document.createElement('span'), { className: 'tab-search-audio', innerHTML: SPEAKER, title: window.t('tabSearch.audio') }));
     li.onmousemove = () => { if (selected !== i) { selected = i; render(); } };
@@ -95,12 +119,18 @@ const tabSearch = (() => {
     if (!isOpen()) return;
     results = items();
     selected = Math.min(selected, Math.max(0, results.length - 1));
+    const aiCount = state.tabs.filter(aiTab).length;
+    const filtering = aiOnly || tabSearchMatch.parseQuery(input.value).aiOnly;
+    aiChip.hidden = aiCount === 0 && !filtering;
+    aiChip.setAttribute('aria-pressed', String(filtering));
+    aiChip.textContent = tr('tabSearch.aiFilter', 'Tabs the AI opened ({count})', { count: aiCount });
+    aiChip.title = tr('tabSearch.aiFilter.title', 'Only the tabs the AI opened, by chat (Alt+A, or type @ai)');
     list.replaceChildren();
     let section = null;
     results.forEach((item, i) => {
-      if (item.kind !== section) {
-        section = item.kind;
-        const header = Object.assign(document.createElement('li'), { className: 'tab-search-section', textContent: section === 'open' ? window.t('tabSearch.open') : window.t('tabSearch.closed') });
+      if (sectionKey(item) !== section) {
+        section = sectionKey(item);
+        const header = Object.assign(document.createElement('li'), { className: 'tab-search-section', textContent: sectionName(item) });
         header.setAttribute('role', 'presentation');
         list.append(header);
       }
@@ -126,18 +156,23 @@ const tabSearch = (() => {
     } else if (e.key === 'Escape') {
       e.preventDefault();
       close();
+    } else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'a') { // Alt+A: the "Tabs the AI opened" filter
+      e.preventDefault();
+      aiChip.click();
     }
   }
 
   function activate(item) {
     close();
-    if (item.kind === 'open') window.browser.switchTab(item.id);
+    if (item.kind === 'open' || item.kind === 'ai') window.browser.switchTab(item.id);
     else window.browser.reopenClosed(item.index, item.url);
   }
 
-  async function open() {
+  // opts.ai: open with the "Tabs the AI opened" filter on (the strip's AI tabs menu)
+  async function open(opts = null) {
     if (!panel) build();
     if (isOpen()) { input.select(); return; }
+    aiOnly = opts?.ai === true;
     closed = await window.browser.closedTabs().catch(() => []);
     panel.hidden = false;
     document.getElementById('tab-search')?.setAttribute('aria-expanded', 'true');

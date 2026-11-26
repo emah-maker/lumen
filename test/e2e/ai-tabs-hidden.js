@@ -2,7 +2,7 @@
 // agent.js readSignedIn / parallelTasks). A run that reads one signed-in site over and over, reads pages signed out (research tabs) and
 // hands the same two jobs to parallel helpers twice once filled the whole strip with purple "AI: <site> (signed in)" groups, one tab each.
 // Now, while that run works:
-//  1. the strip gains one folded "AI tabs" label and no tab of its own (no purple group, no new visible tab per step);
+//  1. the strip gains one folded label named after the chat ("AI · <chat>") and no tab of its own (no purple group, no new visible tab per step);
 //  2. every read of the signed-in site, the parallel ones in one call included, uses one tab;
 //  3. the second parallel_tasks on the same two sites reuses the first one's helper tabs;
 //  4. the tabs stay reachable from the chat: the card's Tabs list names the signed-in tab, each helper card names its tab, and
@@ -103,13 +103,14 @@ const serve = () => new Promise((resolve) => {
     const ai = await aiTabs();
     check('(set up) the run opened its tabs: signed-in, research and helper tabs', Boolean(ready), JSON.stringify(ai));
 
-    // ---- 1. hidden: one folded "AI tabs" label, no new tab in the strip
+    // ---- 1. hidden: one folded label for the chat ("AI · Add my tasks: chat-A"), no new tab in the strip
+    const AI_GROUP = 'AI · Add my tasks: chat-A';
     const g = await groups();
     const after = await strip();
-    const aiGroup = g.find((x) => x.name === 'AI tabs');
-    check('(1) the strip gains at most one group, and it is the folded gray "AI tabs" group', g.length - groupsBefore <= 1 && Boolean(aiGroup) && aiGroup.collapsed === true && aiGroup.color === 'gray', JSON.stringify({ groupsBefore, g }));
+    const aiGroup = g.find((x) => x.name === AI_GROUP);
+    check('(1) the strip gains at most one group, and it is the folded gray group named after the chat', g.length - groupsBefore <= 1 && Boolean(aiGroup) && aiGroup.collapsed === true && aiGroup.color === 'gray', JSON.stringify({ groupsBefore, g }));
     check('(1) no purple "AI: ..." group, and every tab the AI opened is in that one group', g.every((x) => !/^AI: /.test(x.name)) && ai.length > 0 && ai.every((t) => t.groupId === aiGroup?.id), JSON.stringify({ g, ai }));
-    check('(1) the strip shows one label more and not one tab more', after.labels.length - before.labels.length <= 1 && after.labels.filter((l) => l === 'AI tabs').length === 1 && after.tabs === before.tabs, JSON.stringify({ before, after }));
+    check('(1) the strip shows one label more and not one tab more', after.labels.length - before.labels.length <= 1 && after.labels.filter((l) => l === AI_GROUP).length === 1 && after.tabs === before.tabs, JSON.stringify({ before, after }));
     check('(1) the user is still on their own tab', (await win()).activeId === user, JSON.stringify(await win()));
 
     // ---- 2. one tab per signed-in site: five reads (two of them side by side) in one tab

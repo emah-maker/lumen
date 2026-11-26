@@ -744,6 +744,7 @@ contextBridge.exposeInMainWorld('assistant', {
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
   undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId),
   annotate: (action) => ipcRenderer.invoke('agent:annotate', action),
+  chatTabs: (chatId) => ipcRenderer.invoke('chat:ai-tabs', chatId),
   closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts),
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),

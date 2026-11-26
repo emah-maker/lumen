@@ -12587,7 +12587,7 @@ startChat();
 
 const mcpSteps = new Map();
 
-const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
+const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : tab.aiChat ? t('tabs.aiOpenedFor', { chat: tab.aiChat }) : t('tabs.aiOpened'));
 
 
 
@@ -14469,6 +14469,109 @@ e.preventDefault();
 openSheet();
 }
 });
+})();
+
+
+
+
+
+
+(() => {
+const api = window.assistant;
+const actions = document.querySelector('[data-chat-root] .sidebar-actions');
+if (!api?.chatTabs || !actions || !window.tabRef) return;
+const tr = (key, english, vars) => { const s = window.t ? window.t(key, vars) : key; return s && s !== key ? s : english.replace(/\{(\w+)\}/g, (_, k) => vars?.[k] ?? ''); };
+const chatOf = () => (typeof shownChatId !== 'undefined' ? shownChatId : null);
+const btn = Object.assign(document.createElement('button'), { type: 'button', className: 'icon-btn chat-ai-tabs-btn', id: 'chat-ai-tabs', hidden: true });
+btn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5.5v6a1.5 1.5 0 0 0 1.5 1.5h8a1.5 1.5 0 0 0 1.5-1.5v-6"/><path d="M2.5 5.5V4.5A1.5 1.5 0 0 1 4 3h2.6l1.2 2.5h5.7"/></svg><span class="chat-ai-tabs-count" aria-hidden="true"></span>';
+btn.setAttribute('aria-haspopup', 'dialog');
+btn.setAttribute('aria-expanded', 'false');
+btn.setAttribute('aria-controls', 'chat-ai-tabs-pop');
+const wrap = Object.assign(document.createElement('span'), { className: 'chat-ai-tabs-wrap' });
+actions.prepend(wrap);
+wrap.append(btn);
+const pop = Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-pop', id: 'chat-ai-tabs-pop', hidden: true });
+pop.setAttribute('role', 'dialog');
+pop.setAttribute('aria-label', tr('chat.aiTabs.list', 'Tabs this chat opened'));
+(actions.closest('.sidebar-head') || wrap).append(pop);
+
+let last = { open: [], closed: [] };
+let shownFor = null;
+let seq = 0;
+function paintButton() {
+const n = last.open.length;
+const any = n + last.closed.length > 0;
+btn.hidden = !any;
+const label = n === 1 ? tr('chat.aiTabs.button.one', 'This chat opened 1 tab that is still open', { count: n }) : n > 1 ? tr('chat.aiTabs.button.other', 'This chat opened {count} tabs that are still open', { count: n }) : tr('chat.aiTabs.button.none', 'Tabs this chat opened (all closed)');
+btn.title = label;
+btn.setAttribute('aria-label', label);
+const count = btn.querySelector('.chat-ai-tabs-count');
+count.textContent = n > 99 ? '99+' : n ? String(n) : '';
+count.hidden = !n;
+}
+function section(title, items, note) {
+const box = Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-section' });
+box.append(Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-head', textContent: title }));
+const list = Object.assign(document.createElement('ul'), { className: 'chat-ai-tabs-list' });
+for (const item of items) {
+const li = document.createElement('li');
+const chip = window.tabRef.chip({ id: item.id });
+chip.addEventListener('click', () => setTimeout(close, 0));
+li.append(chip);
+const tag = note(item);
+if (tag) li.append(Object.assign(document.createElement('span'), { className: 'chat-ai-tabs-tag', textContent: tag }));
+list.append(li);
+}
+box.append(list);
+return box;
+}
+function paintList() {
+if (pop.hidden) return;
+const parts = [];
+if (last.open.length) parts.push(section(tr('chat.aiTabs.list.open', 'Open'), last.open, (x) => (x.front ? tr('chat.aiTabs.tag.front', 'In front') : !x.ai ? tr('chat.aiTabs.tag.yours', 'Yours now') : x.kept ? tr('chat.aiTabs.tag.kept', 'Kept') : '')));
+if (last.closed.length) parts.push(section(tr('chat.aiTabs.list.closed', 'Closed · click to open again'), last.closed.slice(0, 15), () => ''));
+if (!parts.length) parts.push(Object.assign(document.createElement('p'), { className: 'chat-ai-tabs-empty', textContent: tr('chat.aiTabs.list.empty', 'This chat has not opened any tabs.') }));
+pop.replaceChildren(Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-title', textContent: tr('chat.aiTabs.list', 'Tabs this chat opened') }), ...parts);
+}
+async function refresh() {
+const cid = chatOf();
+const mine = ++seq;
+if (!cid) { last = { open: [], closed: [] }; shownFor = null; paintButton(); close(); return; }
+let out = null;
+try { out = await api.chatTabs(cid); } catch {  }
+if (mine !== seq) return;
+if (shownFor !== cid) close();
+shownFor = cid;
+last = { open: Array.isArray(out?.open) ? out.open : [], closed: Array.isArray(out?.closed) ? out.closed : [] };
+paintButton();
+paintList();
+}
+let timer = 0;
+const soon = (ms = 300) => { if (timer) return; timer = setTimeout(() => { timer = 0; refresh(); }, ms); };
+function open() {
+pop.hidden = false;
+btn.setAttribute('aria-expanded', 'true');
+paintList();
+refresh();
+pop.querySelector('.tab-ref')?.focus();
+}
+function close() {
+if (pop.hidden) return;
+pop.hidden = true;
+btn.setAttribute('aria-expanded', 'false');
+}
+btn.addEventListener('click', () => (pop.hidden ? open() : close()));
+pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); btn.focus(); } });
+document.addEventListener('pointerdown', (e) => { if (!pop.hidden && !pop.contains(e.target) && !btn.contains(e.target)) close(); }, true);
+
+api.onEvent?.(() => soon(400));
+window.browser?.onTabs?.((state) => { if (!btn.hidden || state?.tabs?.some((x) => x.aiChat != null)) soon(500); });
+document.addEventListener('lumen:reply-done', () => soon(100));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) soon(50); });
+let seenChat = chatOf();
+new MutationObserver(() => { const c = chatOf(); if (c !== seenChat) { seenChat = c; soon(30); } }).observe(document.getElementById('messages') || document.body, { childList: true });
+window.chatAiTabs = { refresh, open, close };
+soon(800);
 })();
 ;
 // ---- chat-folders.js
@@ -17489,14 +17592,17 @@ return Math.min(30, score * (10 / Math.max(word.length, 1)));
 
 
 
+
 function itemScore(query, item) {
 const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
 if (!words.length) return 0;
 const title = String(item.title || '').toLowerCase();
 const url = String(item.url || '').toLowerCase().replace(/^https?:\/\/(www\.)?/, '');
+const chat = String(item.chat || '').toLowerCase();
 let total = 0;
 for (const word of words) {
-const best = Math.max(wordScore(word, title) * 1.2, wordScore(word, url));
+const inChat = chat ? wordScore(word, chat) : -1;
+const best = Math.max(wordScore(word, title) * 1.2, wordScore(word, url), inChat >= 40 ? inChat * 0.9 : -1);
 if (best < 0) return -1;
 total += best;
 }
@@ -17513,7 +17619,27 @@ return items
 .map((r) => r.item);
 }
 
-const api = { wordScore, itemScore, rank };
+
+const AI_WORD = /(^|\s)@ai(?=\s|$)/gi;
+function parseQuery(query) {
+const raw = String(query || '');
+const aiOnly = new RegExp(AI_WORD.source, 'i').test(raw);
+return { aiOnly, text: aiOnly ? raw.replace(AI_WORD, ' ').replace(/\s+/g, ' ').trim() : raw };
+}
+
+
+
+function byChat(items) {
+const sections = new Map();
+for (const item of items) {
+const key = item.chat || '';
+if (!sections.has(key)) sections.set(key, []);
+sections.get(key).push(item);
+}
+return [...sections.entries()].map(([chat, list]) => ({ chat, items: list }));
+}
+
+const api = { wordScore, itemScore, rank, parseQuery, byChat };
 if (typeof module === 'object' && module.exports) module.exports = api;
 else root.tabSearchMatch = api;
 })(this);
@@ -17559,6 +17685,8 @@ let selected = 0;
 let panel = null;
 let input = null;
 let list = null;
+let aiChip = null;
+let aiOnly = false;
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return ''; } };
 
@@ -17570,7 +17698,14 @@ input = Object.assign(document.createElement('input'), { id: 'tab-search-input',
 input.setAttribute('aria-controls', 'tab-search-results');
 list = Object.assign(document.createElement('ul'), { id: 'tab-search-results', className: 'tab-search-results' });
 list.setAttribute('role', 'listbox');
-panel.append(input, list);
+
+aiChip = Object.assign(document.createElement('button'), { type: 'button', className: 'tab-search-ai-filter', id: 'tab-search-ai', hidden: true });
+aiChip.setAttribute('aria-pressed', 'false');
+aiChip.addEventListener('mousedown', (e) => e.preventDefault());
+aiChip.addEventListener('click', () => { aiOnly = !aiOnly; selected = 0; render(); });
+const bar = Object.assign(document.createElement('div'), { className: 'tab-search-filters' });
+bar.append(aiChip);
+panel.append(input, bar, list);
 document.body.append(panel);
 input.addEventListener('input', () => { selected = 0; render(); });
 input.addEventListener('keydown', onKey);
@@ -17581,12 +17716,23 @@ window.addEventListener('blur', () => { if (isOpen()) close(); });
 
 const isOpen = () => Boolean(panel && !panel.hidden);
 
+
+
+const tr = (key, english, vars) => { const s = window.t(key, vars); return s && s !== key ? s : english.replace(/\{(\w+)\}/g, (_, k) => vars?.[k] ?? ''); };
+const aiTab = (t) => Boolean(t.aiOpened) || (t.aiChat !== null && t.aiChat !== undefined);
 function items() {
-const open = state.tabs.map((t) => ({ kind: 'open', id: t.id, title: t.title, url: t.url, favicon: t.favicon, audible: t.audible, active: t.id === state.activeId }));
+const open = state.tabs.map((t) => ({ kind: 'open', id: t.id, title: t.title, url: t.url, favicon: t.favicon, audible: t.audible, active: t.id === state.activeId, ai: aiTab(t), chat: aiTab(t) ? t.aiChat || '' : null }));
+const { aiOnly: typed, text: q } = tabSearchMatch.parseQuery(input.value);
+if (aiOnly || typed) {
+const mine = tabSearchMatch.rank(q, open.filter((x) => x.ai).reverse());
+return tabSearchMatch.byChat(mine).flatMap((s) => s.items.map((item) => ({ ...item, kind: 'ai' })));
+}
 const gone = closed.map((c) => ({ kind: 'closed', index: c.index, title: c.title, url: c.url }));
-const q = input.value;
 return [...tabSearchMatch.rank(q, open), ...tabSearchMatch.rank(q, gone).slice(0, 10)];
 }
+const sectionKey = (item) => (item.kind === 'ai' ? `ai:${item.chat}` : item.kind);
+const sectionName = (item) => (item.kind === 'open' ? window.t('tabSearch.open') : item.kind === 'closed' ? window.t('tabSearch.closed')
+: item.chat ? tr('tabSearch.fromChat', 'From “{chat}”', { chat: item.chat }) : tr('tabSearch.fromAi', 'Opened by the AI'));
 
 function row(item, i) {
 const li = document.createElement('li');
@@ -17605,6 +17751,10 @@ text.append(
 Object.assign(document.createElement('span'), { className: 'tab-search-title', textContent: item.title || item.url || window.t('tabSearch.newTab') }),
 Object.assign(document.createElement('span'), { className: 'tab-search-host', textContent: hostOf(item.url) }),
 );
+if (item.ai && item.kind === 'open') {
+const host = text.lastChild;
+host.append(Object.assign(document.createElement('span'), { className: 'tab-search-ai', textContent: item.chat ? tr('tabSearch.aiChat', 'AI · {chat}', { chat: item.chat }) : tr('tabSearch.ai', 'AI') }));
+}
 li.append(icon, text);
 if (item.audible) li.append(Object.assign(document.createElement('span'), { className: 'tab-search-audio', innerHTML: SPEAKER, title: window.t('tabSearch.audio') }));
 li.onmousemove = () => { if (selected !== i) { selected = i; render(); } };
@@ -17616,12 +17766,18 @@ function render() {
 if (!isOpen()) return;
 results = items();
 selected = Math.min(selected, Math.max(0, results.length - 1));
+const aiCount = state.tabs.filter(aiTab).length;
+const filtering = aiOnly || tabSearchMatch.parseQuery(input.value).aiOnly;
+aiChip.hidden = aiCount === 0 && !filtering;
+aiChip.setAttribute('aria-pressed', String(filtering));
+aiChip.textContent = tr('tabSearch.aiFilter', 'Tabs the AI opened ({count})', { count: aiCount });
+aiChip.title = tr('tabSearch.aiFilter.title', 'Only the tabs the AI opened, by chat (Alt+A, or type @ai)');
 list.replaceChildren();
 let section = null;
 results.forEach((item, i) => {
-if (item.kind !== section) {
-section = item.kind;
-const header = Object.assign(document.createElement('li'), { className: 'tab-search-section', textContent: section === 'open' ? window.t('tabSearch.open') : window.t('tabSearch.closed') });
+if (sectionKey(item) !== section) {
+section = sectionKey(item);
+const header = Object.assign(document.createElement('li'), { className: 'tab-search-section', textContent: sectionName(item) });
 header.setAttribute('role', 'presentation');
 list.append(header);
 }
@@ -17647,18 +17803,23 @@ if (results[selected]) activate(results[selected]);
 } else if (e.key === 'Escape') {
 e.preventDefault();
 close();
+} else if (e.altKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'a') {
+e.preventDefault();
+aiChip.click();
 }
 }
 
 function activate(item) {
 close();
-if (item.kind === 'open') window.browser.switchTab(item.id);
+if (item.kind === 'open' || item.kind === 'ai') window.browser.switchTab(item.id);
 else window.browser.reopenClosed(item.index, item.url);
 }
 
-async function open() {
+
+async function open(opts = null) {
 if (!panel) build();
 if (isOpen()) { input.select(); return; }
+aiOnly = opts?.ai === true;
 closed = await window.browser.closedTabs().catch(() => []);
 panel.hidden = false;
 document.getElementById('tab-search')?.setAttribute('aria-expanded', 'true');

@@ -1,5 +1,5 @@
 // [ai tabs] An AI tab the user has been to, or one the AI's reply names ([[tab:ID]]), stays in sight (main.js aiTabShown, app.js render):
-//  1. after a run that opened three tabs and named one, the folded "AI tabs" label shows the named tab beside it, and not the other two;
+//  1. after a run that opened three tabs and named one, the folded label of the chat's AI tabs ("AI · <chat>") shows the named tab beside it, and not the other two;
 //  2. a tab the user switched to (a real click in the strip) stays beside the folded label after they switch away;
 //  3. with "Hide tabs the AI opened" on, those two stay in the strip and the third is left out.
 // Real Lumen, throwaway profile, a fake model (no network, no key), local pages, hidden windows (LUMEN_TEST_BACKGROUND=1).
@@ -57,7 +57,7 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
     const opened = await waitFor(async () => { const l = await list(); return l.filter((t) => t.url.startsWith(base)).length === 3 && l; });
     const idOf = (l, p) => l.find((t) => t.url === `${base}${p}`)?.id;
     const [A, B, C] = ['/a', '/b', '/c'].map((p) => idOf(opened || [], p));
-    check('the run opened three tabs in the AI tabs group', A && B && C && (opened || []).filter((t) => t.group === 'AI tabs').length === 3, JSON.stringify(opened));
+    check('the run opened three tabs in the chat group ("AI · Open three pages and…")', A && B && C && (opened || []).filter((t) => t.group === 'AI · Open three pages and…').length === 3, JSON.stringify(opened));
     await waitFor(() => ui.evaluate(() => /second one is here/.test(document.querySelector('#messages')?.textContent || '')));
     await sleep(800);
     // The user's own tab is in front (the run worked in the background).

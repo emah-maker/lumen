@@ -23,16 +23,19 @@
     return Math.min(30, score * (10 / Math.max(word.length, 1)));
   }
 
-  // Score of one item ({ title, url }) for the whole query; every word has to match the title or
-  // the address. A title match counts a little more than an address match.
+  // Score of one item ({ title, url, chat? }) for the whole query; every word has to match the title, the address or (a tab the AI
+  // opened) the name of the chat that opened it. A title match counts a little more than an address match, a chat name a little less,
+  // and in the chat name only a word or a piece of one counts (not letters scattered through it).
   function itemScore(query, item) {
     const words = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return 0;
     const title = String(item.title || '').toLowerCase();
     const url = String(item.url || '').toLowerCase().replace(/^https?:\/\/(www\.)?/, '');
+    const chat = String(item.chat || '').toLowerCase();
     let total = 0;
     for (const word of words) {
-      const best = Math.max(wordScore(word, title) * 1.2, wordScore(word, url));
+      const inChat = chat ? wordScore(word, chat) : -1;
+      const best = Math.max(wordScore(word, title) * 1.2, wordScore(word, url), inChat >= 40 ? inChat * 0.9 : -1);
       if (best < 0) return -1;
       total += best;
     }
@@ -49,7 +52,27 @@
       .map((r) => r.item);
   }
 
-  const api = { wordScore, itemScore, rank };
+  // [ai tab finder] "@ai" in the query keeps only the tabs the AI opened; the rest of it is searched as usual.
+  const AI_WORD = /(^|\s)@ai(?=\s|$)/gi;
+  function parseQuery(query) {
+    const raw = String(query || '');
+    const aiOnly = new RegExp(AI_WORD.source, 'i').test(raw);
+    return { aiOnly, text: aiOnly ? raw.replace(AI_WORD, ' ').replace(/\s+/g, ' ').trim() : raw };
+  }
+
+  // Items in sections by the chat that opened them ({ chat } of each item; '' for none): [{ chat, items }], in the order each chat
+  // first appears, its items in their own order.
+  function byChat(items) {
+    const sections = new Map();
+    for (const item of items) {
+      const key = item.chat || '';
+      if (!sections.has(key)) sections.set(key, []);
+      sections.get(key).push(item);
+    }
+    return [...sections.entries()].map(([chat, list]) => ({ chat, items: list }));
+  }
+
+  const api = { wordScore, itemScore, rank, parseQuery, byChat };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.tabSearchMatch = api;
 })(this);

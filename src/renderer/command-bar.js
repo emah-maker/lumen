@@ -129,7 +129,10 @@ const commandBar = (() => {
     const tabState = (typeof lastTabState !== 'undefined' && lastTabState) || seen; // app.js keeps the newest tab list
     const active = tabState.tabs.find((t) => t.id === tabState.activeId) || null;
     const state = { active };
-    const out = tabState.tabs.map((t) => ({ id: `tab:${t.id}`, group: 'tab', tabId: t.id, title: t.title || t.url || tr('tabSearch.newTab', 'New Tab'), url: t.url, favicon: t.favicon, sub: hostOf(t.url), current: t.id === tabState.activeId }));
+    // [ai tab finder] A tab the AI opened says which chat opened it, and is found by that chat's name or by "ai".
+    const fromAi = (t) => Boolean(t.aiOpened) || (t.aiChat !== null && t.aiChat !== undefined);
+    const aiSub = (t) => (t.aiChat ? tr('tabSearch.aiChat', 'AI · {chat}', { chat: t.aiChat }) : tr('tabSearch.ai', 'AI'));
+    const out = tabState.tabs.map((t) => ({ id: `tab:${t.id}`, group: 'tab', tabId: t.id, title: t.title || t.url || tr('tabSearch.newTab', 'New Tab'), url: t.url, favicon: t.favicon, sub: fromAi(t) ? [hostOf(t.url), aiSub(t)].filter(Boolean).join(' · ') : hostOf(t.url), ...(fromAi(t) ? { keywords: `ai ${t.aiChat || ''}`.trim() } : {}), current: t.id === tabState.activeId }));
     for (const [id, key, english, keywords, when] of ACTIONS) if (!when || when(state)) out.push({ id, group: 'action', title: tr(key, english), keywords });
     for (const [id, english, keywords] of SECTIONS) {
       const name = tr(`settings.section.${id}`, english);
