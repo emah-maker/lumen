@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The chat stops jumping while the AI works.** Each time a reply started something new (its activity card, words after a step, the answer), everything under your message jumped down and back for a frame: your message was drawn about 120 px taller for that frame. It now keeps its real height, so what is already in the chat stays still as steps, thinking and words are added. Test: test/e2e/chat-no-jump.js.
+
 ## 0.5.112 (2026-11-25)
 
 - **An outside agent can answer a page's confirm or prompt.** When an agent working in its own Lumen window (Claude Code, Codex, another MCP app) loaded a page that asked "Are you sure?", the question went to you the moment the agent's call ended, so its next `handle_dialog` call always found nothing to answer. The question now waits for the agent until its session ends, then goes to you.

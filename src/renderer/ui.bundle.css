@@ -658,7 +658,8 @@ mask-image:linear-gradient(transparent, black 14px);
 .msg, .step, details.thinking, .notice, .error{animation:rise var(--t-smooth) var(--spring-smooth);}
 .messages > .restored{animation:none;}
 .msg{margin:var(--sp-8) 0;}
-.messages > .msg:not(:nth-last-child(-n+4)){content-visibility:auto;contain-intrinsic-size:auto 160px;overflow-clip-margin:44px;}
+.messages > .msg{contain-intrinsic-size:auto 160px;}
+.messages > .msg:not(:nth-last-child(-n+4)){content-visibility:auto;overflow-clip-margin:44px;}
 .msg.user{
 margin-left:var(--sp-20);padding:var(--sp-4) var(--sp-6);border-radius:var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl);background:var(--field);white-space:pre-wrap;word-wrap:break-word;
 box-shadow:inset 0 1px 0 var(--highlight);transform-origin:bottom right;
