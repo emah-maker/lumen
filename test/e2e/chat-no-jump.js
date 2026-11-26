@@ -6,6 +6,8 @@
 //    message, the card and its rows, the words already said. Only the working line (always last) moves as things are added above it.
 //  - the run ends: the card says Done and keeps its height while on screen (step-ui.js keep), so the answer under it and the user's message
 //    do not move either (inside the card, its rows settle; that is the card's own, live-card-steady.js)
+//  - the input box keeps its height while the AI moves into a tab and out again ("Working in <tab>" floats above the box, styles.css
+//    .working-in, in the room under the chat's last line, never over it); its height is watched every frame until the run ends
 // Real Lumen with a model held open by the test; the reply's events are sent into the window (main's 'agent:event', with the run's id).
 // Hidden: LUMEN_TEST_BACKGROUND=1, a temp profile. $LUMEN_ROOT runs another checkout (to see the check fail on the old code).
 require('../helpers/_tmp-cleanup');
@@ -55,7 +57,8 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
       document.head.append(style);
       const box = document.getElementById('messages');
       const ids = new WeakMap(); let next = 1;
-      const out = window.__jump = { phase: 'start', moves: [], frames: 0, done: false };
+      const out = window.__jump = { phase: 'start', moves: [], box: [], frames: 0, done: false };
+      let boxH = -1;
       let prev = new Map();
       const SEL = '.msg, .msg p, .msg li, .act-card, .act-head, .act-status, .step, details.thinking';
       const frame = () => {
@@ -77,6 +80,9 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
           if (c && (Math.abs(c.y - p.y) > 1 || Math.abs(c.x - p.x) > 1)) out.moves.push(`${out.phase}: ${c.what} moved ${Math.round(c.x - p.x)},${Math.round(c.y - p.y)}`);
         }
         prev = now;
+        const h = document.getElementById('composer').getBoundingClientRect().height;
+        if (boxH >= 0 && Math.abs(h - boxH) > 0.5 && out.phase !== 'the run ends') out.box.push(`${out.phase}: the box ${Math.round(boxH)} -> ${Math.round(h)} px`);
+        boxH = h;
         if (!out.done) requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
@@ -91,6 +97,22 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
     await phase('the step ends'); await send({ type: 'tool_done', id: 't1', ok: true });
     await sleep(200);
     await phase('thinking'); for (const w of words('The XPS has the best screen but the battery is weaker. I should check the ThinkPad.')) { await send({ type: 'thinking', text: w }); await sleep(20); }
+    await sleep(200);
+    await phase('the AI moves to a tab');
+    const target = (info) => app.evaluate(({ BrowserWindow }, x) => BrowserWindow.getAllWindows()[0].webContents.send('agent:target', x), info);
+    await target({ id: 9001, title: 'XPS 14 review - Notebookcheck', host: 'notebookcheck.net', front: true });
+    await sleep(300);
+    const pill = await ui.evaluate(() => {
+      const w = document.getElementById('working-in');
+      const box = document.getElementById('composer').getBoundingClientRect();
+      const r = w.getBoundingClientRect();
+      const last = [...document.querySelectorAll('#messages > .msg, #messages > .act-card')].at(-1)?.getBoundingClientRect();
+      return { shown: !w.hidden, text: w.textContent, above: r.bottom <= box.top + 0.5, gap: Math.round(box.top - r.bottom), sameWidth: Math.abs(r.width - box.width) < 1, clearOfChat: !last || r.top >= last.bottom - 0.5, pillTop: Math.round(r.top), lastBottom: last && Math.round(last.bottom) };
+    });
+    check('"Working in" shows above the box, as wide, clear of the chat’s last line', pill.shown && /notebookcheck|XPS/.test(pill.text) && pill.above && pill.gap <= 8 && pill.sameWidth && pill.clearOfChat, JSON.stringify(pill));
+    await phase('the AI leaves the tab'); await target(null);
+    await sleep(200);
+    await phase('and goes back'); await target({ id: 9001, title: 'XPS 14 review - Notebookcheck', host: 'notebookcheck.net', front: false });
     await sleep(200);
     await phase('two more steps'); await send({ type: 'tool', id: 't2', name: 'read_urls', label: 'Reading 2 pages on notebookcheck.net', input: { urls: ['https://notebookcheck.net/a', 'https://notebookcheck.net/b'] } });
     await sleep(300);
@@ -109,8 +131,9 @@ const waitFor = async (fn, ms = 15000) => { const end = Date.now() + ms; let v; 
     await app.evaluate(() => global.__release?.());
     await waitFor(() => ui.evaluate(() => document.querySelector('#messages .act-card')?.dataset.state === 'completed'), 15000);
     await sleep(800);
-    const r = await ui.evaluate(() => { window.__jump.done = true; return { moves: window.__jump.moves, frames: window.__jump.frames, users: document.querySelectorAll('#messages .msg.user').length, card: Boolean(document.querySelector('#messages .act-card')) }; });
+    const r = await ui.evaluate(() => { window.__jump.done = true; return { box: window.__jump.box, moves: window.__jump.moves, frames: window.__jump.frames, users: document.querySelectorAll('#messages .msg.user').length, card: Boolean(document.querySelector('#messages .act-card')) }; });
     check('the run drew its card under the user\'s message (and the frames were watched)', r.card && r.users === 1 && r.frames > 60, JSON.stringify({ card: r.card, users: r.users, frames: r.frames }));
+    check('the input box kept its height to the pixel while the reply ran (steps, thinking, the AI moving in and out of a tab)', r.box.length === 0, r.box.slice(0, 8).join(' | '));
     const moved = r.moves.filter((m) => !/^[^:]+: \S*\.working/.test(m));
     check('nothing already in the chat moved as the reply added words, steps and thinking, nor when it ended', moved.length === 0, `${moved.length} moves: ${moved.slice(0, 12).join(' | ')}`);
     check('no page errors', errors.length === 0, errors.join(' | '));
