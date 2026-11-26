@@ -1,7 +1,8 @@
 // The composer's toolbar (renderer/composer-bar.js), in the sidebar and on lumen://chat: the text box on its own roomy row, then one
 // toolbar row: a "+" menu (screenshot of this tab, attach files, plan first), the model picker with its whole short name, the mic, and
 // Send with a chevron menu that holds "Run in the background". Above the box one quiet status line carries the usage meter and the
-// compact Bypass badge, and takes no space when both are hidden. Hidden window, no network; a stand-in key keeps the picker on the API.
+// compact Bypass badge; when both are hidden it is a blank line the meter's
+// height (styles.css .composer-status [no shift]: the context meter coming in after a chat's first reply must not grow the box). Hidden window, no network; a stand-in key keeps the picker on the API.
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
 const { _electron: electron } = require('playwright-core');
 const path = require('path');
@@ -41,6 +42,7 @@ const LAYOUT = `(() => {
   let overlap = false;
   for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) if (items[i].l < items[j].r - 0.5 && items[j].l < items[i].r - 0.5) overlap = true;
   const status = box('#composer-status');
+  if (status) status.shows = [...document.querySelectorAll('#composer-status *')].some((k) => k.getBoundingClientRect().height > 0 && getComputedStyle(k).visibility !== 'hidden');
   return {
     composer, bar, prompt, status, overlap, text: text ? text.textContent : null, cut: text ? text.scrollWidth > text.clientWidth + 1 : null,
     inside: items.every((x) => x.l >= composer.l - 0.5 && x.r <= composer.r + 0.5), promptAboveBar: prompt.b <= bar.t + 0.5, promptFull: prompt.w >= composer.w - 40,
@@ -94,7 +96,7 @@ const SEND_LONG = `(async () => {
       check(`${name} width: the toolbar's controls sit inside the composer and do not overlap`, l.inside && !l.overlap, JSON.stringify(l));
       check(`${name} width: the model name is shown whole, never cut`, Boolean(l.text) && l.text.trim().length > 2 && l.cut === false, JSON.stringify([l.text, l.cut]));
       check(`${name} width: the model picker left the header`, l.headModel === false, '');
-      check(`${name} width: with Bypass and usage hidden the status line takes no space`, l.status.hidden && l.status.h === 0, JSON.stringify(l.status));
+      check(`${name} width: with Bypass and usage hidden the status line shows nothing and keeps the meter's 20px (so the meter coming in moves nothing)`, !l.status.shows && Math.abs(l.status.h - 20) < 0.5, JSON.stringify(l.status));
     }
 
     // ---- the status line: usage on the left, the compact Bypass badge on the right

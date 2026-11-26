@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The chat no longer shifts when your first reply finishes.** At the end of a chat's first reply, the "This chat: …" usage line appeared under the header and the context meter appeared above the box, each pushing the chat about 20 px. Both lines now keep their room from the start, blank until there is something to show. Tests: test/e2e/chat-no-jump.js, test/e2e/composer-bar.js.
+
 ## 0.5.113 (2026-11-26)
 
 - **The chat box stays still while the AI works.** The "Working in <tab>" line was a row inside the box, so each time the AI moved into a tab or left one, the box grew or shrank by about 37 px and the chat scrolled with it. The line now floats just above the box, in the room the chat already leaves under its last line, so the box keeps its height through every step. Test: test/e2e/chat-no-jump.js.

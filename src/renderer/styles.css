@@ -1031,7 +1031,9 @@ details.thinking[open] div { animation: drop-in var(--t-base) var(--spring-smoot
 .composer-bar .model-picker svg { position: static; flex: none; margin: 0 var(--sp-3) 0 0; } /* the caret follows the name directly */
 .composer-status { flex: 1 1 100%; display: flex; align-items: center; gap: var(--sp-4); min-width: 0; margin: 0 0 var(--sp-1); container-type: inline-size; }
 @container (max-width: 280px) { .composer-status .usage-meter .um-bar { display: none; } } /* the minimum sidebar: the words first, so "resets Oct 19, 1:50pm" is not cut off beside the badge */
-.composer-status:not(:has(> :not([hidden]))) { display: none; }
+/* [no shift] The line keeps its height while it is empty: the context meter appears as a chat's first reply ends, and the
+   box growing then would move the chat above it. Empty, it is a blank line the meter's height. */
+.composer-status { min-height: 20px; }
 .composer-status > .meter-strip { flex: 1 1 0; margin: 0; }
 
 /* ---------- "@" tabs: chips above the composer, the picker, the once-per-chat confirm ---------- */
