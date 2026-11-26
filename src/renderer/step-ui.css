@@ -51,7 +51,7 @@
 .act-shot[data-mode="site"][data-tab-closed="1"] .act-site { color: var(--muted); }
 .act-shot[data-mode="site"][data-tab-closed="1"]::after { position: static; flex: none; margin-right: var(--sp-4); }
 /* The status bar: what the AI is doing right now, one line, under the preview. */
-.act-status { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; max-width: 340px; padding: var(--sp-4) var(--sp-5); border-radius: var(--r-md); background: var(--bg); color: var(--muted); font-size: var(--fs-sm); }
+.act-status { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; max-width: 340px; padding: var(--sp-4) var(--sp-5); border-radius: var(--r-md); background: var(--field); color: var(--muted); font-size: var(--fs-sm); transition: background-color var(--t-base) ease-out, padding var(--t-base) ease-out; }
 .act-status[hidden] { display: none; }
 .act-status-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .act-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
@@ -59,6 +59,7 @@
 .act-status[data-state="working"] .act-status-text, .act-status[data-state="helper"] .act-status-text { color: var(--text); }
 .act-status[data-state="approval"] { background: var(--accent-soft); color: var(--accent-text); }
 .act-status[data-state="approval"] .act-dot { background: var(--accent); }
+.act-status[data-state="completed"] { background: transparent; padding-inline: 0; } /* (same height: only the sides change) */
 .act-status[data-state="completed"] .act-dot { background: var(--success, var(--accent)); }
 /* The tabs this turn opened or used: chips in the order first touched, each marked open or closed. */
 /* One card for the whole turn: the preview of the surface being acted on (the tab, a program's window, a picture), the assistant's live line. */

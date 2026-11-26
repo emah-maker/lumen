@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **A calmer, roomier chat, in the sidebar and on the chat page.** The chat box is rounder, and while you type it shows a thin accent edge with a soft glow instead of a thick ring. Your messages are evenly rounded bubbles. Replies have a little more room between paragraphs, list items and headings, and a table's header row stands out. The starters in an empty chat sit in a row that wraps instead of a tall list. Menus under the + button are roomier, and the item you reach with the keyboard is a filled row. The activity card's status line is a light tint in both themes (it was a black bar in dark mode), and once the work is done it is a quiet line instead of a second "Done" box. The model's name under a reply is no longer cut short in the sidebar ("Auto · Cl…"): the time and the thumbs take room only when they show. Pictures of every chat view, light or dark: `node scripts/measure/chat-ui-shots.js <folder> [light|dark]`.
+
 ## 0.5.113 (2026-11-26)
 
 - **The chat box stays still while the AI works.** The "Working in <tab>" line was a row inside the box, so each time the AI moved into a tab or left one, the box grew or shrank by about 37 px and the chat scrolled with it. The line now floats just above the box, in the room the chat already leaves under its last line, so the box keeps its height through every step. Test: test/e2e/chat-no-jump.js.
