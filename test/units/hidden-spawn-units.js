@@ -112,6 +112,7 @@ const ALLOW = {
       setMode(true);
       delete process.env.LUMEN_TEST_REAL_CLIS;
       check('test Electron: the real agy / claude / codex / grok / ant paths are blocked', [realAgy, realClaude, 'codex', 'grok.cmd', 'ant.exe'].every((f) => hs.testBlocksRealCli(f)));
+      check('test Electron: only a real extension is taken off the name ("antsexe" is not ant, "grok.cmd" is grok)', !hs.testBlocksRealCli('antsexe') && !hs.testBlocksRealCli('claudebat') && hs.testBlocksRealCli('grok.cmd'));
       check('test Electron: a stub inside the test\'s temp folder runs; non-CLI programs (where, reg, powershell) are not touched', hs.testBlocksRealCli(stub) === false && !hs.testBlocksRealCli('where') && !hs.testBlocksRealCli('reg.exe') && !hs.testBlocksRealCli('powershell.exe'));
       calls.length = 0;
       const blocked = await hs.probe(realAgy, ['--version'], {}, { wait: () => Promise.resolve() });
