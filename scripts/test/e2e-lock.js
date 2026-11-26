@@ -43,6 +43,11 @@ let held = null; // { owner } while this process holds the lock
 
 function cleanupOnExit() { try { release(); } catch { /* best effort */ } }
 function onSignal(sig) { cleanupOnExit(); process.kill(process.pid, sig); }
+const onInt = () => onSignal('SIGINT');
+const onTerm = () => onSignal('SIGTERM');
+// The handlers go with the lock: a runner taking it once per suite (test-all, ~300 suites) used to add three listeners each time and
+// never remove them (MaxListenersExceededWarning, and every old handler still ran on exit).
+function unhook() { process.removeListener('exit', cleanupOnExit); process.removeListener('SIGINT', onInt); process.removeListener('SIGTERM', onTerm); }
 
 // One attempt: true when the lock is now ours.
 function tryTake(owner, staleMs) {
@@ -59,8 +64,8 @@ function tryTake(owner, staleMs) {
   held = { owner };
   process.env[HELD_ENV] = String(process.pid);
   process.once('exit', cleanupOnExit);
-  process.once('SIGINT', () => onSignal('SIGINT'));
-  process.once('SIGTERM', () => onSignal('SIGTERM'));
+  process.once('SIGINT', onInt);
+  process.once('SIGTERM', onTerm);
   return true;
 }
 
@@ -94,6 +99,7 @@ function release() {
   const h = held;
   held = null;
   if (h.nested) return;
+  unhook();
   delete process.env[HELD_ENV];
   const o = readOwner();
   if (o && o.pid !== process.pid) return; // not ours any more (taken over as stale): leave it
