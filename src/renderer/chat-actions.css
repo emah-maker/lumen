@@ -29,8 +29,12 @@ body.agent-active .msg-version-step { pointer-events: none; opacity: 0.35; }
 /* ---- under a reply: versions, model, time and thumbs on the left (Copy and Regenerate stay at the right corner) */
 .reply-meta { position: absolute; left: 0; bottom: calc(-1 * var(--reply-meta-h)); height: var(--reply-meta-h); max-width: calc(100% - 56px); display: flex; align-items: center; gap: var(--sp-4); white-space: nowrap; }
 .msg.assistant:has(> .reply-meta) { margin-bottom: calc(var(--reply-meta-h) + var(--sp-2)); } /* the row, and a gap */
-.reply-meta .reply-model { position: static; min-width: 0; max-width: none; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.msg.assistant .reply-meta .reply-model { position: static; min-width: 0; max-width: none; /* (.msg.assistant: over styles.css's corner-label max-width, a percentage of this shrink-to-fit row that cut the name to half) */ overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .reply-meta .msg-time { padding: 0; flex: none; }
+/* The model's name keeps the row's room: the time and the thumbs, unseen until the reply is hovered or the row has keyboard focus, take no width
+   until then (they stay in the tab order: focusing one opens them), so a narrow sidebar says "Auto · Claude Sonnet 5.5", not "Auto · Cl…". */
+.reply-meta > :is(.msg-time.msg-hover, .reply-thumbs:not(.rated), .reply-note:not(.done)) { max-width: 60px; overflow: hidden; transition: max-width var(--t-fast) ease-out, opacity var(--t-fast) ease-out; }
+.msg.assistant:not(:hover) > .reply-meta:not(:focus-within) > :is(.msg-time.msg-hover, .reply-thumbs:not(.rated), .reply-note:not(.done)) { max-width: 0; margin-inline-start: calc(-1 * var(--sp-4)); } /* (and its gap) */
 .reply-thumbs { display: inline-flex; align-items: center; flex: none; }
 .reply-thumb { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: none; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out; }
 .reply-thumb svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
