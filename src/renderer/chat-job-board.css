@@ -131,6 +131,21 @@
 .jb-tile.s-interview .jb-tile-n, .jb-tile.s-offer .jb-tile-n, .jb-tile.s-rejected .jb-tile-n { color: color-mix(in srgb, var(--s) 82%, var(--d-text)); }
 .jb-tile-l { font: var(--jt-caption); color: var(--d-muted); }
 .jb-tile-chart { grid-column: 1 / -1; }
+/* "+2 in email" under an outcome: found in the inbox, not applied yet (a click goes to the emails) */
+.jb-tile-more { align-self: flex-start; margin-top: -4px; padding: 2px 8px; border: none; border-radius: 999px; background: color-mix(in srgb, var(--s, var(--d-muted)) 14%, transparent); color: color-mix(in srgb, var(--s, var(--d-muted)) 85%, var(--d-text)); font: var(--jt-caption); font-weight: 600; cursor: pointer; }
+.jb-tile-more:hover { background: color-mix(in srgb, var(--s, var(--d-muted)) 22%, transparent); }
+/* From your sheet: one card per block of the sheet's own numbers, a bar per line */
+.jb-sheet-grid { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@container (min-width: 640px) { .jb-sheet-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (min-width: 1000px) { .jb-sheet-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.jb-sheet-card { display: flex; flex-direction: column; gap: 10px; }
+.jb-sheet-text { font: var(--jt-caption); color: var(--d-muted); }
+.jb-sheet-rows { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.jb-sheet-row { display: grid; grid-template-columns: minmax(0, 9em) minmax(0, 1fr) auto; align-items: center; gap: 10px; font: var(--jt-caption); }
+.jb-sheet-label { color: var(--d-text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.jb-sheet-bar { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--d-muted) 18%, transparent); overflow: hidden; }
+.jb-sheet-bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.jb-sheet-n { min-width: 2.5ch; text-align: right; color: var(--d-text); font-weight: 650; font-variant-numeric: tabular-nums; }
 @container (min-width: 960px) { .jb-tile-chart { grid-column: auto; } }
 /* Needs attention and Outcomes side by side on a wide page (the list wider), one under the other on a narrow one */
 .jb-pair { display: grid; gap: 28px; }

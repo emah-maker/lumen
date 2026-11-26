@@ -4,6 +4,9 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The job dashboard's Outcomes match your sheet.** With a tracker sheet that has no Date Applied column, every answer was stamped with the time of the sync, so "Avg. days to an answer" read 0 d. The days now come from the sheet itself: "Applied Nov 6" and "Rejected Nov 4" in Status, "Submitted Nov 5" in Notes, and nothing is made up when there is no day. Closed or skipped rows you never applied to no longer count as applications. Outcomes also shows how many are waiting to hear back and how many closed, and what an email check found but you haven't applied yet ("+2 in email"), so an email never changes a number on its own. Status cells Lumen writes say the day the way the sheet does ("Rejected Nov 18"). Test: test/e2e/job-outcomes.js.
+- **Your sheet's own numbers on the dashboard.** A new "From your sheet" section shows the sheet's other tabs, such as a Dashboard of counts by odds, region and posting status, as the sheet lays them out: a card per block and a bar per line.
+
 ## 0.5.113 (2026-11-26)
 
 - **The chat box stays still while the AI works.** The "Working in <tab>" line was a row inside the box, so each time the AI moved into a tab or left one, the box grew or shrank by about 37 px and the chat scrolled with it. The line now floats just above the box, in the room the chat already leaves under its last line, so the box keeps its height through every step. Test: test/e2e/chat-no-jump.js.

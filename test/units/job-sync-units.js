@@ -70,15 +70,15 @@ const DAY = 86400000;
     // moved in Lumen (GM: interview -> offer): its Status cell is written
     T.setStage(entries[0], 'offer', NOW);
     const out = S.plan(entries, sheet, { tab: 'fall-coop-tracker', now: NOW });
-    check('plan: a move in Lumen writes the Status cell of that row, the tab quoted', J(out.cells) === J([{ range: "'fall-coop-tracker'!G2", value: 'Offer' }]), J(out.cells));
+    check('plan: a move in Lumen writes the Status cell of that row, with the day the way the sheet says it ("Offer Nov 24"), the tab quoted', J(out.cells) === J([{ range: "'fall-coop-tracker'!G2", value: 'Offer Nov 24', status: true }]), J(out.cells));
     check('plan: "Keep the sheet updated" off writes nothing', S.plan(entries, sheet, { write: false }).cells.length === 0);
     // the user sorted the sheet and changed Ford's status there; a new application was logged in Lumen
     const sorted = S.readSheet([coop[0], ['Ford Motor Company', 'Co-op search', 'Multiple', 'Co-op', '', '', 'Interview 12/1', 'https://www.careers.ford.com/search-jobs/Co-op', '', 'Oct 20'], ['General Motors', '2027 Co-op - Manufacturing', 'Flint, MI', 'Co-op', '', '', 'Interviewing', 'https://search-careers.gm.com/en/jobs/jr-1/?utm_source=x', '', '10/28/2026']], NOW);
     const logged = T.manualEntry({ company: 'Tesla', role: 'Manufacturing co-op', url: 'https://tesla.com/careers/1' }, { projectId: 'p', now: NOW }).entry;
     const after = S.plan([...entries, logged], sorted, { tab: 'fall-coop-tracker', now: NOW });
     check('plan: the sheet\'s change moves the tracker (Ford rejected -> interview)', J(after.moves.map((m) => [m.key, m.stage])) === J([[T.entryKey(entries[1]), 'interview']]), J(after.moves));
-    check('plan: after a sort, the cell written is GM\'s new row (found by its address, tracking parameters and all)', J(after.cells) === J([{ range: "'fall-coop-tracker'!G3", value: 'Offer' }]), J(after.cells));
-    check('plan: an application logged in Lumen becomes a new row, in the sheet\'s own columns', after.append.length === 1 && after.append[0].cells[0] === 'Tesla' && after.append[0].cells[6] === 'Applied' && after.append[0].cells[7] === 'https://tesla.com/careers/1' && /^11\/24\/2026$/.test(after.append[0].cells[9]) && after.append[0].cells.length === 10, J(after.append));
+    check('plan: after a sort, the cell written is GM\'s new row (found by its address, tracking parameters and all)', J(after.cells) === J([{ range: "'fall-coop-tracker'!G3", value: 'Offer Nov 24', status: true }]), J(after.cells));
+    check('plan: an application logged in Lumen becomes a new row, in the sheet\'s own columns', after.append.length === 1 && after.append[0].cells[0] === 'Tesla' && after.append[0].cells[6] === 'Applied Nov 24' && after.append[0].cells[7] === 'https://tesla.com/careers/1' && /^11\/24\/2026$/.test(after.append[0].cells[9]) && after.append[0].cells.length === 10, J(after.append));
     const gone = { ...entries[1], sheet: { status: 'Rejected', row: 3 } };
     check('plan: an entry taken out of the sheet by the user is not added back', S.plan([gone], S.readSheet([coop[0]], NOW)).append.length === 0);
     const misread = { ...first.add[1], stage: 'interview', sheet: { status: sheet.rows[1].status, row: sheet.rows[1].row } }; // kept before entry.sheet.stage, read as interview then
@@ -165,6 +165,81 @@ const DAY = 86400000;
     check('runtime: an email\'s new application is logged, dated by the email', viaEmail.ok && rt.applications('p1').some((e) => e.company === 'Tesla' && e.submittedAt === NOW - 2 * DAY && e.automation === 'Gmail'));
     const gm = rt.applications('p1').find((e) => e.company === 'General Motors');
     check('runtime: an email\'s move goes to the entry it matched', rt.applyEmail('p1', { id: 'abd', key: T.entryKey(gm), stage: 'offer' }).ok && rt.applications('p1').find((e) => e.company === 'General Motors').stage === 'offer');
+  }
+
+  // ---- [outcomes] the sheet's own days, the way a real tracker writes them (no Date Applied column: the day is in Status or Notes)
+  {
+    const dated = [
+      ['Company', 'Area', 'Role', 'Status', 'Apply URL', 'Notes'],
+      ['Acme Motors', 'Detroit', 'ME Intern', 'Rejected Nov 4', 'https://acme.example/jobs/1', 'Recheck Oct 26: verified open. Applied Nov 1 via portal'],
+      ['Beta Robotics', 'Boston', 'ME Intern', 'Applied Nov 6', 'https://beta.example/jobs/2', 'SUBMITTED Nov 6 via iCIMS'],
+      ['Gamma Air', 'Boston', 'ME Intern', 'Applied (user-reported)', 'https://gamma.example/jobs/3', 'Confirm in portal'],
+      ['Delta Labs', 'SF', 'ME Intern', 'Closed — posting removed (checked Oct 23, 2026)', 'https://delta.example/jobs/4', ''],
+      ['Eps Power', 'SF', 'ME Intern', 'Found Oct 26, verified open (applied by Nov 30)', 'https://eps.example/jobs/5', 'Submitted Nov 2'],
+      ['Zeta Space', 'LA', 'ME Intern', 'Interview Nov 20', 'https://zeta.example/jobs/6', 'Submitted Nov 5, 2026 via Workday'],
+    ];
+    const sheet = S.readSheet(dated, NOW);
+    const at = (m, d) => new Date(2026, m, d, 12).getTime();
+    const row = (c) => sheet.rows.find((r) => r.company === c);
+    check('dates: "Rejected Nov 4" is the answer\'s day, the Notes\' "Applied Nov 1" the applied day', row('Acme Motors').stage === 'rejected' && row('Acme Motors').answered === at(10, 4) && row('Acme Motors').applied === at(10, 1), J(row('Acme Motors')));
+    check('dates: "Applied Nov 6" is the applied day, with no answer', row('Beta Robotics').applied === at(10, 6) && row('Beta Robotics').answered === 0);
+    check('dates: no day anywhere -> none made up', row('Gamma Air').applied === 0 && row('Gamma Air').answered === 0);
+    check('dates: a saved row\'s Notes date is not an applied day; a closed row\'s "checked" day is not an answer', row('Eps Power').applied === 0 && row('Delta Labs').answered === 0 && row('Delta Labs').stage === 'withdrawn');
+    check('dates: an interview\'s day, and "Submitted Nov 5, 2026" in Notes', row('Zeta Space').answered === at(10, 20) && row('Zeta Space').applied === at(10, 5));
+    const first = S.plan([], sheet, { now: NOW });
+    const acme = first.add.find((e) => e.company === 'Acme Motors');
+    const gamma = first.add.find((e) => e.company === 'Gamma Air');
+    check('plan: a new rejected row keeps the sheet\'s days (applied Nov 1, answered Nov 4), not the sync\'s', acme.submittedAt === at(10, 1) && acme.respondedAt === at(10, 4) && acme.history.at(-1).at === at(10, 4), J(acme));
+    check('plan: a new applied row with no day gets no made-up answer', gamma.stage === 'applied' && !gamma.respondedAt, J(gamma));
+    const st = T.stats(first.add, NOW);
+    check('stats: the sheet\'s rejection counts, and the average wait is the sheet\'s days (3 and 15 days: 9), not 0', st.rejections === 1 && st.interviews === 1 && st.avgDays === 9 && st.answered === 2 && st.waiting === 2 && st.closed === 1, J(st));
+    const delta = first.add.find((e) => e.company === 'Delta Labs');
+    check('plan: a closed row with no applied day is not an application (Total applied is the sheet\'s 4, not 5)', delta.stage === 'withdrawn' && !delta.submittedAt && st.total === 4, J({ delta, total: st.total }));
+    // an older sync's closed entry, "applied" and closed in the same moment: the next sync takes the made-up application back
+    const oldClosed = { ...delta, submittedAt: NOW - DAY, history: [{ stage: 'applied', at: NOW - DAY }, { stage: 'withdrawn', at: NOW - DAY }], sheet: { status: dated[4][3], row: 5, stage: 'withdrawn' } };
+    const repair = S.plan([oldClosed], sheet, { now: NOW });
+    check('plan: a closed entry an older sync counted as applied is taken back (submittedAt 0)', repair.dates.length === 1 && repair.dates[0].submittedAt === 0, J(repair.dates));
+    const reallyApplied = { ...oldClosed, history: [{ stage: 'applied', at: NOW - 9 * DAY }, { stage: 'withdrawn', at: NOW - DAY }] };
+    check('plan: one really applied to and then closed keeps its application', S.plan([reallyApplied], sheet, { now: NOW }).dates.length === 0);
+    // entries kept by an older sync, with the sync's time as their days: the sheet's days replace them
+    const old = first.add.map((e) => ({ ...e, submittedAt: NOW, respondedAt: e.respondedAt ? NOW : undefined, sheet: { status: dated.find((r) => r[0] === e.company)[3], row: 0, stage: e.stage } }));
+    const fix = S.plan(old, sheet, { now: NOW });
+    const fa = fix.dates.find((d) => d.key === T.entryKey(old.find((e) => e.company === 'Acme Motors')));
+    check('plan: entries an older sync dated "now" get the sheet\'s days back (dates)', fa && fa.submittedAt === at(10, 1) && fa.respondedAt === at(10, 4) && fix.moves.length === 0 && fix.cells.length === 0, J(fix.dates));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jobsync-dates-'));
+    const rt = runtime.create({ file: path.join(dir, 'automations.json'), encrypt: (s) => Buffer.from(s).toString('base64'), decrypt: (s) => Buffer.from(s, 'base64').toString(), available: () => true, now: () => NOW, saveCsv: async () => ({ ok: true }), changed: () => {} });
+    {
+      rt.applySheetPlan('p9', S.plan([], sheet, { now: NOW }));
+      const kept = rt.applications('p9').find((e) => e.company === 'Acme Motors');
+      check('runtime: the dates a sync gives are kept on the entries', kept.submittedAt === at(10, 1) && kept.respondedAt === at(10, 4), J(kept));
+      const beta = rt.applications('p9').find((e) => e.company === 'Beta Robotics');
+      rt.applyEmail('p9', { id: 'm1', key: T.entryKey(beta), stage: 'rejected', at: at(10, 18) });
+      const b2 = rt.applications('p9').find((e) => e.company === 'Beta Robotics');
+      check('runtime: an email\'s rejection counts from the email\'s day (Nov 18), not the day it was applied here', b2.stage === 'rejected' && b2.respondedAt === at(10, 18), J(b2));
+      const d0 = rt.applications('p9').find((e) => e.company === 'Delta Labs');
+      const fakeOld = S.plan([{ ...d0, submittedAt: NOW - DAY, history: [{ stage: 'applied', at: NOW - DAY }, { stage: 'withdrawn', at: NOW - DAY }], sheet: { status: dated[4][3], row: 5, stage: 'withdrawn' } }], sheet, { now: NOW });
+      const real = rt.applications('p9').find((e) => e.company === 'Delta Labs');
+      Object.assign(real, { submittedAt: NOW - DAY, history: [{ stage: 'applied', at: NOW - DAY }, { stage: 'withdrawn', at: NOW - DAY }] });
+      rt.applySheetPlan('p9', { dates: fakeOld.dates });
+      const fixed = rt.applications('p9').find((e) => e.company === 'Delta Labs');
+      check('runtime: the made-up application is taken off the closed entry', !fixed.submittedAt && !fixed.history.some((h) => h.stage === 'applied'), J(fixed));
+      check('statusText: the day the way the sheet writes it', S.statusText('rejected', b2.respondedAt) === 'Rejected Nov 18' && S.statusText('saved', NOW) === 'Not started' && S.statusText('applied', 0) === 'Applied');
+    }
+  }
+
+  // ---- [outcomes] a summary tab's numbers, laid out as the sheet has them
+  {
+    const dash = [
+      ['Odds', 'Listings by odds'], ['High', '23'], ['Med', '51'], ['Low', '37'], ['Verify', '0'], ['Applied', '37'],
+      [], ['Region', 'Listings by region'], ['Boston area', '65'], ['California', '57'], ['Other', '57'],
+      [], ['Posting status', 'Listings by posting status'], ['Verified open', '46'], ['Unverified', '56'], ['Applied / backup / skip', '77'],
+      [], ['Missing apply link'], ['none'],
+    ];
+    const blocks = S.sheetMetrics(dash, 'Dashboard');
+    check('metrics: one block per heading, titled by its last cell, its lines and numbers', blocks.length === 4 && blocks[0].title === 'Listings by odds' && blocks[0].rows.length === 5 && blocks[0].rows[1].label === 'Med' && blocks[0].rows[1].n === 51 && blocks[2].rows[2].label === 'Applied / backup / skip', J(blocks));
+    check('metrics: a heading answered by one cell ("Missing apply link" / "none")', blocks[3].title === 'Missing apply link' && blocks[3].text === 'none' && !blocks[3].rows.length, J(blocks[3]));
+    check('metrics: numbers with no heading go under the tab\'s name; %, $ and commas read', J(S.sheetMetrics([['Rate', '12%'], ['Pay', '$1,250']], 'Stats')) === J([{ title: 'Stats', rows: [{ label: 'Rate', value: '12%', n: 12 }, { label: 'Pay', value: '$1,250', n: 1250 }] }]), J(S.sheetMetrics([['Rate', '12%'], ['Pay', '$1,250']], 'Stats')));
+    check('metrics: a tab of words only gives nothing', S.sheetMetrics([['Notes'], ['remember to follow up']], 'Notes').length === 0);
   }
 
   console.log(failures ? `\n${failures} failed` : '\nAll job sync checks passed.');
