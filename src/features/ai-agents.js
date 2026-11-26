@@ -564,7 +564,12 @@ function setupAiAgents(deps) {
     // element in that tab), not in whichever tab is in front while the user looks elsewhere.
     // An outside agent's own window: the tab in front THERE (not the user's, not the sidebar run's).
     const front = scope ? null : windows ? (agentRec ? (tabArg ?? windows.activeTabId(agentRec)) : null) : (tabArg ?? agent.browser.activeTab()?.id);
-    const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn, null, null, windows ? { rec: agentRec, mcp: true, clipboard: (session.clipboard ||= require('./agent-hands-off').privateClipboard()) } : null));
+    if (!scope && !session.heldHook) { // a confirm/prompt held for this session's handle_dialog lives until the session ends (agent.inTask heldOwner)
+      session.heldHook = true;
+      const letGo = () => agent.releaseHeldFor(session);
+      if (session.controller.signal.aborted) letGo(); else session.controller.signal.addEventListener('abort', letGo, { once: true });
+    }
+    const inPin = (fn) => (scope ? runAgent.inScope(scope, fn) : agent.inTask(front, signal, fn, null, null, windows ? { rec: agentRec, mcp: true, heldOwner: session, clipboard: (session.clipboard ||= require('./agent-hands-off').privateClipboard()) } : null));
     // The row shows at once with its generic label; describeStep's specific one follows as a tool_update
     // (renderer) and never holds the call up. Only a label that reads the page as it is before the call
     // acts (a click or type names its element) is waited for, for at most LABEL_WAIT_MS, then the call goes on.

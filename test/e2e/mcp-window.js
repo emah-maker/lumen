@@ -46,6 +46,9 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.waitForSelector('.tab');
   await ui.waitForTimeout(500);
   await ui.evaluate(() => window.assistant.setMcpEnabled(true));
+  // (By default Lumen closes the tabs the AI opened a few seconds after its run ends. This suite looks at the sidebar AI's tab long after, and
+  // checks the agents leave the user's tabs alone, so that tab has to stay: the "Close the tabs the AI opened" setting is off here.)
+  await app.evaluate(() => global.__settings.backend.set('closeAiTabs', 'off'));
   await app.evaluate(({ app: electronApp }) => {
     global.__focusEvents = [];
     electronApp.on('browser-window-focus', (_e, w) => global.__focusEvents.push(w.id));

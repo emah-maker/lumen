@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **An outside agent can answer a page's confirm or prompt.** When an agent working in its own Lumen window (Claude Code, Codex, another MCP app) loaded a page that asked "Are you sure?", the question went to you the moment the agent's call ended, so its next `handle_dialog` call always found nothing to answer. The question now waits for the agent until its session ends, then goes to you.
+
 ## 0.5.111 (2026-11-25)
 
 - **The AI can change your settings and remember things for a project, and you can undo it.** Say "use dark mode", "bigger text", "use Opus for new chats here" or "remember I cite in APA", and the AI changes it: the theme, accent colour, text size, reduce motion, compact or side tabs, prefer fractions, and in a project's chat the project's goal, its new-chat model and Plan first, and short notes kept under "Noted for this project:" in its instructions. Each change shows in the chat as "Changed …: old → new" with **Undo**, and on the project's **Settings** under **Changed by the AI**. It never changes permissions, sites you allowed, privacy, security, memory or accounts; it tells you where those are. After the chat has read a page, an email or a file, it shows you the change and asks first.

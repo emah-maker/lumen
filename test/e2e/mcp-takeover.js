@@ -90,6 +90,18 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('the agent opened its window on the sign-in page', !r.result.isError && (await agentWins()).length === 1, A.text(r));
   const aw = (await agentWins())[0];
   const tab = aw.tabs[0];
+  // Hidden windows (LUMEN_TEST_BACKGROUND) never get the OS focus, and "the user is in the agent's window" is exactly what the app reads from
+  // the window's focus state (agent-hands-off userInputCounts / stillHeld). So the agent window's focus state is kept here instead: focus() and
+  // blur() set it, isFocused() reads it, and the app's own code (the pill's click, the user's input) goes through the same calls as for real.
+  if (process.env.LUMEN_TEST_BACKGROUND) {
+    await app.evaluate((_e, id) => {
+      const win = global.__agentWindows.recOf(id).win;
+      let focused = false;
+      win.isFocused = () => focused;
+      win.focus = () => { focused = true; };
+      win.blur = () => { focused = false; };
+    }, aw.windowId);
+  }
   const probe = await app.evaluate(({ webContents }, id) => webContents.fromId(id).getURL(), tab.contentsId);
   check('the page loaded', /signin/.test(probe), probe);
 
