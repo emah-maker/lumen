@@ -96,7 +96,7 @@ const SECTIONS = [
     id: 'chatpage',
     entries: [
       ['shortcuts.chatpage.newChat', ['mod+shift+o']],
-      ['shortcuts.chatpage.rail', ['mod+shift+s']],
+      ['shortcuts.chatpage.rail', ['mod+b', 'mod+shift+s']],
       ['shortcuts.chatpage.home', ['alt+home']],
       ['shortcuts.chatpage.stop', ['escape']],
     ],

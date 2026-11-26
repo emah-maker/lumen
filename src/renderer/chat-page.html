@@ -85,13 +85,10 @@
   <div class="cp-scrim" id="cp-scrim" hidden></div>
   <nav class="cp-list" id="cp-rail" aria-label="Chats" data-i18n-aria-label="sidebar.chats">
     <div class="cp-rail-top">
-      <button class="icon-btn" id="cp-rail-close" type="button" title="Hide chat list (Ctrl+Shift+S)" aria-label="Hide chat list" aria-controls="cp-rail" aria-expanded="true" data-i18n-title="chatpage.rail.hide" data-i18n-aria-label="chatpage.rail.hide">
+      <button class="icon-btn cp-rail-toggle" id="cp-rail-close" type="button" title="Hide sidebar (Ctrl+B)" aria-label="Hide sidebar" aria-controls="cp-rail" aria-expanded="true" data-i18n-aria-label="chatpage.rail.hide">
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/></svg>
       </button>
       <h1 data-i18n="sidebar.chats">Chats</h1>
-      <button class="icon-btn cp-full-btn" id="cp-rail-full" type="button" title="Full screen (F11)" aria-label="Full screen" aria-pressed="false" data-i18n-title="chatpage.full.title" data-i18n-aria-label="chatpage.full">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path class="cp-full-in" d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/><path class="cp-full-out" d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/></svg>
-        </button>
     </div>
     <button class="cp-new" id="new-chat" type="button">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5zM9 5l2.5 2.5"/></svg>
@@ -112,8 +109,11 @@
   <main class="cp-main">
     <section id="chat-root" class="sidebar" data-chat-root aria-label="Conversation" data-i18n-aria-label="chatpage.conversation">
       <header class="sidebar-head">
-        <button class="icon-btn" id="cp-rail-open" type="button" title="Show chat list (Ctrl+Shift+S)" aria-label="Show chat list" aria-controls="cp-rail" aria-expanded="false" hidden data-i18n-title="chatpage.rail.show" data-i18n-aria-label="chatpage.rail.show">
+        <button class="icon-btn cp-rail-toggle" id="cp-rail-open" type="button" title="Show sidebar (Ctrl+B)" aria-label="Show sidebar" aria-controls="cp-rail" aria-expanded="false" hidden data-i18n-aria-label="chatpage.rail.show">
           <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/></svg>
+        </button>
+        <button class="icon-btn" id="cp-rail-new" type="button" title="New chat" aria-label="New chat" hidden data-i18n-aria-label="sidebar.newChat">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h2.5L12.5 6 10 3.5 3 10.5zM9 5l2.5 2.5"/></svg>
         </button>
         <div class="cp-title-wrap">
           <button class="cp-title" id="cp-title" type="button" hidden title="Rename chat" aria-label="Rename chat" data-i18n-title="chatpage.rename" data-i18n-aria-label="chatpage.rename"></button>

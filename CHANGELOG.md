@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **The chat no longer shifts when your first reply finishes.** At the end of a chat's first reply, the "This chat: …" usage line appeared under the header and the context meter appeared above the box, each pushing the chat about 20 px. Both lines now keep their room from the start, blank until there is something to show. Tests: test/e2e/chat-no-jump.js, test/e2e/composer-bar.js.
+- **Hide the chat page's sidebar so the conversation takes the whole width.** On the full-page chat (lumen://chat), the button at the top left of the sidebar of chats and projects, now called **Hide sidebar**, or **Ctrl+B** (⌘B on macOS) slides it away. **Show sidebar** and **New chat** then wait at the start of the chat's header, and Ctrl+B brings it back. Ctrl+Shift+S still works too. The conversation stays a centred column at full width. Lumen remembers your choice after a restart, and the page opens with the sidebar where you left it, without sliding. With Settings → **Reduce motion** on, it hides and shows at once. The **Full screen** button that sat next to it in the sidebar is gone; full screen stays in the chat header and on F11. Test: `test/e2e/chatpage-sidebar.js`.
 
 ## 0.5.113 (2026-11-26)
 
