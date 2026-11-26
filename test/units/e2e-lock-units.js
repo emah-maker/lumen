@@ -89,6 +89,11 @@ const deadPid = () => { const r = spawnSync(process.execPath, ['-e', '0']); retu
   const r3 = spawnSync(process.execPath, [cli, 'run'], { env, encoding: 'utf8' });
   check('run without a command is a usage error and takes no lock', r3.status === 2 && !fs.existsSync(LOCK));
 
+  const counts = () => ['exit', 'SIGINT', 'SIGTERM'].map((e) => process.listenerCount(e)).join(',');
+  const before = counts();
+  for (let i = 0; i < 25; i++) lock.withLockSync(() => {}, { owner: 'unit-many' });
+  check('taking and releasing the lock 25 times leaves no exit or signal listeners behind (test-all takes it once per suite)', counts() === before && !fs.existsSync(LOCK), `${before} -> ${counts()}`);
+
   fs.rmSync(base, { recursive: true, force: true });
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
