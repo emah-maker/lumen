@@ -482,8 +482,8 @@ function create(deps) {
       lib.setStage(e, m.stage, at);
       if (m.applied && m.stage !== 'saved' && (!e.submittedAt || e.submittedAt === at)) e.submittedAt = m.applied;
     }
-    for (const s of p.seen || []) { const e = real(s.key); if (e) e.sheet = { status: s.sheetStatus, row: s.row }; }
-    for (const a of appended) { const e = real(a.key); if (e) e.sheet = { status: a.status, row: 0 }; }
+    for (const s of p.seen || []) { const e = real(s.key); if (e) e.sheet = { status: s.sheetStatus, row: s.row, ...(s.stage ? { stage: s.stage } : {}) }; } // (stage: what the cell was read as)
+    for (const a of appended) { const e = real(a.key); if (e) e.sheet = { status: a.status, row: 0, stage: e.stage }; }
     save();
     changed();
     return { added: (p.add || []).length, moved: (p.moves || []).length };

@@ -51,6 +51,9 @@ const DAY = 86400000;
     const stages = { 'Offer!': 'offer', 'Offer declined': 'offer', 'Rejected after OA': 'rejected', 'OA sent': 'interview', 'Phone screen 11/2': 'interview', 'Submitted': 'applied', 'Backup': 'saved', 'Skip': 'withdrawn', 'Withdrew': 'withdrawn', '': 'saved' };
     const got = Object.fromEntries(Object.keys(stages).map((k) => [k, S.stageFromStatus(k)]));
     check('sheet: Status words people use', J(got) === J(stages), J(got));
+    const notes = { 'Found Oct 26, verified open (Summer 2027, Holden MA, onsite)': 'saved', 'Found Oct 21, verified open (<25 applicants; on-site SolidWorks role)': 'saved', 'Queued Nov 24': 'saved', 'Found Nov 8, scraper (unverified)': 'saved', 'Applied Nov 6': 'applied', 'Closed Nov 22 - posting no longer listed': 'withdrawn', 'Closed — expired (confirmed Oct 23, 2026)': 'withdrawn', 'Rejected Nov 4': 'rejected', 'Interview scheduled (onsite Dec 2)': 'interview', 'Screening call booked': 'interview' };
+    const gotNotes = Object.fromEntries(Object.keys(notes).map((k) => [k, S.stageFromStatus(k)]));
+    check('sheet: the lead of a Status decides; a note says "onsite", which is not an interview, Found and Queued are saved', J(gotNotes) === J(notes), J(gotNotes));
   }
 
   // ---- one sync's plan
@@ -78,6 +81,10 @@ const DAY = 86400000;
     check('plan: an application logged in Lumen becomes a new row, in the sheet\'s own columns', after.append.length === 1 && after.append[0].cells[0] === 'Tesla' && after.append[0].cells[6] === 'Applied' && after.append[0].cells[7] === 'https://tesla.com/careers/1' && /^11\/24\/2026$/.test(after.append[0].cells[9]) && after.append[0].cells.length === 10, J(after.append));
     const gone = { ...entries[1], sheet: { status: 'Rejected', row: 3 } };
     check('plan: an entry taken out of the sheet by the user is not added back', S.plan([gone], S.readSheet([coop[0]], NOW)).append.length === 0);
+    const misread = { ...first.add[1], stage: 'interview', sheet: { status: sheet.rows[1].status, row: sheet.rows[1].row } }; // kept before entry.sheet.stage, read as interview then
+    const reread = S.plan([misread], sheet, { tab: 'fall-coop-tracker', now: NOW });
+    check('plan: a cell read differently now moves the entry to what the sheet says and writes nothing to the sheet', reread.cells.length === 0 && J(reread.moves.map((m) => m.stage)) === J([sheet.rows[1].stage]) && reread.seen[0].stage === sheet.rows[1].stage, J(reread));
+    check('plan: the stage a cell was read as is kept with it', first.add[0].sheet.stage === 'interview' && quiet.seen.every((x) => x.stage));
     check('plan: a row whose Status says nothing known is not added', S.plan([], S.readSheet(summer, NOW)).add.length === 3);
   }
 
@@ -97,6 +104,15 @@ const DAY = 86400000;
       check(`email: "${msg.subject}" is ${kind} from ${company}`, c?.kind === kind && c?.company === company, J(c));
     }
     check('email: a message about something else is none', S.classifyEmail(m('Sam <sam@gmail.com>', 'lunch tomorrow?', 'want to grab food')) === null && S.classifyEmail(m('Amazon <ship@amazon.com>', 'Your order has shipped')) === null);
+    check('email: a newsletter\'s "unfortunately" is not a rejection', S.classifyEmail(m('Jeff Nippard <jeff@jeffnippard.com>', 'The Biggest Training Mistakes That Keep You Small', 'Unfortunately, most lifters skip this')) === null, J(S.classifyEmail(m('Jeff Nippard <jeff@jeffnippard.com>', 'The Biggest Training Mistakes That Keep You Small', 'Unfortunately, most lifters skip this'))));
+    check('email: a neighborhood post is not a rejection', S.classifyEmail(m('Upper Happy Valley Area Posts <reply@rs.email.nextdoor.com>', '49ers Fans!!', 'Unfortunately the game got moved')) === null);
+    check('email: a podcast "interview" is not an interview', S.classifyEmail(m('The Daily <news@nytimes.com>', 'An interview with the governor', 'Listen now')) === null);
+    const fwd = S.classifyEmail(m('Evan Mah <me@gmail.com>', 'FW: Application Received', '---------- Forwarded message --------- From: Kiewit Careers <careers@kiewit.com> Thank you for your application to Kiewit'));
+    check('email: a forward is filed under the original sender, not the one who forwarded it', fwd?.kind === 'applied' && fwd.company === 'Kiewit', J(fwd));
+    const fwdBare = S.classifyEmail(m('Evan Mah <me@gmail.com>', 'Fwd: Application Received', 'see below'));
+    check('email: a forward without the original sender has no company (so it is not suggested)', fwdBare?.kind === 'applied' && !fwdBare.company, J(fwdBare));
+    check('email: a suggestion opens its message in Gmail, in the searched account', S.gmailLink('18c2f0a1b2c3d4e5', 'me@example.com') === 'https://mail.google.com/mail/?authuser=me%40example.com#all/18c2f0a1b2c3d4e5' && S.gmailLink('18c2f0a1b2c3d4e5') === 'https://mail.google.com/mail/#all/18c2f0a1b2c3d4e5' && S.gmailLink('../x') === '' && S.gmailLink('18c2f0a1b2c3d4e5', 'not an email') === 'https://mail.google.com/mail/#all/18c2f0a1b2c3d4e5');
+    check('email: the Gmail search leaves out Promotions, Social and Forums', /-category:promotions/.test(S.GMAIL_QUERY) && /-category:social/.test(S.GMAIL_QUERY) && /-category:forums/.test(S.GMAIL_QUERY));
     const entries = [
       { id: 'a1', company: 'Acme Robotics', role: 'ME co-op', stage: 'saved' },
       { id: 'd1', company: 'Draper', role: 'Mechanical co-op', stage: 'applied', submittedAt: NOW - 20 * DAY },

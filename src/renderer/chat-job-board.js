@@ -118,6 +118,7 @@
       else say.textContent = action === 'sync' || action === 'link-sheet' ? syncSays(out) : action === 'check-email' ? (out.suggestions.length ? tr('jobs.email.found', '{n} emails could update your tracker.', { n: out.suggestions.length }) : tr('jobs.email.none', 'Checked {n} emails: nothing new.', { n: out.checked })) : '';
       if (out?.ok && action === 'link-sheet') linking = false;
       await load();
+      if (out?.ok && action === 'check-email' && out.suggestions?.length) root.querySelector('.jb-sug-box')?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); // (what the button found, in view)
       return out;
     }
     const syncSays = (r) => tr('jobs.sheet.synced', 'Synced: {added} new from the sheet, {moved} moved, {written} written back, {appended} added to the sheet.', { added: r.added || 0, moved: r.moved || 0, written: r.written || 0, appended: r.appended || 0 });
@@ -140,7 +141,6 @@
     const postingBtn = (e) => (e.url ? linkBtn(tr('jobs.posting', 'Open the posting'), 'open', () => ctx.openLink(e.url), 'jb-posting') : null);
     const openResume = async (e) => { const out = await api.projectApplications(id, 'resume', { key: e.key }).catch(() => null); if (!out?.ok) say.textContent = tr('jobs.resumeFailed', 'Could not open the résumé.'); };
     const resumeBtn = (e) => (e.resume ? linkBtn(tr('jobs.resume', 'Open the tailored résumé: {name}', { name: e.resume }), 'doc', () => openResume(e), 'jb-resume') : null);
-    const stagePill = (s) => el('span', { className: `jb-pill s-${s}`, textContent: stageName(s) });
     function stageMenu(e) {
       const sel = el('select', { className: 'jb-stage-select' });
       sel.setAttribute('aria-label', tr('jobs.stageFor', 'Stage of {name}', { name: [e.company, e.role].filter(Boolean).join(', ') }));
@@ -242,10 +242,14 @@
         const action = s.key ? tr('jobs.email.move', 'Move to {stage}', { stage: stageName(s.stage) }) : tr('jobs.email.add', 'Add as {stage}', { stage: stageName(s.stage) });
         const apply = small(action, (b) => act('email-apply', { id: s.id }, b), 'primary');
         const ignore = small(tr('jobs.email.ignore', 'Ignore'), (b) => act('email-ignore', { id: s.id }, b), 'jb-quiet');
-        rows.append(el('li', { className: `jb-row jb-sug s-${s.stage}` },
-          el('span', { className: 'jb-pill', textContent: what(s) }),
-          el('span', { className: 'jb-sug-main' }, el('strong', { textContent: s.company }), s.role ? el('span', { className: 'jb-muted', textContent: ` · ${s.role}` }) : null, el('span', { className: 'jb-sug-subj', textContent: `“${s.subject}” · ${day(s.at)}`, title: s.from })),
-          apply, ignore));
+        // The company and subject open the email in Gmail (a new tab), to see what it is before applying.
+        const main = el(s.link ? 'button' : 'span', { className: 'jb-sug-main' }, el('strong', { textContent: s.company }), s.role ? el('span', { className: 'jb-muted', textContent: ` · ${s.role}` }) : null, el('span', { className: 'jb-sug-subj', textContent: `“${s.subject}” · ${day(s.at)}` }));
+        if (s.link) {
+          main.type = 'button';
+          main.title = tr('jobs.email.open', 'Open in Gmail: {from}', { from: s.from });
+          main.onclick = () => ctx.openLink(s.link);
+        } else main.title = s.from;
+        rows.append(el('li', { className: `jb-row jb-sug s-${s.stage}` }, el('span', { className: 'jb-pill', textContent: what(s) }), main, apply, ignore));
       }
       const all = small(tr('jobs.email.applyAll', 'Apply all'), (b) => act('email-apply', { all: true }, b));
       return el('div', { className: 'jb-panel jb-sug-box' }, el('div', { className: 'jb-panel-head' }, icon('mail'), el('strong', { className: 'jb-sub', textContent: list.length === 1 ? tr('jobs.email.one', '1 email could update your tracker') : tr('jobs.email.many', '{n} emails could update your tracker', { n: list.length }) }), el('span', { className: 'jb-caption', textContent: tr('jobs.email.check2', 'Sorted from the subject and preview. Check before you apply.') }), el('span', { className: 'jb-grow' }), all), rows);
@@ -319,10 +323,10 @@
       c.setAttribute('aria-label', [e.company, e.role, stageName(e.stage)].filter(Boolean).join(', '));
       const when = e.stage === 'saved' ? tr('jobs.savedOn', 'Saved {when}', { when: day(e.at) }) : tr('jobs.appliedOn', 'Applied {when}', { when: day(e.applied || e.at) });
       c.append(...[
-        el('div', { className: 'jb-card-top' }, el('strong', { className: 'jb-card-co', textContent: e.company || tr('jobs.noCompany', '(no company)') }), e.stage === 'withdrawn' || e.stage === 'rejected' ? stagePill(e.stage) : null),
-        e.role ? el('div', { className: 'jb-card-role', textContent: e.role }) : null,
-        el('div', { className: 'jb-card-when', textContent: when }),
-        el('div', { className: 'jb-card-foot' }, el('span', { className: 'jb-grow' }), postingBtn(e), resumeBtn(e), stageMenu(e))].filter(Boolean)); // (no role: no line)
+        el('div', { className: 'jb-card-top' }, el('strong', { className: 'jb-card-co', textContent: e.company || tr('jobs.noCompany', '(no company)'), title: e.company || '' })),
+        e.role ? el('div', { className: 'jb-card-role', textContent: e.role, title: e.role }) : null,
+        // The date and the controls share one line (the stage menu names rejected or withdrawn in Closed): a card is three short lines.
+        el('div', { className: 'jb-card-foot' }, el('span', { className: 'jb-card-when', textContent: when }), postingBtn(e), resumeBtn(e), stageMenu(e))].filter(Boolean)); // (no role: no line)
       c.addEventListener('dragstart', (ev) => { ev.dataTransfer.setData('text/x-lumen-job', e.key); ev.dataTransfer.effectAllowed = 'move'; c.classList.add('dragging'); });
       c.addEventListener('dragend', () => c.classList.remove('dragging'));
       c.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !isImeEnter(ev) && ev.target === c && e.url) ctx.openLink(e.url); });
@@ -335,7 +339,17 @@
         const items = (data.entries || []).filter((e) => stages.includes(e.stage));
         const title = col === 'closed' ? tr('jobs.closed', 'Closed') : stageName(col);
         const list = el('div', { className: 'jb-col-list' });
-        for (const e of items) list.append(card(e));
+        // A long column shows its first few (Closed fewer: it is history) and a button for the rest, so one column of 30 doesn't make
+        // the page a long scroll to what is under the board. Opened stays open (remembered per column).
+        const cap = col === 'closed' ? 3 : 6;
+        const open = remember.get(`open.${col}`, '') === '1';
+        for (const e of open ? items : items.slice(0, cap)) list.append(card(e));
+        if (items.length > cap) {
+          const more = el('button', { type: 'button', className: 'jb-col-more', textContent: open ? tr('jobs.showFewer', 'Show fewer') : tr('jobs.showAll', 'Show all {n}', { n: items.length }) });
+          more.setAttribute('aria-expanded', String(open));
+          more.onclick = () => { remember.set(`open.${col}`, open ? '' : '1'); render(); root.querySelector(`.jb-col.c-${col} .jb-col-more`)?.focus(); };
+          list.append(more);
+        }
         if (!items.length) list.append(el('p', { className: 'jb-col-empty', textContent: col === 'saved' ? tr('jobs.savedEmpty', 'Postings to apply to later') : tr('jobs.dropHere', 'Drag a card here') }));
         const column = el('section', { className: `jb-col c-${col}` }, el('header', { className: 'jb-col-head' }, el('span', { className: 'jb-dot' }), el('span', { className: 'jb-col-title', textContent: title }), el('span', { className: 'jb-col-n', textContent: String(items.length) })), list);
         column.setAttribute('aria-label', `${title}: ${items.length}`);
@@ -514,9 +528,9 @@
         actionBar(),
         keepForm,
         say,
-        progress(),
+        section('view', viewTitle, '', content), // (right under the switcher: picking a view changes what is next to it, not something a screen below)
         attention.length ? el('div', { className: 'jb-pair' }, section('attention', tr('jobs.sec.attention', 'Needs attention'), '', ...attention), outcomes()) : outcomes(), // (side by side on a wide page)
-        section('view', viewTitle, '', content),
+        progress(),
         src ? section('sources', tr('jobs.sec.sources', 'Sources'), '', sources(), profileLine()) : section('sources', tr('jobs.sec.sources', 'Sources'), '', profileLine()),
       ];
       root.replaceChildren(...parts.filter(Boolean));

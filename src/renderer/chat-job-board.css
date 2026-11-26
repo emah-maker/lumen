@@ -156,6 +156,10 @@
 .jb-follow-name, .jb-sug-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jb-follow-name span, .jb-sug-main .jb-muted { color: var(--d-muted); }
 .jb-sug-subj { margin-left: 8px; font: var(--jt-caption); color: var(--d-muted); }
+/* The company and subject open the email in Gmail: a plain line of text that underlines on hover. */
+button.jb-sug-main { appearance: none; border: 0; background: none; padding: 4px 6px; margin: -4px -6px; border-radius: 6px; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+button.jb-sug-main:hover strong, button.jb-sug-main:hover .jb-sug-subj { text-decoration: underline; text-underline-offset: 2px; }
+button.jb-sug-main:focus-visible { outline: 2px solid var(--d-focus); outline-offset: 0; }
 .jb-row .jb-pill { flex: none; min-width: 96px; justify-content: center; }
 .jb-panel-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
 .jb-panel-head .jb-ic { color: var(--d-muted); }
@@ -191,15 +195,19 @@ select.jb-in { flex: 0 0 auto; }
 .jb-col-n { min-width: 22px; padding: 0 7px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--s) 15%, transparent); text-align: center; font: var(--jt-caption); font-weight: 650; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--s) 70%, var(--d-text)); }
 .jb-col-list { flex: 1; display: flex; flex-direction: column; gap: 8px; }
 .jb-col-empty { margin: 0; padding: 20px 12px; border: 1.5px dashed var(--d-line); border-radius: var(--jb-r); color: var(--d-muted); font: var(--jt-caption); text-align: center; }
-.jb-card { display: flex; flex-direction: column; gap: 3px; cursor: grab; }
+.jb-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; cursor: grab; } /* (compact: three short lines, so a column shows more without scrolling) */
 .jb-card.dragging { opacity: 0.45; }
 .jb-card.flash { outline: 2px solid var(--d-focus); outline-offset: 2px; }
 .jb-card-top { display: flex; align-items: center; gap: 8px; }
 .jb-card-co { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--jt-sub); }
 .jb-card-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--d-text); }
 .jb-card-when { font: var(--jt-caption); color: var(--d-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.jb-card-foot { display: flex; align-items: center; gap: 2px; margin-top: 6px; }
-.jb-card .jb-stage-select { flex: none; width: 104px; margin-left: 2px; }
+.jb-card-foot { display: flex; align-items: center; gap: 2px; margin-top: 2px; }
+.jb-card-foot .jb-card-when { flex: 1; }
+.jb-card .jb-stage-select { flex: none; width: 96px; height: 24px; margin-left: 2px; }
+.jb-col-more { appearance: none; padding: 6px 10px; border: 1px dashed var(--d-line); border-radius: var(--jb-r); background: none; color: var(--d-muted); font: var(--jt-caption); font-weight: 600; cursor: pointer; }
+.jb-col-more:hover { color: var(--d-text); border-color: var(--d-edge); }
+.jb-col-more:focus-visible { outline: 2px solid var(--d-focus); outline-offset: 2px; }
 
 /* ---- the table */
 .jb-table-wrap { overflow-x: auto; }
