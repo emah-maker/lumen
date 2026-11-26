@@ -850,7 +850,7 @@ box-shadow:0 0 0 1px var(--hairline), 0 12px 32px -12px rgb(0 0 0 / calc(0.8 * v
 .composer-bar .model-picker svg{position:static;flex:none;margin:0 var(--sp-3) 0 0;}
 .composer-status{flex:1 1 100%;display:flex;align-items:center;gap:var(--sp-4);min-width:0;margin:0 0 var(--sp-1);container-type:inline-size;}
 @container (max-width:280px){.composer-status .usage-meter .um-bar{display:none;}}
-.composer-status:not(:has(> :not([hidden]))){display:none;}
+.composer-status{min-height:20px;}
 .composer-status > .meter-strip{flex:1 1 0;margin:0;}
 .tab-chips{flex-basis:100%;display:flex;flex-wrap:wrap;gap:var(--sp-2);padding:var(--sp-1) 0 var(--sp-2);}
 .tab-chips[hidden], .tabs-confirm[hidden], .tabs-picker[hidden]{display:none;}
@@ -1735,6 +1735,8 @@ body.side-resizing, body.side-resizing *{cursor:col-resize !important;user-selec
 padding:0 var(--sp-10) var(--sp-2);font-size:11px;color:color-mix(in srgb, var(--muted) 55%, var(--text));font-variant-numeric:tabular-nums;
 white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
+body:not(.chat-page) .chat-usage[hidden]{display:block !important;visibility:hidden;}
+.chat-usage[hidden]::before{content:"\00a0";}
 #chat-history.active{color:var(--accent);background:var(--accent-soft);}
 .chat-list{
 position:absolute;top:46px;right:0;bottom:0;z-index:var(--z-panel);
