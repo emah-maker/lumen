@@ -3202,7 +3202,7 @@ startChat();
 
 const mcpSteps = new Map(); // step id -> row
 // "Opened by the AI", or by the app whose window it is in ("Opened by Claude Desktop") where that is known.
-const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : t('tabs.aiOpened'));
+const openedNote = (tab) => (tab.openedByApp ? t('tabs.openedByApp', { client: tab.openedByApp }) : tab.aiChat ? t('tabs.aiOpenedFor', { chat: tab.aiChat }) : t('tabs.aiOpened')); // [ai tab finder] which chat
 
 // ---------- other apps using Lumen (features/external-apps.js, Settings → AI → Let other apps use Lumen) ----------
 // A pill per app that is working (or paused), with Stop and Take over; and a pill like the update one (Allow this time / Deny) when an app that has not been allowed

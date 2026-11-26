@@ -540,3 +540,106 @@
     }
   });
 })();
+
+/* global shownChatId */ // renderer/chat-core.js: the chat the view shows
+// ---------- [ai tab finder] "Tabs this chat opened": a button in the chat's header and its list ----------
+// The tabs the open chat's AI opened, in any window, while it works and after: open ones first (newest first, one the user has since
+// taken over too), then the ones that closed. Each is a tab chip (tab-ref.js): a click switches to it, or opens a closed one again.
+// The button shows only for a chat that has opened a tab, with how many are open. Main: main.js chatTabsList ('chat:ai-tabs').
+(() => {
+  const api = window.assistant;
+  const actions = document.querySelector('[data-chat-root] .sidebar-actions');
+  if (!api?.chatTabs || !actions || !window.tabRef) return;
+  const tr = (key, english, vars) => { const s = window.t ? window.t(key, vars) : key; return s && s !== key ? s : english.replace(/\{(\w+)\}/g, (_, k) => vars?.[k] ?? ''); };
+  const chatOf = () => (typeof shownChatId !== 'undefined' ? shownChatId : null);
+  const btn = Object.assign(document.createElement('button'), { type: 'button', className: 'icon-btn chat-ai-tabs-btn', id: 'chat-ai-tabs', hidden: true });
+  btn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 5.5v6a1.5 1.5 0 0 0 1.5 1.5h8a1.5 1.5 0 0 0 1.5-1.5v-6"/><path d="M2.5 5.5V4.5A1.5 1.5 0 0 1 4 3h2.6l1.2 2.5h5.7"/></svg><span class="chat-ai-tabs-count" aria-hidden="true"></span>';
+  btn.setAttribute('aria-haspopup', 'dialog');
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('aria-controls', 'chat-ai-tabs-pop');
+  const wrap = Object.assign(document.createElement('span'), { className: 'chat-ai-tabs-wrap' });
+  actions.prepend(wrap);
+  wrap.append(btn);
+  const pop = Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-pop', id: 'chat-ai-tabs-pop', hidden: true });
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', tr('chat.aiTabs.list', 'Tabs this chat opened'));
+  (actions.closest('.sidebar-head') || wrap).append(pop); // (across the header's width: hanging off the button it would reach over the page, which draws above the UI)
+
+  let last = { open: [], closed: [] };
+  let shownFor = null;
+  let seq = 0;
+  function paintButton() {
+    const n = last.open.length;
+    const any = n + last.closed.length > 0;
+    btn.hidden = !any;
+    const label = n === 1 ? tr('chat.aiTabs.button.one', 'This chat opened 1 tab that is still open', { count: n }) : n > 1 ? tr('chat.aiTabs.button.other', 'This chat opened {count} tabs that are still open', { count: n }) : tr('chat.aiTabs.button.none', 'Tabs this chat opened (all closed)');
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    const count = btn.querySelector('.chat-ai-tabs-count');
+    count.textContent = n > 99 ? '99+' : n ? String(n) : '';
+    count.hidden = !n;
+  }
+  function section(title, items, note) {
+    const box = Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-section' });
+    box.append(Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-head', textContent: title }));
+    const list = Object.assign(document.createElement('ul'), { className: 'chat-ai-tabs-list' });
+    for (const item of items) {
+      const li = document.createElement('li');
+      const chip = window.tabRef.chip({ id: item.id });
+      chip.addEventListener('click', () => setTimeout(close, 0));
+      li.append(chip);
+      const tag = note(item);
+      if (tag) li.append(Object.assign(document.createElement('span'), { className: 'chat-ai-tabs-tag', textContent: tag }));
+      list.append(li);
+    }
+    box.append(list);
+    return box;
+  }
+  function paintList() {
+    if (pop.hidden) return;
+    const parts = [];
+    if (last.open.length) parts.push(section(tr('chat.aiTabs.list.open', 'Open'), last.open, (x) => (x.front ? tr('chat.aiTabs.tag.front', 'In front') : !x.ai ? tr('chat.aiTabs.tag.yours', 'Yours now') : x.kept ? tr('chat.aiTabs.tag.kept', 'Kept') : '')));
+    if (last.closed.length) parts.push(section(tr('chat.aiTabs.list.closed', 'Closed · click to open again'), last.closed.slice(0, 15), () => ''));
+    if (!parts.length) parts.push(Object.assign(document.createElement('p'), { className: 'chat-ai-tabs-empty', textContent: tr('chat.aiTabs.list.empty', 'This chat has not opened any tabs.') }));
+    pop.replaceChildren(Object.assign(document.createElement('div'), { className: 'chat-ai-tabs-title', textContent: tr('chat.aiTabs.list', 'Tabs this chat opened') }), ...parts);
+  }
+  async function refresh() {
+    const cid = chatOf();
+    const mine = ++seq;
+    if (!cid) { last = { open: [], closed: [] }; shownFor = null; paintButton(); close(); return; }
+    let out = null;
+    try { out = await api.chatTabs(cid); } catch { /* an old main: nothing to show */ }
+    if (mine !== seq) return;
+    if (shownFor !== cid) close();
+    shownFor = cid;
+    last = { open: Array.isArray(out?.open) ? out.open : [], closed: Array.isArray(out?.closed) ? out.closed : [] };
+    paintButton();
+    paintList();
+  }
+  let timer = 0;
+  const soon = (ms = 300) => { if (timer) return; timer = setTimeout(() => { timer = 0; refresh(); }, ms); }; // (at most one ask per burst: a streaming reply sends many events)
+  function open() {
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    paintList();
+    refresh();
+    pop.querySelector('.tab-ref')?.focus();
+  }
+  function close() {
+    if (pop.hidden) return;
+    pop.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+  }
+  btn.addEventListener('click', () => (pop.hidden ? open() : close()));
+  pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); btn.focus(); } });
+  document.addEventListener('pointerdown', (e) => { if (!pop.hidden && !pop.contains(e.target) && !btn.contains(e.target)) close(); }, true);
+  // When it may have changed: the AI did something (a step, the end of a reply), the strip changed (sidebar), another chat is shown.
+  api.onEvent?.(() => soon(400));
+  window.browser?.onTabs?.((state) => { if (!btn.hidden || state?.tabs?.some((x) => x.aiChat != null)) soon(500); });
+  document.addEventListener('lumen:reply-done', () => soon(100));
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) soon(50); });
+  let seenChat = chatOf();
+  new MutationObserver(() => { const c = chatOf(); if (c !== seenChat) { seenChat = c; soon(30); } }).observe(document.getElementById('messages') || document.body, { childList: true });
+  window.chatAiTabs = { refresh, open, close };
+  soon(800);
+})();

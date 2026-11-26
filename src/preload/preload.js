@@ -336,6 +336,7 @@ contextBridge.exposeInMainWorld('assistant', {
   undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId), // [ai controls]
   undoEdits: (runId) => ipcRenderer.invoke('agent:undo-edits', runId), // [content guard]
   annotate: (action) => ipcRenderer.invoke('agent:annotate', action), // [annotate] 'show' | 'clear': the last drawing the AI made on the tab
+  chatTabs: (chatId) => ipcRenderer.invoke('chat:ai-tabs', chatId), // [ai tab finder] the tabs this chat opened: { open: [{ id, ai, kept, front }], closed: [{ id }] }
   closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners] { runId } | { chatId }: close the tabs the AI opened
   undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
   autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on), // no argument: just read it

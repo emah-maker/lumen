@@ -1,7 +1,8 @@
 // Settings → AI → Tabs the AI opens → "Group tabs the AI opens" (groupAiTabs, on; main.js joinAiGroup): every tab the AI opens with the real open_tab
-// joins one gray "AI tabs" group in its window, folded when made, so the strip shows one label instead of a row of tabs. A second chat's
-// tabs join the same group; the user's unfolding is kept; a tab the user types in leaves the group; the group goes when its tabs close;
-// with the setting off, tabs stay loose. Real Lumen, throwaway profile, a fake model, local pages.
+// joins a gray group of its chat's own in its window, named after the chat ("AI · <chat title>"), folded when made, so the strip shows one
+// label per chat instead of a row of tabs. A second chat's tabs get a group of their own (the two never mix); the user's unfolding is
+// kept; a tab the user types in leaves the group; the group goes when its tabs close; with the setting off, tabs stay loose.
+// Real Lumen, throwaway profile, a fake model, local pages.
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const fs = require('fs');
@@ -49,7 +50,7 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
 
     const active = () => app.evaluate(() => global.__windows.list()[0].activeId);
     const aiIds = () => app.evaluate(() => global.__windows.list()[0].tabs.map((t) => t.id).filter((id) => global.__aiTabs.tab(id)?.openedBy));
-    const groups = () => app.evaluate(() => [...global.__tabGroups.groups.values()].map((g) => ({ id: g.id, name: g.name, color: g.color, collapsed: g.collapsed, members: global.__windows.list()[0].tabs.filter((t) => global.__aiTabs.tab(t.id)?.groupId === g.id).map((t) => t.id) })));
+    const groups = () => app.evaluate(() => [...global.__tabGroups.groups.values()].map((g) => ({ id: g.id, name: g.name, color: g.color, collapsed: g.collapsed, aiChat: g.aiChat ?? null, members: global.__windows.list()[0].tabs.filter((t) => global.__aiTabs.tab(t.id)?.groupId === g.id).map((t) => t.id) })));
     const groupOf = (id) => app.evaluate((_e, i) => global.__aiTabs.tab(i)?.groupId ?? null, id);
     const strip = () => ui.evaluate(() => ({ labels: [...document.querySelectorAll('#tabs .group-label .group-name')].map((l) => l.textContent.trim()), tabs: document.querySelectorAll('#tabs .tab').length }));
     const send = async (text) => { await ui.fill('#prompt', text); await ui.press('#prompt', 'Enter'); };
@@ -62,59 +63,72 @@ const fakeModel = (app, base) => app.evaluate((_e, b) => {
     const user = await active();
     const before = await strip();
 
-    // ---- 1. a chat opens five tabs: one folded gray "AI tabs" group holds them all, the user stays on their tab
+    // ---- 1. a chat opens five tabs: one folded gray group named after the chat holds them all, the user stays on their tab
+    const A = 'AI · chat-A: open five';
     await plan('A', 5);
     await send('chat-A: open five');
     await waitFor(async () => /A done/.test(await bodyText()), 20000);
     const five = await waitFor(async () => { const x = await aiIds(); return x.length === 5 && x; });
-    let g = (await groups()).filter((x) => x.name === 'AI tabs');
-    check('five AI tabs, all in one group named "AI tabs"', Boolean(five) && g.length === 1 && g[0].members.length === 5 && five.every((id) => g[0].members.includes(id)), JSON.stringify(await groups()));
+    let g = (await groups()).filter((x) => x.name === A);
+    check(`five AI tabs, all in one group named after the chat ("${A}")`, Boolean(five) && g.length === 1 && g[0].members.length === 5 && five.every((id) => g[0].members.includes(id)) && typeof g[0].aiChat === 'string', JSON.stringify(await groups()));
     check('the group is gray and folded', g[0]?.color === 'gray' && g[0]?.collapsed === true, JSON.stringify(g));
     check('the user is still on their own tab', (await active()) === user, String(await active()));
-    const after = await waitFor(async () => { const s = await strip(); return s.labels.includes('AI tabs') && s; });
-    check('the strip shows the one "AI tabs" label and none of the five tabs', Boolean(after) && after.labels.filter((l) => l === 'AI tabs').length === 1 && after.tabs === before.tabs, JSON.stringify({ before, after }));
+    const after = await waitFor(async () => { const s = await strip(); return s.labels.includes(A) && s; });
+    check('the strip shows the one label with the chat\'s name and none of the five tabs', Boolean(after) && after.labels.filter((l) => l === A).length === 1 && after.tabs === before.tabs, JSON.stringify({ before, after }));
 
-    // ---- 2. a second chat's tabs join the same group
+    // ---- 2. a second chat's tabs get a group of their own, named after that chat: the two never mix
+    const B = 'AI · chat-B: open two';
     await newChat();
     await plan('B', 2);
     await send('chat-B: open two');
     await waitFor(async () => /B done/.test(await bodyText()), 20000);
     await waitFor(async () => (await aiIds()).length === 7);
-    g = (await groups()).filter((x) => x.name === 'AI tabs');
-    check('another chat\'s tabs join the same group (one group, seven tabs)', g.length === 1 && g[0].members.length === 7, JSON.stringify(await groups()));
+    const all = await groups();
+    const gA = all.filter((x) => x.name === A);
+    const gB = all.filter((x) => x.name === B);
+    check('another chat\'s tabs get their own group (two groups: five tabs and two)', gA.length === 1 && gA[0].members.length === 5 && gB.length === 1 && gB[0].members.length === 2 && gA[0].aiChat !== gB[0].aiChat, JSON.stringify(all));
+    check('...folded too, and the strip has one label per chat', gB[0]?.collapsed === true && Boolean(await waitFor(async () => { const s = await strip(); return s.labels.includes(A) && s.labels.includes(B); })), JSON.stringify(await strip()));
 
-    // ---- 3. the user unfolds it: the next AI tab leaves it unfolded
-    await app.evaluate(({ ipcMain }, id) => ipcMain.emit('group:toggle', {}, id), g[0].id);
+    // ---- 3. the user unfolds a chat's group: the chat's next AI tab leaves it unfolded
+    const C = 'AI · chat-C: open one';
     await newChat();
     await plan('C', 1);
     await send('chat-C: open one');
     await waitFor(async () => /C done/.test(await bodyText()), 20000);
     await waitFor(async () => (await aiIds()).length === 8);
-    g = (await groups()).filter((x) => x.name === 'AI tabs');
-    check('a group the user unfolded stays unfolded when the next AI tab joins', g.length === 1 && g[0].collapsed === false && g[0].members.length === 8, JSON.stringify(g));
+    g = (await groups()).filter((x) => x.name === C);
+    await app.evaluate(({ ipcMain }, id) => ipcMain.emit('group:toggle', {}, id), g[0]?.id);
+    await plan('C', 2);
+    await send('chat-C: open one more');
+    await waitFor(async () => ((await bodyText()).match(/C done/g) || []).length >= 2, 20000);
+    await waitFor(async () => (await aiIds()).length === 9);
+    g = (await groups()).filter((x) => x.name === C);
+    check('a group the user unfolded stays unfolded when the chat\'s next AI tab joins', g.length === 1 && g[0].collapsed === false && g[0].members.length === 2, JSON.stringify(await groups()));
+    g = (await groups()).filter((x) => x.name === A);
 
     // ---- 4. the user types in one of them: it is theirs, and leaves the group
     const taken = five[0];
     await app.evaluate((_e, id) => global.__aiTabs.switchTo(id), taken);
     await waitFor(async () => (await active()) === taken);
     await app.evaluate(({ webContents }, id) => { const wc = webContents.fromId(global.__windows.list()[0].tabs.find((t) => t.id === id).contentsId); wc.sendInputEvent({ type: 'keyDown', keyCode: 'a' }); wc.sendInputEvent({ type: 'char', keyCode: 'a' }); wc.sendInputEvent({ type: 'keyUp', keyCode: 'a' }); }, taken);
-    check('a tab the user types in leaves the "AI tabs" group', await waitFor(async () => (await groupOf(taken)) === null), String(await groupOf(taken)));
-    g = (await groups()).filter((x) => x.name === 'AI tabs');
-    check('...and the others stay in it', g.length === 1 && g[0].members.length === 7, JSON.stringify(g));
+    check('a tab the user types in leaves its chat\'s group', await waitFor(async () => (await groupOf(taken)) === null), String(await groupOf(taken)));
+    g = (await groups()).filter((x) => x.name === A);
+    check('...and the others stay in it', g.length === 1 && g[0].members.length === 4, JSON.stringify(g));
 
     // ---- 5. the group goes when its tabs close
     await app.evaluate((_e, ids) => { for (const id of ids) global.__notifyClick.closeTab(id); }, g[0].members);
-    check('closing the AI\'s tabs removes the group', await waitFor(async () => (await groups()).every((x) => x.name !== 'AI tabs')), JSON.stringify(await groups()));
+    check('closing a chat\'s AI tabs removes its group, and only its group', await waitFor(async () => { const now = await groups(); return now.every((x) => x.name !== A) && now.some((x) => x.name === B); }), JSON.stringify(await groups()));
 
     // ---- 6. setting off: AI tabs stay loose
     await app.evaluate((_e, id) => global.__aiTabs.switchTo(id), user); // (back to the user's tab, where the sidebar is open)
     await ui.waitForSelector('#new-chat', { state: 'visible' });
     await app.evaluate(() => global.__settings.backend.set('groupAiTabs', false));
+    const earlier = await aiIds(); // (the other chats' tabs, still in their groups)
     await newChat();
     await plan('D', 2);
     await send('chat-D: open two');
     await waitFor(async () => /D done/.test(await bodyText()), 20000);
-    const loose = await waitFor(async () => { const x = await aiIds(); return x.length === 2 && x; });
+    const loose = await waitFor(async () => { const x = (await aiIds()).filter((id) => !earlier.includes(id)); return x.length === 2 && x; });
     check('with the setting off, the AI\'s tabs are not grouped', Boolean(loose) && (await Promise.all(loose.map(groupOf))).every((x) => x === null), JSON.stringify(await groups()));
     check('no page errors in the window', errors.length === 0, errors.join(' | '));
   } catch (err) {

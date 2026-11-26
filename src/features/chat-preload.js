@@ -139,6 +139,7 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
     openPreview: (target) => ipcRenderer.invoke('agent:open-preview', target), // [activity cards] the tab a Browser card shows (or its page again)
     thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
     undoRun: (runId) => ipcRenderer.invoke('agent:undo', runId),
+    chatTabs: (chatId) => ipcRenderer.invoke('chat:ai-tabs', chatId), // [ai tab finder]
     closeAiTabs: (opts) => ipcRenderer.invoke('agent:ai-tabs-close', opts), // [ai manners]
     undoCloseAiTabs: (token) => ipcRenderer.invoke('agent:ai-tabs-undo', token),
     autoAllow: (on) => ipcRenderer.invoke('agent:auto-allow', on),

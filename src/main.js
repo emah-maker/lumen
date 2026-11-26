@@ -335,7 +335,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'chat:ai-tabs', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', 'ai-changes:list', 'ai-changes:undo', // [ai preferences] the chat's Changed row and the project page's list // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -2441,7 +2441,8 @@ function tabState() {
           pinned: Boolean(t.pinned),
           sleeping: true,
           chat: tabChatMark(t.id),
-          aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), aiShown: aiTabShown(t), // [ai manners] the AI opened this tab (aiForUser: because the user asked for it, so it shows with theirs; aiShown: see aiTabShown)
+          aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), aiShown: aiTabShown(t), aiChat: t.fromChat != null ? aiChatTitle(t.fromChat) : null, // [ai tab finder] the chat that opened it ('' while it has no title; kept after the user takes the tab over)
+          // [ai manners] the AI opened this tab (aiForUser: because the user asked for it, so it shows with theirs; aiShown: see aiTabShown)
           openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window: the strip says whose
           aiKeepOff: manners.isKeptOff(t), // [ai off-tab]
           ...splitMark(t),
@@ -2479,7 +2480,8 @@ function tabState() {
         account: t.account ? accounts().badge(t.account) : null, // [account tabs] { id, name, color }: the strip's colored mark
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
-        aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), aiShown: aiTabShown(t), // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card; aiShown: see aiTabShown)
+        aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), aiShown: aiTabShown(t), aiChat: t.fromChat != null ? aiChatTitle(t.fromChat) : null, // [ai tab finder] the chat that opened it ('' while it has no title; kept after the user takes the tab over)
+          // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card; aiShown: see aiTabShown)
         openedByApp: t.rec?.agent?.label || null, // [external apps] a tab in an outside app's own window ("Opened by Claude Desktop")
         aiKeepOff: manners.isKeptOff(t), // [ai off-tab] the user keeps the AI from acting on this tab (the address bar's button, a mark in the strip)
         ...splitMark(t), // [split view]
@@ -4475,22 +4477,104 @@ function noteAiTabsMentioned(text) {
   try { ids = tabMarker.idsIn(String(text || '')); } catch { return; }
   for (const id of ids) { const hit = tabAnywhere(id); if (hit && manners.isAiTab(hit.t)) hit.t.aiMentioned = true; }
 }
-const aiGroupName = () => t('tabs.aiGroup');
-function aiGroup() {
+// [ai tab finder] One group per chat, named after it ("AI · Compare flights to…"), so the tabs of two chats never mix and the label says
+// whose they are. A tab with no chat (an outside agent's, Lumen's own) and a chat with no title yet use the plain "AI tabs".
+// (Not "AI: …": that is a research group's "AI: <site>".)
+const AI_GROUP_TITLE_CHARS = 24;
+const aiGroupName = (cid = null) => {
+  const title = aiChatTitle(cid);
+  if (!title) return t('tabs.aiGroup');
+  return t('tabs.aiGroupFor', { task: require('./features/chat-title').cut(title, AI_GROUP_TITLE_CHARS) });
+};
+// A chat's title for the strip and tab search: the saved one, or (a chat whose first run is still going) the one its first message will give.
+// Asked on every tab update, so it is kept a few seconds; '' before the chat store is loaded (a restart's first frames).
+const aiChatTitles = new Map(); // chatId -> { title, at }
+function aiChatTitle(cid) {
+  if (cid == null || cid === '') return '';
+  const now = Date.now();
+  const hit = aiChatTitles.get(cid);
+  if (hit && now - hit.at < 3000) return hit.title;
+  let title = '';
+  try { if (chatStore) title = chats().list().find((c) => c.id === cid)?.title || ''; } catch { /* none */ }
+  if (!title || title === 'New chat') { const run = chatRuns.get(cid); try { if (run?.messages?.length) title = require('./features/chat-title').autoTitle({ messages: run.messages }); } catch { /* none */ } }
+  if (title === 'New chat') title = '';
+  aiChatTitles.set(cid, { title, at: now });
+  while (aiChatTitles.size > 200) aiChatTitles.delete(aiChatTitles.keys().next().value);
+  return title;
+}
+function aiGroup(cid = null) {
   for (const g of tabGroups.groups.values()) {
-    if (g.aiTabs) return g;
-    if (g.name === aiGroupName() && !g.userNamed && tabs.some((x) => x.groupId === g.id) && tabs.every((x) => x.groupId !== g.id || manners.isAiTab(x))) { g.aiTabs = true; return g; } // (restored after a restart: the mark itself is not saved)
+    if (g.aiTabs) { if ((g.aiChat ?? null) === cid) return g; continue; }
+    if (g.userNamed) continue;
+    const members = tabs.filter((x) => x.groupId === g.id);
+    // (restored after a restart: the mark itself is not saved; the group's name and its tabs' chat say whose it is)
+    if (members.length && members.every((x) => manners.isAiTab(x) && (x.openedBy.chatId ?? null) === cid) && (g.name === aiGroupName(cid) || g.name === t('tabs.aiGroup'))) { g.aiTabs = true; g.aiChat = cid; return g; }
   }
   return null;
 }
 function joinAiGroup(tab) {
   if (!manners.isAiTab(tab) || manners.forUser(tab) || tab.pinned || curRec?.agent || readSettings().groupAiTabs === false) return; // (a tab the user asked for shows with theirs)
-  const group = aiGroup();
-  if (group) { if (tab.groupId !== group.id) { if (tab.groupId) tabGroups.remove(tab.id); tabGroups.add(tab.id, group.id); } return; }
+  const cid = tab.openedBy.chatId ?? null;
+  const group = aiGroup(cid);
+  if (group) {
+    if (!group.userNamed) group.name = aiGroupName(cid); // (the chat has a title now)
+    if (tab.groupId !== group.id) { if (tab.groupId) tabGroups.remove(tab.id); tabGroups.add(tab.id, group.id); }
+    return;
+  }
   if (tab.groupId) tabGroups.remove(tab.id);
-  const made = tabGroups.create(aiGroupName(), [tab.id], { color: 'gray' });
+  const made = tabGroups.create(aiGroupName(cid), [tab.id], { color: 'gray' });
   made.aiTabs = true;
+  made.aiChat = cid;
   made.collapsed = true;
+}
+// [ai tab finder] The tabs a chat opened, for its Tabs list in the chat (renderer/chat-extras.js): the open ones (in any window, even one the
+// user has taken over since) and the ones that closed (their last title and address are in closedChipTabs, so a click opens them again).
+const chatClosedTabs = new Map(); // chatId -> [tab ids], newest last
+function noteChatTabClosed(tab) {
+  const cid = tab?.fromChat;
+  if (cid == null) return;
+  const list = (chatClosedTabs.get(cid) || []).filter((id) => id !== tab.id);
+  list.push(tab.id);
+  chatClosedTabs.delete(cid);
+  chatClosedTabs.set(cid, list.slice(-30));
+  while (chatClosedTabs.size > 100) chatClosedTabs.delete(chatClosedTabs.keys().next().value);
+}
+function chatTabsList(cid) {
+  if (cid == null || cid === '') return { open: [], closed: [] };
+  const every = allTabsEverywhere().filter((x) => !x.closing);
+  const open = every.filter((x) => x.fromChat === cid).sort((a, b) => (b.fromChatAt || 0) - (a.fromChatAt || 0));
+  // A closed one that is open again (from this list, Reopen Closed Tab, or by hand) is listed as open, not twice.
+  const byUrl = new Map();
+  for (const x of every) { const u = tabUrl(x); if (u && !byUrl.has(u)) byUrl.set(u, x); }
+  const closed = [];
+  for (const id of [...(chatClosedTabs.get(cid) || [])].reverse()) {
+    const u = closedChipTabs.get(id)?.u;
+    if (!u || tabAnywhere(id)) continue;
+    const again = byUrl.get(u);
+    if (again) { if (!open.includes(again)) open.push(again); } else closed.push(id);
+  }
+  const front = new Set([...winRecs].filter(rcAlive).map((r) => activeIdOf(r)));
+  return {
+    open: open.map((x) => ({ id: x.id, ai: manners.isAiTab(x), kept: Boolean(x.openedBy?.keep), front: front.has(x.id) })),
+    closed: closed.map((id) => ({ id })),
+  };
+}
+ipcMain.handle('chat:ai-tabs', (_event, cid) => chatTabsList(typeof cid === 'string' && cid ? cid : null)); // (the view names its chat: asking never switches one)
+// [ai tab finder] The chat's title arrived after its group was made (or the chat was renamed): the labels follow. Run when a run ends.
+function aiGroupsRename() {
+  for (const r of [...winRecs]) {
+    if (!rcAlive(r) || r.agent) continue;
+    withWindow(r, () => {
+      let changed = false;
+      for (const g of tabGroups.groups.values()) {
+        if (!g.aiTabs || g.userNamed) continue;
+        aiChatTitles.delete(g.aiChat);
+        const name = aiGroupName(g.aiChat ?? null);
+        if (g.name !== name) { g.name = name; changed = true; }
+      }
+      if (changed) sendTabs();
+    });
+  }
 }
 function leaveAiGroup(tab) {
   const group = tab?.groupId ? tabGroups.groups.get(tab.groupId) : null;
@@ -4503,8 +4587,8 @@ function aiGroupIdOf(ids) {
   const list = ids.map((id) => tabs.find((x) => x.id === id)).filter(Boolean);
   if (!list.length) return null;
   for (const x of list) joinAiGroup(x);
-  const group = aiGroup();
-  return group && list.every((x) => x.groupId === group.id) ? group.id : null;
+  const group = list[0].groupId ? tabGroups.groups.get(list[0].groupId) : null;
+  return group?.aiTabs && list.every((x) => x.groupId === group.id) ? group.id : null;
 }
 
 function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
@@ -4527,6 +4611,7 @@ function closeTab(id, { destroyed = false, user = false, ai = false } = {}) {
     closedChipTabs.delete(id);
     closedChipTabs.set(id, { t: String((alive(tab) ? tab.view.webContents.getTitle() : tab.pendingCloseTitle || tab.sleepTitle) || '').slice(0, 300), u: chipUrl.slice(0, 2000), f: typeof tab.favicon === 'string' && tab.favicon.length <= 2000 ? tab.favicon : '' }); // (f: its icon, kept so a closed chip still shows it)
     if (closedChipTabs.size > 300) closedChipTabs.delete(closedChipTabs.keys().next().value);
+    noteChatTabClosed(tab); // [ai tab finder] the chat's Tabs list offers it again
     tabChipsRt?.changed();
   }
   const reopenUrl = isInternal(url) ? sessionFiles.savedUrl(url) : url; // (a file in its viewer reopens from the file's own address)
@@ -7428,6 +7513,8 @@ function hideAiMenuTemplate() {
     { label: t('sidebar.hideAiTabs.menu.hide'), type: 'checkbox', checked: readSettings().hideAiTabs === true, click: (item) => { settingsBackend.set('hideAiTabs', item.checked); } },
     { type: 'separator' },
     { label: count ? t('sidebar.hideAiTabs.menu.close', { count }) : t('sidebar.hideAiTabs.menu.closeNone'), enabled: count > 0, click: () => { closeAiTabsEverywhere().catch(() => {}); } },
+    { type: 'separator' },
+    { label: t('sidebar.hideAiTabs.menu.find'), click: () => { ui()?.focus(); ui()?.send('tabsearch:open', { ai: true }); } }, // [ai tab finder] tab search, filtered to the AI's tabs by chat
   ];
 }
 const hideAiMenuPops = []; // (tests: where each request to open the menu came from; the test build opens no native menu)
@@ -12198,7 +12285,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
     }
     if (run.doneMsg && msg.type === 'tool' && run.thumbs) { run.thumbs = null; run.thumbTarget = null; } // (see below: a helper's step after 'done')
     let aiTabs = null; // [ai manners] the tabs this run opened that can still be closed (under the reply, or closed by the setting)
-    if (msg.type === 'done' && !run.deleted) { noteAiTabsMentioned(run.reply); aiTabsKeepLinked(runId, run.reply); aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
+    if (msg.type === 'done' && !run.deleted) { noteAiTabsMentioned(run.reply); aiTabsKeepLinked(runId, run.reply); aiGroupsRename(); aiTabs = aiTabsAfterRun(runId); if (aiTabs) msg = { ...msg, aiTabs }; try { msg = { ...msg, aiTabCount: aiTabSelect({ runId }).length }; } catch { /* none */ } } // (aiTabCount: the activity card's "Hide tabs the AI opened (N)")
     if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) setImmediate(pushAgentTarget); // the run's tab pinned, moved or gone (a live picture of an app window changes neither)
     if (msg.type !== 'text' && msg.type !== 'thinking' && !msg.frame) run.tabId = agent.runTabIdFor(run.messages) ?? run.tabId; // kept for the end (the scope is gone by 'done')
     if (msg.type === 'tool_done' && msg.ok && run.tabId != null) { // [tab chips] the tab an open_tab made is the one the run now works in

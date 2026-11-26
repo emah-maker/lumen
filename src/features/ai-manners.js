@@ -24,6 +24,9 @@
 function markOpened(tab, by = {}, now = Date.now()) {
   if (!tab) return tab;
   tab.openedBy = { chatId: by.chatId ?? null, runId: by.runId ?? null, at: now, ...(by.keep === true || by.forUser === true ? { keep: true } : {}), ...(by.forUser === true ? { forUser: true } : {}) };
+  // [ai tab finder] The chat that opened it, kept after the user takes the tab over (handOver clears openedBy, not this): the chat's
+  // Tabs list and tab search still find it by its chat.
+  if (by.chatId != null) { tab.fromChat = by.chatId; tab.fromChatAt = now; }
   return tab;
 }
 // The AI says this tab of its own is needed after the task (the page the user asked to see, a sign-in or checkout left for them to

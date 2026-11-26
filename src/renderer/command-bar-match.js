@@ -23,7 +23,7 @@
     const title = String(item.title || '').toLowerCase();
     const where = [item.keywords, String(item.url || '').replace(SCHEME, '')].filter(Boolean).join(' ').toLowerCase();
     let total = 0;
-    for (const word of q.split(/s+/)) {
+    for (const word of q.split(/\s+/)) {
       const inTitle = base.wordScore(word, title) * 1.2;
       const w = base.wordScore(word, where);
       const best = Math.max(inTitle, w >= 40 ? w * 0.8 : -1);
