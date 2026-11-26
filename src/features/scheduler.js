@@ -23,7 +23,6 @@ function createScheduler({
   const jobs = new Map();
   const reasons = new Set(); // 'hidden' | 'locked' | 'suspended' | anything a caller names
   let timer = null;
-  let timerAt = 0;
   let wakeups = 0;
   let running = false;
   let memo = null; // { at, promise, value }
@@ -46,7 +45,6 @@ function createScheduler({
     clearTimer(timer);
     timer = null;
     if (earliest === Infinity) return;
-    timerAt = earliest;
     timer = setTimer(wake, Math.max(0, earliest - now()));
     timer?.unref?.();
   }

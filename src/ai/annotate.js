@@ -425,7 +425,6 @@ function overlayMain(spec, env) {
     if (!best) return null;
     return { node: best, rects: () => { if (!best.isConnected) return null; const r = best.getBoundingClientRect(); return visibleRect(r) ? [{ x: r.left, y: r.top, w: r.width, h: r.height }] : null; } };
   };
-  const scrolledTo = [];
   // anchor -> { rects(): [] | null, tok?, frozen: anchor }
   const resolve = (a) => {
     if (!a) return null;
@@ -575,7 +574,6 @@ function overlayMain(spec, env) {
   // ---- one mark
   function makeView(m, at, to, index) {
     const c = colorOf(m.color || (m.type !== 'write' && m.fill) || null, m.type); // a filled shape is outlined in its fill colour unless told
-    const rnd = makeRng(state.seed * 131 + index * 977 + m.type.length);
     state.seed++;
     const delay = Math.min(index, 5) * 110;
     const parts = [];

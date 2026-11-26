@@ -307,7 +307,7 @@ function validate(key, value) {
     case 'fontSize': return pick(Number(value), FONT_SIZES, null);
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
     case 'screenReaderSupport': return pick(value, require('../features/a11y-mode').MODES, null);
-    case 'maxSteps': return pick(Number(value), [0, 30, 60, 120, 250], null);
+    case 'maxSteps': return pick(Number(value), [0, ...require('../ai/loop-guard').STEP_CHOICES], null); // (0: unlimited)
     case 'routineWebhookPort': return require('../features/routine-webhooks').cleanPort(value);
     case 'aiSubagents': return value === true ? 'on' : value === false ? 'off' : pick(value, ['auto', 'on', 'off'], null); // (true / false: saved before Auto existed)
     case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);

@@ -26,7 +26,6 @@
 
 const LABELS = { grokbuild: 'Grok Build', xai: 'Grok', gemini: 'Gemini', openai: 'OpenAI', openrouter: 'OpenRouter', antigravity: 'Antigravity' };
 const ORDER = ['grokbuild', 'xai', 'gemini', 'openai', 'openrouter', 'antigravity']; // Automatic's order (agy last: one slow headless run per picture)
-const PICK_ONLY = []; // (none now: Antigravity used to be asked only when picked)
 const CAN_EDIT = { grokbuild: true, xai: false, gemini: true, openai: true, openrouter: true, antigravity: true };
 const SETTINGS = ['auto', 'off', ...ORDER];
 
@@ -187,4 +186,4 @@ async function renderSvg(svg, { rasterize }) {
   return Buffer.from(png);
 }
 
-module.exports = { PICK_ONLY, notReady, PICTURE_NOTE, DIAGRAM_NOTE, noContextAsk, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };
+module.exports = { notReady, PICTURE_NOTE, DIAGRAM_NOTE, noContextAsk, renderSvg, LABELS, ORDER, CAN_EDIT, SETTINGS, TOOL, cleanSetting, ownProviderOf, labelOf, plan, judge, route, extendTools, toolResult };

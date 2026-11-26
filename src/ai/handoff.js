@@ -145,6 +145,5 @@ function finalReply(messages) {
 }
 
 const isRetryText = (text) => String(text || '').includes(RETRY_OPEN);
-const withoutRetry = (text) => String(text || '').replace(RETRY_BLOCK, '');
 
-module.exports = { classify, finalReply, bodyOf, isRetryText, withoutRetry, FOLLOWUP, FOLLOWUP_UNFINISHED, FOLLOWUP_REFUSAL, followupFor, straightQuotes, RETRY_OPEN, RETRY_CLOSE, RETRY_BLOCK };
+module.exports = { classify, finalReply, bodyOf, isRetryText, FOLLOWUP, FOLLOWUP_UNFINISHED, FOLLOWUP_REFUSAL, followupFor, straightQuotes, RETRY_OPEN, RETRY_CLOSE, RETRY_BLOCK };

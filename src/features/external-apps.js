@@ -379,7 +379,6 @@ function configPath(app, { platform = process.platform, env = process.env, home 
 
 // The ready-to-paste setup for each app. `command` / `args` are how to run the bridge (ai-agents.js mcpCommand); `token` is the app's
 // token, or null where it is not known any more (shown once): a placeholder stands in and the text is still valid.
-const TOKEN_PLACEHOLDER = 'PASTE-THE-TOKEN-FROM-ADD-APP';
 const FILE_PLACEHOLDER = 'PATH-OF-THE-TOKEN-FILE-FROM-ADD-APP';
 // The bridge reads the token from the file named in LUMEN_CLIENT_TOKEN_FILE (the text holds a path, not the secret); `token` (the secret
 // itself, LUMEN_CLIENT_TOKEN) is only for a caller that insists. Neither: a placeholder stands in and the text is still valid.
@@ -397,4 +396,4 @@ function setupFor({ command, args, tokenFile = null, token = null, name = 'lumen
   };
 }
 
-module.exports = { createExternalApps, writeTokenFile, nameKey, isClaudeCodeName, configPath, setupFor, APPS, TOKEN_PLACEHOLDER, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, CALL_WAIT_MS, MAX_PROMPTS, cleanName };
+module.exports = { createExternalApps, writeTokenFile, nameKey, isClaudeCodeName, configPath, setupFor, APPS, FILE_PLACEHOLDER, RUN_QUIET_MS, PROMPT_WAIT_MS, CALL_WAIT_MS, MAX_PROMPTS, cleanName };

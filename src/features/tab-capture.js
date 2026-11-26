@@ -340,18 +340,6 @@ async function viaScreenshot(wc, { lowRes = false, width = 420, quality = 55, ma
   return null;
 }
 
-// A saved chat keeps one small final frame (≤ 45 KB): a sharp live frame is scaled down once, when the run is stamped.
-function shrinkThumb(base64, { width = 420, maxBytes = 45000 } = {}) {
-  try {
-    if (typeof base64 !== 'string') return null;
-    const image = nativeImage().createFromBuffer(Buffer.from(base64, 'base64'));
-    if (image.getSize().width <= width && base64.length * 0.75 <= maxBytes) return base64; // (already small)
-    const small = image.getSize().width > width ? image.resize({ width, quality: 'good' }) : image;
-    for (const q of [55, 40, 30]) { const jpeg = small.toJPEG(q); if (jpeg.length <= maxBytes) return jpeg.toString('base64'); }
-  } catch { /* no saved frame */ }
-  return null;
-}
-
 // ---------- the page-size safety net (kept here: one module less to load at startup) ----------
 // A tab's page must always fill the tab area. Chromium can leave a page drawn or laid out smaller than its view (a DevTools screenshot with a clip, taken
 // while another capture was in flight, leaves it at the clip's size in the view's top-left corner), and neither the capture paths (features/tab-capture.js
@@ -510,4 +498,4 @@ async function captureJpegNow(wc, { maxWidth, quality }) {
   }
 }
 
-module.exports = { viewClip, shoot, clippedSinceShown: (wc) => clipped.has(wc), CAPTURE_MS, NOT_DRAWN, inTime, checkPageSize, captureJpeg, jpegSize, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, shrinkThumb, isBlankFrame };
+module.exports = { viewClip, shoot, clippedSinceShown: (wc) => clipped.has(wc), CAPTURE_MS, NOT_DRAWN, inTime, checkPageSize, captureJpeg, jpegSize, whenCaptureIdle, layoutMismatch, oneAtATime, streamThumb, captureTab, cssClip, captureThumb, isBlankFrame };

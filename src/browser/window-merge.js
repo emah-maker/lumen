@@ -20,7 +20,6 @@ const liveTabs = (w) => (w.tabs || []).filter((t) => !t.closing);
 // How long the merge toast (and so its Undo button) stays up; main.js tells the tab strip to use the same time.
 // A click that was sent just as the toast faded still arrives, hence the short grace.
 const NOTE_MS = 9000;
-const UNDO_GRACE_MS = 500;
 const UNDO_MS = 60000; // how long main keeps the merge undoable: the strip hides the note on its own timer (and holds it while hovered or focused), so Undo never outlives the button
 const undoValid = (at, now = Date.now()) => Number.isFinite(at) && now - at >= 0 && now - at < UNDO_MS;
 
@@ -177,4 +176,4 @@ function undoPlan(entries, liveIds) {
   return out.filter((w) => w.ids.length);
 }
 
-module.exports = { NOTE_MS, UNDO_GRACE_MS, UNDO_MS, undoValid, describeTab, releaseFlags, blocker, availability, eligibleWindows, pickTarget, mergeIntoChoices, planMerge, undoPlan };
+module.exports = { NOTE_MS, UNDO_MS, undoValid, describeTab, releaseFlags, blocker, availability, eligibleWindows, pickTarget, mergeIntoChoices, planMerge, undoPlan };

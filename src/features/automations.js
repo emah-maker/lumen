@@ -21,7 +21,6 @@ const FORMAT = 'lumen-automations';
 const LIMITS = { automations: 50, profiles: 10, urls: 200, items: 200, answers: 150, runs: 20, log: 2000, text: 4000, template: 20000, field: 300, value: 2000, waiting: 10, searchLimit: 50 };
 const ITEM_STATES = ['queued', 'running', 'review', 'needs-you', 'done', 'failed', 'skipped', 'stopped'];
 const FINAL = new Set(['done', 'failed', 'skipped', 'stopped']);
-const WAITING = new Set(['review', 'needs-you']);
 // Which item state may follow which. A waiting item goes on (running) when the user approves or says Continue.
 const MOVES = {
   queued: ['running', 'skipped', 'stopped'],
@@ -650,7 +649,7 @@ function createStore({ file, encrypt = null, decrypt = null, available = () => f
 }
 
 module.exports = {
-  FORMAT, LIMITS, ITEM_STATES, FINAL, WAITING, NEEDS, PROFILE_FIELDS, PROFILE_KEYS, CSV_COLUMNS,
+  FORMAT, LIMITS, ITEM_STATES, FINAL, NEEDS, PROFILE_FIELDS, PROFILE_KEYS, CSV_COLUMNS,
   webUrl, urlKey, urlsIn, hostOf, normalizeInputs, normalizeSteps, normalizeSchedule, normalizeAutomation, submitsAlone, fromRecording,
   normalizeProfile, normLabel, similarity, answerFor, matchOption, coverLetter, planFill, blockerOf, outcome, preview, jobOf,
   itemsFor, pickLinks, newRun, canMove, moveItem, counts, nextItem, settle, pauseRun, resumeRun, stopRun,

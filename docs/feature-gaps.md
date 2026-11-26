@@ -6,11 +6,8 @@ How Lumen's everyday browser features compare with Chrome, Arc, Safari, Brave an
 **Worth it:** whether closing the gap is worth the code, and why.
 **Effort:** **S** is under a day, **M** is one to three days, **L** is a week or more.
 
-Some gaps are already being handled elsewhere, so they're marked and not built here:
+Rows were brought up to date on 2026-11-25: the PRs this page once waited on (#114, #117, #119 to #122) are merged, and sync, print preview, tab sleep controls and on-device translation have shipped.
 
-- **In Evan's PR:** draft PRs [#114](https://github.com/emah-maker/lumen/pull/114) (Smart Stack widgets), [#117](https://github.com/emah-maker/lumen/pull/117) (Organize Tabs), [#119](https://github.com/emah-maker/lumen/pull/119) (Windows signing through SignPath), [#120](https://github.com/emah-maker/lumen/pull/120) (faster boot and page loads), [#121](https://github.com/emah-maker/lumen/pull/121) (a chat per tab) and [#122](https://github.com/emah-maker/lumen/pull/122) (Antigravity).
-- **Other work in progress:** private windows and address-bar speed are being reworked separately.
-- **Declined:** on-device translation (Bergamot). The owner turned it down.
 
 ## Added in this round
 
@@ -45,8 +42,8 @@ Polish in the same round:
 | Area | Lumen | Chrome / Edge / Brave | Arc | Safari | Status | Worth it | Effort |
 |---|---|---|---|---|---|---|---|
 | **Tabs**: pin, mute, duplicate, reopen closed, close others or to the right, move, multi-select | All of them, plus tab search (`Ctrl+Shift+A`) | Same | Same, plus a vertical sidebar | Same | Have | — | — |
-| **Tab groups** | By site, by topic, or with AI; Organize Tabs | Manual groups | Spaces and folders | Tab groups | Have (Organize: in Evan's PR #117) | — | — |
-| **Tab sleep** | Automatic (`tabSleep`) | Memory Saver, with a "keep active" site list | Auto-archive | Automatic | Partial: no "sleep this tab now" and no always-awake sites | No: rarely asked for, and the automatic rules already skip tabs that play audio or have unsent input | S |
+| **Tab groups** | By site, by topic, or with AI; Organize Tabs | Manual groups | Spaces and folders | Tab groups | Have | — | — |
+| **Tab sleep** | Automatic (`tabSleep`) | Memory Saver, with a "keep active" site list | Auto-archive | Automatic | Have: "Put tab to sleep now" and "Never unload <site>" in the tab menu | — | — |
 | **Windows** | New window (added), private window, merge, move tabs, restore every window | Same | Same | Same | Have | — | — |
 | **Private windows** | Yes | Yes | Yes | Yes | Have (being reworked separately) | — | — |
 | **History** | Searchable page, remove an entry, clear by time range | Per-visit timeline, journeys | Same as Chrome | Per-visit | Partial: one entry per address (latest visit), page not localized | Later: a per-visit list needs a new history store | M |
@@ -54,7 +51,7 @@ Polish in the same round:
 | **Downloads** | Panel and page, ask where to save, risky files held, Save … As (added) | Same | Same | Same | Have | — | — |
 | **Find in page** | Count, next and previous, Esc | Same (no match case either) | Same | Plus match case and "begins with" | Have | Match case: later, small | S |
 | **Zoom** | Pill in the address bar, default zoom, per-site zoom remembered (added) | Same, plus a +/− bubble | Same | Same | Have | — | — |
-| **Print** | Ctrl+P to the system dialog (Save as PDF is in the system dialog on macOS; Windows has Microsoft Print to PDF) | Built-in preview | System | System | Partial: no print preview on Windows | No: the system dialog already previews on macOS, and a Chromium-style preview is a large UI job | L |
+| **Print** | Ctrl+P opens Lumen's print preview, then the system printer or Save as PDF | Built-in preview | System | System | Have: Lumen's own print preview (destination, pages, layout) | — | — |
 | **Reader mode** | Address-bar button and ⋯ menu | Reading mode side panel | — | Reader | Have (no font or width settings) | Later: font and width controls are small and nice to have | S |
 | **Picture in Picture** | Video right-click, ⋯ → This Page, View menu (added) | Same, plus automatic PiP | Automatic when you switch tabs | Same | Have | Automatic PiP on tab switch: later, since it plays video without being asked | S |
 | **Site permissions** | Prompt, defaults, per-site list in Settings, page info from the lock (added) | Same | Same | Same | Have (4 kinds: location, camera and microphone, notifications, clipboard) | — | — |
@@ -81,9 +78,9 @@ Polish in the same round:
 | **Fonts** | Font size and minimum font size | Plus font families | Same | Same | Partial | No: rarely changed | S |
 | **Media hub and autoplay** | — | Global media controls, autoplay settings | Media controls in the sidebar | Autoplay per site | Missing | Later: a small media button for tabs playing audio would fit the tab strip, which already shows audio | M |
 | **Profiles and guest mode** | One profile, plus private windows | Profiles, guest | Spaces with profiles | Profiles | Missing | Later: every store (settings, keys, history) would need a profile root | L |
-| **Sync** | — | Google account | Arc account | iCloud | Missing | No: Lumen has no servers of its own (no telemetry, no accounts) | L |
+| **Sync** | Through a folder in your own cloud drive, passphrase-encrypted: bookmarks, history, chats, widgets, settings | Google account | Arc account | iCloud | Have (no Lumen servers or accounts) | — | — |
 | **Split view** | Two tabs side by side: tab menu → Open in split view, or drop a tab on the page's right edge; draggable divider | Edge and Chrome split screen | Split view | — | Have | Not kept across restarts; two tabs only | — |
-| **Translation** | Your connected AI, or Google Translate with consent | Built in | Built in | Built in, on device | Have (by AI) | On-device (Bergamot): declined by the owner | — |
+| **Translation** | Your connected AI, Google Translate with consent, or on this device (Bergamot) | Built in | Built in | Built in, on device | Have | — | — |
 | **Error pages** | Certificate, HTTPS-only, Safe Browsing, crashed, and network errors with their own wording and hint: offline, site not found, refused, timed out, reset, proxy, redirect loop, blocked (added) | Same, plus an offline game | Same | Same | Partial: the error, history, bookmarks and downloads pages aren't localized | Yes: localize these pages (they need the strings handed in, as the settings page does) | M |
 | **Notifications** | Web notifications through the permission prompt; Lumen's own for background tasks | Plus quieter prompts | Same | Same | Have | — | — |
 | **Protocol handlers** | http and https, html and pdf files; mailto, tel and sms ask, then open the system app | `registerProtocolHandler` | Same | Same | Partial | No: rarely used, and each handler is a page that can take links from other apps | M |
@@ -97,4 +94,4 @@ The biggest gaps worth the work, roughly in order:
 3. **Media controls** for tabs playing audio (M).
 4. **Profiles** (L): when there's demand.
 
-Known housekeeping: `npm run lint` reports 16 errors that already fail on `main`: browser-side globals in `src/browser/chrome-identity.js` and `src/browser/google-auth-identity.js`, two renderer globals in `src/renderer/app.js`, and one in `test/e2e/windows.js`.
+Known housekeeping: `npm run lint` reports no errors; the remaining warnings are unused-variable and useless-assignment hints.

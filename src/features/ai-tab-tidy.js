@@ -17,7 +17,6 @@
 const CAP_PER_CHAT = 8;
 const SLEEP_AFTER_MS = 15 * 60 * 1000;
 const SETTLE_MS = 2 * 60 * 1000; // a finished run's leftover tab waits this long first (a helper's late step, a follow-up using it)
-const SWEEP_EVERY_MS = 60 * 1000;
 const GRACE = { '15m': 15 * 60 * 1000, '1h': 60 * 60 * 1000, '4h': 4 * 60 * 60 * 1000 };
 const GRACE_CHOICES = Object.keys(GRACE);
 const graceMs = (value) => GRACE[value] ?? GRACE['1h'];
@@ -91,4 +90,4 @@ function reusePick(tabs, url, { chatId = null, runId = null, busyIds = [], ownTa
     && urlKey(urlOf(tab)) === key) || null;
 }
 
-module.exports = { CAP_PER_CHAT, SLEEP_AFTER_MS, SETTLE_MS, SWEEP_EVERY_MS, GRACE, GRACE_CHOICES, graceMs, urlKey, lastUse, untouchable, linkedIds, sweepPlan, capPlan, reusePick };
+module.exports = { CAP_PER_CHAT, SLEEP_AFTER_MS, SETTLE_MS, GRACE, GRACE_CHOICES, graceMs, urlKey, lastUse, untouchable, linkedIds, sweepPlan, capPlan, reusePick };

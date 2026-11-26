@@ -246,7 +246,7 @@ function projects({ store, removed = () => {} }) {
 // ---------- project files ----------
 // The text of the files in a project (the AI's knowledge), one shard per file, only up to a size: a larger file stays on the computer it was
 // added on (the project page there says so). Like everything here they travel only inside the passphrase-encrypted sync files.
-function projectFiles({ store, projectIds, maxChars = 400000 }) {
+function projectFiles({ store, projectIds, maxChars = require('./project-files').SYNC_FILE_CHARS }) {
   const keyOf = (pid, fid) => `${pid}-${fid}`;
   const split = (key) => { const m = /^([a-f0-9]{16})-([a-f0-9]{12})$/.exec(String(key)); return m ? [m[1], m[2]] : null; };
   return {

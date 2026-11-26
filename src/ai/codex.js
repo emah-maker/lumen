@@ -128,10 +128,7 @@ function modelsFromCache(text) {
 
 // ---------- what each run is given ----------
 const homeFor = (userData) => path.join(userData, 'codex-home');
-const chatsDirFor = (userData) => path.join(userData, 'codex-chats');
-const SAFE_KEY = /^[A-Za-z0-9_-]{1,64}$/;
-const chatKey = (chatId) => (SAFE_KEY.test(String(chatId)) ? String(chatId) : crypto.createHash('sha256').update(String(chatId)).digest('hex').slice(0, 32));
-const chatHomeFor = (userData, chatId) => (chatId ? path.join(chatsDirFor(userData), chatKey(chatId)) : null);
+const { chatsDirFor, chatKey, chatHomeFor, removeChatHome, pruneChatHomes } = require('./cli-utils').chatHomes('codex-chats');
 const SAFE_SESSION = /^[A-Za-z0-9_.-]{8,128}$/;
 const AUTH_FILES = ['auth.json'];
 
@@ -151,20 +148,6 @@ function authPeers({ userHome, home }) {
 // (never creating a folder: a late copy-back from one chat must not bring back another chat's deleted home; a run makes its own home first)
 async function pullAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home }), { mkdir: false }); }
 async function returnAuth({ userHome, home }) { return authSync.syncNewest(authPeers({ userHome, home }), { mkdir: false }); }
-
-async function removeChatHome(userData, chatId) {
-  const home = chatHomeFor(userData, chatId);
-  if (!home) return false;
-  try { await fs.promises.rm(home, { recursive: true, force: true, maxRetries: 3 }); return true; } catch { return false; }
-}
-async function pruneChatHomes(userData, keep) {
-  const kept = new Set([...(keep || [])].filter(Boolean).map(chatKey));
-  let names = [];
-  try { names = await fs.promises.readdir(chatsDirFor(userData)); } catch { return []; }
-  const gone = names.filter((n) => !kept.has(n));
-  for (const n of gone) { try { await fs.promises.rm(path.join(chatsDirFor(userData), n), { recursive: true, force: true, maxRetries: 3 }); } catch { /* in use: next time */ } }
-  return gone;
-}
 
 // TOML string literal (basic string, escaped): enough for the URLs, ids and paths written here.
 const q = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\u0000-\u001f\u007f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}"`;

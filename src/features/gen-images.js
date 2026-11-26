@@ -98,7 +98,6 @@ async function resolveImage(entry, { fetchImpl } = {}) {
 // ---------- asking for a picture ----------
 // "draw a cat", "generate an image of a sunset", "create a logo for my cafe", or "/image a cat". Words that only
 // mention pictures ("an image upload form", "draw a conclusion") are left to the model.
-const NOUN = '(?:image|picture|photo|photograph|illustration|drawing|painting|logo|icon|poster|wallpaper|artwork|portrait|cartoon|sketch|render(?:ing)?)';
 const MAKE = /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need|would\s+like|'d\s+like)\s+(?:you\s+to\s+|to\s+)?)?(?:generate|create|make|produce|render|design|draw|paint|sketch|illustrate)\s+(?:me\s+|us\s+)?(?:an?\s+|some\s+|another\s+)?(?:(?!(?:the|this|that|these|those|my|our|your|its|his|her|their)\b)[\w'-]+\s+){0,4}?(?:image|picture|photo|photograph|illustration|drawing|painting|logo|icon|poster|wallpaper|artwork|portrait|cartoon|sketch|rendering|render)s?\b(?!\s+(?:upload|gallery|carousel|component|tag|element|format|file|viewer|editor|library|processing|resize|compression|optimi[sz]ation|url|path|src|attribute|hosting|cdn|loading|loader)\b)/i;
 const DRAW = /^\s*(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:draw|paint|sketch|illustrate)\s+(?:me\s+|us\s+)?(?:an?\s+|the\s+|some\s+)(?!(?:conclusion|comparison|parallel|line|distinction|connection|map\s+of\s+the\s+code|attention|breath|blank)\b)[^\n]{3,}/i;
 const SLASH = /^\s*\/(?:image|imagine|draw)\s+([\s\S]{2,})$/i;
