@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.110 (2026-11-25)
+
 - Job applications: Check email no longer offers newsletters, neighborhood posts or podcasts as rejections or interviews (it needs a job word, and skips Promotions, Social and Forums), and files a forwarded email under the original sender. Click an email to open it in Gmail.
 - Job applications: the board sits right under the view switcher, cards are half as tall, and long columns show a few with "Show all". Check email scrolls to what it found.
 - Job applications: a sheet Status is read by its first words, so a note such as "onsite" no longer marks a row as an interview; "Found" and "Queued" count as saved. A row read wrong before is corrected without writing over the sheet.
