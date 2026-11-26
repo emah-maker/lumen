@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The answer stays put when the AI finishes.** While it works, the activity card keeps room for things that may show up (a page preview, a tab, a second step at once). When the run ended, that room folded away and the answer under the card slid up. The card now keeps its height while you can see it, and gives the room back once it is out of view, without anything on screen moving.
+
 - **The chat stops jumping while the AI works.** Each time a reply started something new (its activity card, words after a step, the answer), everything under your message jumped down and back for a frame: your message was drawn about 120 px taller for that frame. It now keeps its real height, so what is already in the chat stays still as steps, thinking and words are added. Test: test/e2e/chat-no-jump.js.
 
 ## 0.5.112 (2026-11-25)

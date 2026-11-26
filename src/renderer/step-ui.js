@@ -322,8 +322,22 @@
     const gap = parseFloat(getComputedStyle(n.parentElement).rowGap) || 0;
     n.animate([{ maxHeight: '0px', opacity: 0, marginTop: `${-gap}px`, overflow: 'hidden' }, { maxHeight: `${h}px`, opacity: 1, marginTop: '0px', overflow: 'hidden' }], { duration: 180, easing: 'ease-out' });
   }
+  // [keep size] The run ends and the card settles smaller: it keeps the height it had while it is on screen (the empty room at its foot), so the
+  // answer under it does not move; once it is out of view (scrolled away, a new message under it, the chat hidden) it lets that room go, out of
+  // sight, scroll anchoring keeping what is on screen where it is.
+  let keptWatch = null;
+  function release(node) { keptWatch?.unobserve(node); if (node.dataset.kept) { delete node.dataset.kept; node.style.minHeight = ''; } }
+  function keep(node, before) {
+    const cs = getComputedStyle(node);
+    const extra = cs.boxSizing === 'border-box' ? 0 : ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((s, k) => s + (parseFloat(cs[k]) || 0), 0);
+    node.style.minHeight = `${before - extra}px`;
+    node.dataset.kept = '1';
+    keptWatch ||= new IntersectionObserver((entries) => { for (const e of entries) if (!e.isIntersecting) release(e.target); });
+    keptWatch.observe(node);
+  }
   function steady(node, live, before) {
     if (live) {
+      release(node); // (it works again: card-steady holds it)
       node.classList.add('card-steady');
       const held = node.classList.contains('act-hold') ? HELD : null; // (a Browser card keeps these places from its first step: they do not grow in)
       for (const n of node.querySelectorAll(SLOTS)) if (!n.hidden && !n.dataset.seen) { n.dataset.seen = '1'; if (!held || !n.matches(held)) grow(n); }
@@ -332,9 +346,10 @@
     if (!node.classList.contains('card-steady')) return;
     node.classList.remove('card-steady');
     for (const n of node.querySelectorAll('[data-seen]')) delete n.dataset.seen;
-    if (before == null || still()) return;
+    if (before == null) return;
     const after = node.getBoundingClientRect().height;
-    if (Math.abs(after - before) > 1) node.animate?.([{ height: `${before}px`, overflow: 'hidden' }, { height: `${after}px`, overflow: 'hidden' }], { duration: 180, easing: 'ease-out' });
+    if (after < before - 1) keep(node, before); // (smaller: it keeps its height while on screen, see keep)
+    else if (after > before + 1 && !still()) node.animate?.([{ height: `${before}px`, overflow: 'hidden' }, { height: `${after}px`, overflow: 'hidden' }], { duration: 180, easing: 'ease-out' });
   }
   // ---- the tabs this turn opened or used: chips (tab-ref.js) in the order they were first touched, each marked open or closed
   // (a closed one reopens from its chip, an open one switches to it); folded by default, the head says how many.
