@@ -725,7 +725,9 @@ const runPill = (() => {
     mo = new MutationObserver(() => { if (!working()) show(null); else if (side) paint(); });
     mo.observe(card.statusText, { childList: true, characterData: true, subtree: true });
   }
-  main.onclick = () => { if (card) card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
+  // The chat stops following the bottom first: a step that lands before the smooth scroll's first frame would otherwise jump the chat back
+  // down past the card (scrollToBottom while still `stuck`), and the pill stayed with the card out of view.
+  main.onclick = () => { if (!card) return; stuck = false; jump.hidden = false; card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
   stop.onclick = () => stopReply();
   return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
 })();
