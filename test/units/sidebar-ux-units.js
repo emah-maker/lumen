@@ -16,5 +16,5 @@ check('the clock button says history', /history/i.test(en['sidebar.chats']), en[
 for (const k of ['slash.think.description', 'slash.deep.description', 'slash.fast.description']) check(`${k} says it needs Auto`, /needs auto/i.test(en[k]) && en[k].length < 80, en[k]);
 check('a chain of fallback notices keeps only the newest', /querySelectorAll\('\.notice\[data-fallback\]'\)/.test(core) && /notice\.dataset\.fallback = '1'/.test(core));
 check('slash and model descriptions wrap to two lines instead of one cut-off line', /line-clamp: 2/.test(read('src', 'renderer', 'slash.css')) && /line-clamp: 2/.test(read('src', 'renderer', 'picker.css')));
-check('starter chips look like buttons (border, pointer, focus ring)', /\.chip \{[^}]*border: 0\.5px solid[^}]*cursor: pointer/.test(read('src', 'renderer', 'styles.css')) && /\.chip:focus-visible/.test(read('src', 'renderer', 'styles.css')));
+check('starter chips look like buttons (border, pointer, focus ring)', /\.chip \{[^}]*border: 1px solid[^}]*cursor: pointer/.test(read('src', 'renderer', 'styles.css')) && /\.chip:focus-visible/.test(read('src', 'renderer', 'styles.css')));
 process.exit(failures ? 1 : 0);
