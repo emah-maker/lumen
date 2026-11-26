@@ -4666,7 +4666,9 @@ io.observe(card.el);
 mo = new MutationObserver(() => { if (!working()) show(null); else if (side) paint(); });
 mo.observe(card.statusText, { childList: true, characterData: true, subtree: true });
 }
-main.onclick = () => { if (card) card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
+
+
+main.onclick = () => { if (!card) return; stuck = false; jump.hidden = false; card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
 stop.onclick = () => stopReply();
 return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
 })();
