@@ -42,7 +42,9 @@ const TEMPLATES = [
     profile: true, // an automation profile of its own (résumé, cover letter, major, start date, location), named for the project
     tracker: true, // the applications tool and the tracker card
     keyDocs: ['Master résumé', 'Cover letter base'], // what its page asks for first
-    tools: { apps: ['gmail', 'sheets', 'drive', 'docs', 'calendar'] }, // [project tools] what its chats get (features/project-tools.js): the tracker sheet, application emails, the résumé files, interviews
+    tools: { apps: ['gmail', 'sheets', 'drive', 'docs', 'calendar'] },
+    icon: 'briefcase',
+    starters: ['Tailor my résumé for this posting', 'Find co-op postings that fit my profile', 'Draft a follow-up for an application with no answer'], // [project tools] what its chats get (features/project-tools.js): the tracker sheet, application emails, the résumé files, interviews
   },
   // [project tools] Templates that are mostly a set of tools: instructions, and the apps their chats get. Nothing else is made for them.
   {
@@ -57,6 +59,8 @@ const TEMPLATES = [
     ].join('\n'),
     folders: [],
     tools: { apps: ['canvas', 'calendar', 'gtasks', 'drive', 'docs'] },
+    icon: 'book',
+    starters: ['What is due this week?', 'Plan my study time for the next exam', 'Explain this assignment’s rubric to me'],
   },
   {
     id: 'coding',
@@ -70,6 +74,8 @@ const TEMPLATES = [
     ].join('\n'),
     folders: [],
     tools: { apps: ['github'], plan: true },
+    icon: 'code',
+    starters: ['Summarize the open issues', 'Review my latest pull request', 'Explain how this repository is laid out'],
   },
   {
     id: 'research',
@@ -83,12 +89,14 @@ const TEMPLATES = [
     ].join('\n'),
     folders: [],
     tools: { apps: ['zotero', 'drive', 'docs', 'notion'] },
+    icon: 'flask',
+    starters: ['Find recent papers on my topic', 'Summarize my sources and where they disagree', 'Outline a literature review from my notes'],
   },
 ];
 
 const byId = (id) => TEMPLATES.find((t) => t.id === String(id ?? '')) || null;
 // What the New project dialog lists.
-const list = () => TEMPLATES.map(({ id, name, description, tools }) => ({ id, name, description, apps: tools?.apps || [] })); // (apps: [project tools] what its chats get, shown on its button)
+const list = () => TEMPLATES.map(({ id, name, description, tools, icon, starters }) => ({ id, name, description, apps: tools?.apps || [], icon, starters: [...starters] })); // (apps: [project tools] what its chats get, shown on its button; icon and starters: [project presets] its mark and the first questions its page offers)
 
 // The fields a new project gets from a template: its goal line and instructions unless the user wrote their own, its name when the
 // name box was left empty, and `template` (kept on the project: its page and its chats read it). null for no template or an unknown one.

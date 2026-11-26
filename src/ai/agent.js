@@ -665,6 +665,17 @@ const APPLICATIONS_TOOL = {
   input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'check', 'add', 'update', 'search', 'remember'] }, url: { type: 'string' }, company: { type: 'string' }, role: { type: 'string' }, stage: { type: 'string', enum: ['saved', 'applied', 'interview', 'offer', 'rejected', 'withdrawn'] }, resume: { type: 'string' }, note: { type: 'string' }, query: { type: 'string' }, location: { type: 'string' }, job_type: { type: 'string', enum: ['internship', 'fulltime', 'parttime', 'contract'] } }, required: ['action'] },
   eager_input_streaming: true,
 };
+// [ai preferences] preferences: a short list of safe settings the AI changes itself (ai/preferences.js, loaded on first use): the browser's look
+// and, in a project's chat, the project's goal, its new-chat defaults and standing notes in its instructions. Never permissions, privacy or security.
+// Listed only when the user's latest words are about a setting or something to remember (every request pays for it), or the chat used it already.
+// Sidebar API chats only: not a temporary chat, an outside agent or a run with nobody to ask.
+const PREFERENCES_INTENT = /\b(?:remember|note (?:that|this)|keep in mind|from now on|always|never|prefer|i like|i'm a|i am a)\b|\b(?:settings?|preferences?|theme|dark mode|light mode|accent|colou?r|font|text size|bigger|smaller|motion|animations?|tabs? (?:on|down|across)|side tabs|compact|fractions|default model|plan first|project(?:'s)? (?:goal|description|model))\b/i;
+const PREFERENCES_TOOL = {
+  name: 'preferences',
+  description: 'Change a safe setting when the user asks or says how they like it, or keep a standing note for the chat\'s project ("remember I\'m an ME student"). list; set key value (remove: true takes a project.note out). Keys: theme, accentColor, fontSize, reduceMotion, compactTabs, tabLayout, aiPreferFractions; project.description, project.model, project.planFirst, project.note. Never permissions, privacy or security: tell the user where in Settings.',
+  input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['list', 'set'] }, key: { type: 'string' }, value: { type: 'string' }, remove: { type: 'boolean' } }, required: ['action'] },
+  eager_input_streaming: true,
+};
 // [notes] The user's notepad (ai/notes.js, loaded on first use): read it, add to it, never edit or delete. Defined here so the module itself stays
 // out of startup; the text is short on purpose (every request pays for it). Sidebar API chats only, like the board: not listed to MCP clients or the CLI engines.
 const NOTES_INTENT = /\bnotepad\b|\b(?:my|the|these|those|saved|quick|your) notes\b|\bnotes? (?:app|about|on|from)\b|\b(?:add|put|save|write|jot|append|keep|store)\b[^.\n]{0,40}\b(?:to|in|into|on) (?:my |the |a )?notes?\b/i;
@@ -712,6 +723,7 @@ const OTHER_TOOLS = [...TOOLS, SEARCH_TOOL].map(slimTool);
 const OTHER_TOOLS_BOARD = [...OTHER_TOOLS, slimTool(BOARD_TOOL)];
 const OTHER_NOTES = slimTool(NOTES_TOOL); // [notes]
 const OTHER_APPLICATIONS = slimTool(APPLICATIONS_TOOL); // [project templates]
+const OTHER_PREFERENCES = slimTool(PREFERENCES_TOOL); // [ai preferences]
 const OTHER_READING = slimTool(READING_LIST_TOOL); // [reading list]
 const OTHER_TOOLS_DELEGATE = [...OTHER_TOOLS_BOARD, slimTool(DELEGATE_TOOL)];
 const OTHER_DESKTOP = slimTool(DESKTOP_TOOL); // [desktop apps]
@@ -1127,7 +1139,7 @@ const isContextError = fallback.isContextError; // one matcher for every "too lo
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false, applications = false, filesInApps = 'auto' } = {}) { // applications: [project templates] the applications tool is offered; project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false, applications = false, preferences = false, filesInApps = 'auto' } = {}) { // preferences: [ai preferences] the preferences tool is offered; // applications: [project templates] the applications tool is offered; project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -1142,7 +1154,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : ''), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], applications ? [APPLICATIONS_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL, REVIEW_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], applications ? [APPLICATIONS_TOOL] : [], preferences ? [PREFERENCES_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL, REVIEW_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -1172,6 +1184,7 @@ TOOL_SCHEMAS.memory = MEMORY_TOOL.input_schema; // [memory]
 TOOL_SCHEMAS.project_files = PROJECT_TOOL.input_schema; // [project workspace]
 TOOL_SCHEMAS.notes = NOTES_TOOL.input_schema; // [notes]
 TOOL_SCHEMAS.applications = APPLICATIONS_TOOL.input_schema; // [project templates]
+TOOL_SCHEMAS.preferences = PREFERENCES_TOOL.input_schema; // [ai preferences]
 
 const KEY_CODES = {
   Enter: 'Enter', Escape: 'Escape', Tab: 'Tab', Backspace: 'Backspace',
@@ -1213,7 +1226,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files', 'applications', 'review_round']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files', 'applications', 'preferences', 'review_round']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -4334,7 +4347,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), applications: this.applicationsOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), applications: this.applicationsOffered(messages), preferences: this.preferencesOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.effortFor('anthropic', messages.settings), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -4387,7 +4400,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.applicationsOffered(messages) ? [OTHER_APPLICATIONS] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
+      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.applicationsOffered(messages) ? [OTHER_APPLICATIONS] : []), ...(this.preferencesOffered(messages) ? [OTHER_PREFERENCES] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
       signal,
       emit,
       noTools,
@@ -4839,6 +4852,43 @@ ${prompt}` : prompt), historyImages: [] };
     const what = String(input?.note ?? '').slice(0, 400);
     const answer = await this.askApproval('profile', emit, signal, { action: 'tool', who, title: `${who} wants to save to your profile: ${quote(what, 160)}`, args: what, tainted: true, noAlways: true, guarded: true });
     if (!answer) throw new Error('The user did not allow saving that to their profile. Only save what the user tells you about themselves.');
+  }
+
+  // ---- [ai preferences] The preferences tool (ai/preferences.js): the sidebar's own chats (not a temporary one), when the latest words are about a
+  // setting or something to remember, or the chat used it already. main supplies browser.preferences (the reads, the writes, the change log).
+  preferencesOffered(messages) {
+    try {
+      if (!this.browser.preferences || !messages?.settings || messages.settings.noMemory || this.browser.memory?.isTemporary?.(messages)) return false;
+      for (let i = messages.length - 1, seen = 0; i >= 0 && i >= messages.length - 40; i--) {
+        const m = messages[i];
+        if (m?.role === 'assistant' && Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_use' && b.name === 'preferences')) return true;
+        if (m?.role !== 'user' || seen >= 2) continue;
+        seen++;
+        const text = typeof m.content === 'string' ? m.content : Array.isArray(m.content) ? m.content.filter((b) => b?.type === 'text').map((b) => b.text).join(' ') : '';
+        if (text.length < 4000 && PREFERENCES_INTENT.test(text)) return true;
+      }
+    } catch { /* not offered */ }
+    return false;
+  }
+  // A change is the user's call: once the chat holds content from elsewhere (a page, an email, a file), the words asking for it could be that
+  // content's, so a card shows exactly what would change first (no Always; Bypass permissions answers it, with a step naming it). Reading the list is free.
+  async allowPreferences(input, { emit, signal, who, external, noAsk, run }) {
+    if (external) throw new Error('Unknown tool: preferences');
+    if (String(input?.action || '') !== 'set') return;
+    if (noAsk) throw new Error('Settings change only in a chat with the user there to see it.');
+    if (!taintHolder(run)?.tainted) return;
+    const label = require('./preferences').stepLabel(input);
+    const what = `${String(input?.key ?? '').slice(0, 60)} = ${String(input?.value ?? '').slice(0, 300)}${input?.remove === true ? ' (remove)' : ''}`;
+    const answer = await this.askApproval('preferences', emit, signal, { action: 'tool', who, title: `${who} wants to change a setting: ${quote(label, 160)}`, args: what, tainted: true, noAlways: true, guarded: true });
+    if (!answer) throw new Error('The user did not allow that change. Only change settings the user asks for themselves.');
+  }
+  async preferencesTool(input) {
+    const scope = taskScope.getStore();
+    const chat = scope?.chat || null;
+    if (!chat || scope.gate?.external || !this.preferencesOffered(chat)) throw new Error('Settings can’t be changed from this chat.');
+    const deps = this.browser.preferences.forChat(chat);
+    const emit = scope?.gate?.emit || (() => {});
+    return require('./preferences').runTool(input, { ...deps, changed: (ev) => { try { emit({ type: 'preference', ...ev }); } catch { /* a closed view: the change stands */ } } });
   }
 
   // ---- [project workspace] The files and pinned pages of the chat's project (Projects on lumen://chat). Offered when main marks the chat's settings
@@ -5399,6 +5449,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'memory') return memoryLib.stepLabel(input); // [memory]
       if (name === 'project_files') return projectCtx.stepLabel(input); // [project workspace]
       if (name === 'notes') return require('./notes').stepLabel(input); // [notes]
+      if (name === 'preferences') return require('./preferences').stepLabel(input); // [ai preferences]
       if (name === 'applications') return ({ list: 'Reading the applications tracker', check: 'Checking the applications tracker', add: `Logging the application${input?.company ? ` to ${input.company}` : ''}`, search: `Searching job boards${input?.query ? ` for ${String(input.query).slice(0, 60)}` : ''}`, update: `Updating the application${input?.company ? ` to ${input.company}` : ''}` })[input?.action] || 'Applications tracker'; // [project templates]
       if (name === 'research_board') return { add: 'Adding to the research board', quote: 'Pinning a quote', star: 'Starring a source', remove: 'Removing a source', list: 'Reading the research board', cite: `Formatting citations (${input.style || 'apa'})` }[input.action] || 'Using the research board';
       if (name === 'analyze_posts') return `Comparing ${Array.isArray(input.posts) ? input.posts.length : 0} posts`;
@@ -5507,6 +5558,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (name === 'read_pdf') await this.allowPdf(input, gate); // per PDF per chat (features/pdf-text.js)
     if (name === 'memory') await this.allowMemory(input, gate); // [memory]
     if (name === 'applications' && input?.action === 'remember') await this.allowProfile(input, gate); // [about you]
+    if (name === 'preferences') await this.allowPreferences(input, gate); // [ai preferences]
     if (name === 'project_files' && (input?.action === 'read' || input?.action === 'search' || input?.action === 'site_read')) this.markTainted(run); // [project workspace] a file's text came from somewhere: it counts as content read, like a local file's
     const scripted = name === 'run_script' && Boolean(taintHolder(run)?.tainted); // before this call's own taint
     if (name === 'word' && WORD_READS.has(String(input?.action || ''))) this.markTainted(run, { app: true }); // [word] a document's words taint web actions, but not the word tool's own edits to a document that was read (src/word tracks its sources)
@@ -8432,6 +8484,7 @@ ${same}
       case 'project_files': return this.projectFilesTool(input); // [project workspace]
       case 'notes': return this.notesTool(input); // [notes]
       case 'applications': return this.applicationsTool(input); // [project templates]
+      case 'preferences': return this.preferencesTool(input); // [ai preferences]
       case 'document': { // [document tool]
         const store = this.docStore();
         store.docInternal = true;

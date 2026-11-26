@@ -650,6 +650,11 @@ contextBridge.exposeInMainWorld('assistant', {
     forget: (id) => ipcRenderer.invoke('memory:forget', id),
   },
 
+  preferences: {
+    list: (projectId) => ipcRenderer.invoke('ai-changes:list', projectId),
+    undo: (token) => ipcRenderer.invoke('ai-changes:undo', token),
+  },
+
   notes: {
     act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),
     onChanged: on('notes:changed'),

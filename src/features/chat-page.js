@@ -66,7 +66,7 @@ const CHAT_IPC = new Set([
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made
   'aifiles:preview', 'aifiles:open', // files the AI made (features/ai-files.js)
   'notes:act', // (notes) "Add to notes" under a reply (main.js; features/notes-hub.js)
-  'memory:list', 'memory:undo', 'memory:forget', // (memory) the "Remembered" row in the chat and /memory
+  'memory:list', 'memory:undo', 'memory:forget', 'ai-changes:list', 'ai-changes:undo', // (memory) the "Remembered" row in the chat and /memory
   'settings:get', 'settings:set-model', 'settings:set-effort', 'openrouter:models',
   'usage:get', 'prefs:ui', 'ui:strings', 'settings-page:open',
   'chatpage:state', 'chatpage:back', 'chatpage:home', 'chatpage:link', 'tabs:ask-list',

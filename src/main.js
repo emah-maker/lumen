@@ -338,7 +338,7 @@ const UI_ONLY_IPC = new Set([
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
-  'memory:list', 'memory:undo', 'memory:forget', // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
+  'memory:list', 'memory:undo', 'memory:forget', 'ai-changes:list', 'ai-changes:undo', // [ai preferences] the chat's Changed row and the project page's list // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
   'chats:list', 'chats:open', 'chats:share', 'chats:show-tab', 'chats:stop', 'chats:rename', 'chats:delete', 'chats:undo-delete', 'chats:pin', 'chats:archive', 'chats:search', 'chats:export', 'chats:markdown', 'chats:temporary', 'chats:project-save', 'chats:project-permissions', 'chats:project-delete', 'chats:project-set', 'chats:project-move', 'chats:project-restore', 'chats:new-in-project', 'chats:project-pick-folder', 'chats:project-folder', 'chats:work-folder', 'chats:run-now', 'chats:close-tabs', 'chats:project-get', 'chats:project-files-add', 'chats:project-file-remove', 'chats:project-search', 'chats:project-link', 'chats:project-add-tab', 'chats:project-import', 'chats:project-tabs', 'chats:project-file-rename', 'chats:project-memory-forget', 'chats:project-memory', 'chats:project-places', 'chats:project-defaults', 'chats:project-flag', 'chats:project-drive', 'chats:drive-list', 'chats:drive-import', 'chats:project-temp-new', 'chats:projects-overview', 'chats:project-undo', 'chats:current-project', 'chats:project-templates', 'chats:project-applications', 'chats:project-tools', 'chats:project-connect', 'chats:project-about', 'chats:project-folders',
   'images:data', 'images:save', 'images:copy', 'images:remote', 'images:open-tab', // pictures the AI made (features/gen-images.js)
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
@@ -10003,6 +10003,7 @@ const agent = new Agent({
     searchChats: (query, exclude) => memorySearchChats(query, exclude),
     place: (project, location, label) => { if (!memoryOn() || !projectById(String(project))) throw new Error('Memory is off.'); const p = places().note(String(project), { loc: location, label }); return p; }, // [project places] the memory tool's place
   },
+  preferences: { forChat: (messages) => aiPrefsFor(projectForChat(chatIdOfMessages(messages))) }, // [ai preferences] the preferences tool (ai/preferences.js)
   projectPlaces: (project, call) => recordPlaces(project, call), // [project places] a tool call in a project's chat touched these
   notes: { store: () => notesStore(), changed: () => pushNotes() }, // [notes] the notes tool (ai/notes.js)
   projects: { // [project workspace] the project_files tool's data for a chat, and which tools its project allows
@@ -14102,6 +14103,46 @@ const memoryView = () => ({ on: memoryOn(), chatSearch: readSettings().aiMemoryC
 const memoryEdited = () => require('./ai/agent').memoryEdited(); // the user changed it: open chats' prompts follow at their next request
 // The chat's row and /memory (the sidebar and the chat page).
 ipcMain.handle('memory:list', () => memoryView());
+// [ai preferences] What the preferences tool reads and writes (ai/preferences.js, loaded the first time): the browser's settings through the
+// settings backend (which checks each value again), the chat's project through the store (projectChanged: the page, the sidebar, its folder and
+// Drive follow). The change log is kept for this run of Lumen; the chat's row and the project page's Settings undo from it.
+let aiPrefsLog = null;
+const aiPrefsLogOf = () => (aiPrefsLog ||= require('./ai/preferences').createChangeLog());
+function aiPrefsRead(e) {
+  if (e.scope === 'app') return settingsBackend.prefs()[e.key];
+  const p = projectById(String(e.projectId));
+  if (!p) return undefined;
+  return e.field === 'instructions' ? p.instructions || '' : e.field === 'description' ? p.description || '' : e.field === 'defaults.model' ? p.defaults?.model || '' : p.defaults?.plan === true;
+}
+async function aiPrefsWrite(e, value) {
+  if (e.scope === 'app') {
+    if (!(e.key in require('./ai/preferences').APP) || settingsPage.validate(e.key, value) === null) return false; // (never anything off the safe list)
+    try { await settingsBackend.set(e.key, value); } catch { return false; }
+    return true;
+  }
+  const p = projectById(String(e.projectId));
+  if (!p) return false;
+  const patch = e.field === 'instructions' ? { instructions: String(value ?? '').slice(0, projectLimits().instructions) } : e.field === 'description' ? { description: String(value ?? '').slice(0, 200) } : { defaults: { ...(p.defaults || {}), ...(e.field === 'defaults.model' ? { model: String(value || '').slice(0, 120) } : { plan: value === true }) } };
+  const out = chats().saveProject({ id: p.id, name: p.name, ...patch });
+  if (out) projectChanged();
+  return Boolean(out);
+}
+function aiPrefsFor(project) {
+  const models = modelOptions().flatMap((g) => g.entries || []).filter((m) => m && !m.disabled);
+  return {
+    app: { read: (k) => settingsBackend.prefs()[k] },
+    project: project ? { get: () => projectById(project.id) } : null,
+    accents: Object.keys(settingsPage.ACCENTS || {}),
+    fontSizes: [9, 12, 14, 16, 18, 20, 22, 24].filter((n) => settingsPage.validate('fontSize', n) !== null),
+    models: models.map((m) => m.id),
+    modelName: (id) => models.find((m) => m.id === id)?.name || id,
+    maxInstructions: projectLimits().instructions,
+    log: aiPrefsLogOf(),
+    write: aiPrefsWrite,
+  };
+}
+ipcMain.handle('ai-changes:list', (_e, projectId) => (aiPrefsLog ? aiPrefsLog.list({ projectId: String(projectId ?? ''), app: true }) : []));
+ipcMain.handle('ai-changes:undo', (_e, token) => (aiPrefsLog ? require('./ai/preferences').undo(String(token ?? '').slice(0, 20), { log: aiPrefsLog, read: aiPrefsRead, write: aiPrefsWrite }) : 'gone'));
 ipcMain.handle('memory:undo', (_e, token) => { const ok = memory().undo(String(token ?? '').slice(0, 20)); if (ok) memoryEdited(); return ok; });
 ipcMain.handle('memory:forget', (_e, id) => { try { memory().forget(String(id ?? '').slice(0, 20)); memoryEdited(); return true; } catch { return false; } });
 // Settings → AI → Instructions and memory.

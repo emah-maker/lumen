@@ -40,10 +40,21 @@
     open: '<path d="M9.5 2.5h4v4M13.5 2.5 8.5 7.5M6.5 3.5h-2a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-2"/>',
     globe: '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.7 1.6 2.5 3.4 2.5 5.5S9.7 11.9 8 13.5C6.3 11.9 5.5 10.1 5.5 8S6.3 4.1 8 2.5z"/>',
     sliders: '<path d="M2.5 4.5h11M2.5 11.5h11"/><circle cx="10.5" cy="4.5" r="1.6"/><circle cx="5.5" cy="11.5" r="1.6"/>',
+    book: '<path d="M8 4.2C6.8 3.3 5 3 2.5 3v9.3c2.5 0 4.3.3 5.5 1.2 1.2-.9 3-1.2 5.5-1.2V3C11 3 9.2 3.3 8 4.2zM8 4.2v9.3"/>', // [project presets] Coursework
+    code: '<path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5M9 3l-2 10"/>', // Code project
+    flask: '<path d="M6.2 2.5h3.6M6.8 2.5v3.8L3 12.4a.8.8 0 0 0 .7 1.1h8.6a.8.8 0 0 0 .7-1.1L9.2 6.3V2.5M4.6 10h6.8"/>', // Research
+    expand: '<path class="cp-full-in" d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/><path class="cp-full-out" d="M6 2.5V6H2.5M13.5 6H10V2.5M10 13.5V10h3.5M2.5 10H6v3.5"/>', // [job page controls] Full screen, as the chat header's
+    rail: '<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/>', // Show chat list
     briefcase: '<rect x="2" y="5" width="12" height="8.5" rx="1.5"/><path d="M5.5 5V3.8a1.3 1.3 0 0 1 1.3-1.3h2.4a1.3 1.3 0 0 1 1.3 1.3V5M2 8.8h12M7 8.8v1.2h2V8.8"/>',
   };
   const JOB = 'job-applications';
   const isJob = (p) => p?.template === JOB;
+  // [project presets] Every template's project looks its own: its mark, a badge with its name, and three first questions under the box that
+  // starts a chat (features/project-templates.js list(): read once). The colours are the theme's accent, as the job dashboard's are.
+  const TPL = { [JOB]: ['briefcase', 'Job applications'], coursework: ['book', 'Coursework'], coding: ['code', 'Code project'], research: ['flask', 'Research'] };
+  const tplOf = (p) => (TPL[p?.template] ? p.template : '');
+  let templatesAsked = null;
+  const templateList = (api) => (templatesAsked ||= Promise.resolve(api.projectTemplates?.()).then((l) => (Array.isArray(l) ? l : [])).catch(() => { templatesAsked = null; return []; }));
   // [project templates] the job dashboard's script and stylesheet, the first time one is shown (marked data-later: not part of the page's start)
   let boardLoading = null;
   const loadJobBoard = () => (window.chatJobBoard ? Promise.resolve(true) : (boardLoading ||= new Promise((done) => {
@@ -802,6 +813,46 @@
     return root;
   }
 
+  // ---- [ai preferences] Settings view: what the AI changed when asked in a chat (ai/preferences.js: this project's goal, new-chat defaults and notes,
+  // and the browser's look), newest first, each with Undo. Kept for this run of Lumen; the chat's own row has the same Undo.
+  function aiChangesCard() {
+    const prefs = window.assistant?.preferences;
+    if (!prefs?.list) return null;
+    const root = card(tr('prefs.card', 'Changed by the AI'), { tip: tr('prefs.card.tip', 'Settings the AI changed when you asked in a chat: this project’s goal, defaults and notes, and how the browser looks. Undo puts the old value back. The AI never changes permissions, privacy or security.'), className: 'pjp-ai-changes' });
+    const say = status();
+    const me = page;
+    const draw = async () => {
+      const list = await prefs.list(me.id).catch(() => []);
+      if (me !== page) return;
+      if (!list.length) { root.body.replaceChildren(note(tr('prefs.none', 'Nothing yet. Say it in a chat here (“use dark mode”, “remember I cite in APA”) and the change shows here with Undo.')), say); return; }
+      const ul = el('ul', { className: 'pjp-list pjp-ai-list' });
+      ul.setAttribute('aria-label', tr('prefs.card', 'Changed by the AI'));
+      for (const e of list.slice(0, 12)) {
+        const li = el('li', { className: `pjp-row pjp-ai-change${e.undone ? ' undone' : ''}` });
+        li.dataset.token = e.token;
+        const where = e.scope === 'app' ? tr('prefs.scope.app', 'Browser') : tr('prefs.scope.project', 'This project');
+        li.append(el('div', { className: 'pjp-row-main' },
+          el('span', { className: 'pjp-row-text', textContent: tr('prefs.changed', 'Changed {label}: {from} → {to}', { label: e.label, from: e.from, to: e.to }) }),
+          el('span', { className: 'pjp-row-meta', textContent: [where, when(e.at), e.undone ? tr('prefs.undoneShort', 'undone') : ''].filter(Boolean).join(' · ') })));
+        if (!e.undone) {
+          const undo = button(tr('memory.undo', 'Undo'), async () => {
+            undo.disabled = true;
+            const r = await prefs.undo(e.token).catch(() => 'gone');
+            say.textContent = tr(r === 'undone' ? 'prefs.undone' : r === 'changed' ? 'prefs.changedSince' : 'prefs.gone', r === 'undone' ? 'Undone: back as it was.' : r === 'changed' ? 'Changed again since, so it was left as it is.' : 'Can’t be undone any more.');
+            if (r === 'undone' && e.scope === 'project') await reload(true);
+            if (root.isConnected) draw();
+          }, 'pjp-ai-undo');
+          li.append(undo);
+        }
+        ul.append(li);
+      }
+      root.body.replaceChildren(ul, say);
+    };
+    root.body.append(note(tr('projecttpl.apps.loading', 'Loading…')));
+    draw();
+    return root;
+  }
+
   // ---- [project places] Key documents and Where things are: what the project's chats opened, read, edited or cited, most used first
   // (ai/project-places.js). Open, rename (click the name), pin, remove; documents first, then the folders and sites the chats keep coming back to.
   const PLACE_KIND = { file: 'File', pdf: 'PDF', doc: 'Word', sheet: 'Sheet', slides: 'Slides', drive: 'Drive', onedrive: 'OneDrive', web: 'Web', folder: 'Folder', site: 'Site' };
@@ -964,7 +1015,8 @@
   function recentSection() {
     const root = el('section', { className: 'pjp-recent' });
     root.setAttribute('aria-labelledby', 'pjp-recent-h');
-    const head = el('div', { className: 'pjp-sec-head' }, el('h2', { className: 'pjp-h pjp-h-big', id: 'pjp-recent-h', textContent: tr('projectws.recent', 'Continue where you left off') }));
+    const allChats = quiet('', () => page.setView?.('overview'), 'pjp-all-chats'); // [job page chat] on the Applications view: the whole list is on Overview
+    const head = el('div', { className: 'pjp-sec-head' }, el('h2', { className: 'pjp-h pjp-h-big', id: 'pjp-recent-h', textContent: tr('projectws.recent', 'Continue where you left off') }), el('span', { className: 'pjp-grow' }), allChats);
     const grid = el('div', { className: 'pjp-cards' });
     root.append(head, grid);
     let timer = null;
@@ -991,6 +1043,7 @@
     function draw(ask = true) {
       const cards = pick();
       root.hidden = !cards.length;
+      allChats.textContent = tr('projectws.allChats', 'All {n} chats', { n: mine().length });
       grid.replaceChildren(...cards.map((c) => {
         const b = el('button', { type: 'button', className: `pjp-chat-card${c.badge === 'running' ? ' live' : ''}` });
         b.dataset.chat = c.id;
@@ -1152,6 +1205,26 @@
     page.composerText = text;
     return form;
   }
+  // [project presets] the template's first questions, under the box: a click puts one in the box (it is sent with Enter, so it can be changed first)
+  function startersRow() {
+    const row = el('div', { className: 'pjp-starters', hidden: true });
+    row.setAttribute('role', 'group');
+    row.setAttribute('aria-label', tr('projectws.starters', 'Ideas to start with'));
+    const id = tplOf(page.data.project);
+    if (!id) return row;
+    const me = page;
+    templateList(page.api).then((list) => {
+      const t = list.find((x) => x.id === id);
+      if (me !== page || !Array.isArray(t?.starters) || !t.starters.length) return;
+      row.replaceChildren(...t.starters.map((q, i) => {
+        const b = el('button', { type: 'button', className: 'pjp-starter', textContent: tr(`projecttpl.starter.${id}.${i}`, q) });
+        b.onclick = () => { const box = page.composerText; if (!box) return; box.value = b.textContent; box.dispatchEvent(new Event('input')); box.focus(); box.setSelectionRange(box.value.length, box.value.length); };
+        return b;
+      }));
+      row.hidden = false;
+    });
+    return row;
+  }
 
   // ---- the page: the header, then the box, the latest chats and all of them on the left, the overview on the right (under them on a narrow window)
   async function open({ api, id, host: h, focus = '', view = '' }) {
@@ -1245,11 +1318,28 @@
       });
     };
     const job = isJob(data.project);
+    const tpl = tplOf(data.project); // [project presets]
     const mark = el('div', { className: 'pjp-mark' });
-    mark.append(icon(job ? 'briefcase' : 'folder'));
+    mark.append(icon(tpl ? TPL[tpl][0] : 'folder'));
     root.classList.toggle('pjp-job', job);
-    const badge = job ? el('span', { className: 'pjp-type-badge', textContent: tr('projecttpl.job-applications', 'Job applications') }) : null;
-    const head = el('header', { className: 'pjp-head' }, back,
+    root.classList.toggle('pjp-tpl', Boolean(tpl));
+    if (tpl) root.dataset.template = tpl;
+    const badge = tpl ? el('span', { className: 'pjp-type-badge', textContent: tr(`projecttpl.${tpl}`, TPL[tpl][1]) }) : null;
+    // [job page controls] the chat header's own controls, on every project page (its header is hidden while a project shows): Show chat list
+    // when the list is folded, and Full screen. They press the chat header's buttons, so the shortcuts, the saved choice and the state are one.
+    const ctl = (name, label, target, className) => {
+      const b = el('button', { type: 'button', className: `icon-btn pjp-ctl ${className}`, title: label });
+      b.setAttribute('aria-label', label);
+      b.append(icon(name));
+      b.onclick = () => document.getElementById(target)?.click();
+      return b;
+    };
+    const railBtn = ctl('rail', tr('chatpage.rail.show', 'Show chat list (Ctrl+Shift+S)'), 'cp-rail-open', 'pjp-rail-open');
+    const fullBtn = ctl('expand', tr('chatpage.full.title', 'Full screen (F11)'), 'cp-fullscreen', 'cp-full-btn pjp-full');
+    fullBtn.setAttribute('aria-pressed', String(Boolean(document.fullscreenElement)));
+    if (document.fullscreenElement) { fullBtn.title = tr('chatpage.full.exit.title', 'Exit full screen (F11 or Esc)'); fullBtn.setAttribute('aria-label', tr('chatpage.full.exit', 'Exit full screen')); }
+    const topbar = el('div', { className: 'pjp-topbar' }, railBtn, back, el('span', { className: 'pjp-grow' }), fullBtn);
+    const head = el('header', { className: 'pjp-head' }, topbar,
       el('div', { className: 'pjp-head-row' },
         mark,
         el('div', { className: 'pjp-head-text' }, ...[badge, title, desc, sub].filter(Boolean)),
@@ -1367,12 +1457,15 @@
       root.dataset.view = v;
       for (const b of tabButtons) { const on = b.dataset.view === v; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; b.classList.toggle('on', on); }
       cols.hidden = v !== 'overview';
+      if (page.start && page.start.parentNode !== cols) cols.prepend(page.start, page.recent); // [job page chat] back from the Applications view
       viewBox.hidden = v === 'overview';
       page.board?.dispose?.(); // [job dashboard look] (gives Ctrl+K back to the command bar)
       page.board = null;
       if (v === 'jobs') { // [project templates] the dashboard
         const holder = el('div', { className: 'pjp-jobs' });
-        viewBox.replaceChildren(holder);
+        // [job page chat] the same box that starts a chat and the latest chats as on every project's Overview, compact, over the dashboard
+        const dock = el('div', { className: 'pjp-job-chat' }, page.start, page.recent);
+        viewBox.replaceChildren(dock, holder);
         loadJobBoard().then((ok) => {
           if (!holder.isConnected) return;
           if (!ok) { holder.replaceChildren(note(tr('projecttpl.apps.failed', 'Could not read the tracker.'))); return; }
@@ -1395,13 +1488,14 @@
           if (!ok) { holder.replaceChildren(note(tr('projecttools.failed', 'Could not read your apps and tools.'))); return; }
           page.tools = window.chatProjectTools.view(holder, { api, id, tr, onSaved: (p) => { page.data.project = p; h.refresh(); } });
         });
-      } else if (v === 'settings') viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, projectCard(), instructionsCard(page.data), permissionsCard(page.data), folderCard(page.data)));
+      } else if (v === 'settings') viewBox.replaceChildren(el('div', { className: 'pjp-settings' }, ...[projectCard(), instructionsCard(page.data), permissionsCard(page.data), folderCard(page.data), aiChangesCard()].filter(Boolean))); // ([ai preferences] what the AI changed, with Undo)
       else { viewBox.replaceChildren(); if (was && was !== 'overview') reload(true); } // (the overview's cards show what changed in the other views)
     }
     page.setView = (v) => { setView(v); tabs.querySelector('.pjp-tab.on')?.focus(); }; // [project tools] the Overview's Tools card
     page.extras = () => { drawNotice(); if (page.view && !['overview', 'tools', 'about'].includes(page.view) && !page.editing.size) setView(page.view); }; // ([about you] that view keeps itself too: a box being typed in) // (the Tools view keeps itself: redrawn, a Connect in progress would be lost)
     page.recent = recentSection();
-    const main = [composer(data), page.recent, chatsSection()];
+    page.start = el('div', { className: 'pjp-start' }, composer(data), startersRow()); // [project presets] the box and the template's first questions
+    const main = [page.start, page.recent, chatsSection()];
     const instructions = instructionsCard(data);
     const side = el('aside', { className: 'pjp-side' }, ...[applicationsCard(data), aboutCard(data)].filter(Boolean), instructions, sourcesCard(data), toolsCard(data), folderCard(data), defaultsCard(data), permissionsCard(data), memoryCard(data), placesCard(data));
     side.setAttribute('aria-label', tr('projectws.side', 'Project overview'));
