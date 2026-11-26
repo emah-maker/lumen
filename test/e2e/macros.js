@@ -153,6 +153,8 @@ const PAGE = (variant) => `<!doctype html><meta charset="utf-8"><title>Shop ${va
   await load(`${base}/?v=2`);
   await app.evaluate((_e, mac) => global.__pageTools.handleShortcut({ key: '!', code: 'Digit1', shift: true, ...(mac ? { meta: true } : { control: true }) }), process.platform === 'darwin');
   check('a macro\'s keyboard shortcut runs it', await waitFor(async () => (await out()) === 'Searched: by key', 15000), await out());
+  // (the last click's page settling takes a moment after its effect shows: only one macro runs at a time, so wait for the run to end)
+  check('the shortcut run ends', await waitFor(async () => (await app.evaluate(() => global.__macros.runs.size)) === 0, 15000), 'still running');
   const conflict = await inSettings("window.lumenSettings.macros.checkShortcut('ctrl+t', null)");
   const free = await inSettings("window.lumenSettings.macros.checkShortcut('ctrl+shift+7', null)");
   const dupe = await inSettings("window.lumenSettings.macros.checkShortcut('ctrl+shift+1', null)");
@@ -166,6 +168,7 @@ const PAGE = (variant) => `<!doctype html><meta charset="utf-8"><title>Shop ${va
   await ui.fill('#prompt', '/macro shortcut');
   await ui.press('#prompt', 'Enter');
   check('/macro <name> runs the macro (a unique piece of the name is enough)', await waitFor(async () => (await out()) === 'Searched: by key', 15000), await out());
+  await waitFor(async () => (await app.evaluate(() => global.__macros.runs.size)) === 0, 15000); // (one macro at a time: let this run end)
   // a macro that needs a value asks for it in a small form
   await app.evaluate((_e, b) => global.__macros.store.save({ name: 'Ask me', steps: [{ type: 'open_url', url: `${b}/`, target: 'current' }, { type: 'type', locator: { name: 'Search products' }, text: '{{item}}' }, { type: 'click', locator: { name: 'Find' } }] }), base);
   await ui.waitForFunction(() => window.macrosApi);

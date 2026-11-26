@@ -88,6 +88,7 @@ const projectFolders = new Proxy({}, { get: (_t, key) => (projectFoldersMod ||= 
 // in front when it started, so switching tabs mid-task can't send its clicks and typing to another
 // page; switch_tab and open_tab move the pin on purpose. Outside a task, tools use the active tab.
 const taskScope = new AsyncLocalStorage();
+const heldOwnerOf = (scope) => (scope ? scope.heldOwner || scope : null); // who a confirm/prompt held for handle_dialog belongs to (an outside agent's session, else the run)
 const STOP_GRACE_MS = 8000; // how long a stopped run may take to wind down before it is ended without waiting (runOnce)
 const REDISPATCH = new Error('model fallback: another engine takes the turn'); // thrown by loop() to runTask, never shown
 const nestedCall = new AsyncLocalStorage(); // [ai controls] set inside execute(): tools a tool runs
@@ -1913,7 +1914,10 @@ class Agent {
   inTask(tabId, signal, fn, chat = null, log = null, meta = null) {
     const scope = { ...(meta || {}), tabId: tabId ?? null, signal, chat, log };
     this.scopes.add(scope);
-    const letGo = () => { try { pageDebugShared.releaseHeldFor(scope); } catch {} }; // [held dialog] a confirm/prompt held for this run goes to the user when it is stopped or ends
+    // [held dialog] a confirm/prompt held for this run goes to the user when it is stopped or ends. An outside agent's calls are each a run
+    // of their own, but its confirm/prompt has to outlive the call that opened it (handle_dialog is the next call): those belong to the
+    // session (scope.heldOwner), which ai-agents.js lets go of when the session ends (releaseHeldFor).
+    const letGo = () => { if (scope.heldOwner) return; try { pageDebugShared.releaseHeldFor(scope); } catch {} };
     try { signal?.addEventListener?.('abort', letGo, { once: true }); } catch {}
     if (chat) this.runScope = scope; // the sidebar run (runTabId): only one runs at a time
     return taskScope.run(scope, fn).finally(() => {
@@ -1928,6 +1932,9 @@ class Agent {
       return Promise.resolve(scope.clipRestore?.()).catch(() => {}); // [edit keys] the user's clipboard goes back as it was, before the run is over
     });
   }
+
+  // An outside agent's session ended: what it was holding for handle_dialog goes to the user (see inTask).
+  releaseHeldFor(owner) { try { pageDebugShared.releaseHeldFor(owner); } catch {} }
 
   // The tab the sidebar's running task works in (null: none running, or no tab yet). The sidebar shows it
   // ("Working in: …") so the user can tell which tab the AI is using after switching away.
@@ -7684,7 +7691,7 @@ ${CLI_DESKTOP_RULE}`;
     let call = () => this.executeGuarded(name, input);
     if (AI_NAV_TOOLS.has(name)) { const inner = call; call = () => dbg.withAiNavigation(wc, inner); }
     let result;
-    if (cap) { cap.busy++; cap.lastScope = taskScope.getStore() || null; } // (a page dialog opened now is the AI's: page-debug.js pageDialog)
+    if (cap) { cap.busy++; cap.lastScope = heldOwnerOf(taskScope.getStore()); } // (a page dialog opened now is the AI's: page-debug.js pageDialog)
     try {
       result = safe ? await call() : await dbg.race(wc, call());
     } catch (err) {
@@ -7692,7 +7699,7 @@ ${CLI_DESKTOP_RULE}`;
       if (head && err && typeof err.message === 'string') err.message = `${head}${err.message}`;
       throw err;
     } finally {
-      if (cap) { cap.busy--; cap.lastAiAt = cap.now(); cap.lastScope = taskScope.getStore() || cap.lastScope; }
+      if (cap) { cap.busy--; cap.lastAiAt = cap.now(); cap.lastScope = heldOwnerOf(taskScope.getStore()) || cap.lastScope; }
     }
     if (result && typeof result === 'object' && !Array.isArray(result) && result.dialog) return blocked(); // (the abandoned call settles on its own)
     const head = dbg.headerFor(wc);

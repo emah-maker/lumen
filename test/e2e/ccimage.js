@@ -46,6 +46,9 @@ process.stdin.on('data', (d) => {
   const home = path.join(root, 'home'); fs.mkdirSync(path.join(home, 'Pictures'), { recursive: true });
   const elsewhere = path.join(root, 'elsewhere'); fs.mkdirSync(elsewhere);
   const fake = path.join(root, 'fake-claude.js'); fs.writeFileSync(fake, FAKE);
+  // Every Claude Code engine (the sidebar's and each chat's own) starts the fake through this module (LUMEN_TEST_CLI_SPAWN).
+  const spawnModule = path.join(root, 'spawn.js');
+  fs.writeFileSync(spawnModule, "const cp = require('child_process');\nexports.spawn = (bin, argv, opts) => cp.spawn(process.execPath, [bin, ...argv], { ...opts, env: { ...opts.env, ELECTRON_RUN_AS_NODE: '1' } });\n");
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==', 'base64');
   const oldPic = path.join(home, 'Pictures', 'old.png'); fs.writeFileSync(oldPic, png); fs.utimesSync(oldPic, new Date(Date.now() - 86400e3), new Date(Date.now() - 86400e3));
   const outsidePic = path.join(elsewhere, 'new.png'); fs.writeFileSync(outsidePic, png);
@@ -54,7 +57,7 @@ process.stdin.on('data', (d) => {
 
   const app = await electron.launch({
     args: [path.join(__dirname, '..', '..')],
-    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', LUMEN_CLAUDE_BIN: fake, FAKE_LOG: log, FAKE_OUT_DIR: outDir, FAKE_OLD: oldPic, FAKE_OUTSIDE: outsidePic },
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, LUMEN_TEST_BACKGROUND: '1', LUMEN_CLAUDE_BIN: fake, LUMEN_TEST_CLI_SPAWN: spawnModule, FAKE_LOG: log, FAKE_OUT_DIR: outDir, FAKE_OLD: oldPic, FAKE_OUTSIDE: outsidePic },
   });
   const ui = await app.firstWindow();
   const errors = [];
@@ -65,14 +68,10 @@ process.stdin.on('data', (d) => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // The fake CLI stands in for `claude` (run as Node), and the user's home folder is the throwaway one.
-  await app.evaluate((_e, { fakePath, fakeHome }) => {
-    const { spawn } = process.mainModule.require('child_process');
+  await app.evaluate((_e, { fakeHome }) => {
     const os = process.mainModule.require('os');
     os.homedir = () => fakeHome;
-    const cc = global.__agent.engines.claudecode;
-    cc.bin = fakePath;
-    cc.spawn = (bin, argv, opts) => spawn(process.execPath, [bin, ...argv], { ...opts, env: { ...opts.env, ELECTRON_RUN_AS_NODE: '1' } });
-  }, { fakePath: fake, fakeHome: home });
+  }, { fakeHome: home });
 
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
   await sleep(500);

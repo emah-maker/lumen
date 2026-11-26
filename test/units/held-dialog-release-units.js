@@ -71,6 +71,20 @@ const holdingTool = (wc, log, tag) => async () => { pageConfirm(wc, log, tag); r
     wc.destroyed = true;
   }
 
+  // ---- an outside agent's call ends while holding: the dialog waits for its next call (handle_dialog) until its session ends
+  {
+    const wc = fakeWc(); const agent = makeAgent(wc); const log = [];
+    const session = { name: 'session' };
+    agent.executeGuarded = holdingTool(wc, log, 'd');
+    await agent.inTask(1, new AbortController().signal, () => agent.executeDebugged('click', {}), null, null, { mcp: true, heldOwner: session });
+    check('outside agent: its call ends while held, the dialog stays for its next call', log.length === 0 && Boolean(pageDebugShared.captureOf(wc).dialog), log.join());
+    agent.releaseHeldFor({ name: 'another session' });
+    check('outside agent: another session ending leaves it', log.length === 0 && Boolean(pageDebugShared.captureOf(wc).dialog), log.join());
+    agent.releaseHeldFor(session);
+    check('outside agent: its session ending hands the dialog to the user', log.join() === 'd:user' && !pageDebugShared.captureOf(wc).dialog, log.join());
+    wc.destroyed = true;
+  }
+
   // ---- another chat's held dialog is untouched by this chat's Stop and end
   {
     const wcA = fakeWc(); const wcB = fakeWc(); const agent = makeAgent(wcA); const log = [];

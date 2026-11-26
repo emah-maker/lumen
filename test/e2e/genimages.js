@@ -59,7 +59,7 @@ const SRC = path.join(__dirname, '..', '..', 'src').split(path.sep).join('/');
   check('the picture shows in the chat, as an image with a description', (await ui.locator('.msg.gen-pics .gen-img img').count()) === 1 && (await ui.locator('.gen-img img').getAttribute('alt')) === 'draw a red square', await ui.locator('.gen-img').count());
   const shown = await ui.evaluate(() => { const i = document.querySelector('.gen-img img'); return { ok: i.complete && i.naturalWidth === 24, src: i.src.slice(0, 22), fits: i.getBoundingClientRect().width <= document.querySelector('.msg.gen-pics').getBoundingClientRect().width + 1 }; });
   check('it is a real decoded PNG, from a data URL, no wider than its bubble', shown.ok && shown.src === 'data:image/png;base64,' && shown.fits, JSON.stringify(shown));
-  check('Save and Copy are buttons with names; the picture opens with Enter', (await ui.locator('.gen-img-bar button').allTextContents()).join() === 'Save,Copy' && (await ui.locator('.gen-img-open').getAttribute('aria-label')).startsWith('Enlarge picture'), await ui.locator('.gen-img-bar').innerText());
+  check('Save and Copy are buttons with names; the picture opens with Enter', (await ui.locator('.gen-img-bar button').allTextContents()).join() === 'Save,Copy,Add to notes' && (await ui.locator('.gen-img-open').getAttribute('aria-label')).startsWith('Enlarge picture'), await ui.locator('.gen-img-bar').innerText());
   check('the reply can be asked for again', (await ui.locator('.reply-regen').count()) >= 1, 'no regenerate');
 
   // enlarge: a dialog, Escape closes it and returns focus
@@ -106,6 +106,8 @@ const SRC = path.join(__dirname, '..', '..', 'src').split(path.sep).join('/');
   // ---- a model that can't make pictures says so, and still answers
   await ui.evaluate(() => document.getElementById('new-chat').click());
   await ui.waitForTimeout(400);
+  // (A connected picture provider takes the request whatever model the chat is on, so this model has to be the only one: no GPT key.)
+  await app.evaluate(() => { const was = global.__agent.getKey; global.__agent.getKey = (p) => (p === 'openai' ? null : was.call(global.__agent, p)); });
   await ui.selectOption('#model', 'claude-opus-5-5');
   await send('draw a red square');
   check('Claude: a notice that it can\'t make pictures, and the words answer', /can.t make pictures/.test(await ui.locator('#messages .notice').first().innerText().catch(() => '')) && /describe it in words/.test(await ui.locator('.msg.assistant').last().innerText()), await ui.locator('#messages').innerText());
