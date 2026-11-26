@@ -241,6 +241,11 @@ contextBridge.exposeInMainWorld('assistant', {
     undo: (token) => ipcRenderer.invoke('memory:undo', token),
     forget: (id) => ipcRenderer.invoke('memory:forget', id),
   },
+  // [ai preferences] Settings the AI changed (ai/preferences.js): the chat's "Changed" row (Undo) and the project page's list.
+  preferences: {
+    list: (projectId) => ipcRenderer.invoke('ai-changes:list', projectId),
+    undo: (token) => ipcRenderer.invoke('ai-changes:undo', token),
+  },
   // Quick notes (renderer/notes.js; features/notes-hub.js): one call for everything the panel and the "Add to notes" buttons do.
   notes: {
     act: (op, arg) => ipcRenderer.invoke('notes:act', op, arg),

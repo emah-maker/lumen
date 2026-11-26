@@ -22,7 +22,8 @@ const NOW = 1_800_000_000_000;
   // ---- the templates
   {
     const list = T.list();
-    check('Job applications is a template, listed with its name, goal line and the apps its chats get only', list.some((t) => t.id === 'job-applications' && t.name === 'Job applications' && t.description && J(t.apps) === J(['gmail', 'sheets', 'drive', 'docs', 'calendar'])) && list.every((t) => Object.keys(t).sort().join() === 'apps,description,id,name' && Array.isArray(t.apps)), J(list));
+    check('Job applications is a template, listed with its name, goal line and the apps its chats get only', list.some((t) => t.id === 'job-applications' && t.name === 'Job applications' && t.description && J(t.apps) === J(['gmail', 'sheets', 'drive', 'docs', 'calendar'])) && list.every((t) => Object.keys(t).sort().join() === 'apps,description,icon,id,name,starters' && Array.isArray(t.apps)), J(list));
+    check('[project presets] every template has its own mark and three short first questions', new Set(list.map((t) => t.icon)).size === list.length && list.every((t) => /^[a-z]+$/.test(t.icon) && t.starters.length === 3 && t.starters.every((q) => typeof q === 'string' && q.length >= 10 && q.length <= 60)), J(list.map((t) => [t.icon, t.starters])));
     const tpl = T.byId('job-applications');
     check('its instructions fit a project (4,000 characters at most)', tpl.instructions.length > 200 && tpl.instructions.length <= 4000, tpl.instructions.length);
     check('its instructions keep the master résumé untouched and tailor a copy', /Never edit, rename or overwrite/.test(tpl.instructions) && /tailored COPY/.test(tpl.instructions) && /Tailored résumés/.test(tpl.instructions));

@@ -63,6 +63,10 @@ if (location.protocol === 'file:' && /\/renderer\/chat-page\.html$/.test(locatio
       undo: (token) => ipcRenderer.invoke('memory:undo', token),
       forget: (id) => ipcRenderer.invoke('memory:forget', id),
     },
+    preferences: { // [ai preferences] the chat's Changed row (Undo) and the project page's list (ai/preferences.js)
+      list: (projectId) => ipcRenderer.invoke('ai-changes:list', projectId),
+      undo: (token) => ipcRenderer.invoke('ai-changes:undo', token),
+    },
     chats: {
       list: () => ipcRenderer.invoke('chats:list'),
       open: (id) => ipcRenderer.invoke('chats:open', id),

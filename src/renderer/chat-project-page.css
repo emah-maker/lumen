@@ -270,6 +270,51 @@ button.pjp-hit { cursor: pointer; }
 .pjp-job .pjp-tab.on::after { background: linear-gradient(90deg, var(--job), var(--job-2)); }
 .pjp-job .pjp-tab[data-view="jobs"] { font-weight: 600; }
 .pjp-jobs { padding-top: var(--sp-2); }
+/* [job page controls] the chat header's controls on a project page: Show chat list (only while the list is folded) and Full screen */
+.pjp-topbar { display: flex; align-items: center; gap: var(--sp-2); min-height: 32px; }
+.pjp-topbar .pjp-back { align-self: center; }
+.pjp .pjp-ctl { flex: none; display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; border: none; border-radius: var(--r-md); background: transparent; color: var(--muted); cursor: pointer; }
+.pjp .pjp-ctl:hover { background: var(--hover); color: var(--text); }
+.pjp .pjp-ctl.pjp-rail-open { display: none; }
+body.cp-rail-hidden .pjp .pjp-ctl.pjp-rail-open { display: inline-grid; }
+body.cp-rail-hidden .pjp-topbar .pjp-back { margin-left: 0; }
+.pjp-full .cp-full-out { display: none; }
+body.cp-full .pjp-full .cp-full-in { display: none; }
+body.cp-full .pjp-full .cp-full-out { display: inline; }
+/* [project presets] Coursework, Code project and Research look their own, as Job applications does: a tinted mark and header in the theme's
+   accent (no palette of their own), the template's badge, and its first questions under the box as small chips */
+.pjp-tpl { --tpl: var(--accent); }
+.pjp-tpl:not(.pjp-job) .pjp-head-row { padding: var(--sp-5); border-radius: 20px; background: linear-gradient(120deg, color-mix(in srgb, var(--tpl) 10%, transparent), color-mix(in srgb, var(--tpl) 4%, transparent) 70%); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tpl) 14%, transparent); }
+.pjp-tpl:not(.pjp-job) .pjp-mark { background: var(--accent-deep, var(--accent)); color: var(--on-accent, #fff); box-shadow: 0 4px 14px color-mix(in srgb, var(--tpl) 26%, transparent); }
+.pjp-tpl:not(.pjp-job) .pjp-type-badge { background: color-mix(in srgb, var(--tpl) 14%, transparent); color: var(--accent-text, var(--accent)); }
+.pjp-start { grid-area: composer; display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+.pjp-start .pjp-composer { grid-area: auto; }
+.pjp-starters { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+.pjp-starters[hidden] { display: none; }
+.pjp-starter { max-width: 100%; height: 28px; padding: 0 var(--sp-6); border: none; border-radius: var(--r-pill); background: var(--surface-raised, var(--surface)); box-shadow: 0 0 0 1px var(--hairline); color: var(--text-2, var(--muted)); font: inherit; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; transition: box-shadow var(--t-fast) ease-out, color var(--t-fast) ease-out; }
+.pjp-starter:hover { color: var(--text); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 50%, var(--hairline)); }
+/* the overview reads shorter: the side cards are tighter and the instructions fold sooner */
+.pjp-tpl .pjp-side { gap: var(--sp-4); }
+.pjp-side .pjp-card { padding: var(--sp-6); }
+.pjp-side .pjp-instr-text.clamped { -webkit-line-clamp: 5; }
+/* [job page chat] the Applications view starts with the same box and latest chats as Overview, compact: a short box, one row of cards */
+.pjp-job-chat { display: flex; flex-direction: column; gap: var(--sp-4); margin-bottom: var(--sp-6); }
+.pjp-job-chat .pjp-composer { padding: var(--sp-5) var(--sp-6) var(--sp-4); border-radius: 16px; }
+.pjp-job-chat .pjp-compose-text { min-height: 24px; font-size: 14.5px; }
+.pjp-job-chat .pjp-recent { margin-top: 0; }
+.pjp-job-chat .pjp-sec-head { min-height: 0; margin-bottom: var(--sp-3); }
+.pjp-job-chat .pjp-h-big { font-size: 13px; color: var(--muted); font-weight: 600; }
+.pjp-job-chat .pjp-cards { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); grid-auto-rows: auto; }
+.pjp-job-chat .pjp-chat-card { min-height: 0; padding: var(--sp-4) var(--sp-5); gap: var(--sp-2); }
+.pjp-job-chat .pjp-cc-snip { -webkit-line-clamp: 1; }
+.pjp-job-chat .pjp-chat-card:nth-child(n+4) { display: none; }
+.pjp-all-chats { display: none; }
+.pjp-job-chat .pjp-all-chats { display: inline; }
+/* [ai preferences] Settings → Changed by the AI */
+.pjp-ai-change.undone .pjp-row-text { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.pjp .btn.small.pjp-ai-undo { flex: none; height: 26px; padding: 0 var(--sp-5); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .pjp-starter { transition: none; } }
+:root.pref-reduce-motion .pjp-starter { transition: none; }
 .pjp-type-switch { display: inline-flex; flex-wrap: wrap; max-width: 100%; padding: 4px; gap: 2px; border-radius: var(--r-pill); background: var(--hover); }
 .pjp-type-opt { height: 28px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-pill); background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; }
 .pjp-type-opt:hover { color: var(--text); }

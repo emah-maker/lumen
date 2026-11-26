@@ -2122,6 +2122,21 @@ function onAgentEvent(event) {
       if (event.action !== 'forget') action(t('memory.forget'), t('memory.forgotten'), () => window.assistant.memory.forget(event.id));
       break;
     }
+    case 'preference': { // [ai preferences] the AI changed a setting (ai/preferences.js): said in the chat with Undo, which puts the old value back
+      if (!window.assistant.preferences) break;
+      const note = appendToTurn(Object.assign(document.createElement('div'), { className: 'notice memory-note pref-note', textContent: t('prefs.changed', { label: event.label || '', from: event.from || '', to: event.to || '' }) }));
+      if (event.token) {
+        const button = Object.assign(document.createElement('button'), { type: 'button', className: 'notice-action', textContent: t('memory.undo') });
+        button.onclick = async () => {
+          button.disabled = true;
+          const r = await window.assistant.preferences.undo(event.token).catch(() => 'gone');
+          button.remove();
+          note.append(` ${t(r === 'undone' ? 'prefs.undone' : r === 'changed' ? 'prefs.changedSince' : 'prefs.gone')}`);
+        };
+        note.append(' ', button);
+      }
+      break;
+    }
     case 'notice': {
       if (event.stopped) turn.stopped = true;
       // A chain of "couldn't reach X, switched to Y" lines in a row says one thing: keep the newest only.
