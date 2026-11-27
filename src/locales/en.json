@@ -1535,6 +1535,10 @@
   "passwords.offer.close": "Close",
   "passwords.noUsername": "no username",
   "passwords.fillAs": "Fill password for {username}",
+  "passwords.generate": "Use a strong password",
+  "passwords.generate.note": "Lumen makes one and saves it for this site when you sign up",
+  "passwords.generated": "Lumen saved the strong password for {site}",
+  "passwords.generated.ok": "OK",
   "passwords.manage": "Manage passwords…",
   "passwords.driven": "Lumen doesn’t fill passwords while an outside program controls it",
   "passwords.driven.detail": "A program connected over CDP (Settings → Advanced → Automation) could read the page. Disconnect it, then fill the password again.",
@@ -1790,6 +1794,15 @@
   "settings.clear.go": "Clear data",
   "settings.clear.sure": "Clear it? Click again",
   "settings.passwords.deleteAll": "Delete all saved passwords",
+  "settings.passwords.generated": "Generated password",
+  "settings.passwords.genLength": "Length",
+  "settings.passwords.genLengthText": "{n} characters",
+  "settings.passwords.genTitle": "Generate a password",
+  "settings.passwords.genDesc": "A strong random password for a site, without look-alike characters like 0 and O. Sign-up forms offer one by themselves (“Use a strong password”) and Lumen saves it for you.",
+  "settings.passwords.genNew": "New password",
+  "settings.passwords.genCopy": "Copy",
+  "settings.passwords.genCopied": "Copied. The clipboard is cleared in 30 seconds.",
+  "settings.passwords.genSymbols": "Symbols (like ! and #)",
   "settings.passwords.deleteAllSure": "Delete all? Click again",
   "settings.passwords.delete": "Delete",
   "settings.passwords.deleteSure": "Delete? Click again",
@@ -5867,5 +5880,6 @@
   "certError.thisSite": "this site",
   "settings.row.turnOneOffTo": "Turn one off to stop it without removing it; it stays off after a restart. Removing one deletes it and its data. An extension that asks for every site can be held to the ones you list; reload open pages after changing it.",
   "settings.row.developerMode": "Developer mode",
-  "settings.row.loadAnExtensionFrom": "Load an extension from a folder on this computer (one with a manifest.json), and reload it from that folder after you change it. Lumen runs a copy, so it never writes into your folder."
+  "settings.row.loadAnExtensionFrom": "Load an extension from a folder on this computer (one with a manifest.json), and reload it from that folder after you change it. Lumen runs a copy, so it never writes into your folder.",
+
 }
