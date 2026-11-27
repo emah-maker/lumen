@@ -57,6 +57,25 @@
     return { list, hidden: pool.length - list.length, archived: shelved.length };
   }
 
+  // Project chats are not in the dated list, so the projects worked in lately start open with their latest chats: the (up to) three
+  // with a chat from the last 7 days, newest first. A project the user shut (shut: a Set kept by the caller) stays shut.
+  const OPEN_RECENT = 3;
+  const RECENT_MS = 7 * 86400000;
+  function autoOpen({ projects, chats, expanded, shut, now = Date.now() }) {
+    const active = new Map();
+    for (const c of chats) if (c.project && !c.archived && now - Number(c.updated || 0) < RECENT_MS) active.set(c.project, Math.max(active.get(c.project) || 0, Number(c.updated || 0)));
+    const recent = projects.filter((p) => !p.archived && active.has(p.id)).sort((a, b) => active.get(b.id) - active.get(a.id)).slice(0, OPEN_RECENT);
+    for (const p of recent) if (!shut.has(p.id)) expanded.add(p.id);
+  }
+  // A kept set of project ids (localStorage), for the projects the user shut.
+  function keptSet(key) {
+    let v = [];
+    try { v = JSON.parse(localStorage.getItem(key) || '[]'); } catch { /* none kept */ }
+    const set = new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+    set.save = () => { try { localStorage.setItem(key, JSON.stringify([...set].slice(-200))); } catch { /* not kept */ } };
+    return set;
+  }
+
   // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
   // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder, pin, archive); the chevron lists its chats under it.
   function render(opts) {
@@ -572,5 +591,5 @@
     (menu.querySelector('.cp-pj-pick-find') || menu.querySelector('button'))?.focus();
   }
 
-  window.chatProjects = { render, editor, picker, menu, arrange, expiresText };
+  window.chatProjects = { render, editor, picker, menu, arrange, expiresText, autoOpen, keptSet };
 })();

@@ -21,6 +21,7 @@
   const KEY = 'lumen.sidebar.projects.open';
   const saved = () => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []; } catch { return []; } };
   const expanded = new Set(saved()); // projects shown open in the history panel: shut to begin with, and kept as the user left them
+  const shut = pj.keptSet('lumen.sidebar.projects.shut'); // projects the user shut: the recent ones open by themselves otherwise
   const remember = () => { try { localStorage.setItem(KEY, JSON.stringify([...expanded])); } catch { /* not kept */ } };
   let state = { id: null, project: null, count: 0 };
   let lastCurrent; // the open chat when the block was last drawn (undefined: not drawn yet)
@@ -124,10 +125,11 @@
       const home = chats.find((c) => c.id === current)?.project;
       if (home && list.some((p) => p.id === home && !p.archived) && !expanded.has(home)) { expanded.add(home); remember(); }
     }
+    pj.autoOpen({ projects: list, chats, expanded, shut });
     const host = el('div', { className: 'cp-projects sbp-projects' });
     pj.render({
       host, projects: list, chats, active: null, expanded, current,
-      onToggle: (id) => { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); remember(); rerender(); },
+      onToggle: (id) => { if (expanded.has(id)) { expanded.delete(id); shut.add(id); } else { expanded.add(id); shut.delete(id); } shut.save(); remember(); rerender(); },
       onOpen: (id) => openChat(id),
       onAdd: () => newProject(),
       onEdit: (p) => pj.editor({ api, project: p, onDone: async () => { await refresh(); rerender(); } }),

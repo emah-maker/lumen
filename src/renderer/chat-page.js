@@ -149,6 +149,7 @@
   let lastChats = [];
   let lastCurrent = null;
   const expanded = new Set(); // projects shown open in the rail (their chats listed under them)
+  const shut = window.chatProjects.keptSet('lumen.chat.projects.shut'); // projects the user shut: the recent ones open by themselves otherwise
   let dirtyDuringDrag = false;
   // Drag chats onto a project, and pick several with Ctrl/Shift+click (renderer/chat-project-drag.js).
   const drag = window.chatProjectDrag.create({
@@ -187,6 +188,7 @@
     lastChats = chats;
     lastProjects = Array.isArray(projects) ? projects : [];
     for (const id of [...expanded]) if (!lastProjects.some((p) => p.id === id)) expanded.delete(id);
+    pj.autoOpen({ projects: lastProjects, chats, expanded, shut }); // (the projects worked in lately start open: their chats are not in the dated list)
     drag.selection.prune();
     if (current !== lastCurrent) { // the chat on show is in a project: its project opens in the rail so the chat is in sight (once: shutting it stays shut)
       const home = chats.find((c) => c.id === current)?.project;
@@ -223,7 +225,7 @@
     if (!lastProjects.length && !lastChats.length) { host.hidden = true; return; }
     pj.render({
       host, projects: lastProjects, chats: lastChats, active: window.chatProjectPage?.id() || null, expanded, current: lastCurrent,
-      onToggle: (id) => { if (expanded.has(id)) expanded.delete(id); else expanded.add(id); drawProjects(); },
+      onToggle: (id) => { if (expanded.has(id)) { expanded.delete(id); shut.add(id); } else { expanded.add(id); shut.delete(id); } shut.save(); drawProjects(); },
       onOpen: (id) => openChat(id),
       onAdd: () => editProject(null),
       onImport: () => importProject(),
