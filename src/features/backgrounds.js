@@ -7,14 +7,48 @@
 // one static paint, no animation. The older presets (aurora, dusk, ocean, forest, sunset, graphite) are CSS in newtab.html and
 // settings.css; the newer ones carry their `art` here, and both pages set it as the element's background.
 //   tone  'dark': white text and frosted-dark cards (every background has always been this)   'light': dark text and white cards
+//         'auto' (the Studio group): follows the system's light or dark theme, with a light `art` and a dark `dark`; toneOf/artOf take
+//         the system's mode and give 'light' or 'dark' and the matching art, so the page, the preview and the tests never ask the item itself
 //   seed  the colour "Match wallpaper" takes the accent from (a picture gives its own)
 // The text colour over each is checked on the running page (test/e2e/newtab-wallpaper.js), not assumed.
 (function () {
 'use strict';
 
+// Studio textures: very fine, low-contrast patterns tiled over the base (a 1px dot grid, a hairline grid, a woven hatch). They stay crisp at
+// any size and zoom, cost one static paint, and are faint enough that the text over them is measured against the base, not the pattern.
+const dotGrid = (color, step) => `radial-gradient(circle at 1px 1px, ${color} 0 1px, transparent 1.5px) 0 0 / ${step}px ${step}px`;
+const hairGrid = (color, step) => `linear-gradient(${color} 1px, transparent 1px) 0 0 / ${step}px ${step}px, linear-gradient(90deg, ${color} 1px, transparent 1px) 0 0 / ${step}px ${step}px`;
+const weave = (color) => `repeating-linear-gradient(45deg, ${color} 0 1px, transparent 1px 7px), repeating-linear-gradient(-45deg, ${color} 0 1px, transparent 1px 7px)`;
+const glow = (size, at, color) => `radial-gradient(${size} at ${at}, ${color}, transparent 70%)`;
+
 const mesh = (base, ...glows) => `${glows.map(([size, at, color]) => `radial-gradient(${size} at ${at}, ${color}, transparent 70%)`).join(', ')}, ${base}`;
 
 const BACKGROUNDS = [
+  // Studio: calm, low-saturation themes for work. Each has a light and a dark version and follows the system theme (tone 'auto').
+  { id: 'mist', label: 'Mist', group: 'studio', tone: 'auto', seed: '#5f7189',
+    art: `${glow('70% 60%', '15% 0%', 'rgba(255, 255, 255, 0.95)')}, ${glow('60% 60%', '95% 100%', 'rgba(190, 201, 216, 0.6)')}, #edf0f4`,
+    dark: `${glow('70% 60%', '15% 0%', 'rgba(78, 90, 110, 0.42)')}, ${glow('60% 60%', '95% 100%', 'rgba(38, 46, 60, 0.7)')}, #111419` },
+  { id: 'harbor', label: 'Harbor', group: 'studio', tone: 'auto', seed: '#3a6797',
+    art: `${glow('60% 50%', '85% 0%', 'rgba(255, 255, 255, 0.85)')}, linear-gradient(180deg, #eaf0f7 0%, #dbe5f0 100%), #e3ebf4`,
+    dark: `${glow('60% 50%', '85% 0%', 'rgba(84, 124, 184, 0.24)')}, linear-gradient(165deg, #0a1320 0%, #0f2036 60%, #142c48 100%), #0f2036` },
+  { id: 'horizon', label: 'Horizon', group: 'studio', tone: 'auto', seed: '#b5774a',
+    art: `${glow('90% 45%', '50% 100%', 'rgba(255, 216, 178, 0.45)')}, linear-gradient(180deg, #f6f4f1 0%, #eef0f3 55%, #e4e9ef 100%), #eef0f3`,
+    dark: `${glow('90% 40%', '50% 100%', 'rgba(196, 128, 80, 0.16)')}, linear-gradient(180deg, #0a0d13 0%, #111725 60%, #1a2031 100%), #111725` },
+  { id: 'eucalyptus', label: 'Eucalyptus', group: 'studio', tone: 'auto', seed: '#4a8570',
+    art: `${glow('70% 60%', '10% 10%', 'rgba(255, 255, 255, 0.8)')}, linear-gradient(160deg, #eef3ef 0%, #dfe8e2 100%), #e6eee8`,
+    dark: `${glow('70% 60%', '10% 10%', 'rgba(74, 133, 112, 0.2)')}, linear-gradient(160deg, #0c1512 0%, #12201b 100%), #0f1a16` },
+  { id: 'velvet', label: 'Velvet', group: 'studio', tone: 'auto', seed: '#7b5893',
+    art: `${glow('70% 60%', '85% 15%', 'rgba(255, 255, 255, 0.8)')}, linear-gradient(160deg, #f3f0f5 0%, #e7e0eb 100%), #ede8f0`,
+    dark: `${glow('70% 60%', '85% 15%', 'rgba(130, 92, 160, 0.22)')}, linear-gradient(160deg, #130f17 0%, #1f1726 100%), #19131f` },
+  { id: 'linen', label: 'Linen', group: 'studio', tone: 'auto', seed: '#9a7f5c',
+    art: `${glow('80% 60%', '20% 0%', 'rgba(255, 255, 255, 0.7)')}, ${weave('rgba(120, 98, 66, 0.045)')}, #f3efe7`,
+    dark: `${glow('80% 60%', '20% 0%', 'rgba(150, 124, 90, 0.14)')}, ${weave('rgba(255, 238, 214, 0.035)')}, #191612` },
+  { id: 'blueprint', label: 'Blueprint', group: 'studio', tone: 'auto', seed: '#3563ad',
+    art: `${hairGrid('rgba(38, 72, 128, 0.06)', 32)}, ${glow('80% 70%', '50% 0%', 'rgba(255, 255, 255, 0.7)')}, #f1f4f8`,
+    dark: `${hairGrid('rgba(150, 180, 230, 0.06)', 32)}, ${glow('80% 70%', '50% 0%', 'rgba(70, 110, 180, 0.18)')}, #0c121d` },
+  { id: 'carbon', label: 'Carbon', group: 'studio', tone: 'auto', seed: '#687079',
+    art: `${dotGrid('rgba(0, 0, 0, 0.09)', 18)}, ${glow('90% 70%', '50% 0%', 'rgba(255, 255, 255, 0.75)')}, #eceef0`,
+    dark: `${dotGrid('rgba(255, 255, 255, 0.075)', 18)}, ${glow('90% 70%', '50% 0%', 'rgba(255, 255, 255, 0.05)')}, #0e0f11` },
   // Gradients, made for white text.
   { id: 'aurora', label: 'Aurora', group: 'gradients', tone: 'dark', seed: '#2ed5aa', art: null },
   { id: 'dusk', label: 'Dusk', group: 'gradients', tone: 'dark', seed: '#d9577b', art: null },
@@ -51,15 +85,18 @@ const BACKGROUNDS = [
   { id: 'sage', label: 'Sage', group: 'solids', tone: 'light', seed: '#6f9a6f', art: '#e7efe6' },
 ];
 const IMAGE = { id: 'image', label: 'Your picture', group: 'image', tone: 'dark', seed: null, art: null };
-const GROUPS = [{ id: 'gradients', label: 'Gradients' }, { id: 'solids', label: 'Solids' }, { id: 'image', label: 'Your picture' }];
+const GROUPS = [{ id: 'studio', label: 'Studio' }, { id: 'gradients', label: 'Gradients' }, { id: 'solids', label: 'Solids' }, { id: 'image', label: 'Your picture' }];
 const IDS = [...BACKGROUNDS.map((b) => b.id), IMAGE.id];
 const byId = (id) => (id === IMAGE.id ? IMAGE : BACKGROUNDS.find((b) => b.id === id) || null);
 const isBackground = (id) => IDS.includes(id);
 // Text and cards: 'light' is the only background that turns the page's text dark; a picture is darkened under a scrim, so it is dark.
-const toneOf = (id) => byId(id)?.tone || 'plain';
+// A Studio one ('auto') is 'light' in the light theme and 'dark' in the dark theme (systemDark: the system's, as the page sees it).
+const toneOf = (id, systemDark = false) => { const tone = byId(id)?.tone || 'plain'; return tone === 'auto' ? (systemDark ? 'dark' : 'light') : tone; };
+// The CSS art drawn for a background in the system's theme (null for Plain, Your picture and the older ones, which are CSS of their own).
+const artOf = (id, systemDark = false) => { const item = byId(id); return (item?.tone === 'auto' && systemDark ? item.dark : item?.art) || null; };
 // The shades the page is drawn in over a background ('light' or 'dark'): the system's on Plain, light over a light background, dark over any other.
 // The new-tab page (accent, text) and the picker's preview in Settings both ask this, so the two can never disagree.
-const modeOf = (id, systemDark) => { const tone = toneOf(id); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
+const modeOf = (id, systemDark) => { const tone = toneOf(id, systemDark); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
 
 // The animated effects drawn over a background (renderer/newtab-effects.js), with a still preview each for the picker.
 // `fps` is how often it redraws (the particles and snow move at 30; the soft ones need far fewer); `soft` ones are drawn small and scaled up.
@@ -96,7 +133,7 @@ function dailyPick(key = dayKey()) {
   return ORDER[((day % ORDER.length) + ORDER.length) % ORDER.length];
 }
 
-const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, modeOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
+const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, artOf, modeOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.Backgrounds = api;
 })();

@@ -224,12 +224,46 @@ else globalThis.ThemeColors = api;
 
 
 
+
+
 (function () {
 'use strict';
+
+
+
+const dotGrid = (color, step) => `radial-gradient(circle at 1px 1px, ${color} 0 1px, transparent 1.5px) 0 0 / ${step}px ${step}px`;
+const hairGrid = (color, step) => `linear-gradient(${color} 1px, transparent 1px) 0 0 / ${step}px ${step}px, linear-gradient(90deg, ${color} 1px, transparent 1px) 0 0 / ${step}px ${step}px`;
+const weave = (color) => `repeating-linear-gradient(45deg, ${color} 0 1px, transparent 1px 7px), repeating-linear-gradient(-45deg, ${color} 0 1px, transparent 1px 7px)`;
+const glow = (size, at, color) => `radial-gradient(${size} at ${at}, ${color}, transparent 70%)`;
 
 const mesh = (base, ...glows) => `${glows.map(([size, at, color]) => `radial-gradient(${size} at ${at}, ${color}, transparent 70%)`).join(', ')}, ${base}`;
 
 const BACKGROUNDS = [
+
+{ id: 'mist', label: 'Mist', group: 'studio', tone: 'auto', seed: '#5f7189',
+art: `${glow('70% 60%', '15% 0%', 'rgba(255, 255, 255, 0.95)')}, ${glow('60% 60%', '95% 100%', 'rgba(190, 201, 216, 0.6)')}, #edf0f4`,
+dark: `${glow('70% 60%', '15% 0%', 'rgba(78, 90, 110, 0.42)')}, ${glow('60% 60%', '95% 100%', 'rgba(38, 46, 60, 0.7)')}, #111419` },
+{ id: 'harbor', label: 'Harbor', group: 'studio', tone: 'auto', seed: '#3a6797',
+art: `${glow('60% 50%', '85% 0%', 'rgba(255, 255, 255, 0.85)')}, linear-gradient(180deg, #eaf0f7 0%, #dbe5f0 100%), #e3ebf4`,
+dark: `${glow('60% 50%', '85% 0%', 'rgba(84, 124, 184, 0.24)')}, linear-gradient(165deg, #0a1320 0%, #0f2036 60%, #142c48 100%), #0f2036` },
+{ id: 'horizon', label: 'Horizon', group: 'studio', tone: 'auto', seed: '#b5774a',
+art: `${glow('90% 45%', '50% 100%', 'rgba(255, 216, 178, 0.45)')}, linear-gradient(180deg, #f6f4f1 0%, #eef0f3 55%, #e4e9ef 100%), #eef0f3`,
+dark: `${glow('90% 40%', '50% 100%', 'rgba(196, 128, 80, 0.16)')}, linear-gradient(180deg, #0a0d13 0%, #111725 60%, #1a2031 100%), #111725` },
+{ id: 'eucalyptus', label: 'Eucalyptus', group: 'studio', tone: 'auto', seed: '#4a8570',
+art: `${glow('70% 60%', '10% 10%', 'rgba(255, 255, 255, 0.8)')}, linear-gradient(160deg, #eef3ef 0%, #dfe8e2 100%), #e6eee8`,
+dark: `${glow('70% 60%', '10% 10%', 'rgba(74, 133, 112, 0.2)')}, linear-gradient(160deg, #0c1512 0%, #12201b 100%), #0f1a16` },
+{ id: 'velvet', label: 'Velvet', group: 'studio', tone: 'auto', seed: '#7b5893',
+art: `${glow('70% 60%', '85% 15%', 'rgba(255, 255, 255, 0.8)')}, linear-gradient(160deg, #f3f0f5 0%, #e7e0eb 100%), #ede8f0`,
+dark: `${glow('70% 60%', '85% 15%', 'rgba(130, 92, 160, 0.22)')}, linear-gradient(160deg, #130f17 0%, #1f1726 100%), #19131f` },
+{ id: 'linen', label: 'Linen', group: 'studio', tone: 'auto', seed: '#9a7f5c',
+art: `${glow('80% 60%', '20% 0%', 'rgba(255, 255, 255, 0.7)')}, ${weave('rgba(120, 98, 66, 0.045)')}, #f3efe7`,
+dark: `${glow('80% 60%', '20% 0%', 'rgba(150, 124, 90, 0.14)')}, ${weave('rgba(255, 238, 214, 0.035)')}, #191612` },
+{ id: 'blueprint', label: 'Blueprint', group: 'studio', tone: 'auto', seed: '#3563ad',
+art: `${hairGrid('rgba(38, 72, 128, 0.06)', 32)}, ${glow('80% 70%', '50% 0%', 'rgba(255, 255, 255, 0.7)')}, #f1f4f8`,
+dark: `${hairGrid('rgba(150, 180, 230, 0.06)', 32)}, ${glow('80% 70%', '50% 0%', 'rgba(70, 110, 180, 0.18)')}, #0c121d` },
+{ id: 'carbon', label: 'Carbon', group: 'studio', tone: 'auto', seed: '#687079',
+art: `${dotGrid('rgba(0, 0, 0, 0.09)', 18)}, ${glow('90% 70%', '50% 0%', 'rgba(255, 255, 255, 0.75)')}, #eceef0`,
+dark: `${dotGrid('rgba(255, 255, 255, 0.075)', 18)}, ${glow('90% 70%', '50% 0%', 'rgba(255, 255, 255, 0.05)')}, #0e0f11` },
 
 { id: 'aurora', label: 'Aurora', group: 'gradients', tone: 'dark', seed: '#2ed5aa', art: null },
 { id: 'dusk', label: 'Dusk', group: 'gradients', tone: 'dark', seed: '#d9577b', art: null },
@@ -266,15 +300,18 @@ const BACKGROUNDS = [
 { id: 'sage', label: 'Sage', group: 'solids', tone: 'light', seed: '#6f9a6f', art: '#e7efe6' },
 ];
 const IMAGE = { id: 'image', label: 'Your picture', group: 'image', tone: 'dark', seed: null, art: null };
-const GROUPS = [{ id: 'gradients', label: 'Gradients' }, { id: 'solids', label: 'Solids' }, { id: 'image', label: 'Your picture' }];
+const GROUPS = [{ id: 'studio', label: 'Studio' }, { id: 'gradients', label: 'Gradients' }, { id: 'solids', label: 'Solids' }, { id: 'image', label: 'Your picture' }];
 const IDS = [...BACKGROUNDS.map((b) => b.id), IMAGE.id];
 const byId = (id) => (id === IMAGE.id ? IMAGE : BACKGROUNDS.find((b) => b.id === id) || null);
 const isBackground = (id) => IDS.includes(id);
 
-const toneOf = (id) => byId(id)?.tone || 'plain';
+
+const toneOf = (id, systemDark = false) => { const tone = byId(id)?.tone || 'plain'; return tone === 'auto' ? (systemDark ? 'dark' : 'light') : tone; };
+
+const artOf = (id, systemDark = false) => { const item = byId(id); return (item?.tone === 'auto' && systemDark ? item.dark : item?.art) || null; };
 
 
-const modeOf = (id, systemDark) => { const tone = toneOf(id); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
+const modeOf = (id, systemDark) => { const tone = toneOf(id, systemDark); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
 
 
 
@@ -311,7 +348,7 @@ const day = Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000);
 return ORDER[((day % ORDER.length) + ORDER.length) % ORDER.length];
 }
 
-const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, modeOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
+const api = { BACKGROUNDS, IMAGE, GROUPS, IDS, byId, isBackground, toneOf, artOf, modeOf, EFFECTS, EFFECT_IDS, isEffect, POOL, ORDER, dayKey, dailyPick };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.Backgrounds = api;
 })();
@@ -4548,7 +4585,7 @@ return pic.data;
 function render() {
 dirty = false;
 const { p, id, effect } = lookOf();
-const tone = BG.toneOf(id);
+const tone = BG.toneOf(id, dark.matches);
 const image = id === 'image' ? picture() : null;
 const mode = BG.modeOf(id, dark.matches);
 const light = Boolean(opts.state()?.graphics?.light);
@@ -4558,7 +4595,7 @@ box.dataset.tone = tone; box.dataset.bg = id; box.dataset.effect = effect;
 
 const item = BG.byId(id);
 bg.className = `ntp-bg bg-${id}`;
-bg.style.background = image ? `#000 url("${image.url}") center / cover no-repeat` : item?.art || '';
+bg.style.background = image ? `#000 url("${image.url}") center / cover no-repeat` : BG.artOf(id, dark.matches) || '';
 scrim.hidden = id !== 'image';
 
 const seed = id === 'image' ? image?.colors?.[0] || null : item?.seed || null;
@@ -5945,9 +5982,10 @@ const shuffled = () => st.prefs.newTabShuffle === true;
 const currentId = () => (shuffled() ? BG.dailyPick() : st.prefs.newTabBackground);
 const picture = h('div', { class: 'controls' });
 const tileOf = (item) => {
-const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${item.id}${item.tone === 'light' ? ' tone-light' : ''}`, 'data-value': item.id, 'aria-label': item.label, title: item.label,
+const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${item.id}${item.tone === 'light' ? ' tone-light' : item.tone === 'auto' ? ' tone-auto' : ''}`, 'data-value': item.id, 'aria-label': item.label, title: item.label,
 onclick: async () => { if (shuffled()) await save('newTabShuffle', false); await save('newTabBackground', item.id); renderTiles(); } }, h('span', { text: item.label }));
 if (item.art) btn.style.background = item.art;
+if (item.tone === 'auto') btn.style.setProperty('--art-dark', item.dark);
 const show = () => showPreview(item);
 const back = () => preview.hover(null);
 btn.addEventListener('pointerenter', show); btn.addEventListener('focus', show);

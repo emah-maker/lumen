@@ -1315,9 +1315,10 @@ async function buildHome(card) {
   const currentId = () => (shuffled() ? BG.dailyPick() : st.prefs.newTabBackground);
   const picture = h('div', { class: 'controls' });
   const tileOf = (item) => {
-    const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${item.id}${item.tone === 'light' ? ' tone-light' : ''}`, 'data-value': item.id, 'aria-label': item.label, title: item.label,
+    const btn = h('button', { type: 'button', role: 'radio', class: `bg-tile bg-${item.id}${item.tone === 'light' ? ' tone-light' : item.tone === 'auto' ? ' tone-auto' : ''}`, 'data-value': item.id, 'aria-label': item.label, title: item.label,
       onclick: async () => { if (shuffled()) await save('newTabShuffle', false); await save('newTabBackground', item.id); renderTiles(); } }, h('span', { text: item.label }));
     if (item.art) btn.style.background = item.art;
+    if (item.tone === 'auto') btn.style.setProperty('--art-dark', item.dark); // a Studio tile shows its light and its dark version, split corner to corner
     const show = () => showPreview(item);
     const back = () => preview.hover(null);
     btn.addEventListener('pointerenter', show); btn.addEventListener('focus', show);

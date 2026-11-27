@@ -153,16 +153,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     for (const t of ['dark', 'light']) {
       await theme(t);
       for (const id of ids) {
-        const item = BG.byId(id);
+        const tone = BG.toneOf(id, t === 'dark'); const art = BG.artOf(id, t === 'dark'); // (a Studio one follows the theme)
         await applyBg(id);
         const state = await home("({ bg: document.body.dataset.bg, media: document.body.classList.contains('on-media'), light: document.body.classList.contains('tone-light'), text: getComputedStyle(document.getElementById('greeting')).color, display: getComputedStyle(document.getElementById('backdrop')).display })");
         const tl = lum(...Object.values(parse(state.text)).slice(0, 3));
-        const modeOk = state.bg === id && state.media && state.light === (item.tone === 'light') && (item.tone === 'light' ? tl < 0.1 : tl > 0.8) && state.display !== 'none';
-        check(`${t}: ${id} sets the page to ${item.tone} text mode (${state.text})`, modeOk, JSON.stringify(state));
+        const modeOk = state.bg === id && state.media && state.light === (tone === 'light') && (tone === 'light' ? tl < 0.1 : tl > 0.8) && state.display !== 'none';
+        check(`${t}: ${id} sets the page to ${tone} text mode (${state.text})`, modeOk, JSON.stringify(state));
         const b = await band(`bg-${id}-${t}`);
         const page = await home('getComputedStyle(document.documentElement).backgroundColor');
-        if (item.art) { // (the older ones are CSS in newtab.html: they are checked above, and by their text and band below)
-          const want = await probeBand(item.art);
+        if (art) { // (the older ones are CSS in newtab.html: they are checked above, and by their text and band below)
+          const want = await probeBand(art);
           check(`${t}: ${id}: the top band shows the background (${b.r},${b.g},${b.b}), as its art paints it (${want.r},${want.g},${want.b}), not black or the page's ${page}`, near(b, want, 18) && page !== `rgb(${b.r}, ${b.g}, ${b.b})`, JSON.stringify({ b, want }));
         } else {
           check(`${t}: ${id}: the top band shows the background (${b.r},${b.g},${b.b}), not black`, b.black < 0.05 && b.r + b.g + b.b > 60, JSON.stringify(b));

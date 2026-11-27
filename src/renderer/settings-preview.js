@@ -73,7 +73,7 @@
     function render() {
       dirty = false;
       const { p, id, effect } = lookOf();
-      const tone = BG.toneOf(id); // 'plain', 'dark' or 'light': the same call the new-tab page makes
+      const tone = BG.toneOf(id, dark.matches); // 'plain', 'dark' or 'light': the same call the new-tab page makes
       const image = id === 'image' ? picture() : null;
       const mode = BG.modeOf(id, dark.matches);
       const light = Boolean(opts.state()?.graphics?.light); // Graphics: Light (Settings > Advanced): no blur behind glass, a calmer effect, as on the page
@@ -83,7 +83,7 @@
       // background
       const item = BG.byId(id);
       bg.className = `ntp-bg bg-${id}`;
-      bg.style.background = image ? `#000 url("${image.url}") center / cover no-repeat` : item?.art || '';
+      bg.style.background = image ? `#000 url("${image.url}") center / cover no-repeat` : BG.artOf(id, dark.matches) || '';
       scrim.hidden = id !== 'image';
       // accent, in the shade the page is drawn in (features/theme-colors.js)
       const seed = id === 'image' ? image?.colors?.[0] || null : item?.seed || null;

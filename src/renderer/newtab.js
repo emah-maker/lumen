@@ -74,12 +74,12 @@ let currentLook = lookOf(null);
 window.newtabLook = () => currentLook; // the editor on the clock card (newtab-setup.js) starts from what is shown
 function applyLook(look) {
   currentLook = look;
-  const tone = window.Backgrounds.toneOf(look.background); // 'plain' (the page's own colours), 'dark' (white text) or 'light' (dark text)
+  const tone = window.Backgrounds.toneOf(look.background, dark.matches); // 'plain' (the page's own colours), 'dark' (white text) or 'light' (dark text); a Studio one follows the theme
   document.body.dataset.bg = look.background;
   document.body.classList.toggle('on-media', tone !== 'plain');
   document.body.classList.toggle('tone-light', tone === 'light');
   document.body.style.setProperty('--wallpaper', look.image ? `url("${look.image}")` : 'none');
-  document.getElementById('backdrop').style.background = window.Backgrounds.byId(look.background)?.art || ''; // (the newer presets; the older ones are CSS below)
+  document.getElementById('backdrop').style.background = window.Backgrounds.artOf(look.background, dark.matches) || ''; // (the newer presets, a Studio one in the theme's version; the older ones are CSS below)
   applyAccent(look);
   document.getElementById('clock').hidden = !look.clock;
   applyClockStyle(look);
@@ -120,7 +120,7 @@ function applyEffect(look) {
 dark.addEventListener('change', () => applyLook(currentLook));
 // [widgets] what newtab-widgets.js needs to tint cards from the page's own look
 window.widgetLook = () => {
-  const light = window.Backgrounds.toneOf(currentLook.background) === 'light'; // (a light background reads like Plain in the light theme: dark text)
+  const light = window.Backgrounds.toneOf(currentLook.background, dark.matches) === 'light'; // (a light background reads like Plain in the light theme: dark text)
   return {
     accent: currentLook.accent[modeOf(currentLook)] || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
     background: light ? 'plain' : currentLook.background, dark: light ? false : dark.matches, imageColors: currentLook.imageColors,
