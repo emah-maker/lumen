@@ -5880,6 +5880,5 @@
   "certError.thisSite": "this site",
   "settings.row.turnOneOffTo": "Turn one off to stop it without removing it; it stays off after a restart. Removing one deletes it and its data. An extension that asks for every site can be held to the ones you list; reload open pages after changing it.",
   "settings.row.developerMode": "Developer mode",
-  "settings.row.loadAnExtensionFrom": "Load an extension from a folder on this computer (one with a manifest.json), and reload it from that folder after you change it. Lumen runs a copy, so it never writes into your folder.",
-
+  "settings.row.loadAnExtensionFrom": "Load an extension from a folder on this computer (one with a manifest.json), and reload it from that folder after you change it. Lumen runs a copy, so it never writes into your folder."
 }
