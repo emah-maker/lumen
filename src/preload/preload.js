@@ -110,6 +110,9 @@ contextBridge.exposeInMainWorld('browser', {
   focusPendingAgent: () => ipcRenderer.send('agents:focus-pending'),
   onAgentWindow: on('agent-window'), // this window belongs to an outside agent (or no longer does: null)
   openAppMenu: (point) => ipcRenderer.send('app-menu', point),
+  profileInfo: () => ipcRenderer.invoke('profile:info'), // [profiles] the toolbar's profile button (features/profiles-ui.js)
+  openProfileMenu: (point) => ipcRenderer.send('profile:menu', point),
+  onProfileChanged: on('profile:changed'),
   openPageInfo: (point) => ipcRenderer.send('page-info:open', point), // the lock next to the address (features/page-info.js)
   openActionsOverflow: (point, items) => ipcRenderer.send('actions:overflow', point, items), // the extension icons that don't fit the toolbar
   onActionsOverflowPick: on('actions:overflow-pick'),

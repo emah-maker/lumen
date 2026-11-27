@@ -1,0 +1,7 @@
+/* [profiles] The toolbar's profile button (renderer/profile-button.js): this window's avatar on a circle in its colour. */
+.profile-btn .profile-avatar {
+  width: 20px; height: 20px; border-radius: var(--r-pill); display: grid; place-items: center;
+  background: var(--profile-color, var(--accent-deep)); color: var(--on-accent);
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1;
+}
+.profile-btn .profile-avatar.emoji { font-size: var(--fs-md); }

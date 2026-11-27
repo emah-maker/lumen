@@ -13,6 +13,9 @@ if (TEST) global.__perf = perf;
 // A test run or a development run never opens the installed Lumen's profile (features/profile-guard.js): its userData is a
 // throwaway folder. First, before anything reads userData ("--mcp" is only the stdio bridge and sets its own below).
 if (!process.argv.includes('--mcp')) require('./features/profile-guard').apply(app, { test: TEST });
+// [profiles] `--lumen-profile=<id>`: this process runs that profile, its own userData folder (features/profiles.js). Right after the
+// guard (a test run's profiles sit next to its throwaway folder) and before the instance lock, which is keyed on userData.
+if (!process.argv.includes('--mcp')) require('./features/profiles').apply(app, { test: TEST });
 
 // `Lumen --mcp`: an AI agent (Claude Code, Codex, Antigravity…) started us as its MCP server. Run
 // only the stdio bridge, before loading anything else (no window, no lock, nothing on stdout).
@@ -332,7 +335,7 @@ const UI_ONLY_IPC = new Set([
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
   'nav:go', 'nav:go-com', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
-  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
+  'app-menu', 'profile:info', 'profile:menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'chat:ai-tabs', 'agent:show-target', 'tabs:ask-list',
@@ -2109,6 +2112,7 @@ function showAppMenu({ x, y, right }) {
         { label: t('menu.newTab'), accelerator: 'CmdOrCtrl+T', click: () => openTab() },
         { label: t('menu.newWindow'), accelerator: 'CmdOrCtrl+N', click: () => openNewWindow() },
         { label: t('menu.newPrivateWindow'), accelerator: 'CmdOrCtrl+Shift+N', click: () => privateWindows.open() },
+        { label: t('menu.profiles'), submenu: profilesUi.menuItems() }, // [profiles] switch, Add, Edit, Delete (features/profiles-ui.js)
       ]),
       chunk([
         { label: t('menu.reopenTab'), accelerator: 'CmdOrCtrl+Shift+T', enabled: closedTabs.length > 0, click: reopenLastClosed },
@@ -11300,6 +11304,19 @@ const settingsBackend = settingsPage.create({
   translateLocal: () => translateLocal(), // [translate] Settings → General → Translation → language packs
 });
 accentCss = require('./features/accent-css').create({ rendererDir: path.join(__dirname, 'renderer'), accent: () => settingsBackend.uiPrefs().accent, all: () => require('electron').webContents.getAllWebContents() }); // [look]
+
+// [profiles] ⋯ menu → Profiles and the toolbar's profile button: switch (each profile is its own Lumen, features/profiles.js), Add, Edit, Delete.
+const profilesUi = require('./features/profiles-ui').createProfilesUi({
+  app, ipcMain, Menu, nativeImage: require('electron').nativeImage, t, test: TEST,
+  makeWindow: engineWindow, parentWindow: () => (win && !win.isDestroyed() ? win : null),
+  isUi: () => true, // (profile:info and profile:menu are in UI_ONLY_IPC: the gate has checked the sender)
+  confirm: async ({ message, detail, okLabel }) => (await dialogs.showMessageBox(win, { type: 'warning', message, detail, buttons: [t('profiles.cancel'), okLabel], defaultId: 0, cancelId: 0 })).response === 1,
+  notice: ({ message, detail }) => { dialogs.showMessageBox(win, { type: 'info', message, detail, buttons: [t('dialog.ok')] }).catch(() => {}); },
+  openNewWindow: () => openNewWindow(), sendAllUis, pageReady: (wc) => accentCss?.apply(wc),
+  spawn: (...args) => require('child_process').spawn(...args), trash: (dir) => shell.trashItem(dir),
+  editorPaths: { html: path.join(__dirname, 'renderer', 'profile-editor.html'), preload: path.join(__dirname, 'preload', 'profile-editor-preload.js') },
+});
+if (TEST) global.__profiles = profilesUi;
 for (const c of require('electron').webContents.getAllWebContents()) accentCss.apply(c); // (pages already open)
 
 // One settings tab: reuse it if open. `replace` is a tab (a blank new-tab page) it takes the place of.

@@ -1854,6 +1854,13 @@ background:var(--surface);border:1px solid var(--accent);border-radius:var(--r-s
 @media (prefers-reduced-motion:reduce){
 *, *::before, *::after{animation-duration:0.01ms !important;animation-iteration-count:1 !important;transition-duration:0.01ms !important;scroll-behavior:auto !important;}
 }
+/* ---- profile-button.css */
+.profile-btn .profile-avatar{
+width:20px;height:20px;border-radius:var(--r-pill);display:grid;place-items:center;
+background:var(--profile-color, var(--accent-deep));color:var(--on-accent);
+font-size:var(--fs-xs);font-weight:600;line-height:1;
+}
+.profile-btn .profile-avatar.emoji{font-size:var(--fs-md);}
 /* ---- slash.css */
 .slash-menu{
 position:absolute;z-index:var(--z-menu);left:0;right:0;bottom:calc(100% + 6px);
