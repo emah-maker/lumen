@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **Eight calm new-tab themes for work.** A new **Studio** group, first in Settings → Appearance → New tab background, has Mist, Harbor, Horizon, Eucalyptus, Velvet, Linen, Blueprint and Carbon: soft, low-color gradients, and for the last three a faint woven, grid or dot texture. Each has a light and a dark version and follows Lumen's light or dark theme (dark text and white glass cards in light, white text in dark), so the clock, search box and widgets stay easy to read either way. Their tiles show both versions, split corner to corner. They are CSS, like the other backgrounds: nothing is downloaded and nothing moves. Shuffle daily still picks only from the Gradients. Tests: `test/units/theme-colors-units.js`, and `test/e2e/newtab-wallpaper.js` checks each one in both themes, including AA contrast for the clock, greeting and date.
+
 ## 0.5.114 (2026-11-26)
 
 - **The chat no longer shifts when your first reply finishes.** At the end of a chat's first reply, the "This chat: …" usage line appeared under the header and the context meter appeared above the box, each pushing the chat about 20 px. Both lines now keep their room from the start, blank until there is something to show. Tests: test/e2e/chat-no-jump.js, test/e2e/composer-bar.js.
