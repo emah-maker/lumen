@@ -12455,6 +12455,25 @@ setTimeout(() => window.assistant?.offers?.get().then((list) => { if (list?.item
 
 
 
+window.browser.onTabs?.((state) => {
+const st = state?.tabs?.find((x) => x.id === state.activeId)?.translate;
+if ((st && st.phase !== 'idle') && !laterLoads['translate.css']) loadLater('translate.css', 'translate.js').then((ok) => ok && window.translateBar?.draw(st));
+});
+
+
+
+const loadMediaHub = (list) => { if (Array.isArray(list) && list.length) loadLater('media-hub.css', 'media-hub.js'); };
+window.browser.onMediaList?.(loadMediaHub);
+window.browser.mediaList?.().then(loadMediaHub).catch(() => {});
+
+
+
+const loadProfileButton = (p) => { if (p?.count > 1) loadLater('profile-button.css', 'profile-button.js'); };
+window.browser.profileInfo?.().then(loadProfileButton).catch(() => {});
+window.browser.onProfileChanged?.(loadProfileButton);
+
+
+
 const loadCommandBar = () => loadLater('command-bar.css', 'command-bar-match.js', 'command-bar.js');
 window.browser.onOpenCommandBar?.(() => loadCommandBar().then((ok) => ok && window.commandBar.toggle()));
 document.addEventListener('cmdbar:ask', (e) => {
@@ -17899,158 +17918,6 @@ document.getElementById('tab-search')?.addEventListener('click', () => (isOpen()
 return { open, close, isOpen };
 })();
 ;
-// ---- media-hub.js
-
-
-
-
-
-
-const mediaHub = (() => {
-const button = document.getElementById('media-btn');
-if (!button || !window.browser?.mediaAct) return null;
-const tr = (key, english, vars) => { const s = window.t?.(key, vars); return s && s !== key ? s : english.replace(/\{(\w+)\}/g, (_, k) => vars?.[k] ?? ''); };
-const ICON = {
-play: '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="solid" d="M5 3.2v9.6L12.6 8z"/></svg>',
-pause: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect class="solid" x="4" y="3" width="2.8" height="10" rx="0.8"/><rect class="solid" x="9.2" y="3" width="2.8" height="10" rx="0.8"/></svg>',
-prev: '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="solid" d="M12.5 3.5v9L6 8z"/><path d="M4 3.5v9"/></svg>',
-next: '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="solid" d="M3.5 3.5v9L10 8z"/><path d="M12 3.5v9"/></svg>',
-speaker: '<svg viewBox="0 0 16 16" aria-hidden="true"><path class="solid" d="M3 6h2.5L9 3v10L5.5 10H3z"/><path class="wave" d="M11 5.5a3.5 3.5 0 0 1 0 5M12.8 3.8a6 6 0 0 1 0 8.4"/><path class="cross" d="M11 6l4 4M15 6l-4 4"/></svg>',
-note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 12V3.5l7-1.5V10.5"/><circle class="solid" cx="4.5" cy="12" r="1.8"/><circle class="solid" cx="11.5" cy="10.5" r="1.8"/></svg>',
-};
-let items = [];
-let panel = null;
-let list = null;
-let focusKey = null;
-
-const isOpen = () => Boolean(panel && !panel.hidden);
-
-function drawButton() {
-const show = items.length > 0;
-button.hidden = !show;
-button.classList.toggle('playing', items.some((x) => x.playing && !x.muted));
-const name = tr('media.button', 'Media controls');
-const first = items[0];
-const now = first ? (first.playing ? tr('media.button.playing', '{title} is playing', { title: first.title }) : tr('media.button.paused', '{title} is paused', { title: first.title })) : '';
-button.title = now ? `${name}: ${now}` : name;
-button.setAttribute('aria-label', name);
-if (!show && isOpen()) close();
-}
-
-function control(cls, icon, label, onClick, extra = {}) {
-const b = Object.assign(document.createElement('button'), { type: 'button', className: `media-ctl ${cls}`, innerHTML: icon, title: label });
-b.setAttribute('aria-label', label);
-if (extra.pressed !== undefined) b.setAttribute('aria-pressed', String(extra.pressed));
-b.dataset.ctl = cls.split(' ')[0];
-b.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
-return b;
-}
-
-function row(item) {
-const li = Object.assign(document.createElement('li'), { className: `media-row${item.playing ? ' playing' : ''}${item.muted ? ' muted' : ''}` });
-li.dataset.id = String(item.id);
-const art = Object.assign(document.createElement('span'), { className: 'media-art' });
-const src = item.artwork || item.favicon;
-if (src) {
-const img = Object.assign(document.createElement('img'), { alt: '', src, referrerPolicy: 'no-referrer', decoding: 'async' });
-img.classList.toggle('icon', !item.artwork);
-img.addEventListener('error', () => { art.innerHTML = ICON.note; }, { once: true });
-art.append(img);
-} else art.innerHTML = ICON.note;
-const go = Object.assign(document.createElement('button'), { type: 'button', className: 'media-go' });
-go.dataset.ctl = 'go';
-const title = Object.assign(document.createElement('span'), { className: 'media-title', textContent: item.title || item.pageTitle });
-const sub = item.artist || (item.title !== item.pageTitle ? item.pageTitle : '');
-go.append(title);
-if (sub) go.append(Object.assign(document.createElement('span'), { className: 'media-sub', textContent: sub }));
-const goLabel = tr('media.goToTab', 'Go to tab: {title}', { title: item.pageTitle || item.title });
-go.title = goLabel;
-go.setAttribute('aria-label', [goLabel, item.title !== item.pageTitle ? item.title : '', item.artist, item.playing ? tr('media.state.playing', 'playing') : tr('media.state.paused', 'paused')].filter(Boolean).join(', '));
-go.addEventListener('click', () => { window.browser.mediaAct(item.id, 'show'); close(); });
-const ctls = Object.assign(document.createElement('span'), { className: 'media-ctls' });
-const name = item.title || item.pageTitle;
-if (item.canPrev) ctls.append(control('prev', ICON.prev, tr('media.previous', 'Previous track'), () => window.browser.mediaAct(item.id, 'previoustrack')));
-if (item.canPlay) ctls.append(control('playpause', item.playing ? ICON.pause : ICON.play, item.playing ? tr('media.pause', 'Pause {title}', { title: name }) : tr('media.play', 'Play {title}', { title: name }), () => window.browser.mediaAct(item.id, item.playing ? 'pause' : 'play')));
-if (item.canNext) ctls.append(control('next', ICON.next, tr('media.next', 'Next track'), () => window.browser.mediaAct(item.id, 'nexttrack')));
-const muteLabel = item.muted ? tr('menu.unmuteTab', 'Unmute tab') : tr('menu.muteTab', 'Mute tab');
-ctls.append(control(`mute${item.muted ? ' muted' : ''}`, ICON.speaker, muteLabel, () => window.browser.mediaAct(item.id, 'mute'), { pressed: item.muted }));
-li.append(art, go, ctls);
-return li;
-}
-
-function render() {
-if (!isOpen()) return;
-const had = document.activeElement && panel.contains(document.activeElement) ? document.activeElement : null;
-if (had) focusKey = [had.closest('.media-row')?.dataset.id, had.dataset.ctl];
-list.replaceChildren(...items.map(row));
-if (!items.length) list.append(Object.assign(document.createElement('li'), { className: 'media-empty', textContent: tr('media.empty', 'Nothing is playing') }));
-if (had && focusKey) {
-const r = list.querySelector(`.media-row[data-id="${CSS.escape(focusKey[0] || '')}"]`) || list.querySelector('.media-row');
-const ctl = r?.querySelector(`[data-ctl="${focusKey[1]}"]`) || r?.querySelector('.media-go');
-(ctl || panel).focus();
-}
-}
-
-function build() {
-panel = Object.assign(document.createElement('div'), { id: 'media-panel', className: 'media-panel', hidden: true });
-panel.setAttribute('role', 'dialog');
-panel.setAttribute('aria-label', tr('media.label', 'Playing in your tabs'));
-panel.tabIndex = -1;
-const head = Object.assign(document.createElement('div'), { className: 'media-head', textContent: tr('media.label', 'Playing in your tabs') });
-head.id = 'media-panel-head';
-list = Object.assign(document.createElement('ul'), { className: 'media-list' });
-list.setAttribute('aria-labelledby', head.id);
-panel.append(head, list);
-document.body.append(panel);
-panel.addEventListener('keydown', onKey);
-document.addEventListener('pointerdown', (e) => { if (isOpen() && !panel.contains(e.target) && !e.target.closest('#media-btn')) close(); }, true);
-window.addEventListener('blur', () => { if (isOpen()) close(); });
-}
-
-function onKey(e) {
-if (e.key === 'Escape') { e.preventDefault(); close(); button.focus(); return; }
-if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-const rows = [...list.querySelectorAll('.media-row')];
-if (!rows.length) return;
-e.preventDefault();
-const at = rows.indexOf(document.activeElement?.closest('.media-row'));
-const next = rows[(at + (e.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length] || rows[0];
-const ctl = document.activeElement?.dataset.ctl;
-(next.querySelector(`[data-ctl="${ctl}"]`) || next.querySelector('.media-go')).focus();
-}
-
-function place() {
-const r = button.getBoundingClientRect();
-panel.style.top = `${Math.round(r.bottom + 6)}px`;
-panel.style.right = `${Math.max(8, Math.round(window.innerWidth - r.right))}px`;
-}
-
-async function open() {
-if (!panel) build();
-if (isOpen()) return;
-items = await window.browser.mediaList().catch(() => items);
-panel.hidden = false;
-place();
-button.setAttribute('aria-expanded', 'true');
-if (typeof freezePage === 'function') freezePage();
-focusKey = null;
-render();
-(list.querySelector('[data-ctl="playpause"]') || list.querySelector('.media-go') || panel).focus();
-}
-
-function close() {
-if (!isOpen()) return;
-panel.hidden = true;
-button.setAttribute('aria-expanded', 'false');
-if (typeof thawPage === 'function') thawPage();
-}
-
-window.browser.onMediaList((next) => { items = Array.isArray(next) ? next : []; drawButton(); render(); });
-window.browser.mediaList().then((next) => { items = Array.isArray(next) ? next : []; drawButton(); }).catch(() => {});
-button.addEventListener('click', () => (isOpen() ? close() : open()));
-return { open, close, isOpen, items: () => items };
-})();
-;
 // ---- updates.js
 
 
@@ -18137,144 +18004,6 @@ if (next) render(next); else action.disabled = false;
 close.addEventListener('click', async () => render(await api.dismiss()));
 api.onState(render);
 api.state().then(render).catch(() => {});
-})();
-;
-// ---- translate.js
-
-
-
-(() => {
-const bar = document.getElementById('translate-bar');
-const end = document.querySelector('.omnibox-end');
-if (!bar || !end || !window.browser?.translateAct) return;
-const tr = (key, english, vars) => {
-const text = window.t ? window.t(key, vars) : key;
-return text === key ? english.replace(/\{(\w+)\}/g, (w, n) => (vars && n in vars ? String(vars[n]) : w)) : text;
-};
-const act = (action, arg) => window.browser.translateAct(action, arg);
-
-const btn = document.createElement('button');
-btn.className = 'omnibox-action translate-btn';
-btn.id = 'translate-btn';
-btn.type = 'button';
-btn.hidden = true;
-btn.setAttribute('aria-haspopup', 'menu');
-btn.setAttribute('aria-pressed', 'false');
-btn.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h7M5.5 2.5V4M3.5 4c.4 2.3 1.9 4 4 5M8 4c-.4 2.3-2 4.2-4.6 5.3M8.5 13.5l2.5-6 2.5 6M9.3 11.5h3.4"/></svg>';
-end.insertBefore(btn, document.getElementById('reader') || end.firstChild);
-btn.addEventListener('click', () => act('menu'));
-
-const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
-const button = (label, onclick, cls) => { const b = el('button', cls, label); b.type = 'button'; b.addEventListener('click', onclick); return b; };
-const ERRORS = {
-private: ['translate.error.private', 'Pages in private windows aren’t translated.'],
-unsupported: ['translate.error.unsupported', 'Only web pages can be translated.'],
-'no-engine': ['translate.error.noEngine', 'No AI is connected for translation. Connect one in Settings, or use Google Translate from the menu.'],
-'unsupported-pair': ['translate.error.unsupportedPair', 'There is no on-device language pack for this pair yet.'],
-'unknown-language': ['translate.error.unknownLanguage', 'Couldn’t tell what language this page is in.'],
-'same-language': ['translate.error.sameLanguage', 'This page is already in that language.'],
-'download-failed': ['translate.error.downloadFailed', 'Couldn’t download the language pack. Check your connection and try again.'],
-'pack-removed': ['translate.error.packRemoved', 'The language pack was deleted while it was downloading. Try again to download it.'],
-'registry-failed': ['translate.error.registryFailed', 'Couldn’t reach Mozilla’s list of language packs. Check your connection and try again.'],
-};
-let shown = '';
-
-function draw(st) {
-const tab = st && st.phase !== 'idle' ? st : null;
-btn.hidden = !tab;
-btn.setAttribute('aria-pressed', String(Boolean(tab?.translated)));
-const label = tr('translate.button', 'Translate page');
-btn.title = label;
-btn.setAttribute('aria-label', label);
-let key = '';
-if (tab && !tab.dismissed) key = `${tab.phase}|${tab.provider}|${tab.error}|${tab.lang}|${tab.target}|${tab.progress}|${tab.via}|${tab.size}|${tab.pair}|${tab.detail}`;
-if (key === shown) return;
-shown = key;
-if (!key) { bar.hidden = true; bar.replaceChildren(); return; }
-const parts = [];
-const text = el('span', 'infobar-text');
-const vars = { language: tab.langName || tab.lang, target: tab.targetName, provider: tab.provider, pair: tab.pair, size: tab.size, percent: tab.progress };
-let close = 'dismiss';
-switch (tab.phase) {
-case 'offer':
-text.textContent = tab.langName ? tr('translate.offer', 'This page is in {language}. Translate to {target}?', vars) : tr('translate.offerNoLang', 'Translate this page to {target}?', vars);
-parts.push(button(tr('translate.offer.yes', 'Translate'), () => act('translate', tab.target), 'primary'),
-button(tr('translate.notNow', 'Not now'), () => act('not-now')),
-button(tr('translate.never', 'Never for this site'), () => act('never')));
-close = 'not-now';
-break;
-case 'consent': {
-const google = tab.provider === 'Google Translate';
-text.textContent = google
-? tr('translate.consent.google', 'Sends this page’s address to Google Translate, which opens the translated page.')
-: tr('translate.consent.ai', 'Sends this page’s text to {provider} to translate it.', vars);
-parts.push(button(google ? tr('translate.consent.continue', 'Continue') : tr('translate.consent.allow', 'Allow and translate'), () => act('allow'), 'primary'),
-button(tr('translate.cancel', 'Cancel'), () => act('cancel')));
-close = 'cancel';
-break;
-}
-case 'download-consent':
-text.textContent = tr('translate.download.ask', 'Download the {pair} language pack ({size}) to translate on this device? It comes from Mozilla once; your pages never leave this computer.', vars);
-parts.push(button(tr('translate.download.yes', 'Download and translate'), () => act('download'), 'primary'),
-button(tr('translate.download.always', 'Always download'), () => act('download-always')),
-button(tr('translate.cancel', 'Cancel'), () => act('cancel')));
-close = 'cancel';
-break;
-case 'download': {
-close = 'original';
-text.textContent = tr('translate.downloading', 'Downloading {pair} ({size})… {percent}%', vars);
-const meter = el('progress');
-meter.max = 100;
-meter.value = tab.progress;
-meter.setAttribute('aria-label', text.textContent);
-parts.push(meter, button(tr('translate.cancel', 'Cancel'), () => act('original')));
-break;
-}
-case 'working': {
-close = 'original';
-text.textContent = tr('translate.working', 'Translating… {percent}%', { percent: tab.progress });
-const meter = el('progress');
-meter.max = 100;
-meter.value = tab.progress;
-meter.setAttribute('aria-label', text.textContent);
-parts.push(meter, button(tr('translate.cancel', 'Cancel'), () => act('original')));
-break;
-}
-case 'done':
-text.textContent = tab.via === 'local' ? tr('translate.done.local', 'Translated to {target} on this device.', vars) : tr('translate.done', 'Translated to {target}.', vars);
-if (tab.error === 'capped') text.append(' ', el('span', 'infobar-note', tr('translate.capped', 'A long page: some of it was left as written.')));
-parts.push(button(tr('translate.showOriginal', 'Show original'), () => act('original'), 'primary'),
-button(tr('translate.again', 'Translate again'), () => act('again')));
-break;
-case 'error': {
-const known = ERRORS[tab.error];
-const network = tab.error === 'download-failed' || tab.error === 'registry-failed';
-const offline = network && (navigator.onLine === false || /fetch failed|ENOTFOUND|ECONN|ETIMEDOUT|EAI_AGAIN|network|no data for|timed out/i.test(tab.detail || ''));
-const noSpace = tab.error === 'download-failed' && /ENOSPC|free disk space|no space/i.test(tab.detail || '');
-if (noSpace) text.textContent = tr('translate.error.noSpace', 'Not enough free disk space for the language pack.');
-else if (offline) text.textContent = tab.error === 'registry-failed'
-? tr('translate.error.registryOffline', 'You appear to be offline, so Lumen can’t get Mozilla’s list of language packs. Connect and try again.')
-: tr('translate.error.downloadOffline', 'You appear to be offline, so the language pack couldn’t download. Connect and try again.');
-else text.textContent = known ? tr(known[0], known[1]) : tr('translate.error', 'Couldn’t translate this page: {error}', { error: tab.error });
-if (tab.detail && network && !offline && !noSpace) text.append(' ', el('span', 'infobar-note', tab.detail));
-parts.push(button(tr('translate.tryAgain', 'Try again'), () => act('translate', tab.target)));
-break;
-}
-default: break;
-}
-const x = el('button', 'infobar-close', '×');
-x.type = 'button';
-x.setAttribute('aria-label', tr('translate.close', 'Close'));
-x.addEventListener('click', () => act(close));
-bar.replaceChildren(text, ...parts, x);
-bar.hidden = false;
-if (tab.phase === 'working' || tab.phase === 'download') bar.setAttribute('aria-busy', 'true'); else bar.removeAttribute('aria-busy');
-}
-
-window.browser.onTabs((state) => {
-const active = state?.tabs?.find((t) => t.id === state.activeId);
-draw(active?.translate || null);
-});
 })();
 ;
 // ---- passwords.js
@@ -18727,30 +18456,4 @@ place();
 });
 place();
 }
-;
-// ---- profile-button.js
-
-
-(() => {
-const btn = document.getElementById('profile-btn');
-const avatar = document.getElementById('profile-avatar');
-if (!btn || !window.browser?.profileInfo) return;
-const show = (p) => {
-if (!p) return;
-btn.hidden = !(p.count > 1);
-avatar.textContent = p.avatar || p.initial;
-avatar.classList.toggle('emoji', Boolean(p.avatar));
-avatar.style.setProperty('--profile-color', p.color);
-const label = `${window.t ? window.t('profiles.button') : 'Profiles'}: ${p.name}`;
-btn.title = label;
-btn.setAttribute('aria-label', label);
-btn.dataset.profile = p.id;
-};
-window.browser.profileInfo().then(show).catch(() => {});
-window.browser.onProfileChanged?.(show);
-btn.onclick = () => {
-const r = btn.getBoundingClientRect();
-window.browser.openProfileMenu({ x: Math.round(r.left), y: Math.round(r.bottom) });
-};
-})();
 ;

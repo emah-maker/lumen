@@ -81,7 +81,8 @@ cliJson.configure({ userSettings: () => readSettings().ccUserSettings === true }
 const { engineModel } = require('./ai/cli-utils');
 const { SEARCH_ENGINES, DEFAULT_ENGINE, engineFor, searchUrlFor, resolveInput: resolveAddressInput, internalPage: internalPageOf } = require('./browser/search');
 // Optional features load on first use (startup stays lean).
-const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); };
+const LOADED = Symbol('loaded'); // lazy(x)[LOADED]: true once the module was loaded (asking does not load it)
+const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (key === LOADED ? Boolean(mod) : (mod ||= load())[key]) }); };
 const omnibox = lazy(() => require('./browser/omnibox')); // (loaded on first use: typing in the address bar or a typed visit)
 const windowClose = lazy(() => require('./features/window-close')); // [window close] the last-tab rule and the window-events.jsonl breadcrumb
 let windowLog = null;
@@ -474,9 +475,10 @@ const closedChipTabs = new Map(); // [tab chips] id -> { t, u }: the last title 
 const closedTabs = []; // URLs, most recent last
 const closedInfo = []; // what each closedTabs entry was besides its address: pinned, group, place, back/forward (features/closed-tabs.js)
 const closedTabsKept = require('./features/closed-tabs');
-const tabTools = require('./features/tab-tools').create({ onChange: () => { sendTabs(); mediaHub.refresh(); }, isWebUrl }); // tab search, tab audio
-// [media controls] the toolbar's media button and pop-up, and the media keys (features/media-hub.js; the pages' side: preload/media-hub-preload.js)
-const mediaHub = require('./features/media-hub').create({
+const tabTools = require('./features/tab-tools').create({ onChange: () => { sendTabs(); if (mediaHub[LOADED] || allTabsEverywhere().some((t) => alive(t) && tabTools.state(t, true).audible)) mediaHub.refresh(); }, isWebUrl }); // tab search, tab audio
+// [media controls] the toolbar's media button and pop-up, and the media keys (features/media-hub.js; the pages' side: preload/media-hub-preload.js).
+// Loaded by the first tab that plays sound or the first page that reports a media session: until then there is nothing to list.
+const mediaHub = lazy(() => require('./features/media-hub').create({
   tabOf: (wc) => allTabsEverywhere().find((t) => alive(t) && t.view.webContents === wc) || null,
   tabFields: (t) => ({ id: t.id, title: alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '', favicon: t.favicon || '', muted: tabTools.state(t, alive(t)).muted }),
   setMuted: (t, muted) => tabTools.setMuted(t, muted),
@@ -484,7 +486,7 @@ const mediaHub = require('./features/media-hub').create({
   audibleTabs: () => allTabsEverywhere().filter((t) => alive(t) && tabTools.state(t, true).audible),
   onList: (list) => sendAllUis('media:list', list),
   keys: TEST ? null : { register: (name, fn) => require('electron').globalShortcut.register(name, fn), unregister: (name) => require('electron').globalShortcut.unregister(name) }, // (never in a test run: the keys are the whole computer's)
-});
+}));
 ipcMain.on('media-hub:report', (event, json) => mediaHub.report(event, json)); // from any web frame: untrusted, parsed and capped there
 if (TEST) global.__mediaHub = mediaHub;
 
@@ -974,8 +976,8 @@ function closeCurrentWindow() {
 }
 
 // Right-click → Save Link As… / Save Image As…: always asks where, whatever Settings → Downloads and files says (features/link-menu.js).
-const linkMenu = require('./features/link-menu');
-const saveAsMarks = linkMenu.createSaveAsMarks();
+const linkMenu = lazy(() => require('./features/link-menu')); // (loaded by the first right-click menu on a link or picture, or the first download)
+const saveAsMarks = lazy(() => linkMenu.createSaveAsMarks());
 function saveUrlAs(wc, url) {
   if (!wc || wc.isDestroyed()) return;
   saveAsMarks.mark(url);
@@ -2830,7 +2832,7 @@ function raiseOverlays() {
   // (a music player's view shown in a window of its own, the sign-in window, is not this window's: re-adding it here would pull it out of that window and
   // lay it over the browser's toolbar)
   const here = (v) => !v || win.contentView.children.includes(v);
-  const order = [here(spotifyWeb.view()) ? spotifyWeb.view() : null, here(appleMusicWeb.view()) ? appleMusicWeb.view() : null, suggestView, downloadsView, toolOverlay.viewFor(win)].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
+  const order = [here(spotifyWeb.view()) ? spotifyWeb.view() : null, here(appleMusicWeb.view()) ? appleMusicWeb.view() : null, suggestView, downloadsView, toolOverlay[LOADED] ? toolOverlay.viewFor(win) : null].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
   // Only when one is under a tab (or they are out of order): then all are re-added in order, so two never swap.
   for (const v of overlaysToRaise(win.contentView.children, tabs.filter((t) => t.view).map((t) => t.view), order)) win.contentView.addChildView(v);
   dialogs.raise();
@@ -9449,7 +9451,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
     if (firstWindow) setTimeout(() => {
       if (w.isDestroyed()) return;
       featureOffers.prepare(); // before the notes record the version: it tells an update from a fresh install
-      whatsNew.check().catch((err) => console.error('[lumen] what\'s new:', err.message))
+      (readSettings().lastSeenVersion === app.getVersion() || (TEST && !process.env.LUMEN_WHATS_NEW_TEST) ? Promise.resolve(false) : whatsNew.check()).catch((err) => console.error('[lumen] what\'s new:', err.message))
         .catch((err) => console.error('[lumen] feature offers:', err.message));
     }, 1200);
     // A fresh install opens the sidebar on its welcome (connect an AI, bring bookmarks, default browser).
@@ -10039,8 +10041,9 @@ if (TEST) global.__desktop = { wired: () => desktopLazy(), settings: desktopSett
 const signedInSites = require('./features/signed-in-sites').createSignedInSites({ readSettings, writeSettings });
 signedInSites.register(ipcMain);
 // [screen context] "Allow always for this file": the local files the user let the AI see (features/shared-files.js); asked from the sidebar's own card only.
-const sharedFiles = require('./features/shared-files').createSharedFiles({ readSettings, writeSettings });
-sharedFiles.register(ipcMain);
+const sharedFiles = lazy(() => require('./features/shared-files').createSharedFiles({ readSettings, writeSettings })); // (loaded on first use)
+const SHARED_FILE_CHANNELS = ['settings:shared-files', 'settings:remove-shared-file', 'settings:clear-shared-files']; // features/shared-files.js register() (test/units checks the two lists match)
+{ const handlers = {}; let ready = false; for (const channel of SHARED_FILE_CHANNELS) ipcMain.handle(channel, (event, ...args) => { if (!ready) { sharedFiles.register({ handle: (c, fn) => { handlers[c] = fn; } }); ready = true; } return handlers[channel](event, ...args); }); }
 // [no handoff] What the AI still couldn't do after its second try: a private local list in <profile>/diagnostics (ai/capability-gaps.js).
 let gapLogRt = null; // (loaded with the first gap recorded, or Settings asking for the list)
 const gapLog = () => (gapLogRt ||= require('./ai/capability-gaps').createGapLog({ dir: () => app.getPath('userData'), enabled: () => readSettings().aiGapLog !== false }));
@@ -11830,8 +11833,8 @@ ipcMain.on('address:menu', (e, point, hasSelection) => {
   Menu.buildFromTemplate(items).popup({ window: w, x: n(point?.x), y: n(point?.y) });
 });
 ipcMain.on('tab:ai-off', (_e, id) => { const tab = tabs.find((x) => x.id === id); if (tab) setKeepOff(tab, !manners.isKeptOff(tab)); }); // [ai off-tab] only the UI can send this: no AI tool reaches it
-ipcMain.handle('media:list', () => mediaHub.list());
-ipcMain.on('media:act', (_e, id, action) => { if (Number.isFinite(id) && typeof action === 'string') mediaHub.act(id, action); });
+ipcMain.handle('media:list', () => (mediaHub[LOADED] ? mediaHub.list() : []));
+ipcMain.on('media:act', (_e, id, action) => { if (Number.isFinite(id) && typeof action === 'string' && mediaHub[LOADED]) mediaHub.act(id, action); });
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
 ipcMain.handle('tabsearch:closed', () => tabTools.closedEntries(closedTabs));
 ipcMain.handle('tabsearch:reopen', (_e, index, url) => reopenClosed(index, url));
@@ -14882,13 +14885,20 @@ ipcMain.handle('settings:set-safe-browsing-key', async (_e, key) => {
   return { ...safeBrowsing.status(), keyStored: Boolean(keys.safebrowsing), keyEnv: Boolean(process.env.GOOGLE_SAFE_BROWSING_API_KEY) };
 });
 // ---- [sign-ins] Settings → AI → Local, provider keys, and the OpenRouter, Spotify and Anthropic CLI sign-ins (features/ai-sign-ins.js).
-const aiSignIns = require('./features/ai-sign-ins').create({
-  ipcMain, net, app, TEST, t, readSettings, writeSettings, refreshModels, modelsChanged, providers, secretBox, ENV_KEYS, OPENROUTER_CACHE,
+// Loaded on the first call (Settings → AI, the Spotify card's Reconnect), not at start: AI_SIGN_IN_CHANNELS are registered here and passed on (test/units checks the list matches CHANNELS).
+const AI_SIGN_IN_CHANNELS = ['settings:local-get', 'settings:local-save', 'settings:local-detect', 'settings:local-auto', 'settings:local-lms-status', 'settings:local-lms-load',
+  'settings:local-lms-unload', 'settings:local-lms-bench', 'settings:set-provider-key', 'openrouter:models', 'openrouter:cancel', 'openrouter:sign-in',
+  'spotify:cancel', 'spotify:disconnect', 'spotify:sign-in', 'cli:status', 'cli:login', 'cli:cancel', 'cli:logout'];
+const aiSignInHandlers = {};
+const aiSignIns = lazy(() => require('./features/ai-sign-ins').create({
+  net, app, TEST, t, readSettings, writeSettings, refreshModels, modelsChanged, providers, secretBox, ENV_KEYS, OPENROUTER_CACHE,
+  ipcMain: { handle: (channel, fn) => { aiSignInHandlers[channel] = fn; } }, // (main registered the channels: below)
   tabs: () => tabs, openTab, closeTab, onTabGone, widgets, spotifyRedirectPort, cliAuth, anthropicKeyOn, storedApiKey,
   clearClient: () => { client = null; },
   clearCliLoginValid: () => { cliLoginValid = null; },
-});
-const { spotifySignIn } = aiSignIns; // (the Spotify card's Reconnect / Connect: widgets.spotifyReconnect)
+}));
+for (const channel of AI_SIGN_IN_CHANNELS) ipcMain.handle(channel, (event, ...args) => { void aiSignIns.spotifySignIn; return aiSignInHandlers[channel](event, ...args); });
+const spotifySignIn = (...args) => aiSignIns.spotifySignIn(...args); // (the Spotify card's Reconnect / Connect: widgets.spotifyReconnect)
 
 ipcMain.handle('settings:set-search-engine', (_e, id) => setSearchEngine(id));
 ipcMain.handle('settings:search-engines', () => ({ searchEngine: readSettings().searchEngine || DEFAULT_ENGINE, searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })) })); // (the Search engine row of General: not the whole of settings:get, which also lists the models and looks for the AI command-line tools)

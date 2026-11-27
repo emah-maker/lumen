@@ -12,6 +12,18 @@ const { loadJson, writeJsonAtomic } = require('../../src/settings/settings-file'
 let failures = 0;
 const check = (label, ok, detail) => { if (!ok) failures++; console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok ? '' : `  -> ${detail}`}`); };
 
+// ---- [perf] channels main.js registers itself so a module loads on first use: each list matches the module's own
+{
+  const mainSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8');
+  const listIn = (name) => [...(new RegExp(String.raw`const ${name} = \[([^\]]*)\]`).exec(mainSrc)?.[1] || '').matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const same = (a, b) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+  const signIns = require('../../src/features/ai-sign-ins').CHANNELS;
+  check('main.js lists every AI sign-in channel (features/ai-sign-ins.js CHANNELS)', same(listIn('AI_SIGN_IN_CHANNELS'), signIns), listIn('AI_SIGN_IN_CHANNELS').join());
+  const shared = [];
+  require('../../src/features/shared-files').createSharedFiles({ readSettings: () => ({}), writeSettings: () => {} }).register({ handle: (c) => shared.push(c) });
+  check('main.js lists every shared-files channel (features/shared-files.js register)', same(listIn('SHARED_FILE_CHANNELS'), shared), listIn('SHARED_FILE_CHANNELS').join());
+}
+
 // ---- the window's CSP lets the page snapshot (a blob: URL image, see freezePage in app.js) load
 {
   const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'renderer', 'index.html'), 'utf8');

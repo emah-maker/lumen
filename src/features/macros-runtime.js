@@ -10,7 +10,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const macros = require('./macros');
-const { runMacro } = require('./macro-runner');
+const runMacro = (...args) => require('./macro-runner').runMacro(...args); // (loaded when a macro first runs)
 const macroPage = require('../ai/macro-page');
 
 const RECORD_WORLD = 1051;
