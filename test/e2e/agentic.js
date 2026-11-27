@@ -27,17 +27,23 @@ const launch = (profile) => electron.launch({
   }, [name, input]);
   const url = () => app.evaluate(() => global.__agent.browser.activeTab().webContents.getURL());
 
-  // Open the sidebar so the page is narrow, like real use.
+  // Open the sidebar on a web page so the page is narrow, like real use (the new-tab page keeps its full-width layout under the sidebar on
+  // purpose: test/e2e/sidebar-open-newtab.js). The page must give up the sidebar's whole width; the window's own size varies by machine and
+  // display, so the page is compared with itself before the sidebar opened, not with a fixed number.
+  await run('navigate', { url: 'https://en.wikipedia.org/wiki/Main_Page' });
+  const pageWidth = () => app.evaluate(async () => global.__agent.browser.activeTab().webContents.executeJavaScript('innerWidth'));
+  const before = await pageWidth();
   await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
-  let width = 0;
-  for (let i = 0; i < 30 && !(width && width < 1150); i++) {
+  let width = before;
+  let side = 0;
+  for (let i = 0; i < 30 && !(side && width <= before - side + 2); i++) {
     await ui.waitForTimeout(100);
-    width = await app.evaluate(async () => global.__agent.browser.activeTab().webContents.executeJavaScript('innerWidth'));
+    width = await pageWidth();
+    side = await ui.evaluate(() => Math.round(document.getElementById('sidebar').getBoundingClientRect().width));
   }
-  check('sidebar open: page is narrower', width < 1150, `innerWidth=${width}`);
+  check('sidebar open: the page is narrower by the sidebar\x27s width', side >= 300 && width <= before - side + 2, `innerWidth ${before} -> ${width}, sidebar ${side}px`);
 
   // Wikipedia search via fill_form at this width.
-  await run('navigate', { url: 'https://en.wikipedia.org/wiki/Main_Page' });
   let r = await run('fill_form', { fields: [{ label: 'Search Wikipedia', value: 'Alan Turing' }], submit: true });
   await ui.waitForTimeout(1500);
   check('Wikipedia search with the sidebar open', (await url()).includes('Alan_Turing') || (await url()).includes('search=Alan'), `${r} | ${await url()}`);

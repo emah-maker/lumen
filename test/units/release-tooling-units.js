@@ -103,6 +103,18 @@ const testAll = (names, tail = '') => `// header\nconst { spawnSync } = require(
   const real = lib.deriveChecks({ suites: lib.readSuites(fs.readFileSync(path.join(dir, '..', '..', 'scripts', 'test', 'test-all.js'), 'utf8')), files: suiteNames() });
   check('derive: on this repo, perf-budget is last and every Electron suite has a file', real.electron.length > 100 && real.electron[real.electron.length - 1] === 'perf-budget' && !real.missing.length, `${real.electron.length} electron, missing ${real.missing}`);
   check('derive: this suite is a pure-node one (so it never reaches the Electron list)', !real.electron.includes('release-tooling-units'));
+  // Every test/e2e suite is either run by the release (SUITES) or named, with a reason, in scripts/test/manual-suites.js: never neither.
+  const { MANUAL_SUITES } = require('../../scripts/test/manual-suites');
+  const inAll = new Set(lib.readSuites(fs.readFileSync(path.join(dir, '..', '..', 'scripts', 'test', 'test-all.js'), 'utf8')));
+  const e2e = fs.readdirSync(path.join(dir, '..', 'e2e')).filter((f) => f.endsWith('.js') && !f.startsWith('_')).map((f) => f.slice(0, -3));
+  const neither = e2e.filter((n) => !inAll.has(n) && !Object.hasOwn(MANUAL_SUITES, n));
+  check('e2e: every test/e2e suite is in SUITES (test-all.js) or in MANUAL_SUITES (manual-suites.js) with its reason', !neither.length, `in neither: ${neither.join(', ')}`);
+  const both = Object.keys(MANUAL_SUITES).filter((n) => inAll.has(n));
+  check('e2e: no suite is both run by the release and listed as manual', !both.length, both.join(', '));
+  const stale = Object.keys(MANUAL_SUITES).filter((n) => !e2e.includes(n));
+  check('e2e: every MANUAL_SUITES entry names an existing test/e2e file', !stale.length, `no file: ${stale.join(', ')}`);
+  const noReason = Object.entries(MANUAL_SUITES).filter(([, why]) => typeof why !== 'string' || why.trim().length < 10).map(([n]) => n);
+  check('e2e: every manual suite says why it is manual', !noReason.length, noReason.join(', '));
 }
 
 // ---- the version bump

@@ -1,11 +1,21 @@
 // Hidden-window proof that read_urls reads a PDF link and an HTML table page for the AI (the steam-table report, v0.5.22): the real Agent tool in a real
 // Electron main process with real hidden reader views (a WebContentsView that is never attached to a window: nothing appears on screen), against a local
-// http server. Run: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 CLAUDE_BROWSER_PROFILE=<temp dir> npx electron test/e2e/ai-reads-sources.js
-// (an opt-in real fetch of a public PDF: LUMEN_TEST_NETWORK=1 LUMEN_TEST_PDF_URL=<address>). Not part of npm test.
-const { app } = require('electron');
+// http server. Run: node test/e2e/ai-reads-sources.js (in npm test): under plain Node it starts itself in Electron, hidden, with a throwaway profile.
+// (an opt-in real fetch of a public PDF: LUMEN_TEST_NETWORK=1 LUMEN_TEST_PDF_URL=<address>).
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+
+if (!process.versions.electron) {
+  require('../helpers/_tmp-cleanup'); // removes the temp profile below when this exits
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-reads-sources-'));
+  const env = { ...process.env, LUMEN_TEST_BACKGROUND: '1', CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const run = require('child_process').spawnSync(require('electron'), [__filename], { stdio: 'inherit', env, timeout: 150000 });
+  process.exit(run.status ?? 1);
+}
+
+const { app } = require('electron');
 
 if (process.env.CLAUDE_BROWSER_PROFILE) app.setPath('userData', process.env.CLAUDE_BROWSER_PROFILE);
 else app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-reads-sources-')));
