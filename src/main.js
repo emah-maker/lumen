@@ -336,7 +336,7 @@ const UI_ONLY_IPC = new Set([
   'bookmarks-bar:get', 'bookmarks-bar:folder-menu', 'bookmarks-bar:overflow-menu', 'bookmarks-bar:context-menu', 'bookmarks-bar:save', 'bookmarks-bar:move', 'bookmarks-bar:drop', 'bookmarks-bar:open', 'bookmarks-bar:toggle', 'bookmarks-bar:rect', // [bookmarks bar] features/bookmark-bar-main.js
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
   'nav:go', 'nav:go-com', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
-  'app-menu', 'profile:info', 'profile:menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
+  'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
   'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'chat:ai-tabs', 'agent:show-target', 'tabs:ask-list',
@@ -365,7 +365,8 @@ const UI_ONLY_IPC = new Set([
   'mission:open', // lumen://tasks from the Tasks panel and the More menu (the page itself is checked in its handlers)
   'dictation:status', 'dictation:transcribe', // [dictation] voice input in the chat box (the chat page has them too: CHAT_IPC)
   'offers:get', 'offers:act', // the "New in Lumen" card in the empty chat (the chat page has them too: CHAT_IPC)
-  'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
+  'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
+  'profile:info', 'profile:menu', // [profiles] the toolbar's profile button (features/profiles-ui.js)
 ]);
 // [ipc gate] Every ipcMain channel answers only the frames its rule in browser/ipc-gate.js names: Lumen's own UI, the
 // Settings tab, a chat page, one of Lumen's renderer/ pages or views, or (for the in-page preloads' few calls) any frame.
