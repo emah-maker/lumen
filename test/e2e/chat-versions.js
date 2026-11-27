@@ -58,6 +58,9 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
   }));
   check('a reply has a strip with its model, the time and two thumbs', under.strip && /Claude/.test(under.model) && under.time && under.thumbs === 2, JSON.stringify(under));
   check('your message has a time, Copy and Edit under it', under.copy && under.edit && under.userTime, JSON.stringify(under));
+  // (the time and thumbs take no width until the reply is hovered, chat-actions.css: a person points at the reply first, then clicks the thumb that shows)
+  await ui.hover('.msg.assistant .md, .msg.assistant');
+  await waitFor(() => ui.evaluate(() => document.querySelector('.reply-thumbs').getBoundingClientRect().width > 20));
   await ui.click('.reply-thumb[data-value="up"]');
   check('the thumb is kept in the chat', await waitFor(() => app.evaluate(() => global.__agent.transcript().some((i) => i.feedback === 'up'))), 'not stored');
   check('the thumb shows as pressed', await ui.evaluate(() => document.querySelector('.reply-thumb[data-value="up"]').getAttribute('aria-pressed') === 'true'), 'not pressed');
