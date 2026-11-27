@@ -45,7 +45,7 @@ const src = (p) => fs.readFileSync(path.join(__dirname, '..', '..', 'src', p), '
     check('the Claude client never falls back to ANTHROPIC_API_KEY when the key is off', /off \? new Anthropic\(\{ apiKey: null/.test(fn('getClient')), fn('getClient'));
     check('a change rebuilds the Claude client and the model lists', /onKeysOffChange: \(\) => \{ client = null; for \(const p of Object\.keys\(providers\.PROVIDERS\)\) if \(p !== 'local'\) refreshModels\(p\)/.test(main));
     check('Settings is told which keys are off', /anthropicKeyOff: keyOff\('anthropic'\)/.test(main) && /off: keyOff\(p\),/.test(main));
-    check('saving or removing a key does not touch the switch (it stays off until switched on)', !/keysOff/.test(main.slice(main.indexOf("ipcMain.handle('settings:set-provider-key'"), main.indexOf("ipcMain.handle('openrouter:models'"))));
+    check('saving or removing a key does not touch the switch (it stays off until switched on)', (() => { const signIns = src('features/ai-sign-ins.js'); const from = signIns.indexOf("ipcMain.handle('settings:set-provider-key'"), to = signIns.indexOf("ipcMain.handle('openrouter:models'"); return from > 0 && to > from && !/keysOff/.test(signIns.slice(from, to)); })());
   }
 
   // ---- the Settings page and its words
