@@ -5828,6 +5828,7 @@ select('fontSize', 'Font size', 'The default text size websites start from. Appl
 );
 card.group('Toolbar').append(
 toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
+select('bookmarksBar', 'Show bookmarks bar', 'Your bookmarks under the toolbar, as in Chrome. Ctrl+Shift+B switches between always and the new tab page only.', [['newtab', 'On the new tab page'], ['always', 'Always'], ['never', 'Never']]),
 toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
 );
 

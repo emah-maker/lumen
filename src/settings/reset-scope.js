@@ -7,7 +7,7 @@ const AREAS = [
     'theme', 'accentColor', 'newTabBackground', 'newTabShuffle', 'newTabWidgetGlass', 'newTabEffect', 'newTabEffectColor', 'newTabEffectAmount',
     'newTabEffectSpeed', 'newTabEffectSize', 'newTabEffectInteract', 'newTabImage', 'newTabClock', 'newTabClockSize', 'newTabClockStyle',
     'newTabClockHours', 'newTabClockSeconds', 'newTabClockDate', 'newTabClockCard', 'newTabClockShadow', 'newTabGreetingFont', 'newTabSearchWidth',
-    'newTabName', 'forceDarkWebsites', 'defaultZoom', 'fontSize', 'showBookmarkButton', 'showAiOffButton', 'extensionsToolbar', 'extensionsDevMode',
+    'newTabName', 'forceDarkWebsites', 'defaultZoom', 'fontSize', 'showBookmarkButton', 'bookmarksBar', 'showAiOffButton', 'extensionsToolbar', 'extensionsDevMode',
     'compactTabs', 'tabLayout', 'sideTabsWidth', 'sideTabsCollapsed', 'reduceMotion', 'minimumFontSize', 'focusRings', 'screenReaderSupport',
     'graphicsMode', 'pinchZoom',
   ], stored: ['siteZoom'] },

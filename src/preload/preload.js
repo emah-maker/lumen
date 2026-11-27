@@ -77,6 +77,24 @@ contextBridge.exposeInMainWorld('browser', {
   phoneNoteAction: (token) => ipcRenderer.invoke('phone:note-action', token), // [phone files] the toast about a file from the phone: Attach to chat / Show in Finder
   undoOrganize:() => ipcRenderer.send('tabs:undo-organize'),
   toggleBookmark: () => ipcRenderer.send('bookmark:toggle'),
+  // [bookmarks bar] renderer/bookmarks-bar.js (features/bookmark-bar-main.js). The mode at start comes with the window, so the bar has its place before the first paint.
+  bookmarksBarStart: (process.argv.find((a) => a.startsWith('--lumen-bookmarks-bar=')) || '').split('=')[1] || 'newtab',
+  bookmarksBar: {
+    get: () => ipcRenderer.invoke('bookmarks-bar:get'),
+    onState: on('bookmarks-bar:state'),
+    onEdit: on('bookmarks-bar:edit'),
+    open: (url, how) => ipcRenderer.send('bookmarks-bar:open', url, how),
+    folderMenu: (o) => ipcRenderer.invoke('bookmarks-bar:folder-menu', o),
+    overflowMenu: (o) => ipcRenderer.invoke('bookmarks-bar:overflow-menu', o),
+    contextMenu: (o) => ipcRenderer.invoke('bookmarks-bar:context-menu', o),
+    save: (p) => ipcRenderer.invoke('bookmarks-bar:save', p),
+    move: (o) => ipcRenderer.invoke('bookmarks-bar:move', o),
+    drop: (o) => ipcRenderer.invoke('bookmarks-bar:drop', o),
+    toggle: () => ipcRenderer.send('bookmarks-bar:toggle'),
+    setRect: (r) => ipcRenderer.send('bookmarks-bar:rect', r), // where it is: a tab let go over it is bookmarked (main.js bookmarkBarTabDrop)
+    onTabOver: on('bookmarks-bar:tab-over'),
+    onTabDrop: on('bookmarks-bar:tab-drop'),
+  },
   toggleReader: () => ipcRenderer.send('page:reader'),
   translateAct: (action, arg) => ipcRenderer.send('translate:act', action, arg), // the translate infobar and button (features/translate.js)
   onAccountState: on('account:state'), accountAct: (action, arg) => ipcRenderer.send('account:act', action, arg), // [account tabs] the account chip and the sign-in bar (renderer/account-tabs.js)
