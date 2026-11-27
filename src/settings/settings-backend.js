@@ -1335,7 +1335,8 @@ function create(deps) {
     // Slack setup (features/slack-setup.js, features/slack-view.js explains the flow). Slack's pages open in a
     // small Lumen window that only shows slack.com; when Slack sends it to the app's redirect address, the
     // address is taken from the navigation (no pasting) and checked against the pending state.
-    const slackSetup = require('../features/slack-setup').create({ BrowserWindow: deps.BrowserWindow, clipboard: deps.clipboard });
+    let slackSetupMade = null; // (the module loads with the first Slack setup step, not at start)
+    const slackSetup = new Proxy({}, { get: (_t, key) => (slackSetupMade ||= require('../features/slack-setup').create({ BrowserWindow: deps.BrowserWindow, clipboard: deps.clipboard }))[key] });
     const slackTokenSeen = (token) => { slackSetup.close(); deps.widgets.slackAuto('token', token); };
     const slackOwner = () => { try { return require('os').userInfo().username; } catch { return ''; } };
     handle('prefs:slack-create-app', (opts) => {

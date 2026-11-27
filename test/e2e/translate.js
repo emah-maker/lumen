@@ -79,7 +79,7 @@ const ENGLISH = '<!doctype html><html lang="en"><head><title>English page</title
   // ---- the offer: local detection only, nothing sent ----
   const en = await open(`${base}/en`);
   await sleep(700);
-  check('an English page gets no translate button or bar', (await stateOf(en))?.phase !== 'offer' && (await ui.$eval('#translate-btn', (b) => b.hidden)) === true, JSON.stringify(await stateOf(en)));
+  check('an English page gets no translate button or bar', (await stateOf(en))?.phase !== 'offer' && (await ui.evaluate(() => { const b = document.getElementById('translate-btn'); return !b || b.hidden; /* (no button at all until a page has something to translate: translate.js loads then) */ })) === true, JSON.stringify(await stateOf(en)));
 
   const es = await open(`${base}/es`);
   const offered = await waitFor(async () => (await stateOf(es))?.phase === 'offer' && (await stateOf(es))?.lang === 'es');
