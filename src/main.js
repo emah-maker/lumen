@@ -14176,8 +14176,7 @@ function finishDelete(id) {
   imageStore().removeChat(id); // its pictures go with it
   uploads().removeChat(id); // [uploads] and the files attached to it
   if (folder) serial(() => mirror().trash(folder, id)).catch(() => {}); // [project folders] its Markdown file moves to Chats/Deleted (never erased)
-  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
-  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
+  require('./ai/chat-homes').removeChatHomes(app.getPath('userData'), id); // its CLI engines' homes (Antigravity's conversation, Codex's thread) go too
 }
 let trashSwept = false;
 function sweepTrash() { // chats hidden by a Lumen that quit inside the undo time
@@ -14242,8 +14241,7 @@ ipcMain.handle('chats:delete', (event, id) => {
     chats().remove(id);
     imageStore().removeChat(id);
     uploads().removeChat(id);
-    require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {});
-    require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {});
+    require('./ai/chat-homes').removeChatHomes(app.getPath('userData'), id);
   };
   if (id === chatId) {
     chatGeneration++;
@@ -14551,13 +14549,12 @@ setTimeout(() => {
   const listTrusted = () => { try { return chats().trusted() && chats().list().length > 0; } catch { return false; } };
   if (listTrusted()) try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
   if (listTrusted()) try { uploads().sweep(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to sweep */ } // [uploads] old pending files, files of chats that are gone
-  // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
+  // The CLI engines' homes (ai/chat-homes.js: Antigravity's, Codex's) of chats that are gone (pruned past the history limit, or cleared). (Never with an
   // empty list: a history that could not be read must not cost every chat its conversation.)
   try {
     if (listTrusted()) {
       const keep = new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean));
-      require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), keep).catch(() => {});
-      require('./ai/codex').pruneChatHomes(app.getPath('userData'), keep).catch(() => {}); // Codex homes (threads) likewise
+      require('./ai/chat-homes').pruneChatHomes(app.getPath('userData'), keep);
     }
   } catch { /* nothing to prune */ }
 }, 30000).unref?.();
