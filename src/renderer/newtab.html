@@ -99,6 +99,8 @@
     html body.on-media[data-wglass="clear"] .w-card, html body.on-media[data-wglass="clear"] .w-card.tinted { background: rgba(255, 255, 255, 0.025); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 0, 0, 0.35); }
     body[data-bg="image"] #backdrop { background: #000 var(--wallpaper) center / cover no-repeat; }
     body[data-bg="image"] #backdrop::after { background: linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, rgba(0, 0, 0, 0.12) 40%, rgba(0, 0, 0, 0.45) 100%); inset: 0; }
+    /* A light picture (measured: widget-colors.js pictureTone) keeps dark text: a soft white veil instead of the dark scrim. */
+    body.tone-light[data-bg="image"] #backdrop::after { background: linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.18) 40%, rgba(255, 255, 255, 0.34) 100%); }
     @keyframes drift { from { transform: translate3d(-3%, -2%, 0) scale(1); } to { transform: translate3d(3%, 2%, 0) scale(1.08); } }
     body.on-media {
       --text: #ffffff; --muted: rgba(255, 255, 255, 0.72); --faint: rgba(255, 255, 255, 0.5); --card: rgba(255, 255, 255, 0.12);
@@ -475,6 +477,15 @@
     body.on-media .w-card:hover .w-stack-dot[aria-current="true"]::before, body.on-media .w-card:focus-within .w-stack-dot[aria-current="true"]::before, body.on-media .w-card.rail-on .w-stack-dot[aria-current="true"]::before { background: #fff; }
     .w-stack-scrim { position: fixed; inset: 0; z-index: 29; background: rgba(0, 0, 0, 0.3); }
     body.on-media .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 0 3.5px #fff; }
+    /* A light background (white glass cards, dark text): the rail is a faint dark tint with ink dots, as on the light Plain page, not
+       the white dots in a dark pill that sit over a picture. */
+    body.on-media.tone-light .w-stack { background: rgba(0, 0, 0, 0.035); }
+    body.on-media.tone-light .w-card:hover .w-stack, body.on-media.tone-light .w-card:focus-within .w-stack, body.on-media.tone-light .w-card.rail-on .w-stack, body.on-media.tone-light .w-card.w-moving .w-stack { background: rgba(0, 0, 0, 0.06); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.1); }
+    body.on-media.tone-light .w-stack-dot::before { background: rgba(29, 29, 31, 0.3); box-shadow: none; }
+    body.on-media.tone-light .w-card:hover .w-stack-dot::before, body.on-media.tone-light .w-card:focus-within .w-stack-dot::before, body.on-media.tone-light .w-card.rail-on .w-stack-dot::before { background: rgba(29, 29, 31, 0.45); }
+    body.on-media.tone-light .w-stack-dot:hover::before { background: rgba(29, 29, 31, 0.7); }
+    body.on-media.tone-light .w-stack-dot[aria-current="true"]::before, body.on-media.tone-light .w-stack-dot[aria-current="true"]:hover::before, body.on-media.tone-light .w-card:hover .w-stack-dot[aria-current="true"]::before, body.on-media.tone-light .w-card:focus-within .w-stack-dot[aria-current="true"]::before, body.on-media.tone-light .w-card.rail-on .w-stack-dot[aria-current="true"]::before { background: #1d1d1f; }
+    body.on-media.tone-light .w-stack-dot:focus-visible::before { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--accent); }
     @media (hover: none) { .w-stack { opacity: 0.92; } }
     @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-card.rail-intro .w-stack { animation: w-rail-intro 1.6s var(--ease) 1; } }
     @media (prefers-reduced-motion: no-preference) { body:not(.calm) .w-card.rail-end .w-stack-dot[aria-current="true"]::before { animation: w-rail-end 600ms var(--ease) 1; } }

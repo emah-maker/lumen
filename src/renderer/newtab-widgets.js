@@ -1403,8 +1403,9 @@ const WIDGET_RENDERERS = {
     const d = w.data;
     const symbol = text(d.symbol, 60) || 'Chart';
     const scheme = matchMedia('(prefers-color-scheme: dark)');
-    // A wallpaper or video background makes every card dark whatever the system scheme says (newtab.js does the same for the accent).
-    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && (scheme.matches || (document.body.classList.contains('on-media') && !document.body.classList.contains('tone-light'))));
+    // Over a background the chart follows the cards, not the system scheme: dark over a dark one, light over a light one (a light gradient,
+    // a Studio theme in light mode, a light picture). newtab.js does the same for the accent. Plain follows the system.
+    const isDark = () => d.theme === 'dark' || (d.theme !== 'light' && (document.body.classList.contains('on-media') ? !document.body.classList.contains('tone-light') : scheme.matches));
     const url = tvUrl(isDark() ? d.dark : d.light);
     const list = d.view === 'watchlist';
     if (!url) { card.body.append(el('p', 'w-note', list ? 'This watchlist can’t be shown.' : 'This chart can’t be shown.')); return; }

@@ -668,6 +668,7 @@ button.info:active:not(:disabled){transform:none;}
 .bg-preview.tone-light{--t:#1d1d1f;--m:rgba(29, 29, 31, 0.72);--c:rgba(255, 255, 255, 0.55);--bd:rgba(0, 0, 0, 0.1);--f:rgba(255, 255, 255, 0.62);color:#1d1d1f;}
 .ntp-scrim{background:linear-gradient(180deg, rgba(0, 0, 0, 0.38) 0%, rgba(0, 0, 0, 0.12) 40%, rgba(0, 0, 0, 0.45) 100%);}
 .ntp-scrim[hidden]{display:none;}
+.tone-light .ntp-scrim{background:linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.18) 40%, rgba(255, 255, 255, 0.34) 100%);}
 .ntp-col{width:var(--search-w);max-width:1000px;}
 .ntp-head{--hd:1;margin-bottom:var(--sp-6);}
 .ntp-clock-card[hidden], .ntp-date[hidden], .ntp-clock[hidden]{display:none !important;}

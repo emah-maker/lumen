@@ -91,12 +91,17 @@ const byId = (id) => (id === IMAGE.id ? IMAGE : BACKGROUNDS.find((b) => b.id ===
 const isBackground = (id) => IDS.includes(id);
 // Text and cards: 'light' is the only background that turns the page's text dark; a picture is darkened under a scrim, so it is dark.
 // A Studio one ('auto') is 'light' in the light theme and 'dark' in the dark theme (systemDark: the system's, as the page sees it).
-const toneOf = (id, systemDark = false) => { const tone = byId(id)?.tone || 'plain'; return tone === 'auto' ? (systemDark ? 'dark' : 'light') : tone; };
+// Your picture is 'dark' unless it was measured light (picture: widget-colors.js pictureTone, sampled once per picture in settings-backend.js).
+const toneOf = (id, systemDark = false, picture = 'dark') => {
+  const tone = byId(id)?.tone || 'plain';
+  if (id === IMAGE.id) return picture === 'light' ? 'light' : 'dark';
+  return tone === 'auto' ? (systemDark ? 'dark' : 'light') : tone;
+};
 // The CSS art drawn for a background in the system's theme (null for Plain, Your picture and the older ones, which are CSS of their own).
 const artOf = (id, systemDark = false) => { const item = byId(id); return (item?.tone === 'auto' && systemDark ? item.dark : item?.art) || null; };
 // The shades the page is drawn in over a background ('light' or 'dark'): the system's on Plain, light over a light background, dark over any other.
 // The new-tab page (accent, text) and the picker's preview in Settings both ask this, so the two can never disagree.
-const modeOf = (id, systemDark) => { const tone = toneOf(id, systemDark); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
+const modeOf = (id, systemDark, picture) => { const tone = toneOf(id, systemDark, picture); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
 
 // The animated effects drawn over a background (renderer/newtab-effects.js), with a still preview each for the picker.
 // `fps` is how often it redraws (the particles and snow move at 30; the soft ones need far fewer); `soft` ones are drawn small and scaled up.

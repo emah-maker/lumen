@@ -306,12 +306,17 @@ const byId = (id) => (id === IMAGE.id ? IMAGE : BACKGROUNDS.find((b) => b.id ===
 const isBackground = (id) => IDS.includes(id);
 
 
-const toneOf = (id, systemDark = false) => { const tone = byId(id)?.tone || 'plain'; return tone === 'auto' ? (systemDark ? 'dark' : 'light') : tone; };
+
+const toneOf = (id, systemDark = false, picture = 'dark') => {
+const tone = byId(id)?.tone || 'plain';
+if (id === IMAGE.id) return picture === 'light' ? 'light' : 'dark';
+return tone === 'auto' ? (systemDark ? 'dark' : 'light') : tone;
+};
 
 const artOf = (id, systemDark = false) => { const item = byId(id); return (item?.tone === 'auto' && systemDark ? item.dark : item?.art) || null; };
 
 
-const modeOf = (id, systemDark) => { const tone = toneOf(id, systemDark); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
+const modeOf = (id, systemDark, picture) => { const tone = toneOf(id, systemDark, picture); return tone === 'plain' ? (systemDark ? 'dark' : 'light') : tone === 'light' ? 'light' : 'dark'; };
 
 
 
@@ -4585,9 +4590,9 @@ return pic.data;
 function render() {
 dirty = false;
 const { p, id, effect } = lookOf();
-const tone = BG.toneOf(id, dark.matches);
 const image = id === 'image' ? picture() : null;
-const mode = BG.modeOf(id, dark.matches);
+const tone = BG.toneOf(id, dark.matches, image?.tone);
+const mode = BG.modeOf(id, dark.matches, image?.tone);
 const light = Boolean(opts.state()?.graphics?.light);
 box.className = `bg-preview ntp tone-${tone}${effect !== 'none' ? ' has-fx' : ''}${light ? ' gfx-light' : ''}`;
 box.dataset.gfx = light ? 'light' : 'full';
