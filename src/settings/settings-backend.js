@@ -87,6 +87,7 @@ const DEFAULTS = {
   showBookmarkButton: true,
   showAiOffButton: true, // the shield in the address bar that keeps the AI from acting on a tab
   extensionsToolbar: 'pinned', // [extensions] pinned (only the extensions I pin; the others are in the puzzle button's menu) | all | none (no extension buttons: they still run)
+  extensionsDevMode: false, // [extensions] Developer mode: Settings → Extensions shows Load unpacked and each unpacked extension's Reload (browser/extension-manage.js)
   extensionPins: { order: [], seen: [], migrated: false }, // [extensions] the pinned extensions' ids, left to right, and every id that has had its first choice (renderer/ext-pins-core.js); changed through prefs:extension-pin and ext:pins-*
   compactTabs: false,
   tabLayout: 'top', // [tabs] top | side: the tabs across the top of the window or in a list down its left side (renderer/side-tabs.js)
@@ -1191,9 +1192,15 @@ function create(deps) {
     const canNarrow = Boolean(X.idOfKey(ext.manifest.key)) && (sites.length > 0 || X.hasBroadAccess(ext.manifest));
     return { canNarrow, siteMode: mode, sites, suggestedSites: canNarrow ? X.suggestedSites(ext.id) : [] };
   }
+  // [extensions] On/off and unpacked extensions (browser/extension-manage.js), made on first use.
+  let manager = null;
+  const manage = () => (manager ||= require('../browser/extension-manage').createManager({ ses, userData: app.getPath('userData'), readSettings, writeSettings, isLocked: (id) => Boolean(deps.isBlockerExtension?.(id)) }));
+  const hasManaged = () => Boolean(Object.keys(readSettings().extensionsOff || {}).length || (readSettings().extensionsUnpacked || []).length);
+  let pickedFolder = null; // the folder the last Load unpacked picker returned: the only one prefs:unpacked-add loads
   function listExtensions() {
     const pinned = prefs().extensionPins.order;
-    return installedExtensions().map((ext) => ({
+    const M = hasManaged() ? manage() : null;
+    const on = installedExtensions().map((ext) => ({
       id: ext.id,
       name: ext.name,
       version: ext.version,
@@ -1201,8 +1208,15 @@ function create(deps) {
       options: ext.manifest.options_ui?.page || ext.manifest.options_page || '',
       button: hasAction(ext), // false: no toolbar button, so nothing to pin
       pinned: hasAction(ext) && pinned.includes(ext.id),
+      enabled: true,
+      locked: Boolean(deps.isBlockerExtension?.(ext.id)), // [uBlock mode] its on/off is Settings → Ad blocker
+      unpacked: Boolean(M?.unpackedOf(ext.id)),
+      source: M?.unpackedOf(ext.id)?.source || '',
       ...siteAccess(ext),
     }));
+    // Off: unloaded, still installed (no pin, options or site access until it is on again).
+    const offOnes = M ? M.offList().filter((e) => !on.some((x) => x.id === e.id)).map((e) => ({ ...e, options: '', button: false, pinned: false, enabled: false, locked: false, unpacked: Boolean(M.unpackedOf(e.id)), source: M.unpackedOf(e.id)?.source || '', canNarrow: false, siteMode: 'all', sites: [], suggestedSites: [] })) : [];
+    return [...on, ...offOnes];
   }
   // [extensions] Pins: renderer/ext-pins-core.js has the rules (a new extension starts pinned while fewer than three are).
   const pinsCore = () => require('../renderer/ext-pins-core');
@@ -1405,8 +1419,40 @@ function create(deps) {
     handle('prefs:extensions', async () => { await syncExtensionPins(); return listExtensions(); });
     handle('prefs:extension-pin', async (id, on) => { await pinExtension(String(id), on === true); return listExtensions(); }); // [extensions] Settings → Extensions: Show in toolbar
     handle('prefs:remove-extension', async (id) => {
+      if (hasManaged() && manage().forget(String(id))) return listExtensions(); // [extensions] an unpacked one: its copy goes, the user's folder stays
       await deps.uninstallExtension(id, { session: ses() }).catch(() => {});
       return listExtensions();
+    });
+    // [extensions] The on/off switch: off unloads it and keeps it installed, across restarts.
+    handle('prefs:extension-enabled', async (id, on) => {
+      if (!EXT_ID.test(String(id))) throw new Error('Unknown extension');
+      await manage().setEnabled(String(id), on === true);
+      return listExtensions();
+    });
+    // [extensions] Developer mode → Load unpacked: pick a folder, check its manifest and say what it asks for; the page asks, then adds it.
+    // (The hidden e2e passes the folder: there is no picker to click.)
+    handle('prefs:unpacked-pick', async (testDir) => {
+      if (!prefs().extensionsDevMode) throw new Error('Turn on Developer mode first');
+      let dir = process.env.CLAUDE_BROWSER_TEST && typeof testDir === 'string' ? testDir : null;
+      if (!dir) {
+        const { canceled, filePaths } = await dialog.showOpenDialog(deps.win(), { title: 'Load unpacked extension', properties: ['openDirectory'] });
+        if (canceled || !filePaths[0]) return { canceled: true };
+        dir = filePaths[0];
+      }
+      const check = require('../browser/extension-manage').validateManifest(dir);
+      pickedFolder = check.ok ? dir : null;
+      return check.ok ? { ok: true, dir, name: check.name, version: check.version, lines: check.lines } : { ok: false, dir, error: check.error };
+    });
+    handle('prefs:unpacked-add', async (dir) => {
+      if (!prefs().extensionsDevMode) throw new Error('Turn on Developer mode first');
+      if (!pickedFolder || dir !== pickedFolder) throw new Error('Choose the folder again');
+      pickedFolder = null;
+      try { await manage().addUnpacked(dir); } catch (err) { return { list: listExtensions(), error: String(err?.message || err).slice(0, 300) }; }
+      return { list: listExtensions() };
+    });
+    handle('prefs:unpacked-reload', async (id) => {
+      try { await manage().reloadUnpacked(String(id)); } catch (err) { return { list: listExtensions(), error: String(err?.message || err).slice(0, 300) }; }
+      return { list: listExtensions() };
     });
     handle('prefs:extension-sites', async (id, sites, mode) => { // [extensions] Settings → Extensions: Site access (an empty list is all sites; mode 'except': all but these)
       if (!EXT_ID.test(String(id))) throw new Error('Unknown extension');
@@ -1450,7 +1496,9 @@ function create(deps) {
   }
 
   return {
-    prefs, set, state, start, refreshHeaders: () => setupHeaders(), attachTab, pinExtension, syncExtensionPins, extensionsLoaded, listExtensions, mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
+    prefs, set, state, start, refreshHeaders: () => setupHeaders(), attachTab, pinExtension, syncExtensionPins, extensionsLoaded, listExtensions,
+    forgetExtension: (id) => hasManaged() && manage().forget(String(id)), loadUnpackedAtStart: () => manage().loadAtStart(), /* [extensions] (main.js) */
+    mirrorSession, unmirrorSession, pushUiPrefs: () => (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs())), guardSettingsTab, tabWebPreferences, spellingItems, onFailLoad,
     noteUserZoom, resetZoom, siteZoom, noteResponseHeaders, downloadDir, askWhereToSave, startupPlan, loadPermissions, savePermissions, loadDeviceGrants, saveDeviceGrants, permissionDefault,
     clearData, uiPrefs, launched, newTabLook, reset,
   };
