@@ -1698,6 +1698,7 @@ async function reloadOpenPages() {
 }
 // The blocking extension removed some other way (Settings → Extensions, the Extensions menu) in uBlock mode: Lumen's blocker takes over at once.
 function afterUninstall(id) {
+  settingsBackend.forgetExtension(id); // [extensions] an unpacked or turned-off one is forgotten too (browser/extension-manage.js)
   if (!ublockOn() || id !== ublockExtension()) return;
   ublockGone();
   reloadOpenPages().catch(() => {});
@@ -1962,7 +1963,8 @@ async function setupExtensions() {
   const extensionsRoot = path.join(app.getPath('userData'), 'Extensions');
   const startWorker = (scope) => tabsGate.then(() => setTimeout(() => ses.serviceWorkers.startWorkerForScope(scope).catch(() => console.error(`Failed to start worker for ${scope}`)), 300));
   const loadTarget = { extensions: ses.extensions, serviceWorkers: { startWorkerForScope: (scope) => { startWorker(scope); return Promise.resolve(); } } };
-  const folders = await fs.promises.readdir(extensionsRoot, { withFileTypes: true }).then((list) => list.filter((d) => d.isDirectory()).map((d) => path.join(extensionsRoot, d.name)), () => []);
+  const turnedOff = readSettings().extensionsOff || {}; // [extensions] Settings → Extensions' switch: off ones stay installed, not loaded
+  const folders = await fs.promises.readdir(extensionsRoot, { withFileTypes: true }).then((list) => list.filter((d) => d.isDirectory() && !(turnedOff[d.name] && !(ublockOn() && d.name === ublockExtension()))).map((d) => path.join(extensionsRoot, d.name)), () => []);
   const seen = new Set();
   await Promise.all(folders.map((dir) => loadAllExtensions(loadTarget, dir).then(() => {
     perf.mark(`ext:${path.basename(dir).slice(0, 6)}`);
@@ -1972,6 +1974,7 @@ async function setupExtensions() {
       if (tabsGateOpen) lateExtension(ext).catch(() => {});
     }
   })));
+  if ((readSettings().extensionsUnpacked || []).length) await settingsBackend.loadUnpackedAtStart().then((list) => { for (const ext of list) startWorker(`chrome-extension://${ext.id}`); }, () => {}); // [extensions] Developer mode's unpacked ones
   perf.mark('extLoaded');
   if (ublockOn()) syncRequestRulesSoon(); // [uBlock mode] Lumen's own request rules (loaded once the store's extensions are)
   // [uBlock mode] chosen, but its extension is gone (its folder removed, or it failed to load): Lumen's blocker, rather than none.
@@ -11235,6 +11238,7 @@ const settingsBackend = settingsPage.create({
   stepsAside: (ses) => mainStepsAside(ses), // [uBlock mode] the request-headers listener steps aside on the main session
   setAdBlocker: (mode) => setAdBlocker(mode), // [uBlock mode] Settings → Privacy and security → Ad blocker
   lumenOwnExtension: (ext) => lumenOwnExtension(ext), // [uBlock mode] not in Settings → Extensions
+  isBlockerExtension: (id) => ublockOn() && id === ublockExtension(), // [uBlock mode] its on/off switch is Settings → Ad blocker
   extensionSitesSaved: () => readSettings().extensionSites || {},
   cliPinnedVersion: () => cliAuth.PINNED_VERSION,
   openTab: (url) => openTab(url),

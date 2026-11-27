@@ -3574,18 +3574,49 @@ async function buildExtensions(card) {
     mode.addEventListener('change', () => { if (suggest) suggest.hidden = mode.value !== 'some'; });
     return h('div', { class: 'item ext-sites-row' }, h('span', { class: 'note', text: 'Runs on' }), mode, input, suggest);
   };
-  const render = (items) => { shownItems = items; list.replaceChildren(...(items.length ? items.flatMap((e) => [h('div', { class: 'item' },
-    h('span', { class: 'grow' }, e.name, h('span', { class: 'note', text: ` ${e.version}${e.description ? ` · ${e.description}` : ''}` })),
-    e.button ? pinSwitch(e) : null,
-    e.options ? h('button', { text: 'Options', onclick: () => S.extensionOptions(e.id) }) : null,
-    h('button', { class: 'danger', text: 'Remove', onclick: async () => render(await S.removeExtension(e.id)) })), e.canNarrow ? siteRow(e) : null].filter(Boolean))
+  const note = status('extensions-status');
+  // On/off, as chrome://extensions: off unloads it and keeps it installed, across restarts. [uBlock mode] the ad blocker's is Settings → Ad blocker.
+  const onSwitch = (e) => {
+    const input = h('input', { type: 'checkbox', class: 'switch ext-on', role: 'switch', 'aria-label': `${e.name} on`, checked: e.enabled });
+    if (e.locked) { input.disabled = true; input.title = 'This is your ad blocker: change it in Privacy and security → Ad blocker.'; }
+    input.addEventListener('change', async () => {
+      try { render(await S.extensionEnabled(e.id, input.checked)); } catch (err) { input.checked = !input.checked; flash(note, errText(err), 'err'); }
+    });
+    return input;
+  };
+  const reload = (e) => h('button', { text: 'Reload', class: 'ext-reload', title: `Load it again from ${e.source}`, onclick: async () => {
+    const out = await S.reloadUnpacked(e.id);
+    render(out.list);
+    if (out.error) flash(note, out.error, 'err'); else flash(note, `Reloaded ${e.name}.`);
+  } });
+  const render = (items) => { shownItems = items; list.replaceChildren(...(items.length ? items.flatMap((e) => [h('div', { class: `item${e.enabled ? '' : ' ext-off'}`, 'data-ext': e.id },
+    onSwitch(e),
+    h('span', { class: 'grow' }, e.name, h('span', { class: 'note', text: ` ${e.version}${e.unpacked ? ' · Unpacked' : ''}${e.enabled ? '' : ' · Off'}${e.description ? ` · ${e.description}` : ''}` }),
+      e.unpacked ? h('span', { class: 'note mono ext-source', text: e.source }) : null),
+    e.enabled && e.button ? pinSwitch(e) : null,
+    e.enabled && e.options ? h('button', { text: 'Options', onclick: () => S.extensionOptions(e.id) }) : null,
+    e.unpacked ? reload(e) : null,
+    h('button', { class: 'danger', text: 'Remove', title: e.unpacked ? 'Removes it from Lumen; its folder stays' : '', onclick: async () => render(await S.removeExtension(e.id)) })), e.enabled && e.canNarrow ? siteRow(e) : null].filter(Boolean))
     : [h('div', { class: 'empty-card' }, h('strong', { text: 'No extensions installed' }), h('span', { class: 'note', text: 'Find one in the Chrome Web Store and add it; it shows up here.' }))])); };
+  // Developer mode → Load unpacked: a folder with a manifest.json. Its manifest is checked and what it asks for is shown before it loads.
+  const loadUnpacked = h('button', { id: 'ext-load-unpacked', text: 'Load unpacked…', hidden: !st.prefs.extensionsDevMode, onclick: async () => {
+    note.textContent = '';
+    let picked;
+    try { picked = await S.pickUnpacked(window.__lumenTestUnpackedDir); } catch (err) { flash(note, errText(err), 'err'); return; }
+    if (picked.canceled) return;
+    if (!picked.ok) { flash(note, picked.error, 'err'); return; }
+    if (!(await confirmUnpacked(picked))) return;
+    const out = await S.addUnpacked(picked.dir);
+    render(out.list);
+    if (out.error) flash(note, out.error, 'err'); else flash(note, `Loaded ${picked.name}.`);
+  } });
   card.append(select('extensionsToolbar', 'Show extensions in the toolbar', 'Only the ones I pin keeps the rest in the puzzle button’s menu, as Chrome does. Hide all removes the extension buttons and the puzzle button; extensions keep running, and they are listed here and in the ⋯ menu.',
     [['pinned', 'Only the ones I pin'], ['all', 'All of them'], ['none', 'Hide all']]));
   window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'extensionsToolbar') render(shownItems); });
   render(await S.extensions());
-  card.append(stackRow('Installed extensions', 'Chrome Web Store extensions. Removing one deletes it and its data. Extensions can’t be paused here; remove one to turn it off. An extension that asks for every site can be held to the ones you list; reload open pages after changing it.', list,
-    h('div', { class: 'controls' }, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
+  card.append(stackRow('Installed extensions', 'Turn one off to stop it without removing it; it stays off after a restart. Removing one deletes it and its data. An extension that asks for every site can be held to the ones you list; reload open pages after changing it.', list,
+    h('div', { class: 'controls' }, note, loadUnpacked, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
+  card.append(toggle('extensionsDevMode', 'Developer mode', 'Load an extension from a folder on this computer (one with a manifest.json), and reload it from that folder after you change it. Lumen runs a copy, so it never writes into your folder.', (on) => { loadUnpacked.hidden = !on; }));
 }
 
 // A real confirmation: a dialog that lists what goes back to its defaults (the backend's list, settings/reset-scope.js) and what stays.
@@ -3614,6 +3645,23 @@ function confirmUblock(mode = 'ublock') {
         h('button', { value: 'cancel', id: 'ublock-confirm-cancel', text: 'Cancel', autofocus: true }),
         h('button', { value: 'use', id: 'ublock-confirm-go', text: `Use ${name}` })));
     dlg.addEventListener('close', () => { const yes = dlg.returnValue === 'use'; dlg.remove(); resolve(yes); });
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close('cancel'); });
+    document.body.append(dlg);
+    dlg.showModal();
+  });
+}
+// [extensions] Load unpacked: what the folder's extension asks for (the install prompt's lines), before it loads. Resolves true on Load.
+function confirmUnpacked(picked) {
+  return new Promise((resolve) => {
+    const dlg = h('dialog', { class: 'confirm-dialog', id: 'unpacked-confirm', 'aria-labelledby': 'unpacked-confirm-title' },
+      h('h3', { id: 'unpacked-confirm-title', text: `Load “${picked.name}” ${picked.version}?` }),
+      h('p', { class: 'note mono', text: picked.dir }),
+      picked.lines.length ? [h('p', { text: 'It can:' }), h('ul', { id: 'unpacked-confirm-list' }, picked.lines.map((l) => h('li', { text: l })))]
+        : h('p', { id: 'unpacked-confirm-none', text: 'It asks for no special permissions.' }),
+      h('form', { method: 'dialog', class: 'confirm-buttons' },
+        h('button', { value: 'cancel', id: 'unpacked-confirm-cancel', text: 'Cancel', autofocus: true }),
+        h('button', { value: 'load', id: 'unpacked-confirm-go', text: 'Load extension' })));
+    dlg.addEventListener('close', () => { const yes = dlg.returnValue === 'load'; dlg.remove(); resolve(yes); });
     dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close('cancel'); });
     document.body.append(dlg);
     dlg.showModal();
