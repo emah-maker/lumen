@@ -112,9 +112,10 @@ const { findClaude } = require('../../src/ai/claude-code');
       const box = await ui.locator('#setup-claude-code').boundingBox();
       if (box) await ui.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       else await ui.evaluate(() => document.getElementById('setup-claude-code').click());
-      await sleep(400);
-
-      const s = await ui.evaluate(() => window.assistant.getSettings());
+      // The click first asks the real CLI whether it is installed and signed in (a child process, often over a second), then sets the
+      // model: wait for that rather than a fixed pause.
+      let s = await ui.evaluate(() => window.assistant.getSettings());
+      for (let i = 0; i < 50 && s.model !== 'claudecode:default'; i++) { await sleep(300); s = await ui.evaluate(() => window.assistant.getSettings()); }
       const setupHidden = await ui.evaluate(() => document.getElementById('setup').hidden);
       check('selecting it sets the model to claudecode:default', s.model === 'claudecode:default', s.model);
       check('the setup card is hidden once connected', setupHidden === true, setupHidden);
