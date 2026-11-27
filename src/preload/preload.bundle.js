@@ -559,6 +559,9 @@ contextBridge.exposeInMainWorld('browser', {
   onPageFocused: on('page:focused'),
 
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),
+  mediaList: () => ipcRenderer.invoke('media:list'),
+  mediaAct: (id, action) => ipcRenderer.send('media:act', id, action),
+  onMediaList: on('media:list'),
   toggleAiOffTab: (id) => ipcRenderer.send('tab:ai-off', id),
   closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),

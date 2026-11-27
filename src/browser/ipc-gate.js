@@ -63,6 +63,7 @@ const RULES = [
   ['page-first-keys:*', ['web']], // preload/page-first-keys-preload.js
   ['site-permissions:states', ['web']], // preload/permissions-preload.js
   ['hide-activity:config', ['web']], // preload/activity-preload.js
+  ['media-hub:report', ['web']], // preload/media-hub-preload.js (features/media-hub.js parses and caps what a page sends)
   ['lumen-adblock:scriptlets', ['web']], // features/adblock-preload.js
   ['webauthn:*', ['web']], // preload/webauthn-preload.js (features/passkeys.js checks the frame's origin)
   // libraries' own channels (registered through the same ipcMain, so gated the same way)

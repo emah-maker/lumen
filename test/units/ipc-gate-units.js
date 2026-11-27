@@ -143,6 +143,7 @@ const PRELOADS = {
   'src/preload/page-first-keys-preload.js': ['web'],
   'src/preload/webauthn-preload.js': ['web'],
   'src/preload/activity-preload.js': ['web'],
+  'src/preload/media-hub-preload.js': ['web'],
   'src/features/adblock-preload.js': ['web'],
   'src/preload/extension-css-preload.js': ['web'],
   'src/preload/extensions-mv2-preload.js': ['extension'], // crx-msg: electron-chrome-extensions' own channel, not ipcMain's
