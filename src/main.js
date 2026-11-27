@@ -439,12 +439,16 @@ const tabTools = require('./features/tab-tools').create({ onChange: () => sendTa
 
 let settingsCache = null;
 const settingsFile = require('./settings/settings-file'); // crash-safe read/write (see settings-file.js)
+// The saved session (tabs, windows, groups) lives in session.json, written on its own: a tab change doesn't rewrite settings.json (settings/session-store.js).
+const sessionStore = require('./settings/session-store').createSessionStore({ dir: () => app.getPath('userData'), settingsPath: () => SETTINGS_FILE() });
+const readSession = () => sessionStore.get();
 
 let settingsFileExisted = null; // (at this launch's first read: a fresh install has none, see features/setup.js)
 function readSettings() {
   if (!settingsCache) {
     if (settingsFileExisted === null) settingsFileExisted = fs.existsSync(SETTINGS_FILE());
-    settingsCache = settingsFile.loadJson(SETTINGS_FILE());
+    // (a session key left by an older version moves to session.json first: settings.json loses it only once that file is on disk)
+    settingsCache = sessionStore.migrate(settingsFile.loadJson(SETTINGS_FILE()), (s) => settingsFile.writeJsonAtomic(SETTINGS_FILE(), s));
   }
   return { ...settingsCache };
 }
@@ -462,6 +466,7 @@ let onSettingsWritten = null;
 // shownPick (below) is what every model picker shows; it is declared later, so this may run before it exists (start-up writes).
 function dropShownPick() { try { shownPick = null; } catch { /* not declared yet */ } }
 function writeSettings(settings) {
+  settings = sessionStore.split(settings, { background: true }); // (a session handed in with the settings goes to session.json)
   if (settings?.model !== settingsCache?.model) dropShownPick(); // (the saved model changed by any path: the pickers follow it again; settings:set-model sets its own pick after)
   const before = settingsCache;
   settingsCache = { ...settings };
@@ -472,11 +477,11 @@ function writeSettings(settings) {
   settingsFile.writeJsonAtomicAsync(SETTINGS_FILE(), settingsCache, () => gen === settingsGen)
     .then(() => { if (gen === settingsGen) settingsPending = false; }); // (on disk: quitting has nothing left to write)
 }
-const writeSettingsAsync = writeSettings; // (the periodic session save)
 // Tests that read settings.json straight off disk call this first: a write is off the main thread, so the file can lag the cache.
-if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache) writeSettingsNow(settingsCache); };
+if (TEST) global.__settingsFlush = () => { if (settingsPending && settingsCache) writeSettingsNow(settingsCache); sessionStore.flush(); };
 // Closing a window and quitting: on disk before the process can go away.
 function writeSettingsNow(settings) {
+  settings = sessionStore.split(settings);
   if (settings?.model !== settingsCache?.model) dropShownPick(); // (the saved model changed by any path: the pickers follow it again; settings:set-model sets its own pick after)
   const before = settingsCache;
   settingsCache = { ...settings };
@@ -968,7 +973,7 @@ const shortcutsHelp = lazy(() => require('./features/shortcuts-help').createShor
 const crashBurst = (...args) => require('./features/crash-cap').crashBurst(...args); // (loaded with the first crash)
 const crashRecovery = require('./features/crash-recovery').createCrashRecovery({
   file: () => path.join(app.getPath('userData'), 'running'),
-  readSettings: () => readSettings(),
+  readSettings: () => ({ ...readSettings(), session: readSession() }), // (it reads only the saved session)
 });
 async function offerCrashRestore() {
   const kept = crashRecovery.take();
@@ -7654,17 +7659,15 @@ function saveSession({ excluding = null, background = false } = {}) {
   if (!recs.length || recs.some((r) => r.pendingRestore)) return; // nothing to save, or another window's tabs are still coming back
   const [first, ...more] = recs.map((r) => withWindow(r, sessionEntry));
   const session = { ...first, ...(more.length ? { more } : {}) };
-  const current = readSettings();
-  if (!sessionGate.shouldWrite(current.session, session, background)) return; // unchanged since the last write (background saves only)
-  const next = { ...current, session };
-  if (background) writeSettingsAsync(next); else writeSettingsNow(next); // (closing and quitting write at once)
+  if (!sessionGate.shouldWrite(readSession(), session, background)) return; // unchanged since the last write (background saves only)
+  sessionStore.save(session, { background }); // session.json only (closing and quitting write at once)
 }
 
 // The first window's saved session comes back with the chat page in front (restoreSession's own test: any mode but a new tab or chosen pages restores it).
 function chatPageInFront() {
   try {
     if (['newtab', 'pages'].includes(settingsBackend.startupPlan().mode)) return false;
-    const saved = readSettings().session;
+    const saved = readSession();
     const urls = Array.isArray(saved?.urls) ? saved.urls : [];
     return Boolean(urls.length) && chatPage.isChatUrl(urls[Math.min(Math.max(0, saved.active || 0), urls.length - 1)]);
   } catch { return false; }
@@ -7680,7 +7683,7 @@ function restoreSession(entry = null) {
     switchTab(tabs[0].id);
     return;
   }
-  const saved = entry || readSettings().session;
+  const saved = entry || readSession();
   restoreTabsFrom(saved);
   if (!entry && Array.isArray(saved?.more)) {
     const first = curRec;
@@ -9430,6 +9433,7 @@ app.on('before-quit', () => {
   if ([...winRecs].some(rcAlive)) saveSession();
   crashRecovery.end(); // a normal quit: the next start offers nothing
   if (settingsPending && settingsCache) writeSettingsNow(settingsCache); // (a change still on its way to disk lands now)
+  sessionStore.flush(); // (and a session save)
   if (historyDirty && historyLoaded) { // (visits from the last two seconds land now, once the past is merged in)
     clearTimeout(historySaveTimer);
     historyDirty = false;
