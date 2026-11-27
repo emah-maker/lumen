@@ -57,12 +57,38 @@
     return { list, hidden: pool.length - list.length, archived: shelved.length };
   }
 
+  // Project chats are not in the dated list, so the projects worked in lately start open with their latest chats: the (up to) three
+  // with a chat from the last 7 days, newest first. A project the user shut (shut: a Set kept by the caller) stays shut.
+  const OPEN_RECENT = 3;
+  const RECENT_MS = 7 * 86400000;
+  function autoOpen({ projects, chats, expanded, shut, now = Date.now() }) {
+    const active = new Map();
+    for (const c of chats) if (c.project && !c.archived && now - Number(c.updated || 0) < RECENT_MS) active.set(c.project, Math.max(active.get(c.project) || 0, Number(c.updated || 0)));
+    const recent = projects.filter((p) => !p.archived && active.has(p.id)).sort((a, b) => active.get(b.id) - active.get(a.id)).slice(0, OPEN_RECENT);
+    for (const p of recent) if (!shut.has(p.id)) expanded.add(p.id);
+  }
+  // A kept set of project ids (localStorage), for the projects the user shut.
+  function keptSet(key) {
+    let v = [];
+    try { v = JSON.parse(localStorage.getItem(key) || '[]'); } catch { /* none kept */ }
+    const set = new Set(Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+    set.save = () => { try { localStorage.setItem(key, JSON.stringify([...set].slice(-200))); } catch { /* not kept */ } };
+    return set;
+  }
+
   // ---- the rail's block: a heading with +, then one row per project. A row is the project's name (opens its page), a count, and, on
   // hover or focus, "+" (new chat here) and "⋯" (open, new chat, instructions, rename and folder, pin, archive); the chevron lists its chats under it.
   function render(opts) {
     const { host, projects: everyProject, chats, active, expanded = new Set(), current = null, onSelect, onToggle = null, onOpen = null, onAdd, onEdit, onNewChat, onPage = null, onInstructions = null, onImport = null, onFlag = null, onAll = null, onTemp = null, onKeep = null } = opts;
     const counts = new Map();
-    for (const c of chats) if (c.project && !c.archived) counts.set(c.project, (counts.get(c.project) || 0) + 1);
+    const marks = new Map(); // project id -> its chats' strongest state (a chat of it working or waiting for an OK shows on the row)
+    const rank = { approval: 3, running: 2, queued: 1 };
+    const live = (c) => rank[c.badge] > 0;
+    for (const c of chats) {
+      if (!c.project || c.archived) continue;
+      counts.set(c.project, (counts.get(c.project) || 0) + 1);
+      if (live(c) && rank[c.badge] > (rank[marks.get(c.project)] || 0)) marks.set(c.project, c.badge);
+    }
     const again = () => render(opts);
     const many = everyProject.filter((p) => !p.archived).length > TOOLS_AT;
     if (!many && !prefs.archived) prefs.query = '';
@@ -133,6 +159,15 @@
         row.append(chip);
         row.title = p.expires ? `${p.name}: ${expiresText(p.expires)}` : p.name;
       }
+      const mark = marks.get(p.id);
+      if (mark) { // a chat of it is working (or waiting): the row says so, so a running chat is easy to find with the project shut
+        const word = mark === 'approval' ? tr('chats.badge.approval', 'Needs your OK') : mark === 'queued' ? tr('chats.badge.queued', 'Waiting for its turn') : tr('chats.badge.running', 'Working');
+        const dot = el('span', { className: `cp-pj-live ${mark}`, title: word });
+        dot.setAttribute('role', 'img');
+        dot.setAttribute('aria-label', word);
+        row.append(dot);
+        row.classList.add('live');
+      }
       row.append(el('span', { className: 'cp-pj-count', textContent: counts.get(p.id) ? String(counts.get(p.id)) : '' }));
       row.onclick = () => (onPage ? onPage(p) : onSelect?.(on ? null : p.id));
       wrap.append(row);
@@ -177,10 +212,20 @@
         const list = el('div', { className: 'cp-pj-chats' });
         list.dataset.project = p.id;
         const mine = chats.filter((c) => c.project === p.id && !c.archived);
-        for (const c of mine.slice(0, SHOWN_CHATS)) {
-          const b = el('button', { type: 'button', className: `cp-pj-chat${c.id === current ? ' current' : ''}`, title: c.title || '' });
+        // the first few, and past them the open chat and any working one (they are not in the dated list, so they stay in sight here)
+        const listed = mine.filter((c, i) => i < SHOWN_CHATS || c.id === current || live(c));
+        for (const c of listed) {
+          const b = el('button', { type: 'button', className: `cp-pj-chat${c.id === current ? ' current' : ''}${live(c) ? ` live ${c.badge}` : ''}`, title: c.title || '' });
           b.dataset.id = c.id;
+          if (c.id === current) b.setAttribute('aria-current', 'true');
           b.append(el('span', { className: 'cp-pj-chat-title', textContent: c.title || tr('chats.untitled', 'Chat') }));
+          if (live(c)) {
+            const word = c.badge === 'approval' ? tr('chats.badge.approval', 'Needs your OK') : c.badge === 'queued' ? tr('chats.badge.queued', 'Waiting for its turn') : tr('chats.badge.running', 'Working');
+            const d = el('span', { className: `cp-pj-live ${c.badge}`, title: word });
+            d.setAttribute('role', 'img');
+            d.setAttribute('aria-label', word);
+            b.append(d);
+          }
           b.onclick = () => onOpen(c.id);
           list.append(b);
         }
@@ -546,5 +591,5 @@
     (menu.querySelector('.cp-pj-pick-find') || menu.querySelector('button'))?.focus();
   }
 
-  window.chatProjects = { render, editor, picker, menu, arrange, expiresText };
+  window.chatProjects = { render, editor, picker, menu, arrange, expiresText, autoOpen, keptSet };
 })();
