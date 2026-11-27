@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.115 (2026-11-27)
+
 - **uBlock Origin blocks ads again.** With uBlock Origin chosen as the ad blocker, its blocking reaches pages in tabs again: Lumen fills in which tab each request comes from, which this Electron build still leaves out.
 - **Lumen starts with less.** The translate bar, the media controls and the profile button load the first time they have something to show, and the AI sign-ins, shared-file list, Slack setup, link menu, macro runner and What’s New load on first use, so a new window parses about 20 KB less and starts 8 fewer modules. The startup check that heavy modules stay unloaded now also catches Lumen’s own files (it had been matching only libraries).
 - **Profiles: separate Lumens for work and home.** ⋯ menu → **Profiles** → **Add profile…** makes a new profile with its own name, color and avatar, and its own cookies and sign-ins, history, bookmarks, passwords, chats, projects, settings, API keys and extensions: nothing from one shows up in another. Each profile opens in its own window, and once you have more than one, a round button at the right of the toolbar shows which profile a window belongs to and switches between them. **Edit this profile…** renames or recolors it; **Delete profile** asks first and moves a closed profile's folder to the Recycle Bin. Everything you had is the **Default** profile, left exactly where it was (other profiles live next to it, in `Lumen Profiles`). Command-line AI tools' sign-ins and updates stay shared. See docs/profiles.md. Tests: `test/e2e/profiles.js`, `test/units/profiles-units.js`.
