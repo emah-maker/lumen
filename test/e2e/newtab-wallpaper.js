@@ -211,6 +211,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       await band(`bg-pale-picture-${t}`);
       await textContrast(t, 'a pale picture');
       await cardContrast(t, 'a pale picture');
+      // With an effect drawn over it (Stars, a still frame) and each card glass: the cards stay white glass, not the dark glass made for a dark picture.
+      for (const glass of ['solid', 'frosted', 'clear']) {
+        await set('newTabWidgetGlass', glass); await applyBg('image', { effect: 'stars', still: true }); await sleep(500);
+        const bgc = await home("getComputedStyle(document.querySelector('.w-card[data-id=\"wwall001\"]')).backgroundColor");
+        const c = parse(bgc);
+        check(`${t}: a pale picture with Stars and ${glass} cards: the card is white glass (${bgc})`, c.a === 0 || (c.r > 200 && c.g > 200 && c.b > 200), bgc);
+        await cardContrast(t, `a pale picture with Stars and ${glass} cards`);
+      }
+      await set('newTabWidgetGlass', 'solid'); await applyBg('image');
     }
     // The orange fixture (a mid-tone picture) stays dark: white text under the dark scrim.
     fs.copyFileSync(fixture, path.join(profile, 'newtab-wallpaper.jpg'));

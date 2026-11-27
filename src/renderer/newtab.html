@@ -223,6 +223,12 @@
     body.gfx-light.on-media:not(.has-effect) .frequent a, body.gfx-light.on-media:not(.has-effect) .privacy { background: rgba(255, 255, 255, 0.13); }
     body.gfx-light.on-media[data-clock-card="glass"] .clock-card { background: rgba(255, 255, 255, 0.18); }
     body.gfx-light.on-media .w-stack-menu, body.gfx-light.on-media .w-stack-panel { background: rgba(24, 24, 28, 0.9); }
+    /* ...and over a light background (tone-light: dark text), the same flat tints in white, a little denser than the blurred white glass. */
+    html body.gfx-light.on-media.tone-light[data-wglass="frosted"] .w-card, html body.gfx-light.on-media.tone-light[data-wglass="frosted"] .w-card.tinted { background: rgba(255, 255, 255, 0.72); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.1); }
+    html body.gfx-light.on-media.tone-light.has-effect[data-wglass="frosted"] .w-card { background: rgba(255, 255, 255, 0.82); }
+    body.gfx-light.on-media.tone-light:not(.has-effect) .frequent a, body.gfx-light.on-media.tone-light:not(.has-effect) .privacy { background: rgba(255, 255, 255, 0.72); }
+    body.gfx-light.on-media.tone-light[data-clock-card="glass"] .clock-card { background: rgba(255, 255, 255, 0.72); }
+    body.gfx-light.on-media.tone-light .w-stack-menu, body.gfx-light.on-media.tone-light .w-stack-panel { background: rgba(255, 255, 255, 0.96); }
     /* Software drawing (settings-backend.js [igpu] softwareGfx; newtab.js sets still, calm and gfx-light with it): everything is drawn on the CPU, so also no blur on
        anything, no blurred shadows (a hairline instead), no entrance animation and no skeleton shimmer. The effect is one still frame (newtab-effects.js). */
     html body.gfx-soft *, html body.gfx-soft *::before, html body.gfx-soft *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
