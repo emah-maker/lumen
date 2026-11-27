@@ -38,18 +38,18 @@ const heading = (key, sub) => { const r = row(providerName(key), sub); r.classLi
 // What Lumen counted for one provider, the same rows for each: last used, today and 7 days, per day, per model.
 function usageCountRows(key, u) {
   const t = u.providers?.[key];
-  if (!t || !t.week.turns) return [row(`${providerName(key)}: what Lumen counted`, 'Nothing in the last 7 days.')];
+  if (!t || !t.week.turns) return [row(tr('settings.row.whatLumenCounted', `{providerName}: what Lumen counted`, { providerName: providerName(key) }), tr('settings.row.nothingInTheLast', 'Nothing in the last 7 days.'))];
   const rows = [];
-  rows.push(row('Last used', `${clock(t.lastAt)}${t.lastModel ? ` · ${t.lastModel}` : ''}`));
-  rows.push(row(`${providerName(key)}: what Lumen counted`, `${countLine('Today', t.today)}. ${countLine('Last 7 days', t.week)}. Lumen’s own use only, not what is left of a plan.`));
+  rows.push(row(tr('settings.row.lastUsed', 'Last used'), `${clock(t.lastAt)}${t.lastModel ? ` · ${t.lastModel}` : ''}`));
+  rows.push(row(tr('settings.row.whatLumenCounted', `{providerName}: what Lumen counted`, { providerName: providerName(key) }), tr('settings.row.lumenSOwnUse', `{countLine}. {countLine2}. Lumen’s own use only, not what is left of a plan.`, { countLine: countLine('Today', t.today), countLine2: countLine('Last 7 days', t.week) })));
   const days = h('div', { class: 'list', id: `usage-days-${key}` }, t.days.filter((d) => d.turns).map((d) => h('div', { class: 'item' },
     h('span', { class: 'grow', text: new Date(d.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) }),
     h('span', { class: 'note', text: `${d.turns} turn${d.turns === 1 ? '' : 's'} · ${tokens(d.tokens)} tokens${d.costUSD > 0 ? ` · ≈${dollars(d.costUSD)}` : ''}` }))));
-  rows.push(stackRow('Per day', null, days));
+  rows.push(stackRow(tr('settings.row.perDay', 'Per day'), null, days));
   const models = h('div', { class: 'list', id: `usage-models-${key}` }, t.models.map((m) => h('div', { class: 'item' },
     h('span', { class: 'grow', text: m.model || 'Unknown model' }),
     h('span', { class: 'note', text: `${m.turns} turn${m.turns === 1 ? '' : 's'} · ${tokens(m.tokens)} tokens${m.costUSD > 0 ? ` · ≈${dollars(m.costUSD)}` : ''}` }))));
-  rows.push(stackRow('Per model', null, models));
+  rows.push(stackRow(tr('settings.row.perModel', 'Per model'), null, models));
   return rows;
 }
 
@@ -61,14 +61,14 @@ function usageBudgetRows(key, u, refresh) {
   const rows = [];
   for (const p of b?.status?.periods || []) {
     const fmt = b.status.unit === 'tokens' ? (n) => `${tokens(Math.round(n))} tokens` : dollars;
-    rows.push(meterRow(`${providerName(key)} ${p.kind === 'daily' ? 'daily' : 'weekly'} budget`, p.percent, `${fmt(p.used)} of ${fmt(p.limit)} · resets ${clock(p.resetsAt)}`));
+    rows.push(meterRow(p.kind === 'daily' ? tr('settings.row.providerDailyBudget', '{name} daily budget', { name: providerName(key) }) : tr('settings.row.providerWeeklyBudget', '{name} weekly budget', { name: providerName(key) }), p.percent, tr('settings.row.usedOfResets', '{used} of {limit} · resets {when}', { used: fmt(p.used), limit: fmt(p.limit), when: clock(p.resetsAt) })));
   }
   const unit = h('select', { id: `${idp}-unit`, 'aria-label': `${providerName(key)} budget unit` }, h('option', { value: 'usd', text: 'Dollars (API prices)' }), h('option', { value: 'tokens', text: 'Tokens' }));
   unit.value = cfg.unit;
   const amount = (id, label, value) => h('input', { type: 'number', id, min: '0', step: 'any', placeholder: 'None', 'aria-label': label, value: value ? String(value) : '' });
   const daily = amount(`${idp}-daily`, `${providerName(key)} daily budget`, cfg.daily);
   const weekly = amount(`${idp}-weekly`, `${providerName(key)} weekly budget`, cfg.weekly);
-  rows.push(stackRow(`${providerName(key)} budget (optional)`, 'An alert, not a limit: Lumen tells you at 80% and 100% of what it counted for this AI, shows a bar toward it, and never blocks anything. A day ends at midnight, a week on Monday. Leave both empty for none.',
+  rows.push(stackRow(tr('settings.row.budgetOptional', `{providerName} budget (optional)`, { providerName: providerName(key) }), tr('settings.row.anAlertNotA', 'An alert, not a limit: Lumen tells you at 80% and 100% of what it counted for this AI, shows a bar toward it, and never blocks anything. A day ends at midnight, a week on Monday. Leave both empty for none.'),
     h('div', { class: 'controls' }, unit, h('label', { class: 'note', text: 'Daily' }), daily, h('label', { class: 'note', text: 'Weekly' }), weekly,
       h('button', { id: `${idp}-save`, text: 'Save budget', onclick: async () => { await S.setUsageBudget({ unit: unit.value, daily: daily.value, weekly: weekly.value, ...(key === 'grokbuild' ? {} : { engine: key }) }); refresh(); } }))));
   return rows;
@@ -77,11 +77,11 @@ function usageBudgetRows(key, u, refresh) {
 // An API provider's per-minute rate limits, read from the headers of replies Lumen already had (no request of its own).
 function usageRateRows(key, u) {
   const v = u.rate?.[key];
-  if (!v) return [row(`${providerName(key)} rate limits`, key === 'gemini' ? 'Gemini’s endpoint sends no rate-limit headers, so there is nothing to show.' : 'None seen yet. They are read from the headers of a reply, so they appear after your next message with this AI.')];
+  if (!v) return [row(tr('settings.row.rateLimits', `{providerName} rate limits`, { providerName: providerName(key) }), key === 'gemini' ? 'Gemini’s endpoint sends no rate-limit headers, so there is nothing to show.' : 'None seen yet. They are read from the headers of a reply, so they appear after your next message with this AI.')];
   const rows = v.buckets.map((b) => (b.expired
-    ? row(b.label, 'Reset since the last reply; the next one shows the new reading.')
-    : meterRow(b.label, b.percent, `${Math.round(b.remaining).toLocaleString()} of ${Math.round(b.limit).toLocaleString()} left${b.resetsAt ? ` · resets ${new Date(b.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}` : ''}`)));
-  rows.push(row('', `As of ${clock(v.at)}, from the last reply. These are the API’s per-minute limits, not a plan balance.`));
+    ? row(b.label, tr('settings.row.resetSinceTheLast2', 'Reset since the last reply; the next one shows the new reading.'))
+    : meterRow(b.label, b.percent, tr('settings.row.remainingOfLeft', '{remaining} of {limit} left{reset}', { remaining: Math.round(b.remaining).toLocaleString(), limit: Math.round(b.limit).toLocaleString(), reset: b.resetsAt ? tr('settings.row.resetSuffix', ' · resets {time}', { time: new Date(b.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) }) : '' }))));
+  rows.push(row('', tr('settings.row.asOfFromThe', `As of {clock}, from the last reply. These are the API’s per-minute limits, not a plan balance.`, { clock: clock(v.at) })));
   return rows;
 }
 
@@ -96,7 +96,7 @@ function providerUsageRows(u, refresh) {
   // Antigravity: no plan numbers; the quota message with its reset time when a run hit it.
   const lim = u.limits?.antigravity;
   out.push(heading('antigravity', u.notes?.antigravity));
-  if (lim) out.push(row('Antigravity limit reached', `${lim.resetsAt ? `Resets ${clock(lim.resetsAt)}` : 'No reset time was given'}${lim.model ? ` (${lim.model})` : ''}. ${lim.text || ''} This clears after your next Antigravity reply that works.`.trim()));
+  if (lim) out.push(row(tr('settings.row.antigravityLimitReached', 'Antigravity limit reached'), `${lim.resetsAt ? `Resets ${clock(lim.resetsAt)}` : 'No reset time was given'}${lim.model ? ` (${lim.model})` : ''}. ${lim.text || ''} This clears after your next Antigravity reply that works.`.trim()));
   out.push(...usageCountRows('antigravity', u), ...usageBudgetRows('antigravity', u, refresh));
   for (const key of ['anthropic', 'openai', 'xai', 'gemini', 'openrouter']) {
     out.push(heading(key, u.notes?.[key]), ...usageRateRows(key, u), ...usageCountRows(key, u), ...usageBudgetRows(key, u, refresh));
@@ -240,34 +240,34 @@ async function buildProviders(page) {
     if (PROVIDER_CLI[key]) {
       const state = h('span', { class: 'note', id: `provider-state-${key}`, text: tr('settings.ai.checking', 'Checking…') });
       // The state sits under the label and the path under it, on its own wrapped line (side by side they cut the path at "@anthropic-…"); the path is filled in with the state.
-      const status = row('Status', 'Where Lumen looks is listed under Connect an AI agent.');
+      const status = row(tr('settings.row.status', 'Status'), tr('settings.row.whereLumenLooksIs', 'Where Lumen looks is listed under Connect an AI agent.'));
       status.querySelector('.desc').classList.remove('clamp');
       status.querySelector('.desc').before(state);
       checking.set(key, [state, status]);
       out.push(status);
       const [pref, fallback] = MENU_PREF[key];
-      out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
-      if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], 'Full access to this computer', `${providerName(key)} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced).`, () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
+      out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), tr('settings.row.showsAndItsModels', `Shows {providerName} and its models in every model picker. Off hides it without uninstalling or signing out.`, { providerName: providerName(key) }), undefined, { id: `provider-menu-${key}`, fallback }));
+      if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], tr('settings.row.fullAccessToThis', 'Full access to this computer'), tr('settings.row.worksAsInYour', `{providerName} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced).`, { providerName: providerName(key) }), () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
     } else {
       const k = keys[key] || {};
       const state = k.stored ? 'Key saved' : k.env ? 'Key from the environment' : 'No key';
-      out.push(row('Connection', 'Add or change the key under API keys and sign-ins.', h('span', { class: `note key-state${k.stored || k.env ? ' set' : ''}`, id: `provider-state-${key}`, text: state })));
+      out.push(row(tr('settings.row.connection', 'Connection'), tr('settings.row.addOrChangeThe', 'Add or change the key under API keys and sign-ins.'), h('span', { class: `note key-state${k.stored || k.env ? ' set' : ''}`, id: `provider-state-${key}`, text: state })));
     }
     const picker = h('select', { id: `provider-effort-${key}`, 'aria-label': `${providerName(key)} reasoning effort` },
       h('option', { value: '', text: 'Default' }), ...EFFORT_LEVELS[key].map((l) => h('option', { value: l, text: EFFORT_NAMES[l] })));
     picker.value = (st.prefs.aiEffort || {})[key] || '';
     picker.addEventListener('change', async () => { const next = { ...(st.prefs.aiEffort || {}) }; if (picker.value) next[key] = picker.value; else delete next[key]; await save('aiEffort', next); });
     window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'aiEffort') picker.value = (st.prefs.aiEffort || {})[key] || ''; });
-    out.push(row('Reasoning effort', EFFORT_NOTES[key], picker));
+    out.push(row(tr('settings.row.reasoningEffort', 'Reasoning effort'), EFFORT_NOTES[key], picker));
     if (autoKeys.has(key)) {
       const box = h('input', { type: 'checkbox', class: 'switch', id: `provider-auto-${key}`, role: 'switch', 'aria-label': `Auto may use ${providerName(key)}` });
       const sync = () => { box.checked = !(st.prefs.autoExclude || []).includes(key); };
       sync();
       window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'autoExclude') sync(); });
       box.addEventListener('change', async () => { const next = new Set(st.prefs.autoExclude || []); if (box.checked) next.delete(key); else next.add(key); await save('autoExclude', [...next]); });
-      out.push(row('Auto may use it', 'When you choose Auto in the model menu, Lumen may pick this AI for a message.', box));
+      out.push(row(tr('settings.row.autoMayUseIt', 'Auto may use it'), tr('settings.row.whenYouChooseAuto', 'When you choose Auto in the model menu, Lumen may pick this AI for a message.'), box));
     }
-    out.push(row('Usage', 'Plan or rate limits where the provider publishes them, and what Lumen counted. Usage has the days, the models and a budget.', usageChip(key), h('button', { text: 'Open Usage', onclick: () => { location.hash = '#usage'; } })));
+    out.push(row(tr('settings.row.usage', 'Usage'), tr('settings.row.planOrRateLimits', 'Plan or rate limits where the provider publishes them, and what Lumen counted. Usage has the days, the models and a budget.'), usageChip(key), h('button', { text: 'Open Usage', onclick: () => { location.hash = '#usage'; } })));
     return out;
   };
   for (const key of PROVIDER_ORDER) {

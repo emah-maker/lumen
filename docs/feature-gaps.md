@@ -90,8 +90,9 @@ Polish in the same round:
 The biggest gaps worth the work, roughly in order:
 
 1. **Bookmarks bar** (M): the one thing Chrome and Safari users notice first.
-2. **Localize the remaining pages** (M): error, history, bookmarks, downloads and reader pages, and the English row labels in Settings.
-3. **Media controls** for tabs playing audio (M).
-4. **Profiles** (L): when there's demand.
+2. **Media controls** for tabs playing audio (M).
+3. **Profiles** (L): when there's demand.
+
+The error, history, bookmarks, downloads, reading list and reader pages and every Settings row take their wording from `src/locales/en.json`; `test/units/localized-pages-units.js` fails if English is typed back into them.
 
 Known housekeeping: `npm run lint` reports no errors; the remaining warnings are unused-variable and useless-assignment hints.

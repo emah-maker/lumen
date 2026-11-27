@@ -88,7 +88,7 @@ function createPageTools(deps) {
     let data;
     try { data = await entry.data; } catch (err) { data = { error: String(err?.message || err) }; }
     if (wc.isDestroyed() || wc.getURL() !== url) return;
-    wc.executeJavaScript(`window.lumenRender(${JSON.stringify({ url: entry.url, ...data })})`).catch(() => {});
+    wc.executeJavaScript(`window.lumenRender(${JSON.stringify({ url: entry.url, readerTitle: (deps.t || ((key) => key))('reader.title'), ...data })})`).catch(() => {});
   }
 
   function checkReaderable(tab) {

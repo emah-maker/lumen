@@ -25,7 +25,7 @@
   // `desc`: Chromium's error name, with or without "net::"; `t`: (key, vars) => text
   function reasonFor(desc, host, t = root.t) {
     const key = KEYS[String(desc || '').replace(/^net::/, '').toUpperCase()] || 'general';
-    return t(`certError.reason.${key}`, { host: host || 'this site' });
+    return t(`certError.reason.${key}`, { host: host || t('certError.thisSite') });
   }
 
   const api = { reasonFor, KEYS };

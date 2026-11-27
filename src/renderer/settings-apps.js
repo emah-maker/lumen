@@ -90,7 +90,7 @@ async function buildApps(card) {
     const statusNote = h('span', { class: 'note', id: id('status'), role: 'status', 'aria-live': 'polite' });
     const msg = h('span', { class: 'note', id: id('message'), role: 'status', 'aria-live': 'polite' });
     const connectBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-connect` });
-    const disconnectBtn = armedButton('Disconnect', 'Disconnect? Click again', () => doDisconnect(), 'danger', `conn-${svc.id}-disconnect`);
+    const disconnectBtn = armedButton(tr('settings.row.disconnect', 'Disconnect'), tr('settings.row.disconnectClickAgain', 'Disconnect? Click again'), () => doDisconnect(), 'danger', `conn-${svc.id}-disconnect`);
     // A service that signs in through a site (Canvas, Gmail's session) whose sign-in ended: Sign in opens its page in a Lumen tab.
     const signInBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-signin`, text: tr('settings.apps.signIn', 'Sign in'), hidden: true, 'aria-label': `Sign in to ${svc.name}`, onclick: async () => { await C.signIn(svc.id); say(`Sign in to ${svc.name} in the tab that opened, then ask the AI again.`, 'ok'); } });
     const switchBtn = svc.id === 'github' ? h('button', { type: 'button', id: 'github-switch', text: tr('settings.widgets.github.switch', 'Switch account'), hidden: true, onclick: async () => { try { const r = await W.githubStart({ privateRepos: githubPriv() }); if (r?.state) ws = r.state; await refresh(); } catch (err) { say(clean(err), 'err'); } } }) : null;
@@ -260,7 +260,7 @@ async function buildApps(card) {
     if (svc.id === 'github') {
       const tok = h('input', { type: 'password', id: 'conn-github-secret', autocomplete: 'off', spellcheck: false, placeholder: 'Paste a GitHub token', 'aria-label': 'GitHub access token' });
       inputs.push(tok); // (read by Connect: the last field)
-      advanced.push(row(tr('settings.apps.githubToken', 'Use an access token instead'), 'Only if you can’t sign in above: paste a read-only token and press Connect. It is for the AI’s GitHub connector; the new tab card keeps its own sign-in (Card options → Advanced).', tok));
+      advanced.push(row(tr('settings.apps.githubToken', 'Use an access token instead'), tr('settings.row.onlyIfYouCan', 'Only if you can’t sign in above: paste a read-only token and press Connect. It is for the AI’s GitHub connector; the new tab card keeps its own sign-in (Card options → Advanced).'), tok));
     }
     let ownRows = [];
     if (svc.id === 'gmail' || c0()?.kind === 'google') ownRows = googleClientRows();
