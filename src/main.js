@@ -10068,7 +10068,7 @@ const passwordDeps = () => ({
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event),
 });
 // The settings page's calls (features/passwords.js checks each one again and knows the same list).
-const PASSWORD_CHANNELS = ['state', 'set-enabled', 'list', 'reveal', 'copy', 'update', 'delete', 'delete-all', 'import', 'never-remove'].map((c) => `settings:passwords-${c}`);
+const PASSWORD_CHANNELS = ['state', 'set-enabled', 'list', 'reveal', 'copy', 'update', 'delete', 'delete-all', 'import', 'never-remove', 'generate', 'copy-generated'].map((c) => `settings:passwords-${c}`);
 for (const channel of PASSWORD_CHANNELS) ipcMain.handle(channel, (event, ...args) => passwords().invoke(channel, event, ...args));
 ipcMain.on('passwords:act', (_e, action) => {
   if (!passwordsRt || !['menu', 'save', 'never', 'not-now'].includes(action)) return;

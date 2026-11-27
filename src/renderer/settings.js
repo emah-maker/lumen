@@ -2963,8 +2963,35 @@ async function buildPasswords(card, asked) {
         if (await importPasswords(result)) renderLogins();
       } }),
       deleteAll)));
+  page.append(buildPasswordGenerator(P));
   page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
   renderLogins();
+}
+
+// [passwords] Saved passwords → Generate a password: one made in the main process (features/password-generator.js,
+// crypto.randomBytes) for a site Lumen can't fill, with its length (8 to 64) and symbols on or off. Copy clears the
+// clipboard after 30 seconds. Nothing here is saved.
+function buildPasswordGenerator(P) {
+  const out = h('input', { type: 'text', class: 'grow mono', id: 'passwords-generated', readOnly: true, spellcheck: false, autocomplete: 'off', 'aria-label': tr('settings.passwords.generated', 'Generated password') });
+  const length = h('input', { type: 'range', id: 'passwords-gen-length', min: '8', max: '64', step: '1', value: '20', 'aria-label': tr('settings.passwords.genLength', 'Length') });
+  const lengthText = h('span', { class: 'note', id: 'passwords-gen-length-text' });
+  const symbols = h('input', { type: 'checkbox', id: 'passwords-gen-symbols', checked: true });
+  const note = status('passwords-gen-status');
+  const make = async () => {
+    lengthText.textContent = tr('settings.passwords.genLengthText', '{n} characters', { n: length.value });
+    out.value = (await P.generate({ length: Number(length.value), symbols: symbols.checked }).catch(() => '')) || '';
+  };
+  length.addEventListener('input', make);
+  symbols.addEventListener('change', make);
+  make();
+  return stackRow(tr('settings.passwords.genTitle', 'Generate a password'), tr('settings.passwords.genDesc', 'A strong random password for a site, without look-alike characters like 0 and O. Sign-up forms offer one by themselves (“Use a strong password”) and Lumen saves it for you.'),
+    h('div', { class: 'controls' }, out,
+      h('button', { id: 'passwords-gen-new', text: tr('settings.passwords.genNew', 'New password'), onclick: make }),
+      h('button', { id: 'passwords-gen-copy', class: 'primary', text: tr('settings.passwords.genCopy', 'Copy'), onclick: async () => {
+        if (out.value && await P.copyGenerated(out.value).catch(() => false)) flash(note, tr('settings.passwords.genCopied', 'Copied. The clipboard is cleared in 30 seconds.'));
+      } })),
+    h('div', { class: 'controls' }, length, lengthText,
+      h('label', { class: 'note', for: 'passwords-gen-symbols' }, symbols, ' ', tr('settings.passwords.genSymbols', 'Symbols (like ! and #)')), note));
 }
 
 // [memory] Settings → AI → Instructions and memory. The entries live in memory.json in the profile (encrypted); this page lists them, edits
