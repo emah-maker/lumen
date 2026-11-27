@@ -168,10 +168,10 @@
     let shown = tools.pick(live.order(lastChats), { query, view, hits: search.hits, folded: tools.folded(lastProjects) }); // (a project's chats are under it in the Projects block)
     const rows = [];
     for (const g of tools.group(shown, Date.now(), { months: true })) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
-    items.replaceChildren(...rows);
+    if (!shown.length && (query || view === 'archived')) rows.push(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : tr('chats.noArchived', 'No archived chats') }));
+    tools.keep(items, rows); // (the rows that did not change stay as they are: no flash on a burst of redraws)
     drag.selection.paint();
     play();
-    if (!shown.length && (query || view === 'archived')) items.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? t('chats.noMatch') : tr('chats.noArchived', 'No archived chats') }));
   }
   // The tab's title is the chat's.
   function showTitle() {
@@ -179,7 +179,16 @@
     document.title = pageTools.isTemporary() ? tr('chatpage.temp', 'Temporary chat') : mine?.title || t('chatpage.title.new');
     pageTools.setTitle(mine?.title || '');
   }
-  async function renderList() {
+  // One redraw at a time, and the newest answer wins: chats:changed, New chat (a redraw 50 ms on) and the rest can all ask at once, and
+  // each used to draw on its own. The promise settles once the list shows the newest state.
+  let listing = null;
+  let listAgain = false;
+  function renderList() {
+    if (listing) { listAgain = true; return listing; }
+    listing = (async () => { try { let n = 0; do { listAgain = false; await drawList(); } while (listAgain && ++n < 3); } finally { listing = null; } })();
+    return listing;
+  }
+  async function drawList() {
     if (drag.active()) { dirtyDuringDrag = true; return; } // (the rows under the pointer stay put until the drop)
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focused = focusedRow?.dataset.id;

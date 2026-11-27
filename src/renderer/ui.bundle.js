@@ -8468,6 +8468,35 @@ return chats.filter((c) => String(c.title || '').toLowerCase().includes(q) || hi
 return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived && !(c.project && folded?.has(c.project))));
 },
 
+
+
+
+
+keep(host, nodes, { reuse = true } = {}) {
+const key = (n) => (n.dataset?.id ? `c:${n.dataset.id}` : `h:${n.outerHTML}`);
+const old = new Map();
+if (reuse) for (const n of host.children) if (!old.has(key(n))) old.set(key(n), n);
+const next = !reuse ? nodes : nodes.map((n) => {
+const k = key(n);
+const was = old.get(k);
+if (!was || was.__sig !== n.__sig || was.outerHTML !== n.outerHTML || was.querySelector('.chat-rename-input')) return n;
+old.delete(k);
+return was;
+});
+
+
+let changed = false;
+const keepSet = new Set(next);
+for (const n of [...host.childNodes]) if (!keepSet.has(n)) { n.remove(); changed = true; }
+let cur = host.firstChild;
+for (const n of next) {
+if (n === cur) { cur = cur.nextSibling; continue; }
+host.insertBefore(n, cur);
+changed = true;
+}
+return changed;
+},
+
 folded(projects) { return new Set((projects || []).filter((p) => !p.archived).map((p) => p.id)); },
 
 views(view, archivedCount, onPick) {
@@ -8630,6 +8659,9 @@ return function item(chat, isCurrent) {
 const li = document.createElement('li');
 li.className = `chat-item${isCurrent ? ' current' : ''}`;
 li.dataset.id = chat.id;
+
+
+try { li.__sig = `${isCurrent ? 1 : 0}${JSON.stringify({ ...chat, updated: 0, created: 0 })}`; } catch {  }
 const openBtn = document.createElement('button');
 openBtn.type = 'button';
 openBtn.className = 'chat-open';
@@ -12892,7 +12924,17 @@ let searchBox = null;
 let redraw = () => {};
 const search = tools.searcher(api, () => redraw());
 const live = tools.liveOrder(panel, () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
-async function render() {
+const rowList = Object.assign(document.createElement('ul'), { className: 'chat-items' });
+
+
+let drawing = null;
+let drawAgain = false;
+function render() {
+if (drawing) { drawAgain = true; return drawing; }
+drawing = (async () => { try { let n = 0; do { drawAgain = false; await draw(); } while (drawAgain && ++n < 3); } finally { drawing = null; } })();
+return drawing;
+}
+async function draw() {
 const focusedRow = document.activeElement?.closest?.('.chat-item');
 const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
 const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
@@ -12917,22 +12959,21 @@ if (searchBox) searchBox.value = search.query;
 const archivedCount = chats.filter((c) => c.archived).length;
 if (!archivedCount && view === 'archived') view = 'chats';
 const views = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; render(); }) : null;
-const list = document.createElement('ul');
-list.className = 'chat-items';
+const list = rowList;
 function drawList() {
 const query = search.query;
 const shown = tools.pick(chats, { query, view, hits: search.hits, folded: window.sidebarProjects ? tools.folded(knownProjects) : null });
 const rows = [];
 for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
-list.replaceChildren(...rows);
-if (!shown.length && (query || view === 'archived')) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
+if (!shown.length && (query || view === 'archived')) rows.push(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
+tools.keep(list, rows);
 }
 redraw = drawList;
 drawList();
 const block = window.sidebarProjects && knownProjects.length ? window.sidebarProjects.block({ projects: knownProjects, chats, current, open: openChat, rerender: render, close: () => closePanel(false) }) : null;
 const first = !knownProjects.length ? Object.assign(document.createElement('button'), { type: 'button', className: 'chat-project-hint', textContent: window.chatTr('chatpage.project.new', 'New project') }) : null;
 if (first) first.onclick = async () => { await loadProjects(); window.sidebarProjects?.newProject(); };
-panel.replaceChildren(head, ...(block ? [block] : first ? [first] : []), ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+tools.keep(panel, [head, ...(block ? [block] : first ? [first] : []), ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list], { reuse: false });
 play();
 if (typing && searchBox) searchBox.focus();
 else if (focusedId) {
