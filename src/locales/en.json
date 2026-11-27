@@ -759,6 +759,7 @@
   "find.close": "Close find bar",
   "find.close.title": "Close (Esc)",
   "find.count": "{current} of {total}",
+  "find.matchCase": "Match case",
   "find.next": "Next match",
   "find.next.title": "Next (Enter)",
   "find.none": "No matches",
