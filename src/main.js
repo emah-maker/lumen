@@ -11313,7 +11313,7 @@ const profilesUi = require('./features/profiles-ui').createProfilesUi({
   confirm: async ({ message, detail, okLabel }) => (await dialogs.showMessageBox(win, { type: 'warning', message, detail, buttons: [t('profiles.cancel'), okLabel], defaultId: 0, cancelId: 0 })).response === 1,
   notice: ({ message, detail }) => { dialogs.showMessageBox(win, { type: 'info', message, detail, buttons: [t('dialog.ok')] }).catch(() => {}); },
   openNewWindow: () => openNewWindow(), sendAllUis, pageReady: (wc) => accentCss?.apply(wc),
-  spawn: (...args) => require('child_process').spawn(...args), trash: (dir) => shell.trashItem(dir),
+  trash: (dir) => shell.trashItem(dir),
   editorPaths: { html: path.join(__dirname, 'renderer', 'profile-editor.html'), preload: path.join(__dirname, 'preload', 'profile-editor-preload.js') },
 });
 if (TEST) global.__profiles = profilesUi;

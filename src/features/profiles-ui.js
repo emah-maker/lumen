@@ -4,7 +4,7 @@
 //           t(key, vars), confirm({ message, detail, okLabel }) -> Promise<bool>, notice({ message, detail }),
 //           openNewWindow(), sendAllUis(channel, payload), isUi(event) (the browser UI's own top-level page),
 //           pageReady(webContents) (the accent colour on Lumen's own pages), parentWindow(), test,
-//           spawn (child_process.spawn), trash(dir) -> Promise (shell.trashItem), editorPaths: { html, preload } }
+//           spawn (tests; else child_process.spawn), trash(dir) -> Promise (shell.trashItem), editorPaths: { html, preload } }
 const fs = require('fs');
 const path = require('path');
 const profiles = require('./profiles');
@@ -77,7 +77,8 @@ function createProfilesUi(deps) {
     launches.push({ id, command: spec.command, args: spec.args });
     if (test.dryRun) return { spec };
     try {
-      const child = deps.spawn(spec.command, spec.args, { detached: true, stdio: 'ignore', env: spec.env, cwd: require('os').homedir(), windowsHide: false });
+      // (A GUI exe started visibly on purpose, like automation/launcher.js: the hidden-spawn helper's windowsHide would hide its window.)
+      const child = (deps.spawn || require('child_process').spawn)(spec.command, spec.args, { detached: true, stdio: 'ignore', env: spec.env, cwd: require('os').homedir(), windowsHide: false });
       child.on?.('error', () => {});
       child.unref?.();
     } catch (err) { return { error: err?.message || String(err) }; }
