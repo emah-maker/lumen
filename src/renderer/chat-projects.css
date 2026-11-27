@@ -66,6 +66,14 @@
 .cp-pj-chat.current { background: var(--accent-soft); }
 .cp-pj-chat:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cp-pj-chat-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* A chat working (or waiting) in a project: a small spinner on the project's row and on the chat's row (its chats are not in the dated list). */
+@keyframes cp-pj-spin { to { transform: rotate(360deg); } }
+.cp-pj-live { flex: none; width: 8px; height: 8px; margin-left: var(--sp-2); border-radius: 50%; border: 1.5px solid var(--accent); border-top-color: transparent; animation: cp-pj-spin 0.9s linear infinite; }
+.cp-pj-live.queued { border-color: var(--muted); border-top-color: transparent; }
+.cp-pj-live.approval { border: none; background: var(--warning); animation: none; }
+@media (prefers-reduced-motion: reduce) { .cp-pj-live { animation: none; border-top-color: var(--accent); } }
+:root.pref-reduce-motion .cp-pj-live { animation: none; border-top-color: var(--accent); }
+@media (forced-colors: active) { .cp-pj-live { border-color: Highlight; forced-color-adjust: none; } .cp-pj-live.approval { background: Highlight; } }
 .cp-pj-chats-empty { margin: 0; padding: var(--sp-2) var(--cp-2); font-size: 12px; color: var(--muted); }
 
 /* [project folders] the project editor's folder section (renderer/chat-projects.js) */

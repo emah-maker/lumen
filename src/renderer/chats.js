@@ -83,7 +83,7 @@
     list.className = 'chat-items';
     function drawList() {
       const query = search.query;
-      const shown = tools.pick(chats, { query, view, hits: search.hits });
+      const shown = tools.pick(chats, { query, view, hits: search.hits, folded: window.sidebarProjects ? tools.folded(knownProjects) : null }); // (a project's chats are under it in the Projects block)
       const rows = [];
       for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
       list.replaceChildren(...rows);

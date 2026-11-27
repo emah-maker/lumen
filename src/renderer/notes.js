@@ -70,7 +70,10 @@
     if (!panel.hidden && !open) renderListBody();
   }
   function noteRow(n) {
-    const meta = `${when(n.updated)}${n.preview && n.preview !== n.title ? ` · ${n.preview}` : ''}`;
+    // The words after the title (the preview starts with the note's first line, which the row already shows as its title)
+    const rest = String(n.preview || '').replace(/^#{1,6}\s+/, '');
+    const after = n.title && rest.startsWith(n.title) ? rest.slice(n.title.length).trim() : rest;
+    const meta = `${when(n.updated)}${after && after !== n.title ? ` · ${after}` : ''}`;
     return h('li', { className: 'nt-row' },
       h('button', { type: 'button', className: 'nt-open', onclick: () => openNote(n.id) },
         h('span', { className: 'nt-title', textContent: n.title || T('notes.untitled') }),
@@ -97,7 +100,7 @@
     const bar = h('div', { className: 'nt-bar' }, searchBox(), h('button', { type: 'button', className: 'btn nt-new', textContent: T('notes.new'), onclick: newNote }));
     const undoRow = undo ? h('div', { className: 'nt-undo', role: 'status' }, h('span', { textContent: T('notes.deleted') }),
       h('button', { type: 'button', className: 'btn', textContent: T('notes.undo'), onclick: async () => { const u = undo; undo = null; await api.act('undo', { token: u.token }); refreshList(); renderList(); } })) : null;
-    panel.replaceChildren(head(T('notes.title')), bar, undoRow, h('div', { className: 'nt-list-wrap' }));
+    panel.replaceChildren(...[head(T('notes.title')), bar, undoRow, h('div', { className: 'nt-list-wrap' })].filter(Boolean)); // (no Undo row: nothing, not the text "null")
     renderListBody();
   }
 

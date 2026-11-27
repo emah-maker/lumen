@@ -87,7 +87,8 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     }, events);
     const where = (sel) => inPage(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return null; el.scrollIntoView({ block: 'nearest' }); const r = el.getBoundingClientRect(); return { x: Math.round(r.left + Math.min(r.width / 2, 60)), y: Math.round(r.top + r.height / 2) }; })()`);
     const L = ['leftButtonDown'];
-    const rowSel = (id) => `#cp-items .chat-item[data-id="${id}"] .chat-open`;
+    // a chat's row: in the dated list, or (a chat in a project) under its open project: project chats are not in the dated list
+    const rowSel = (id) => `#cp-items .chat-item[data-id="${id}"] .chat-open, .cp-pj-chat[data-id="${id}"]`;
     const pickUp = async (sel) => { // press on a row and move far enough to start the drag
       const p = await where(sel);
       await mouse([{ type: 'mouseMove', x: p.x, y: p.y }, { type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 }, { type: 'mouseMove', x: p.x + 4, y: p.y + 3, modifiers: L }, { type: 'mouseMove', x: p.x + 12, y: p.y + 8, modifiers: L }]);
@@ -118,12 +119,15 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     check('...the toast says where, with Undo', /Moved to Zoo/.test(await waitFor(toastText) || '') && (await inPage("[...document.querySelectorAll('.chat-undo-toast button')].some((b) => b.textContent === 'Undo')")) === true, await toastText());
     check('...the rail counts it', await waitFor(async () => (await inPage(`document.querySelector('.cp-pj-item[data-project="${zoo}"] .cp-pj-count')?.textContent`)) === '1'), await inPage("document.getElementById('cp-projects').textContent"));
     check('...the live region says so', /Moved to Zoo/.test(await inPage("[...document.querySelectorAll('[role=status].sr-only')].map((e) => e.textContent).join('|')") || ''), await inPage("[...document.querySelectorAll('[role=status]')].map((e) => e.textContent).join('|')"));
-    check('...moving is not activity: the order and every updated time are as they were', (await stamps()) === stampsBefore && (await inPage("[...document.querySelectorAll('#cp-items .chat-item')].map((r) => r.dataset.id).join()")) === before, await stamps());
+    check('...moving is not activity: the order and every updated time are as they were', (await stamps()) === stampsBefore && (await inPage("[...document.querySelectorAll('#cp-items .chat-item')].map((r) => r.dataset.id).join()")) === before.split(',').filter((x) => x !== ids.c3).join(), await stamps());
+    check('...the moved chat leaves the dated list (it is under its project now)', (await inPage(`Boolean(document.querySelector('#cp-items .chat-item[data-id="${ids.c3}"]'))`)) === false, '');
     await settled();
     await inPage('location.reload()');
-    await waitFor(async () => (await inPage("document.body.classList.contains('cp-booting')")) === false && (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 5, 20000);
+    await waitFor(async () => (await inPage("document.body.classList.contains('cp-booting')")) === false && (await inPage("document.querySelectorAll('#cp-items .chat-item').length")) === 4, 20000);
     check('it persists across a reload of the page', (await projectOf(ids.c3)) === zoo && (await inPage(`document.querySelector('.cp-pj-item[data-project="${zoo}"] .cp-pj-count')?.textContent`)) === '1', await inPage("document.getElementById('cp-projects').textContent"));
     await inPage("document.documentElement.classList.remove('platform-darwin')");
+    await inPage(`document.querySelector('.cp-pj-item[data-project="${zoo}"] .cp-pj-chev').click()`); // (open Zoo: its chats are dragged from under it)
+    check('opening Zoo lists the moved chat under it', await waitFor(() => inPage(`Boolean(document.querySelector('.cp-pj-chats[data-project="${zoo}"] .cp-pj-chat[data-id="${ids.c3}"]'))`)), await inPage("document.getElementById('cp-projects').innerText"));
 
     // 2. A collapsed project opens after the pointer rests on it.
     check('a project starts collapsed', (await inPage(`document.querySelector('.cp-pj-item[data-project="${art}"]').classList.contains('open')`)) === false, '');
@@ -199,21 +203,21 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
     // 8. The other open list (the sidebar's) follows live.
     await ui.evaluate(() => document.getElementById('chat-history').click());
-    const sideRow = (id) => ui.evaluate((i) => document.querySelector(`#chat-list .chat-item[data-id="${i}"] .chat-meta-text`)?.textContent || '', id);
-    await waitFor(async () => (await sideRow(ids.c3)) !== '');
-    check('the sidebar list says which project a chat is in', /Zoo/.test(await sideRow(ids.c3)) && !/Zoo|Art/.test(await sideRow(ids.c1)), `${await sideRow(ids.c3)} | ${await sideRow(ids.c1)}`);
+    const inSide = (id) => ui.evaluate((i) => Boolean(document.querySelector(`#chat-list .chat-items .chat-item[data-id="${i}"]`)), id);
+    await waitFor(() => inSide(ids.c1));
+    check('the sidebar list leaves a project chat out of the dated list', (await inSide(ids.c1)) && !(await inSide(ids.c3)), `${await inSide(ids.c1)} ${await inSide(ids.c3)}`);
     await dragTo(ids.c1, pjRow(art));
-    check('a drop in the page shows in the sidebar list at once', await waitFor(async () => /Art/.test(await sideRow(ids.c1))), await sideRow(ids.c1));
+    check('a drop in the page shows in the sidebar list at once (the chat leaves its dated list)', await waitFor(async () => !(await inSide(ids.c1))), '');
     await settled();
     await inPage("[...document.querySelectorAll('.chat-undo-toast button')].find((b) => b.textContent === 'Undo')?.click()");
-    check('...and Undo takes it off again', await waitFor(async () => !/Art/.test(await sideRow(ids.c1))), await sideRow(ids.c1));
+    check('...and Undo puts it back', await waitFor(() => inSide(ids.c1)), '');
     await ui.evaluate(() => document.getElementById('chat-history').click()); // (closed again)
 
     // 9. A running chat can be moved, and keeps running.
-    await inPage(`document.querySelector('${rowSel(ids.c4)}').click()`);
-    await waitFor(async () => /c4 answer/.test(await inPage("document.getElementById('messages').textContent")));
+    await inPage(`document.querySelector('${rowSel(ids.c5)}').click()`);
+    await waitFor(async () => /c5 answer/.test(await inPage("document.getElementById('messages').textContent")));
     await sleep(800); // (the page settles on the chat it opened before anything is typed)
-    check('the page shows c4', /c4 answer/.test(await inPage("document.getElementById('messages').textContent")), await inPage("document.getElementById('messages').textContent"));
+    check('the page shows c5', /c5 answer/.test(await inPage("document.getElementById('messages').textContent")), await inPage("document.getElementById('messages').textContent"));
     await inPage(`(() => { const p = document.getElementById('prompt'); p.value = 'slow question'; p.dispatchEvent(new Event('input')); document.getElementById('composer').requestSubmit(); })()`);
     check('a chat is working (held reply)', await waitFor(() => app.evaluate(() => global.__tabChats.runs().some((r) => r.live))), '');
     const runningId = await app.evaluate(() => global.__tabChats.runs().find((r) => r.live)?.chatId); // (the chat that is working, whichever tab main calls open)
@@ -221,7 +225,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     await pickUp(rowSel(runningId));
     check('a running chat row can be picked up', await waitFor(() => inPage("Boolean(document.querySelector('.cp-drag-ghost'))")), await inPage(`JSON.stringify({ row: document.querySelector('#cp-items .chat-item[data-id="${runningId}"]')?.className, items: document.querySelectorAll('#cp-items .chat-item').length })`));
     await drop(pjRow(zoo));
-    check('a running chat moves into the project', await waitFor(async () => (await projectOf(runningId)) === zoo), `${runningId === ids.c4 ? 'c4' : 'other'} in ${await projectOf(runningId)}, ghost ${await inPage("Boolean(document.querySelector('.cp-drag-ghost'))")}, toast ${await toastText()}`);
+    check('a running chat moves into the project', await waitFor(async () => (await projectOf(runningId)) === zoo), `${runningId === ids.c5 ? 'c5' : 'other'} in ${await projectOf(runningId)}, ghost ${await inPage("Boolean(document.querySelector('.cp-drag-ghost'))")}, toast ${await toastText()}`);
     check('...and keeps running (still live, Stop still showing)', (await app.evaluate(() => global.__tabChats.runs().some((r) => r.live))) && (await inPage("document.getElementById('send').classList.contains('stop')")) === true, '');
     await app.evaluate(() => global.__fakeRelease());
     check('...its reply arrives after the move', await waitFor(async () => /Slow reply done/.test(await inPage("document.getElementById('messages').textContent"))), await inPage("document.getElementById('messages').textContent"));

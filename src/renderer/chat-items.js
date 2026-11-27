@@ -125,13 +125,16 @@
     },
     // The rows to draw: the main list (archived chats left out) or the Archived view; a search looks through both.
     // hits: Map of chat id -> snippet from the main-side search of message text (null: titles only until it answers).
-    pick(chats, { query = '', view = 'chats', hits = null } = {}) {
+    // folded: Set of project ids whose chats are listed under the project instead (left out of the dated list; a search still finds them).
+    pick(chats, { query = '', view = 'chats', hits = null, folded = null } = {}) {
       if (query) {
         const q = query.toLowerCase();
         return chats.filter((c) => String(c.title || '').toLowerCase().includes(q) || hits?.has(c.id)).map((c) => (hits?.get(c.id) ? { ...c, snippet: hits.get(c.id) } : c));
       }
-      return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived));
+      return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived && !(c.project && folded?.has(c.project))));
     },
+    // The projects whose chats go under them in the Projects block: every one not archived (an archived project's chats stay in the list).
+    folded(projects) { return new Set((projects || []).filter((p) => !p.archived).map((p) => p.id)); },
     // Chats / Archived switch (shown once something is archived or the Archived view is open).
     views(view, archivedCount, onPick) {
       const bar = Object.assign(document.createElement('div'), { className: 'chat-views' });
