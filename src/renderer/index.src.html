@@ -22,6 +22,7 @@
   <link rel="stylesheet" href="tab-ref.css" /><!-- a tab the AI names: a chip -->
   <link rel="stylesheet" href="macros.css" /><!-- macros: progress toast and variable form -->
   <link rel="stylesheet" href="external-apps.css" /><!-- other apps using Lumen: the toolbar pills -->
+  <link rel="stylesheet" href="media-hub.css" /><!-- [media controls] the toolbar's media button and pop-up -->
   <link rel="stylesheet" href="focus.css" /><!-- focus mode: the toolbar button and its timer -->
   <link rel="stylesheet" href="bookmarks-bar.css" /><!-- the bookmarks bar under the toolbar -->
 </head>
@@ -96,6 +97,9 @@
         </div>
         <div class="external-pills" id="external-pills" hidden></div><!-- [external apps] "<app> is using Lumen" with Stop and Take over (renderer/app.js) -->
         <div class="update-pill external-ask" id="external-bar" role="group" aria-label="An app wants to use Lumen" data-i18n-aria-label="external.region" hidden></div><!-- [external apps] "<app> wants to use Lumen" with Allow this time and Deny, a pill like the update one (renderer/app.js) -->
+        <button class="icon-btn media-btn" id="media-btn" type="button" hidden title="Media controls" aria-label="Media controls" aria-haspopup="dialog" aria-expanded="false" data-i18n-aria-label="media.button"><!-- [media controls] shown while a tab plays sound: its pop-up lists them (renderer/media-hub.js) -->
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 12V3.5l7-1.5V10.5"/><circle class="solid" cx="4.5" cy="12" r="1.8"/><circle class="solid" cx="11.5" cy="10.5" r="1.8"/></svg>
+        </button>
         <button class="icon-btn focus-btn" id="focus-btn" type="button" title="Focus mode" aria-label="Focus mode" aria-haspopup="menu" data-i18n-title="focus.button" data-i18n-aria-label="focus.button"><!-- [focus] a menu to start focus mode; while it is on, the time left (renderer/focus.js) -->
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle class="dot" cx="8" cy="8" r="1.6"/></svg>
           <span class="focus-time" id="focus-time" hidden></span>
@@ -436,6 +440,7 @@
   <script src="extensions-bar.js"></script><!-- the extension buttons: pinned ones in the toolbar, the rest under the puzzle button -->
   <script src="tab-search-match.js"></script>
   <script src="tab-search.js"></script>
+  <script src="media-hub.js"></script><!-- [media controls] the toolbar's media button and pop-up -->
   <script src="updates.js"></script>
   <script src="translate.js"></script>
   <script src="passwords.js"></script>

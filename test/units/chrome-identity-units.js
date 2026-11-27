@@ -207,7 +207,7 @@ const brandName = (b) => b.brand;
   const args = launcher.browserArgs(argv);
   check('launcher: the browser gets the first process\'s arguments untouched', args.slice(0, 2).join() === 'https://example.com/,--new-window', args.join(' '));
   check('launcher: --disable-blink-features=AutomationControlled is passed explicitly (not inherited from the first process)', args.includes('--disable-blink-features=AutomationControlled'), args.join(' '));
-  check('launcher: --disable-features=FedCm is passed explicitly', args.includes('--disable-features=FedCm'), args.join(' '));
+  check('launcher: --disable-features=FedCm,HardwareMediaKeyHandling is passed explicitly (the same value as main.js)', args.includes('--disable-features=FedCm,HardwareMediaKeyHandling'), args.join(' '));
   check('launcher: no debugging switch on its command line (prepareAutomation adds the pipe inside the browser)', !args.some((a) => /remote-debugging/.test(a)), args.join(' '));
   const first = ['Lumen.exe', 'app-dir', 'https://a.example/'];
   check('launcher: what the first process passes on is the launcher script plus its arguments', launcher.launcherArgs(first, ['https://l.example/']).join() === [require.resolve('../../src/automation/launcher'), 'app-dir', 'https://a.example/', 'https://l.example/'].join(), launcher.launcherArgs(first).join());

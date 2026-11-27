@@ -149,6 +149,10 @@ Settings → Tabs and browsing → **Tab layout** lists the tabs down the left o
 
 Right-click a tab → **Open in split view** to show it next to the tab you are on, or drag a tab out of the strip and drop it on the right edge of the page. Drag the divider to resize (double-click for an even split); the button on the divider, or **Close split view** in the tab menu, ends it. The tab you clicked last is the one the address bar, the AI and the shortcuts use, so the AI can work in one side while you read the other. Split views are not kept across restarts.
 
+## Music and videos in your tabs
+
+While a tab plays sound, a music-note button shows in the toolbar. Click it for a list of every tab playing (or paused partway), the newest first: the song or video's title, artist and artwork when the site provides them (otherwise the tab's title), play/pause, previous and next track when the site supports them, and mute. Click a title to go to that tab. Use ↑ and ↓ to move between rows and Esc to close. The keyboard's media keys (play/pause, next, previous, stop) control the tab that started playing last, also when Lumen is in the background; Lumen only holds the keys while something is playing or paused. The speaker on a tab playing sound mutes it, the same as **Mute tab** in its right-click menu.
+
 ## Two accounts on one site (account tabs)
 
 A tab can sign in as someone else. Right-click a tab, a page or a link → **Open with another account** → **Account 2** (or **New account**). That tab gets its own cookies, logins and site storage, kept apart from your main ones and kept across restarts, so your school Microsoft account and your personal one can both stay signed in. Links, pop-ups and new tabs opened from it stay in the same account. Its tab has a short colored line, and the address bar names the account; click the name to rename it, change its color, open a new tab in it, or open the page in your main account.

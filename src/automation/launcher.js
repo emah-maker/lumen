@@ -49,8 +49,8 @@ const launcherArgs = (argv, links = []) => [__filename, ...argv.slice(1), ...lin
 // (they set the same ones with app.commandLine, which only the process that runs them has: nothing is inherited
 // from the first process). With Chromium's debugging pipe on, pages say navigator.webdriver = true unless
 // AutomationControlled is off, and Google refuses sign-in to such a browser; FedCm is off so Google's One Tap
-// uses its iframe prompt (Electron has no FedCM UI).
-const CHILD_SWITCHES = ['--disable-blink-features=AutomationControlled', '--disable-features=FedCm'];
+// uses its iframe prompt (Electron has no FedCM UI), and HardwareMediaKeyHandling as in main.js (Lumen handles the media keys).
+const CHILD_SWITCHES = ['--disable-blink-features=AutomationControlled', '--disable-features=FedCm,HardwareMediaKeyHandling'];
 // The browser's arguments: `argv` is this launcher's [node, launcher.js, ...what the first process got].
 const browserArgs = (argv) => [...argv.slice(2), ...CHILD_SWITCHES];
 

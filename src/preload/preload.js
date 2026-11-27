@@ -141,6 +141,9 @@ contextBridge.exposeInMainWorld('browser', {
   onPageFocused: on('page:focused'),
   // Tab search (Ctrl+Shift+A) and the tab strip's speaker button (features/tab-tools.js)
   toggleMute: (id) => ipcRenderer.send('tab:mute', id),
+  mediaList: () => ipcRenderer.invoke('media:list'), // [media controls] the tabs playing sound (features/media-hub.js)
+  mediaAct: (id, action) => ipcRenderer.send('media:act', id, action),
+  onMediaList: on('media:list'),
   toggleAiOffTab: (id) => ipcRenderer.send('tab:ai-off', id), // [ai off-tab]
   closedTabs: () => ipcRenderer.invoke('tabsearch:closed'),
   reopenClosed: (index, url) => ipcRenderer.invoke('tabsearch:reopen', index, url),

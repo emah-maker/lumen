@@ -225,7 +225,9 @@ const isWebUrl = (url) => /^https?:\/\//i.test(url);
 app.userAgentFallback = require('./browser/chrome-identity').userAgent(process.platform, process.versions.chrome); // (browser/chrome-identity.js)
 // Google's sign-in on other sites (One Tap, "Sign in with Google") uses FedCM when the browser says it is Chrome.
 // Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
-app.commandLine.appendSwitch('disable-features', 'FedCm');
+// HardwareMediaKeyHandling: the media keys are Lumen's own while a tab plays, for the last-played tab (features/media-hub.js); Chromium's
+// handling of them as well would act on each press twice.
+app.commandLine.appendSwitch('disable-features', 'FedCm,HardwareMediaKeyHandling');
 // Windows hands a playing video to a hardware overlay plane, which sits above everything else and ignores the page's clipping.
 // With Lumen's stacked page views (and a laptop's two GPUs) it came out as a gray rectangle over the page, in the wrong
 // place and bigger than the video (Muse's animated avatar). Videos are drawn by the compositor instead, as with any other content.
@@ -345,6 +347,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
+  'media:list', 'media:act', // [media controls] the toolbar's media pop-up (features/media-hub.js)
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'phone:wifi-open', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act', 'account:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
@@ -467,7 +470,19 @@ const closedChipTabs = new Map(); // [tab chips] id -> { t, u }: the last title 
 const closedTabs = []; // URLs, most recent last
 const closedInfo = []; // what each closedTabs entry was besides its address: pinned, group, place, back/forward (features/closed-tabs.js)
 const closedTabsKept = require('./features/closed-tabs');
-const tabTools = require('./features/tab-tools').create({ onChange: () => sendTabs(), isWebUrl }); // tab search, tab audio
+const tabTools = require('./features/tab-tools').create({ onChange: () => { sendTabs(); mediaHub.refresh(); }, isWebUrl }); // tab search, tab audio
+// [media controls] the toolbar's media button and pop-up, and the media keys (features/media-hub.js; the pages' side: preload/media-hub-preload.js)
+const mediaHub = require('./features/media-hub').create({
+  tabOf: (wc) => allTabsEverywhere().find((t) => alive(t) && t.view.webContents === wc) || null,
+  tabFields: (t) => ({ id: t.id, title: alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '', favicon: t.favicon || '', muted: tabTools.state(t, alive(t)).muted }),
+  setMuted: (t, muted) => tabTools.setMuted(t, muted),
+  show: (t) => { const at = tabAnywhere(t.id); if (!at) return; withWindow(at.rec, () => { switchTab(at.t.id); }); if (rcAlive(at.rec)) { if (at.rec.win.isMinimized()) at.rec.win.restore(); at.rec.win.focus(); } },
+  audibleTabs: () => allTabsEverywhere().filter((t) => alive(t) && tabTools.state(t, true).audible),
+  onList: (list) => sendAllUis('media:list', list),
+  keys: TEST ? null : { register: (name, fn) => require('electron').globalShortcut.register(name, fn), unregister: (name) => require('electron').globalShortcut.unregister(name) }, // (never in a test run: the keys are the whole computer's)
+});
+ipcMain.on('media-hub:report', (event, json) => mediaHub.report(event, json)); // from any web frame: untrusted, parsed and capped there
+if (TEST) global.__mediaHub = mediaHub;
 
 // ---------- settings / API key ----------
 
@@ -1304,6 +1319,7 @@ const WEBAUTHN_PRELOAD = path.join(__dirname, 'preload', 'webauthn-preload.js');
 app.on('session-created', (ses) => setImmediate(() => { if (app.isReady() && ses === session.defaultSession) return; require('./features/passkeys').gateSession(ses, WEBAUTHN_PRELOAD); })); // (the main session's is in PAGE_PRELOADS)
 const PAGE_PRELOADS = [
   { id: 'lumen-page-dialogs', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') },
+  { id: 'lumen-media-hub', filePath: path.join(__dirname, 'preload', 'media-hub-preload.js') }, // [media controls] what the page plays, for the toolbar's media pop-up (features/media-hub.js)
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   { id: 'lumen-select-contrast', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') },
   { id: 'lumen-page-first-keys', filePath: PAGE_FIRST_PRELOAD },
@@ -11788,6 +11804,8 @@ ipcMain.on('address:menu', (e, point, hasSelection) => {
   Menu.buildFromTemplate(items).popup({ window: w, x: n(point?.x), y: n(point?.y) });
 });
 ipcMain.on('tab:ai-off', (_e, id) => { const tab = tabs.find((x) => x.id === id); if (tab) setKeepOff(tab, !manners.isKeptOff(tab)); }); // [ai off-tab] only the UI can send this: no AI tool reaches it
+ipcMain.handle('media:list', () => mediaHub.list());
+ipcMain.on('media:act', (_e, id, action) => { if (Number.isFinite(id) && typeof action === 'string') mediaHub.act(id, action); });
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
 ipcMain.handle('tabsearch:closed', () => tabTools.closedEntries(closedTabs));
 ipcMain.handle('tabsearch:reopen', (_e, index, url) => reopenClosed(index, url));
