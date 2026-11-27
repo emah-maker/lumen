@@ -333,6 +333,7 @@ const UI_ONLY_IPC = new Set([
   'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm', 'gpu:restart',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
+  'bookmarks-bar:get', 'bookmarks-bar:folder-menu', 'bookmarks-bar:overflow-menu', 'bookmarks-bar:context-menu', 'bookmarks-bar:save', 'bookmarks-bar:move', 'bookmarks-bar:drop', 'bookmarks-bar:open', 'bookmarks-bar:toggle', 'bookmarks-bar:rect', // [bookmarks bar] features/bookmark-bar-main.js
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
   'nav:go', 'nav:go-com', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'profile:info', 'profile:menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
@@ -2452,6 +2453,11 @@ function splitMark(t) {
   const mate = t.split ? splitPartner(t) : null;
   return mate ? { split: t.split.left === t.id ? 'left' : 'right', splitWith: mate.id } : {};
 }
+function bookmarkBarShown() {
+  const front = tabs.find((t) => t.id === activeId && alive(t));
+  const mode = bookmarkBarMode();
+  return { mode, shown: bookmarkBarModel.shownFor(mode, { newTab: Boolean(front && isNewTab(front.view.webContents.getURL()) && chatFullTab !== front.id) }) };
+}
 function tabState() {
   const active = activeTab();
   const history = active?.webContents.navigationHistory;
@@ -2535,6 +2541,7 @@ function tabState() {
     }),
     activeId,
     sidebar: tabSidebarOpen(tabs.find((t) => t.id === activeId)), // [sidebar per tab] whether the sidebar is open on the tab in front
+    bookmarksBar: bookmarkBarShown(), // [bookmarks bar] { mode, shown } for the tab in front
     canGoBack: active ? canGoBack(active.webContents) : false,
     canGoForward: history ? history.canGoForward() : false,
   };
@@ -2570,6 +2577,7 @@ function sendTabsBody(coalesced) {
   pushAccountUi(); // [account tabs] the address bar's account chip, the toolbar's extensions and the sign-in bar follow the tab in front
   if (!tabStripGate.shouldSend(curRec || tabStripGate, state, coalesced !== true)) return;
   if (!tabStripGate.repeated(curRec || tabStripGate)) ui()?.send('tabs', state);
+  bookmarkBarRt.pushIfChanged(); // [bookmarks bar] (every bookmark change ends in a sendTabs)
   agentTargetHook?.();
   tabChipsRt?.changed(); // [tab chips] a chip's title or icon follows the tab
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
@@ -2685,14 +2693,14 @@ function sendSplitLayout(sp) {
   ui()?.send('split:layout', msg);
 }
 // The rectangle a tab's page fills: its side of a split pair, else the whole tab area.
-const pageRect = (tab, sp) => (sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : contentBounds);
+const pageRect = (tab, sp) => (sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : isNewTab(tab.view.webContents.getURL()) ? newTabArea() : contentBounds); // [bookmarks bar] newTabArea
 // Bounds and full-width layout for a view that is about to be shown (layoutBody sets the same again afterwards).
 function presizeTab(tab, sp) {
   try {
     const at = pageRect(tab, sp);
     const now = tab.view.getBounds();
     if (now.x !== at.x || now.y !== at.y || now.width !== at.width || now.height !== at.height) tab.view.setBounds({ x: at.x, y: at.y, width: at.width, height: at.height });
-    if (!sp && isNewTab(tab.view.webContents.getURL())) { const overlay = sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds }); if (overlay) setOverlay(tab, overlay); }
+    if (!sp && isNewTab(tab.view.webContents.getURL())) { const overlay = sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: newTabArea() }); if (overlay) setOverlay(tab, overlay); }
   } catch { /* gone */ }
 }
 // The width a new-tab page lays itself out at: the page area with the sidebar closed (a new-tab page keeps that layout under the sidebar).
@@ -2700,7 +2708,7 @@ const pageWidth = () => Math.max(contentBounds.width, contentBounds.fullWidth ||
 // The spare new-tab page follows the tab area's size while it waits, so the page it hands over is already laid out for it.
 function sizeSpares() {
   const w = pageWidth();
-  const h = contentBounds.height;
+  const h = newTabArea().height;
   try { // (spareNewTab is declared further down: not yet during start-up)
     const s = spareNewTab;
     if (!s || !(w > 0) || !(h > 0) || s.view.webContents.isDestroyed()) return;
@@ -2719,7 +2727,7 @@ function sizeHiddenNewTabsSoon() {
   hiddenNewTabTimer = setTimeout(() => {
     hiddenNewTabTimer = null;
     const width = pageWidth();
-    const height = contentBounds.height;
+    const height = newTabArea().height;
     if (!(width > 0) || !(height > 0)) return;
     for (const tab of tabs) {
       if (tab.id === activeId || tab.split || tab.fullscreen || !alive(tab) || tab.view.getVisible()) continue;
@@ -2766,14 +2774,14 @@ function layoutBody() {
     // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
     // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
     const overlay = visible && !sp && !tab.fullscreen && isNewTab(tab.view.webContents.getURL())
-      ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds })
+      ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: newTabArea() })
       : null;
     // The full-width layout goes on BEFORE the view narrows and comes off AFTER it has widened again: the other way round, the page
     // was laid out once at the narrow width (a resize event, the cards reflowing, widgets re-rendering) every time the sidebar closed.
     if (overlay) setOverlay(tab, overlay);
     if (visible) {
       if (tab.fillDue) { tab.fillDue = false; fillCheck(tab.id, 'show', 350); } // (just brought to the front: is its page the size of the tab area?)
-      const at = sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : contentBounds; // [split view] a side of the pair
+      const at = pageRect(tab, sp); // [split view] a side of the pair; [bookmarks bar] the new-tab page below the bar
       if (tab.fullscreen) {
         const [width, height] = win.getContentSize();
         tab.view.setBounds({ x: 0, y: 0, width, height });
@@ -2790,8 +2798,8 @@ function layoutBody() {
   sizeSpares();
   sizeHiddenNewTabsSoon();
   sendSplitLayout(sp);
-  spotifyWeb.clip(contentBounds); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
-  appleMusicWeb.clip(contentBounds);
+  spotifyWeb.clip(newTabArea()); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
+  appleMusicWeb.clip(newTabArea());
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
   appleMusicWeb.sync(); // [widgets] and so does the Apple Music card's
   raiseOverlays();
@@ -2993,7 +3001,7 @@ function makeSpareNewTab() {
   if (!spareForced && sparePolicy.spareAction({ hasSpare: false, firstTabDone, memory: spareMemory(), idle: sparePolicy.isIdle(newTabUsedAt) }) !== 'make') return; // (still starting up, short of memory, or no new tab for a long while: the check below makes it later)
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
-  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: pageWidth(), height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0 (the page area's width with the sidebar closed: a new tab opened beside the sidebar keeps that layout)
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: pageWidth(), height: newTabArea().height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0 (the page area's width with the sidebar closed: a new tab opened beside the sidebar keeps that layout)
   try { view.setBackgroundColor(pageBackground()); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
@@ -5764,6 +5772,31 @@ function bookmarks() {
   const saved = readSettings().bookmarks;
   return Array.isArray(saved) ? saved : SEED_SITES.map(([url, title]) => ({ url, title }));
 }
+// [bookmarks bar] Under the toolbar, as in Chrome (features/bookmark-bar-main.js; the model is features/bookmark-bar.js, the bar renderer/bookmarks-bar.js).
+// settings.bookmarkLayout keeps the bar's order and its empty folders; Settings → Appearance → Show bookmarks bar is bookmarksBar.
+const bookmarkBarModel = require('./features/bookmark-bar');
+const bookmarkBarMode = () => bookmarkBarModel.cleanMode(readSettings().bookmarksBar);
+const bookmarkBarRt = require('./features/bookmark-bar-main').createBookmarkBarMain({
+  ipcMain, Menu, nativeImage: require('electron').nativeImage, dialog: electronDialog, t,
+  read: () => ({ list: bookmarks(), layout: readSettings().bookmarkLayout }),
+  write: ({ list, layout }) => writeSettings({ ...readSettings(), bookmarks: list, bookmarkLayout: layout }),
+  changed: () => { sendTabs(); managers.pushBookmarks(); },
+  mode: bookmarkBarMode,
+  setMode: (mode) => settingsBackend.set('bookmarksBar', mode),
+  icon: (url) => faviconStore.get(hostOf(url)) || '',
+  open: (url, how) => (how === 'window' ? openNewWindow(url) : how === 'here' ? goFromAddress(url) : openTab(url, { background: how === 'background' })),
+  openManager: () => managers.open('bookmarks'),
+  windowOf: () => win,
+  broadcast: (channel, payload) => { for (const r of winRecs) if (rcAlive(r) && !r.win.webContents.isDestroyed()) r.win.webContents.send(channel, payload); },
+  gen: () => settingsGen,
+});
+bookmarkBarRt.register();
+if (TEST) global.__bookmarkBar = { rt: bookmarkBarRt, under: (point) => bookmarkBarUnder({ card: true, rec: curRec }, point), area: () => newTabArea(), boundsLog: [] }; // (test/e2e/bookmarks-bar.js; boundsLog: every page-area top the UI reported)
+// The new-tab page's view in 'newtab' mode: the bar is drawn over the top of the page area and only this page leaves room for it.
+function newTabArea(r = contentBounds) {
+  const h = bookmarkBarModel.newTabInset(bookmarkBarMode());
+  return h ? { ...r, y: r.y + h, height: Math.max(0, r.height - h) } : r;
+}
 
 // Sites visited often (at least 3 times), one per host, skipping favorites and CAPTCHA pages.
 let historyVersion = 0; // bumped on every visit or import: frequentSites is remembered until it changes
@@ -5877,6 +5910,7 @@ async function cacheFavicon(pageUrl, iconUrls, force = false) {
       const bytes = Buffer.from(await res.arrayBuffer());
       if (!res.ok || !type.startsWith('image/') || bytes.length > 40000) continue;
       faviconStore.set(host, `data:${type.split(';')[0]};base64,${bytes.toString('base64')}`);
+      bookmarkBarRt.pushSoon(); // [bookmarks bar] its chip gets the icon
       return;
     } catch {
       // This candidate is unavailable; try the next (with none, the new-tab page shows a letter).
@@ -5951,6 +5985,7 @@ function bookmarksMenu() {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
     { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
+    { label: t('menu.showBookmarksBar'), type: 'checkbox', checked: bookmarkBarMode() === 'always', ...shortcutHint('CmdOrCtrl+Shift+B'), click: () => bookmarkBarRt.toggle() }, // [bookmarks bar]
     { label: t('menu.saveForLater'), accelerator: 'CmdOrCtrl+Shift+Y', enabled: isWebUrl(current), click: () => saveForLater(tabs.find((x) => x.id === activeId)) },
     { label: t('menu.showReadingList'), click: () => managers.open('readinglist') },
     { type: 'separator' },
@@ -6437,6 +6472,7 @@ function handleShortcut(event, input) {
   else if (mod && /^[1-9]$/.test(key)) { const shown = tabs.filter((x) => !aiTabHidden(x)); const t = key === '9' ? shown[shown.length - 1] : shown[Number(key) - 1]; if (t) switchTab(t.id); } // (Ctrl+N counts the tabs the strip shows)
   else if (mod && zoomKeyStep(input) !== null) zoomBy(wc, zoomKeyStep(input)); // Ctrl + = - 0, the numpad's too (features/zoom-steps.js)
   else if (mod && input.shift && key === 'd') bookmarkAllTabs();
+  else if (mod && input.shift && !input.alt && key === 'b') bookmarkBarRt.toggle(); // [bookmarks bar] Ctrl+Shift+B, as in Chrome
   else if (mod && key === 'd') toggleBookmark();
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
@@ -7854,7 +7890,7 @@ function macMenu() {
         normal({ label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage }),
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }), normal({ label: t('menu.saveForLater'), ...shown('Shift+Cmd+Y'), click: () => saveForLater(tabs.find((x) => x.id === activeId)) }), normal({ label: t('menu.showReadingList'), click: () => managers.open('readinglist') })] },
+    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }), normal({ label: t('menu.showBookmarksBar'), ...shown('Shift+Cmd+B'), click: () => bookmarkBarRt.toggle() }), normal({ label: t('menu.saveForLater'), ...shown('Shift+Cmd+Y'), click: () => saveForLater(tabs.find((x) => x.id === activeId)) }), normal({ label: t('menu.showReadingList'), click: () => managers.open('readinglist') })] },
     // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
     {
       label: t('menu.tab'),
@@ -8674,6 +8710,7 @@ function tickTabDrag() {
     finishTabDrag(d.card ? 'cancel' : 'commit');
     return;
   }
+  if (d.card) { const over = bookmarkBarUnder(d, cursor); const key = over ? Math.round(over.x) : null; if (d.barOver !== key) { d.barOver = key; d.rec.win.webContents.send('bookmarks-bar:tab-over', over ? { x: over.x } : null); } } // [bookmarks bar] where it would land
   if (d.card) {
     const at = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
     if (at.x !== d.cardAt.x || at.y !== d.cardAt.y) {
@@ -8736,9 +8773,29 @@ function endDragQuietly(d) {
   if (rcAlive(d.rec)) d.rec.win.webContents.removeListener('before-input-event', d.escape);
   if (d.card || d.chip) hideDragCard(d, 'cancel');
 }
+// [bookmarks bar] A tab dragged out of the strip and let go over its window's bookmarks bar is bookmarked there and goes back to
+// its place, not torn off into a window. `point` is the cursor in screen pixels (tests pass one).
+function bookmarkBarUnder(d, point) {
+  if (!d?.card || !rcAlive(d.rec)) return null;
+  const r = bookmarkBarRt.rectFor(d.rec.win.webContents);
+  if (!r) return null;
+  const cb = d.rec.win.getContentBounds();
+  const x = point.x - cb.x, y = point.y - cb.y;
+  return x >= r.x && x <= r.x + r.width && y >= r.y - 4 && y <= r.y + r.height + 4 ? { x, y } : null;
+}
+function bookmarkBarTabDrop(d, point = cursorPoint()) {
+  const at = bookmarkBarUnder(d, point);
+  const tab = at ? tabById(d.rec, d.tabId) : null;
+  const url = tab ? tabUrl(tab) : '';
+  if (!isWebUrl(url)) return false;
+  d.rec.win.webContents.send('bookmarks-bar:tab-drop', { url, title: tabTitle(tab) || '', x: at.x });
+  return true;
+}
+if (TEST) global.__bookmarkBarTabDrop = (point) => { const d = tabDrag; const ok = Boolean(d && bookmarkBarTabDrop(d, point)); if (ok) finishTabDrag('cancel'); return ok; };
 function finishTabDrag(reason) {
   const d = tabDrag;
   if (!d) return;
+  if (reason === 'commit' && d.card && bookmarkBarTabDrop(d)) reason = 'cancel'; // [bookmarks bar] (see bookmarkBarTabDrop)
   tabDrag = null;
   clearInterval(d.timer);
   const rec = d.rec;
@@ -9089,7 +9146,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
+      additionalArguments: [...(TEST ? [require('./test-mode').PRELOAD_FLAG] : []), `--lumen-bookmarks-bar=${bookmarkBarMode()}`], // preload.js's test-only calls; [bookmarks bar] where the bar goes, known before the first paint (no page resize once the UI reports)
     },
   });
   const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
@@ -9311,7 +9368,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       rec.holdViews = true; // (layout() keeps tab views hidden until the UI reports where they go)
       if (!seedBounds) { // laid out at about the size it will have, so the page isn't laid out twice
         const [width, height] = w.getContentSize();
-        contentBounds = { x: 0, y: GUESS_TOOLBAR_HEIGHT, width, height: Math.max(0, height - GUESS_TOOLBAR_HEIGHT) };
+        const top = GUESS_TOOLBAR_HEIGHT + (bookmarkBarMode() === 'always' ? bookmarkBarModel.BAR_HEIGHT : 0); // [bookmarks bar] shown always: part of the toolbar
+        contentBounds = { x: 0, y: top, width, height: Math.max(0, height - top) };
       }
     }
     if (rec.agent) openTab('about:blank'); else restoreSession(restore); // [agent window] one blank tab; the agent opens the rest
@@ -10072,7 +10130,7 @@ const passwordDeps = () => ({
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event),
 });
 // The settings page's calls (features/passwords.js checks each one again and knows the same list).
-const PASSWORD_CHANNELS = ['state', 'set-enabled', 'list', 'reveal', 'copy', 'update', 'delete', 'delete-all', 'import', 'never-remove'].map((c) => `settings:passwords-${c}`);
+const PASSWORD_CHANNELS = ['state', 'set-enabled', 'list', 'reveal', 'copy', 'update', 'delete', 'delete-all', 'import', 'never-remove', 'generate', 'copy-generated'].map((c) => `settings:passwords-${c}`);
 for (const channel of PASSWORD_CHANNELS) ipcMain.handle(channel, (event, ...args) => passwords().invoke(channel, event, ...args));
 ipcMain.on('passwords:act', (_e, action) => {
   if (!passwordsRt || !['menu', 'save', 'never', 'not-now'].includes(action)) return;
@@ -11072,7 +11130,7 @@ function tradingviewAccountLists() {
 const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive, onAuth) => ({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
   getWindow: () => win,
-  getBounds: () => contentBounds,
+  getBounds: () => newTabArea(), // [bookmarks bar] (the music cards live on the new-tab page, below the bar)
   userAgent: () => app.userAgentFallback, // (browser/chrome-identity.js: a sign-in page, Apple's above all, refuses "Electron" in it)
   hideWindow: (w) => { if (TEST_BACKGROUND && w && !w.isDestroyed()) { w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive(); } }, // (tests only: a sign-in popup never shows or takes focus)
   activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
@@ -11291,6 +11349,7 @@ const settingsBackend = settingsPage.create({
   onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
   onKeysOffChange: () => { client = null; for (const p of Object.keys(providers.PROVIDERS)) if (p !== 'local') refreshModels(p).catch(() => {}); modelsChanged(); }, // [key switches] the picker drops or regains that provider's models
   onTabSleepChange: () => tabSleepSettingChanged(),
+  onBookmarksBarChange: () => { for (const r of [...winRecs].filter(rcAlive)) withWindow(r, () => { layout(); sendTabs(); }); bookmarkBarRt.push(); }, // [bookmarks bar]
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
   onRoutineWebhooksChange: () => bgTasks.syncWebhooks(), // [routines] Settings → Routines → web links: the 127.0.0.1 listener follows the switch and the port
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings → Tabs and browsing > Page unloading
@@ -11404,6 +11463,7 @@ function applyContentBounds(bounds) {
     height: Math.max(0, Math.round(bounds.height)),
     fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
+  if (TEST) global.__bookmarkBar?.boundsLog.push(contentBounds.y);
   if (curRec) { curRec.boundsReported = true; curRec.holdViews = false; } // (a first tab opened while the UI loaded shows now)
   if (curRec && contentBounds.fullWidth > contentBounds.width) curRec.sidebarColumn = contentBounds.fullWidth - contentBounds.width; // [sidebar per tab] the sidebar's width, for a switch to a tab with it open (fitTabSidebar)
   layout();

@@ -5828,6 +5828,7 @@ select('fontSize', 'Font size', 'The default text size websites start from. Appl
 );
 card.group('Toolbar').append(
 toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
+select('bookmarksBar', 'Show bookmarks bar', 'Your bookmarks under the toolbar, as in Chrome. Ctrl+Shift+B switches between always and the new tab page only.', [['newtab', 'On the new tab page'], ['always', 'Always'], ['never', 'Never']]),
 toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
 );
 
@@ -7635,8 +7636,35 @@ h('button', { id: 'passwords-import', text: 'Import from Google or Safari…', o
 if (await importPasswords(result)) renderLogins();
 } }),
 deleteAll)));
+page.append(buildPasswordGenerator(P));
 page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
 renderLogins();
+}
+
+
+
+
+function buildPasswordGenerator(P) {
+const out = h('input', { type: 'text', class: 'grow mono', id: 'passwords-generated', readOnly: true, spellcheck: false, autocomplete: 'off', 'aria-label': tr('settings.passwords.generated', 'Generated password') });
+const length = h('input', { type: 'range', id: 'passwords-gen-length', min: '8', max: '64', step: '1', value: '20', 'aria-label': tr('settings.passwords.genLength', 'Length') });
+const lengthText = h('span', { class: 'note', id: 'passwords-gen-length-text' });
+const symbols = h('input', { type: 'checkbox', id: 'passwords-gen-symbols', checked: true });
+const note = status('passwords-gen-status');
+const make = async () => {
+lengthText.textContent = tr('settings.passwords.genLengthText', '{n} characters', { n: length.value });
+out.value = (await P.generate({ length: Number(length.value), symbols: symbols.checked }).catch(() => '')) || '';
+};
+length.addEventListener('input', make);
+symbols.addEventListener('change', make);
+make();
+return stackRow(tr('settings.passwords.genTitle', 'Generate a password'), tr('settings.passwords.genDesc', 'A strong random password for a site, without look-alike characters like 0 and O. Sign-up forms offer one by themselves (“Use a strong password”) and Lumen saves it for you.'),
+h('div', { class: 'controls' }, out,
+h('button', { id: 'passwords-gen-new', text: tr('settings.passwords.genNew', 'New password'), onclick: make }),
+h('button', { id: 'passwords-gen-copy', class: 'primary', text: tr('settings.passwords.genCopy', 'Copy'), onclick: async () => {
+if (out.value && await P.copyGenerated(out.value).catch(() => false)) flash(note, tr('settings.passwords.genCopied', 'Copied. The clipboard is cleared in 30 seconds.'));
+} })),
+h('div', { class: 'controls' }, length, lengthText,
+h('label', { class: 'note', for: 'passwords-gen-symbols' }, symbols, ' ', tr('settings.passwords.genSymbols', 'Symbols (like ! and #)')), note));
 }
 
 

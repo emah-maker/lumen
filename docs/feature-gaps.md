@@ -47,7 +47,7 @@ Polish in the same round:
 | **Windows** | New window (added), private window, merge, move tabs, restore every window | Same | Same | Same | Have | — | — |
 | **Private windows** | Yes | Yes | Yes | Yes | Have (being reworked separately) | — | — |
 | **History** | Searchable page, remove an entry, clear by time range | Per-visit timeline, journeys | Same as Chrome | Per-visit | Partial: one entry per address (latest visit), page not localized | Later: a per-visit list needs a new history store | M |
-| **Bookmarks** | Ctrl+D, manager, one folder level, HTML import and export | Bar, nested folders, side panel | Pinned tabs replace them | Favorites bar, nested folders | Partial: no bookmarks bar, no nested folders | Yes for the bar: it's the most-noticed missing piece for people coming from Chrome or Safari, though Arc users don't miss it | M |
+| **Bookmarks** | Ctrl+D, manager, a bookmarks bar under the toolbar (added: chips, nested folders as menus, », drag to reorder, links and tabs dropped on it, right-click Edit / Delete / New folder, Ctrl+Shift+B), HTML import and export | Bar, nested folders, side panel | Pinned tabs replace them | Favorites bar, nested folders | Have; partial: HTML import and export keep one folder level, and the bar's order stays on each computer (sync carries the bookmarks, not their order) | Nested folders in HTML import and export: later, small | S |
 | **Downloads** | Panel and page, ask where to save, risky files held, Save … As (added) | Same | Same | Same | Have | — | — |
 | **Find in page** | Count, next and previous, Esc | Same (no match case either) | Same | Plus match case and "begins with" | Have | Match case: later, small | S |
 | **Zoom** | Pill in the address bar, default zoom, per-site zoom remembered (added) | Same, plus a +/− bubble | Same | Same | Have | — | — |
@@ -66,8 +66,8 @@ Polish in the same round:
 | **Session restore** | Continue where you left off (default), new tab, or specific pages; every window | Same | Same | Same | Have | — | — |
 | **Default-browser prompt** | One quiet line in the welcome, ⋯ menu item, Settings | Infobar | Asks at setup | Asks | Have (it never nags, on purpose) | — | — |
 | **Import** | Bookmarks and history from Chrome, Edge, Brave, Vivaldi, Opera, Firefox and Safari; passwords from CSV | Plus passwords, autofill, search engines | Plus passwords and cookies | Plus passwords | Partial: last-used profile only, no passwords from another browser directly | No: reading another browser's passwords or cookies is a security surface Lumen avoids, and CSV covers passwords | M |
+| **Password manager** | Opt-in; save, fill on click, Touch ID to reveal, CSV import, a strong-password generator on sign-up forms and in Settings (added) | Same, plus leak checks | Same | iCloud Keychain | Have (opt-in) | Leak checks: later | S |
 | **Extensions** | Chrome Web Store, toolbar actions, remove, an on/off switch (off unloads it and keeps it installed, across restarts), Developer mode with Load unpacked and Reload (added) | Same, plus turn on or off and developer mode | Same | Safari extensions | Have | — | — |
-| **Password manager** | Opt-in; save, fill on click, Touch ID to reveal, CSV import | Same, plus a generator and leak checks | Same | iCloud Keychain | Have (opt-in) | A generator: later | S |
 | **Spellcheck** | On by default, suggestions, Add to Dictionary, languages (Windows) | Same | Same | System | Have | — | — |
 | **Context menus** | Link, image, video, text, editable and page items, now with New Window, Private Window, Save Link As, Save Image As, Copy Image Address and Print (added) | Same, plus Cast | Same | Same | Have | — | — |
 | **Startup and home** | Startup pages; no home button | Optional home button | — | Homepage | Partial | No: the new-tab page is the home, and Arc and Safari's default toolbars have no home button either | S |
@@ -89,9 +89,8 @@ Polish in the same round:
 
 The biggest gaps worth the work, roughly in order:
 
-1. **Bookmarks bar** (M): the one thing Chrome and Safari users notice first.
-2. **Localize the remaining pages** (M): error, history, bookmarks, downloads and reader pages, and the English row labels in Settings.
-3. **Media controls** for tabs playing audio (M).
-4. ~~**Profiles** (L)~~: done, see [Profiles](profiles.md).
+1. **Localize the remaining pages** (M): error, history, bookmarks, downloads and reader pages, and the English row labels in Settings.
+2. **Media controls** for tabs playing audio (M).
+Done: the **bookmarks bar** (added in 0.5.115) and **profiles** (see [Profiles](profiles.md)).
 
 Known housekeeping: `npm run lint` reports no errors; the remaining warnings are unused-variable and useless-assignment hints.

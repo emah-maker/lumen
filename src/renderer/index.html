@@ -103,6 +103,16 @@
       </div>
     </nav>
 
+    <!-- [bookmarks bar] renderer/bookmarks-bar.js: here under the toolbar when shown always; moved over the top of #viewport when shown on the new-tab page only -->
+    <div class="bookmarks-bar" id="bookmarks-bar" role="toolbar" aria-label="Bookmarks bar" data-i18n-aria-label="bookmarksBar.label" hidden>
+      <div class="bm-items" id="bm-items"></div>
+      <button class="bm-chip" id="bm-overflow" type="button" tabindex="-1" title="More bookmarks" aria-label="More bookmarks" aria-haspopup="menu" aria-expanded="false" data-i18n-title="bookmarksBar.more" hidden>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4.5 7.5 8 4 11.5M8.5 4.5 12 8l-3.5 3.5"/></svg>
+      </button>
+      <form class="bm-edit" id="bm-edit" hidden></form>
+      <span class="bm-caret" id="bm-caret" aria-hidden="true" hidden></span>
+    </div>
+
     <div class="findbar" id="findbar" hidden>
       <div class="findbar-inner">
         <input id="find-input" type="text" spellcheck="false" placeholder="Find in page" aria-label="Find in page" data-i18n-placeholder="find.placeholder" data-i18n-aria-label="find.placeholder" />
