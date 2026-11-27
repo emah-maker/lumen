@@ -18,7 +18,7 @@ const COPIES = 'Unpacked Extensions';
 const MAX_FILES = 5000; // a folder bigger than this is not an extension (a whole project picked by mistake)
 const SKIP = new Set(['.git', 'node_modules', '.DS_Store']);
 
-const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
 
 // "__MSG_appName__" from the default locale's messages, as Chrome shows it.
 function localized(dir, manifest, value) {
