@@ -19,6 +19,7 @@ const ALLOW = {
   'ai/cli-utils.js': 'the helper itself (hidden spawn lives in cli-utils so it adds no start-up module)',
   'features/swap-helper.js': 'starts Lumen (a GUI exe) again after an update; SW_HIDE would hide the new Lumen window',
   'automation/launcher.js': 'relaunches Lumen itself with inherited stdio (a GUI exe, no console is made)',
+  'features/profiles-ui.js': '[profiles] starts Lumen on another profile, visibly on purpose (a GUI exe, windowsHide would hide its window)',
   'automation/mcp.js': 'starts Lumen visibly on purpose (windowsHide: false) and runs the --mcp bridge on inherited stdio (a GUI exe)',
 };
 {

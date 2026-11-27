@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Profile</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--surface); }
+    body {
+      font: var(--fs-md)/1.45 system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", sans-serif;
+      color: var(--text); -webkit-font-smoothing: antialiased; user-select: none;
+      display: flex; flex-direction: column; padding: var(--sp-12) var(--sp-12) var(--sp-10);
+    }
+    header { display: flex; align-items: center; gap: var(--sp-8); margin-bottom: var(--sp-10); }
+    .preview {
+      width: 56px; height: 56px; border-radius: var(--r-pill); flex: none; display: grid; place-items: center;
+      font-size: 26px; font-weight: 600; color: #fff; background: var(--profile, var(--accent-deep));
+      transition: background var(--t-fast);
+    }
+    h1 { font-size: var(--fs-xl); font-weight: 600; margin: 0; }
+    label.field, .group-label { display: block; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); margin: 0 0 var(--sp-3); }
+    input[type="text"] {
+      width: 100%; height: 32px; padding: 0 var(--sp-5); border-radius: var(--r-md); border: 1px solid var(--hairline);
+      background: var(--field); color: var(--text); font: inherit; outline: none;
+    }
+    input[type="text"]:focus-visible { box-shadow: var(--focus-ring); border-color: transparent; }
+    fieldset { border: 0; padding: 0; margin: var(--sp-8) 0 0; min-width: 0; }
+    .swatches, .avatars { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+    .swatches input, .avatars input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+    .swatch {
+      width: 28px; height: 28px; border-radius: var(--r-pill); background: var(--c); cursor: pointer; display: block;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+    }
+    .swatches input:checked + .swatch { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--c); }
+    .swatches input:focus-visible + .swatch { outline: 2px solid var(--accent); outline-offset: 4px; }
+    .avatar {
+      width: 36px; height: 36px; border-radius: var(--r-md); display: grid; place-items: center; cursor: pointer;
+      font-size: 20px; background: var(--field); border: 1px solid transparent;
+    }
+    .avatar.letter { font-size: var(--fs-lg); font-weight: 600; }
+    .avatar:hover { background: var(--hover); }
+    .avatars input:checked + .avatar { border-color: var(--accent); background: var(--hover); }
+    .avatars input:focus-visible + .avatar { box-shadow: var(--focus-ring); }
+    footer { margin-top: auto; display: flex; justify-content: flex-end; gap: var(--sp-4); padding-top: var(--sp-10); }
+    button {
+      height: 30px; padding: 0 var(--sp-8); border-radius: var(--r-md); font: inherit; cursor: pointer;
+      border: 1px solid var(--hairline); background: var(--field); color: var(--text);
+    }
+    button:hover { background: var(--hover); }
+    button.primary { background: var(--accent-deep); border-color: transparent; color: var(--on-accent); font-weight: 600; }
+    button.primary:disabled { opacity: 0.5; cursor: default; }
+    button:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+    .error { color: var(--danger, #d70015); font-size: var(--fs-sm); min-height: 1em; margin-top: var(--sp-3); }
+  </style>
+</head>
+<body>
+  <form id="form" autocomplete="off">
+    <header>
+      <div class="preview" id="preview" aria-hidden="true"></div>
+      <h1 id="title"></h1>
+    </header>
+    <label class="field" for="name" id="name-label"></label>
+    <input type="text" id="name" spellcheck="false" required />
+    <fieldset>
+      <legend class="group-label" id="color-label"></legend>
+      <div class="swatches" id="colors"></div>
+    </fieldset>
+    <fieldset>
+      <legend class="group-label" id="avatar-label"></legend>
+      <div class="avatars" id="avatars"></div>
+    </fieldset>
+    <div class="error" id="error" role="alert"></div>
+  </form>
+  <footer>
+    <button type="button" id="cancel"></button>
+    <button type="submit" form="form" class="primary" id="save"></button>
+  </footer>
+  <script src="profile-editor.js"></script>
+</body>
+</html>
