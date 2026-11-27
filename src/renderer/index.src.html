@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="side-tabs.css" /><!-- Tab layout: Side -->
   <link rel="stylesheet" href="chats.css" /><!-- chat history list -->
   <link rel="stylesheet" href="translate.css" /><!-- translate infobar and button -->
+  <link rel="stylesheet" href="profile-button.css" /><!-- [profiles] the toolbar's profile button -->
   <link rel="stylesheet" href="slash.css" /><!-- the "/" menu and skill tags -->
   <link rel="stylesheet" href="tasks.css" /><!-- background tasks panel -->
   <link rel="stylesheet" href="research.css" /><!-- research board and the Sources list -->
@@ -118,6 +119,8 @@
         <button class="icon-btn" id="toggle-sidebar" title="AI (Ctrl+J)" aria-label="AI assistant" aria-pressed="false" data-i18n-title="toolbar.ai.title" data-i18n-aria-label="toolbar.ai">
           <svg viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11M4.1 4.1l7.8 7.8M11.9 4.1l-7.8 7.8"/></svg>
         </button>
+        <!-- [profiles] this window's profile: its avatar in its colour; shown once there is more than one profile (renderer/profile-button.js) -->
+        <button class="icon-btn profile-btn" id="profile-btn" type="button" title="Profiles" aria-label="Profiles" aria-haspopup="menu" data-i18n-title="profiles.button" data-i18n-aria-label="profiles.button" hidden><span class="profile-avatar" id="profile-avatar" aria-hidden="true"></span></button>
         <button class="icon-btn" id="app-menu" title="Menu" aria-label="Menu" aria-haspopup="menu" data-i18n-title="toolbar.menu" data-i18n-aria-label="toolbar.menu">
           <svg viewBox="0 0 16 16" class="dots"><circle cx="3.5" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="12.5" cy="8" r="1.1"/></svg>
         </button>
@@ -445,5 +448,6 @@
   <script src="translate.js"></script>
   <script src="passwords.js"></script>
   <script src="bookmarks-bar.js"></script><!-- the bookmarks bar (needs app.js for the tab list) -->
+  <script src="profile-button.js"></script><!-- [profiles] -->
 </body>
 </html>

@@ -14,9 +14,9 @@ const norm = (p) => {
   return process.platform === 'win32' || process.platform === 'darwin' ? r.toLowerCase() : r;
 };
 
-// The folders that belong to the installed app (and to its old name).
+// The folders that belong to the installed app (and to its old name), and its other profiles ([profiles] `Lumen Profiles` next to it).
 function realProfiles({ appData, defaultUserData }) {
-  return [path.join(appData, 'Lumen'), path.join(appData, 'Claude Browser'), defaultUserData].filter(Boolean).map(norm);
+  return [path.join(appData, 'Lumen'), path.join(appData, 'Lumen Profiles'), path.join(appData, 'Claude Browser'), defaultUserData, defaultUserData && `${defaultUserData} Profiles`].filter(Boolean).map(norm);
 }
 
 // `dir` is a real profile, or inside one.

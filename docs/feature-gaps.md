@@ -77,7 +77,7 @@ Polish in the same round:
 | **Task manager** | Settings → Advanced (every process, memory and CPU) | Shift+Esc window, end process | Same | Activity Monitor | Partial: no end process | Later | S |
 | **Fonts** | Font size and minimum font size | Plus font families | Same | Same | Partial | No: rarely changed | S |
 | **Media hub and autoplay** | Toolbar media button (added): each playing tab with its title, artist and artwork, play/pause, previous/next, mute and go to tab; media keys control the last-played tab; the speaker on a tab mutes it | Global media controls, autoplay settings | Media controls in the sidebar | Autoplay per site | Partial: no autoplay settings, no seek bar | Later: autoplay per site | S |
-| **Profiles and guest mode** | One profile, plus private windows | Profiles, guest | Spaces with profiles | Profiles | Missing | Later: every store (settings, keys, history) would need a profile root | L |
+| **Profiles and guest mode** | Profiles (added): each its own folder and window, with a name, color and avatar; switch, add, edit, delete from ⋯ → Profiles or the toolbar; plus private windows | Profiles, guest | Spaces with profiles | Profiles | Partial: no guest mode | Guest mode: private windows cover most of it | S |
 | **Sync** | Through a folder in your own cloud drive, passphrase-encrypted: bookmarks, history, chats, widgets, settings | Google account | Arc account | iCloud | Have (no Lumen servers or accounts) | — | — |
 | **Split view** | Two tabs side by side: tab menu → Open in split view, or drop a tab on the page's right edge; draggable divider | Edge and Chrome split screen | Split view | — | Have | Not kept across restarts; two tabs only | — |
 | **Translation** | Your connected AI, Google Translate with consent, or on this device (Bergamot) | Built in | Built in | Built in, on device | Have | — | — |
@@ -90,8 +90,7 @@ Polish in the same round:
 The biggest gaps worth the work, roughly in order:
 
 1. **Localize the remaining pages** (M): error, history, bookmarks, downloads and reader pages, and the English row labels in Settings.
-2. **Profiles** (L): when there's demand.
 
-Done: the **bookmarks bar** (added in 0.5.115) and **media controls** for tabs playing sound.
+Done: the **bookmarks bar** (added in 0.5.115), **profiles** (see [Profiles](profiles.md)) and **media controls** for tabs playing sound.
 
 Known housekeeping: `npm run lint` reports no errors; the remaining warnings are unused-variable and useless-assignment hints.

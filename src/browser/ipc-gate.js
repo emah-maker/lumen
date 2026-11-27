@@ -53,6 +53,7 @@ const RULES = [
   ['private:strings', ['page:private', 'page:private-newtab']],
   ['private:*', ['page:private']], // the private window's own UI (features/private-window.js checks the window too)
   ['eml:*', ['page:eml']],
+  ['profile-editor:*', ['page:profile-editor']], // [profiles] the Add / Edit profile window (features/profiles-ui.js checks the window too)
   ['pdf:*', ['pdf']],
   ['desktop-banner:*', ['banner']],
   ['musicengine:*', ['player']],
