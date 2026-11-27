@@ -144,6 +144,26 @@ check('main.js: the split channels are UI-only, and the preload sends exactly th
     assert.ok(pre.includes(`'${ch}'`), `${ch} in the preload`);
   }
 });
+check('a pair is saved by position and comes back as it was', () => {
+  const tabs = [{ id: 7 }, { id: 9 }, { id: 4 }, { id: 5 }];
+  L.link(tabs, 9, 4, 0.3333);
+  assert.deepStrictEqual(L.snapshotPairs(tabs), [{ left: 1, right: 2, ratio: 0.333 }]);
+  assert.deepStrictEqual(L.snapshotPairs([tabs[0], tabs[1], tabs[3]]), [], 'a pair whose other tab is not saved is left out');
+  const fresh = [{ id: 21 }, { id: 22 }, { id: 23 }, { id: 24 }];
+  assert.strictEqual(L.restorePairs(fresh, fresh, L.snapshotPairs(tabs)), 1);
+  assert.deepStrictEqual(fresh[1].split, { left: 22, right: 23, ratio: 0.333 });
+  assert.strictEqual(fresh[2].split, fresh[1].split, 'one object shared by both tabs');
+  assert.ok(!fresh[0].split && !fresh[3].split);
+});
+check('an old or hand-edited session still loads', () => {
+  const fresh = [{ id: 1 }, { id: 2 }, { id: 3 }];
+  assert.strictEqual(L.restorePairs(fresh, fresh, undefined), 0, 'no splits field');
+  assert.strictEqual(L.restorePairs(fresh, fresh, 'x'), 0);
+  assert.strictEqual(L.restorePairs(fresh, fresh, [null, { left: 0, right: 0 }, { left: 1, right: 9 }, { left: -1, right: 1 }]), 0);
+  assert.strictEqual(L.restorePairs(fresh, fresh, [{ left: 0, right: 1, ratio: 'a' }, { left: 1, right: 2 }]), 1, 'a tab is in one pair at most');
+  assert.strictEqual(fresh[0].split.ratio, 0.5, 'a bad ratio is the middle');
+  assert.ok(!fresh[2].split);
+});
 check('the strings exist', () => {
   const en = JSON.parse(src('src', 'locales', 'en.json'));
   for (const k of ['menu.openSplitView', 'menu.closeSplitView', 'split.divider', 'split.close', 'tabs.state.split']) assert.ok(typeof en[k] === 'string' && en[k], k);

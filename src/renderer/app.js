@@ -2444,6 +2444,9 @@ const findInput = $('find-input');
 
 // The bar opens by growing its row, so the page view (which follows the viewport) eases down with it.
 let findHideTimer = null;
+// Match case (the Aa button): kept while the window is open, for every tab and every time the bar opens. (Chromium's find has no whole-word option.)
+let findMatchCase = false;
+const findOpts = (forward, findNext) => ({ forward, findNext, matchCase: findMatchCase });
 
 // `opts.step` (F3 / Ctrl+G: 1 next, -1 previous): with the bar open it goes to the next match; closed, it opens the bar on the last search.
 // `opts.text` (Ctrl+F with text selected on the page): the bar starts from it, as in Chrome; not while you are typing in the bar.
@@ -2458,7 +2461,7 @@ function openFind(opts) {
   syncFindButtons(0);
   findInput.focus();
   findInput.select();
-  if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
+  if (findInput.value) window.browser.find(findInput.value, findOpts(true, false));
 }
 
 function closeFind() {
@@ -2474,7 +2477,7 @@ function closeFind() {
 function syncFindButtons(matches) { const off = !findInput.value || !matches; $('find-prev').disabled = off; $('find-next').disabled = off; }
 
 function findStep(forward) {
-  if (findInput.value) window.browser.find(findInput.value, { forward, findNext: true });
+  if (findInput.value) window.browser.find(findInput.value, findOpts(forward, true));
 }
 
 window.browser.onOpenFind(openFind);
@@ -2484,7 +2487,7 @@ window.browser.onFindResult(({ activeMatchOrdinal, matches }) => {
   syncFindButtons(matches);
 });
 findInput.addEventListener('input', () => {
-  if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
+  if (findInput.value) window.browser.find(findInput.value, findOpts(true, false));
   else {
     window.browser.stopFind();
     $('find-count').textContent = '';
@@ -2499,6 +2502,13 @@ findbar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.prevent
 $('find-next').onclick = () => findStep(true);
 $('find-prev').onclick = () => findStep(false);
 $('find-close').onclick = closeFind;
+// Turning Match case on or off searches again from the start, so the count is the new one; the keyboard stays in the field.
+$('find-case').onclick = () => {
+  findMatchCase = !findMatchCase;
+  $('find-case').setAttribute('aria-pressed', String(findMatchCase));
+  if (findInput.value) { syncFindButtons(0); window.browser.find(findInput.value, findOpts(true, false)); }
+  findInput.focus();
+};
 
 // ---------- sidebar ----------
 

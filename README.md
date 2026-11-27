@@ -147,7 +147,7 @@ Settings → Tabs and browsing → **Tab layout** lists the tabs down the left o
 
 ## Two tabs side by side
 
-Right-click a tab → **Open in split view** to show it next to the tab you are on, or drag a tab out of the strip and drop it on the right edge of the page. Drag the divider to resize (double-click for an even split); the button on the divider, or **Close split view** in the tab menu, ends it. The tab you clicked last is the one the address bar, the AI and the shortcuts use, so the AI can work in one side while you read the other. Split views are not kept across restarts.
+Right-click a tab → **Open in split view** to show it next to the tab you are on, or drag a tab out of the strip and drop it on the right edge of the page. Drag the divider to resize (double-click for an even split); the button on the divider, or **Close split view** in the tab menu, ends it. The tab you clicked last is the one the address bar, the AI and the shortcuts use, so the AI can work in one side while you read the other. Split views are kept across restarts: each pair comes back with its divider where you left it.
 
 ## Profiles
 
@@ -215,7 +215,7 @@ On a sign-in page (Microsoft, Google, Apple, GitHub, Amazon and others) that pic
 | Open a local file (HTML, PDF, images, media) | `Ctrl+O`, drop it on the window, type or paste its path, or **Open With → Lumen** |
 | Back / forward | `Alt+←` / `Alt+→` (macOS: `Cmd+[` / `Cmd+]`) |
 | Reload / stop loading | `Ctrl+R` or `F5` / `Esc` |
-| Find in page | `Ctrl+F` |
+| Find in page (the **Aa** button matches case) | `Ctrl+F` |
 | Zoom | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 | Bookmark this page | `Ctrl+D` |
 | Show or hide the bookmarks bar | `Ctrl+Shift+B` |
