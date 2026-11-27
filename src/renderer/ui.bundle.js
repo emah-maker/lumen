@@ -8459,13 +8459,16 @@ r.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], { durat
 },
 
 
-pick(chats, { query = '', view = 'chats', hits = null } = {}) {
+
+pick(chats, { query = '', view = 'chats', hits = null, folded = null } = {}) {
 if (query) {
 const q = query.toLowerCase();
 return chats.filter((c) => String(c.title || '').toLowerCase().includes(q) || hits?.has(c.id)).map((c) => (hits?.get(c.id) ? { ...c, snippet: hits.get(c.id) } : c));
 }
-return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived));
+return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived && !(c.project && folded?.has(c.project))));
 },
+
+folded(projects) { return new Set((projects || []).filter((p) => !p.archived).map((p) => p.id)); },
 
 views(view, archivedCount, onPick) {
 const bar = Object.assign(document.createElement('div'), { className: 'chat-views' });
@@ -12918,7 +12921,7 @@ const list = document.createElement('ul');
 list.className = 'chat-items';
 function drawList() {
 const query = search.query;
-const shown = tools.pick(chats, { query, view, hits: search.hits });
+const shown = tools.pick(chats, { query, view, hits: search.hits, folded: window.sidebarProjects ? tools.folded(knownProjects) : null });
 const rows = [];
 for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
 list.replaceChildren(...rows);

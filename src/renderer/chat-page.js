@@ -164,7 +164,7 @@
   function drawItems() {
     const query = search.query;
     const play = live.flip();
-    let shown = tools.pick(live.order(lastChats), { query, view, hits: search.hits });
+    let shown = tools.pick(live.order(lastChats), { query, view, hits: search.hits, folded: tools.folded(lastProjects) }); // (a project's chats are under it in the Projects block)
     const rows = [];
     for (const g of tools.group(shown, Date.now(), { months: true })) rows.push(tools.heading(g.label), ...g.chats.map((chat) => makeItem(chat, chat.id === lastCurrent)));
     items.replaceChildren(...rows);
@@ -188,6 +188,10 @@
     lastProjects = Array.isArray(projects) ? projects : [];
     for (const id of [...expanded]) if (!lastProjects.some((p) => p.id === id)) expanded.delete(id);
     drag.selection.prune();
+    if (current !== lastCurrent) { // the chat on show is in a project: its project opens in the rail so the chat is in sight (once: shutting it stays shut)
+      const home = chats.find((c) => c.id === current)?.project;
+      if (home && lastProjects.some((p) => p.id === home && !p.archived)) expanded.add(home);
+    }
     lastCurrent = current;
     if (!searchBox) { searchBox = tools.search((q) => search.set(q)); items.before(searchBox); }
     searchBox.hidden = !chats.length;
