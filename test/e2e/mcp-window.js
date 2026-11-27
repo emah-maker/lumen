@@ -278,7 +278,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
 
   // ---- 6. Not in the saved session
   await sleep(3800);
-  const saved = JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).session || {};
+  const saved = JSON.parse(fs.readFileSync(path.join(profile, 'session.json'), 'utf8')).session || {}; // (the saved session's own file: settings/session-store.js)
   const savedUrls = JSON.stringify(saved);
   check('the agent\'s window is not in the saved session', !/\/a1|\/a2|\/a3/.test(savedUrls) && /user/.test(savedUrls), savedUrls.slice(0, 300));
 

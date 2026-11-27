@@ -175,8 +175,9 @@ const path = require('path');
   ] });
   check('read_urls: a redirect to a new host asks, and denied, the page is not read', r.approvals.length === 1 && r.approvals[0].host === otherHost && /did not allow Claude/.test(r.results[1]?.text) && !/Secret \/hidden-denied/.test(r.results[1]?.text) && !hits.includes(`${otherHost}/hidden-denied`), JSON.stringify(r));
 
-  // 7c. web_search in a tainted run: a card with the query; denied, nothing is searched. Allowed,
-  // DuckDuckGo joins the chat's approved sites. A run that read nothing searches without a card.
+  // 7c. web_search in a tainted run: a card with the query; denied, nothing is searched. Allowed, that
+  // one search is approved, not DuckDuckGo: the next, different search asks again (it could carry the
+  // page's text), the same search again does not. A run that read nothing searches without a card.
   const secretQuery = 'Secret /inbox private text';
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [
     { name: 'read_page', input: {} },
@@ -188,7 +189,14 @@ const path = require('path');
     { name: 'read_page', input: {} },
     { name: 'web_search', input: { query: 'lumen browser' } },
   ] });
-  check('allowed: DuckDuckGo joins the approved sites', r.approvals.length === 1 && r.approved.includes('html.duckduckgo.com') && !/did not allow/.test(r.results[1]?.text), JSON.stringify(r));
+  check('allowed: the search runs, and only that search is approved (not DuckDuckGo)', r.approvals.length === 1 && !r.approved.includes('html.duckduckgo.com') && r.approved.some((k) => k.startsWith('search:html.duckduckgo.com ')) && !/did not allow/.test(r.results[1]?.text), JSON.stringify(r));
+  r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: true, toolUses: [
+    { name: 'read_page', input: {} },
+    { name: 'web_search', input: { query: 'lumen browser' } },
+    { name: 'web_search', input: { query: '  Lumen   browser ' } },
+    { name: 'web_search', input: { query: secretQuery } },
+  ] });
+  check('a tainted chat asks for each new search, not once per host', r.approvals.length === 2 && r.approvals.map((a) => a.query).join('|') === `lumen browser|${secretQuery}` && r.results.slice(1).every((x) => !/did not allow/.test(x.text)), JSON.stringify(r.approvals));
   r = await run({ startUrl: `${home}/inbox`, pageContext: false, answer: false, toolUses: [
     { name: 'web_search', input: { query: 'lumen browser' } },
   ] });

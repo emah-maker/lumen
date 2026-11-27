@@ -146,6 +146,7 @@ function createBanner(deps) {
     });
     win.setAlwaysOnTop(true, 'screen-saver');
     win.setIgnoreMouseEvents(true, { forward: true });
+    BANNERS.add(win.webContents); // [ipc gate] main.js lets only these pages send desktop-banner:* (isBanner)
     win.on('closed', () => { win = null; loaded = null; grab = null; });
     loaded = win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(HTML)}`).catch(() => {});
     return loaded;
@@ -212,4 +213,7 @@ function createBanner(deps) {
   };
 }
 
-module.exports = { createBanner, HTML, WIDTH, SMALL_WIDTH, HEIGHT, DRAG_PX, esc };
+const BANNERS = new WeakSet(); // every banner page's webContents
+const isBanner = (wc) => Boolean(wc) && BANNERS.has(wc);
+
+module.exports = { createBanner, isBanner, HTML, WIDTH, SMALL_WIDTH, HEIGHT, DRAG_PX, esc };

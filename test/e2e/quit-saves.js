@@ -57,7 +57,8 @@ const launch = (profile) => electron.launch({
   }, TEXT);
   check('the chat written just before the quit is in the chat store', Boolean(await waitFor(chatHas)), 'not found');
   check('the page that was open comes back', Boolean(await waitFor(async () => (await app.evaluate(() => global.__chatPage.tabs())).some((t) => /\/kept$/.test(t.url)))), JSON.stringify(await app.evaluate(() => global.__chatPage.tabs()).catch(() => null)));
-  check('the settings file is whole (parses, has the session)', (() => { try { return Boolean(JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).session); } catch (err) { return false; } })(), 'settings.json');
+  check('the settings file is whole (parses)', (() => { try { return Boolean(JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8'))); } catch (err) { return false; } })(), 'settings.json');
+  check('the session file is whole (parses, has the session)', (() => { try { return Boolean(JSON.parse(fs.readFileSync(path.join(profile, 'session.json'), 'utf8')).session?.urls); } catch (err) { return false; } })(), 'session.json');
 
   try { await app.close(); } catch { /* already gone */ }
   server.close();

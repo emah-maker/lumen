@@ -188,6 +188,12 @@ const http = require('http');
   await ui2.waitForSelector('.tab', { timeout: 10000 }).then(() => true, () => false);
   check('…and the UI comes back with its tabs', (await ui2.locator('.tab').count()) > 0, await ui2.locator('.tab').count());
 
+  // ---- [ipc gate] every channel registered has a sender rule, and none of Lumen's own pages was refused along the way
+  const gate = await app.evaluate(() => ({ unmapped: [...global.__ipcGate.unmapped], refused: global.__ipcGate.refused }));
+  check('every registered ipcMain channel has a rule in browser/ipc-gate.js', gate.unmapped.length === 0, gate.unmapped.join(', '));
+  const ownRefused = gate.refused.filter((r) => r.reason === 'unmapped' || /^file:|^lumen-pdf:/.test(r.from));
+  check('no call from Lumen\'s own pages was refused', ownRefused.length === 0, JSON.stringify(ownRefused.slice(0, 5)));
+
   check('no UI errors', errors.length === 0, errors.join('; '));
   await app.close();
   fs.rmSync(profile, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });

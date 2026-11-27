@@ -1216,6 +1216,8 @@ const PLAN_CLI_NOTICE = 'Plan mode works with API models (Claude, OpenAI, Gemini
 const SCHOLAR_HOST = 'api.openalex.org'; // stands for find_sources' databases on the approval card
 const CLI_NAMES = { claudecode: 'Claude Code', grokbuild: 'Grok Build', antigravity: 'Antigravity', codex: 'Codex' };
 // The card for a search that leaves the browser (web_search, find_sources): the words that will be sent. undefined for other tools.
+// searchKey: what an OK for one of them is kept as in the chat's approved hosts (one search, never the host: ensureAllowed).
+const searchKey = (host, query) => `search:${host} ${String(query).trim().replace(/\s+/g, ' ').toLowerCase()}`;
 function searchCard(name, input, who) {
   const query = String(input?.query ?? input?.doi ?? '');
   if (name === 'web_search') return { query, title: `${who} wants to search DuckDuckGo for ${quote(query, 120)}` };
@@ -5520,7 +5522,10 @@ ${prompt}` : prompt), historyImages: [] };
   // `run` is the task scope, whose chat holds the taint until New chat, or an MCP session for outside
   // agents), navigate / open_tab / read_urls to a destination host that isn't approved yet ask first
   // ("<who> wants to open <host>"), one card per new host. The answer joins the same approved hosts.
-  // web_search asks the same way about DuckDuckGo, with the query on the card (it is what gets sent).
+  // web_search (and find_sources) ask the same way, with the query on the card (it is what gets sent): once per search, not once per
+  // host. The query is the data that leaves, so an OK for one query says nothing about the next one, which could carry the page's
+  // text; a search OK is kept as "search:<host> <query>" (the same query again asks nothing) and does not approve the host itself
+  // (else navigate to html.duckduckgo.com/?q=<page text> would go without a card). A host the user approved opening still covers it.
   // A chat that hasn't read anything goes freely. Redirects the tool then runs into are checked
   // against the same hosts (guardRedirects), so the call's context is kept on the task scope.
   // run_script in a tainted run has its own card per site ("<who> wants to run a script on <host>"):
@@ -5548,7 +5553,7 @@ ${prompt}` : prompt), historyImages: [] };
     if (DESTINATION_TOOLS.has(goes) && taintHolder(run)?.tainted) {
       const search = searchCard(goes, input, who);
       for (const host of destinationHosts(goes, input)) {
-        if (!(await this.askOpen(host, gate, search))) throw new Error(search ? `The user did not allow ${who} to send this search out. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
+        if (!(await this.askOpen(host, gate, search, search ? searchKey(host, search.query) : null))) throw new Error(search ? `The user did not allow ${who} to send this search out. Ask them what to do instead.` : `The user did not allow ${who} to open ${host}. Ask them what to do instead.`);
       }
     }
     // [image routing] The prompt leaves for an image provider: after page content was read, the user sees it first (once per prompt).
@@ -6162,16 +6167,17 @@ ${prompt}` : prompt), historyImages: [] };
   // Is `host` approved for a tainted run heading there? Asks "<who> wants to open <host>" if not
   // (auto-allow covers the sidebar's AI only); calls that need the same host at once share one card.
   // `card` ({ title, query }) says more on the card, for a search; such a card is never shared.
-  async askOpen(host, { emit, signal, hosts, who, external, noAsk }, card = null) {
-    if (hosts.has(host)) return true;
+  // key: what the OK is kept as when it is not the host itself (one search: searchKey).
+  async askOpen(host, { emit, signal, hosts, who, external, noAsk }, card = null, key = null) {
+    if (hosts.has(host) || (key && hosts.has(key))) return true;
     if (!external && !card && this.projectHostOk(host)) { hosts.add(host); return true; } // [project permissions] "Always" allowed in the chat's project
     if (this.autoAllows({ external, noAsk })) {
-      hosts.add(host);
+      hosts.add(key || host);
       return true;
     }
     if (card) {
       const ok = await this.askApproval(host, emit, signal, { action: 'open', who, ...card });
-      if (ok) hosts.add(host);
+      if (ok) hosts.add(key || host);
       return ok;
     }
     return this.sharedAsk(this.openAsks, hosts, host, signal, () => this.askApproval(host, emit, signal, { action: 'open', who }).then((ok) => {
