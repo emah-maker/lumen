@@ -363,6 +363,9 @@ const UI_ONLY_IPC = new Set([
   'offers:get', 'offers:act', // the "New in Lumen" card in the empty chat (the chat page has them too: CHAT_IPC)
   'meeting:state', 'meeting:context-get', 'meeting:context-save', 'meeting:prompt', 'meeting:live-start', 'meeting:live-stop', 'meeting:transcript-chunk', 'meeting:stealth', 'meeting:summarize', 'meeting:save-chat', // meeting helper (features/meeting.js CHANNELS; it loads on first use)
 ]);
+// [ipc gate] Every ipcMain channel answers only the frames its rule in browser/ipc-gate.js names: Lumen's own UI, the
+// Settings tab, a chat page, one of Lumen's renderer/ pages or views, or (for the in-page preloads' few calls) any frame.
+// The sender is told apart by its webContents and its frame's address, never by what it sends; a channel with no rule is refused.
 const isUiUrl = (url) => sameFileUrl(url, UI_URL);
 const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
   && event.senderFrame === event.sender.mainFrame && isUiUrl(event.senderFrame?.url);
@@ -371,11 +374,31 @@ const isUiSender = (event) => Boolean(ui()) && event.sender === ui()
 const { webContents: webContentsModule } = require('electron');
 const syntheticTestEvent = (event) => TEST
   && !(event?.sender && typeof event.sender.id === 'number' && webContentsModule.fromId(event.sender.id) === event.sender);
-const trustedSender = (event, channel) => syntheticTestEvent(event) || isUiSender(event)
-  || (PRIVILEGED_IPC.test(channel) && isSettingsSender(event))
-  || Boolean(chatPageRt?.allows(event, channel)); // the chat page: only the chat calls (features/chat-page.js CHAT_IPC)
-const gatedChannel = (channel) => PRIVILEGED_IPC.test(channel) || UI_ONLY_IPC.has(channel);
-if (TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: gatedChannel, uiUrl: UI_URL };
+const ipcGate = require('./browser/ipc-gate').create({
+  rendererDir: path.join(__dirname, 'renderer'),
+  uiOnly: UI_ONLY_IPC, privileged: PRIVILEGED_IPC, chatIpc: chatPage.CHAT_IPC, spareIpc: chatPage.SPARE_IPC,
+  surfaces: {
+    ui: (event) => isUiSender(event),
+    settings: (event) => isSettingsSender(event),
+    chat: (event, channel) => Boolean(chatPageRt?.allows(event, channel)), // the chat page: only the chat calls (features/chat-page.js CHAT_IPC)
+    pdf: (event) => event.senderFrame === event.sender.mainFrame && pdfViewer.isViewerUrl(event.senderFrame?.url),
+    player: (event) => Boolean(engineSender(event)),
+    banner: (event) => require('./desktop/banner').isBanner(event.sender),
+  },
+});
+const ipcRefusals = new Map(); // channel|address -> times refused (logged the first time each, and every time in development)
+function refusedIpc(event, channel, reason) {
+  let from = '';
+  try { from = String(event?.senderFrame?.url || event?.sender?.getURL?.() || '').slice(0, 80); } catch { /* the frame is gone */ }
+  const key = `${channel}|${from}`;
+  const seen = ipcRefusals.get(key) || 0;
+  if (ipcRefusals.size < 500 || seen) ipcRefusals.set(key, seen + 1);
+  if (!seen || !app.isPackaged) console.error(`[lumen] refused ${channel} from ${from}${reason === 'unmapped' ? ' (no rule in browser/ipc-gate.js)' : ''}`);
+  if (TEST && global.__ipcGate.refused.length < 1000) global.__ipcGate.refused.push({ channel, from, reason });
+  if (TEST && process.env.LUMEN_IPC_REFUSED_LOG) { try { fs.appendFileSync(process.env.LUMEN_IPC_REFUSED_LOG, `${JSON.stringify({ channel, from, reason })}\n`); } catch { /* diagnostics only */ } } // (a run of several e2e suites collects every refusal in one file)
+}
+const ipcUnmapped = new Set(); // channels registered with no rule (refused for everyone)
+if (TEST) global.__ipcGate = { uiOnly: UI_ONLY_IPC, gated: (channel) => Boolean(ipcGate.policyFor(channel)), policyFor: ipcGate.policyFor, unmapped: ipcUnmapped, refused: [], uiUrl: UI_URL };
 
 // Lumen's own views (the UI, the suggestions dropdown, the dialogs overlay) show one local file
 // each and nothing else: a link, drop or script can't navigate them, and window.open never makes a
@@ -418,12 +441,22 @@ for (const method of ['handle', 'on']) {
     enterWindow(rec);
     return run();
   };
-  ipcMain[method] = (channel, listener) => register(channel, !gatedChannel(channel) ? (event, ...args) => inSenderWindow(event, () => listener(event, ...args)) : (event, ...args) => inSenderWindow(event, () => {
-    if (trustedSender(event, channel)) return listener(event, ...args);
-    console.error(`[lumen] refused ${channel} from ${event.sender.getURL?.().slice(0, 80)}`);
-    if (method === 'handle') throw new Error('Not allowed');
-    return undefined;
-  }));
+  ipcMain[method] = (channel, listener) => {
+    if (!ipcGate.policyFor(channel)) {
+      ipcUnmapped.add(channel);
+      if (!app.isPackaged) console.error(`[lumen] ipc channel ${channel} has no rule in browser/ipc-gate.js: every call to it is refused`);
+      if (TEST && process.env.LUMEN_IPC_REFUSED_LOG) { try { fs.appendFileSync(process.env.LUMEN_IPC_REFUSED_LOG, `${JSON.stringify({ channel, reason: 'no-rule' })}\n`); } catch { /* diagnostics only */ } }
+    }
+    return register(channel, (event, ...args) => inSenderWindow(event, () => {
+      if (syntheticTestEvent(event)) return listener(event, ...args);
+      const verdict = ipcGate.allows(event, channel);
+      if (verdict.ok) return listener(event, ...args);
+      refusedIpc(event, channel, verdict.reason);
+      if (method === 'handle') throw new Error('Not allowed');
+      try { event.returnValue = null; } catch { /* an async message: nothing waits for a reply */ } // (a sendSync caller gets null, not a hang)
+      return undefined;
+    }));
+  };
 }
 let tabs = []; // { id, view, favicon }
 let activeId = null;
