@@ -4,7 +4,7 @@
 // refuses every other non-loopback fetch in the main process). Covers: the "Add extension?" permission lines, install through the same installer the store button uses, the
 // content script on a page, the toolbar button, the popup (shown, at the size the page asked for), the declarativeNetRequest gate
 // and shim, and removal (gone from the session, the folder and the toolbar, and the content script no longer runs).
-// Lumen has no enable/disable switch for an extension (an extension is installed or removed), so that is not tested.
+// The on/off switch and Load unpacked are covered by test/e2e/extensions-manage.js.
 // Not covered here, because it needs the real store page: the store's own "Add to Lumen" button.
 // Run alone: LUMEN_TEST_BACKGROUND=1 CLAUDE_BROWSER_TEST=1 node test/e2e/extensions.js (a throwaway profile; no window shows)
 require('../helpers/_tmp-cleanup'); // removes the temp folders this suite makes when it exits, pass or fail
