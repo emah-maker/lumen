@@ -3031,6 +3031,25 @@ window.browser.onAccountState?.((st) => { if (st || laterLoads['account-tabs.css
 // after an update (it answers once startup has decided), not part of the bundle. From then on the card asks for itself.
 setTimeout(() => window.assistant?.offers?.get().then((list) => { if (list?.items?.length) loadLater('offer-card.css', 'offer-card.js').then((ok) => ok && window.offerCard?.show(list)); }).catch(() => {}), 600);
 
+// [translate] The address bar's translate button and infobar (translate.js and .css): loaded the first time a tab in front has something to
+// show for them (a page in another language, a translation running), not part of the bundle. From then on the file follows the tabs itself.
+window.browser.onTabs?.((state) => {
+  const st = state?.tabs?.find((x) => x.id === state.activeId)?.translate;
+  if ((st && st.phase !== 'idle') && !laterLoads['translate.css']) loadLater('translate.css', 'translate.js').then((ok) => ok && window.translateBar?.draw(st));
+});
+
+// [media controls] The toolbar's media button and pop-up (media-hub.js and .css): loaded the first time a tab plays sound, not part of the
+// bundle (the button stays hidden until then). Once loaded the file asks for the list and follows it itself.
+const loadMediaHub = (list) => { if (Array.isArray(list) && list.length) loadLater('media-hub.css', 'media-hub.js'); };
+window.browser.onMediaList?.(loadMediaHub);
+window.browser.mediaList?.().then(loadMediaHub).catch(() => {});
+
+// [profiles] The toolbar's profile button (profile-button.js and .css): loaded once there is more than one profile, not part of the bundle
+// (with one profile the button stays hidden). The file asks for the profile itself and follows changes.
+const loadProfileButton = (p) => { if (p?.count > 1) loadLater('profile-button.css', 'profile-button.js'); };
+window.browser.profileInfo?.().then(loadProfileButton).catch(() => {});
+window.browser.onProfileChanged?.(loadProfileButton);
+
 // The command bar (Ctrl+K; command-bar.js, command-bar-match.js and .css): loaded by the first key that asks for it, not part of the bundle.
 // "Ask AI: ..." in it arrives here as an event and goes to the sidebar chat, like "Ask AI about this" on a selection.
 const loadCommandBar = () => loadLater('command-bar.css', 'command-bar-match.js', 'command-bar.js');

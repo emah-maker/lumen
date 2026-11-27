@@ -133,4 +133,5 @@
     const active = state?.tabs?.find((t) => t.id === state.activeId);
     draw(active?.translate || null);
   });
+  window.translateBar = { draw }; // (app.js loads this file with the first tab that has something to translate, then draws that state)
 })();
