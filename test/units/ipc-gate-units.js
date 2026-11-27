@@ -129,6 +129,7 @@ const PRELOADS = {
   'src/preload/newtab-preload.js': ['page:newtab'],
   'src/preload/files-newtab-preload.js': ['page:newtab'],
   'src/preload/dialog-preload.js': ['page:dialog'],
+  'src/preload/profile-editor-preload.js': ['page:profile-editor'], // [profiles] the Add / Edit profile window
   'src/preload/print-preview-preload.js': ['page:print-preview'],
   'src/preload/recorder-preload.js': ['page:recorder'],
   'src/preload/suggest-preload.js': ['page:suggest'],
