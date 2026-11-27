@@ -143,6 +143,9 @@ const chat = (text) => ({ settings: { model: 'm' }, messages: [{ role: 'user', c
     if (process.platform === 'win32') {
       const busy = await d2.evaluate((_e, id) => global.__profiles.remove(id, { confirmed: true }), work.id);
       check('Delete refuses a profile that is open, and says so', busy.error === 'busy' && fs.existsSync(path.join(root, work.id)) && /Work/.test((await d2.evaluate(() => global.__profiles.test.lastNotice?.message)) || ''), JSON.stringify(busy));
+      const notice = await waitFor(() => d2.evaluate(() => global.__dialogs.currentId()));
+      await d2.evaluate((_e, id) => global.__dialogs.respond({ id, response: 0 }), notice); // OK on the notice
+      await waitFor(() => d2.evaluate(() => global.__dialogs.currentId() !== null ? null : true));
     }
     await close(wk);
     const workHistory = urlsIn(readJson(path.join(root, work.id, 'history.json')));
@@ -152,7 +155,7 @@ const chat = (text) => ({ settings: { model: 'm' }, messages: [{ role: 'user', c
     const asked = await waitFor(() => d2.evaluate(() => global.__dialogs.currentKind() === 'message' && global.__dialogs.currentId()));
     check('Delete asks first (a Lumen dialog)', Boolean(asked), asked);
     await d2.evaluate((_e, id) => global.__dialogs.respond({ id, response: 0 }), asked); // Cancel
-    const cancelled = await d2.evaluate(() => global.__profileDelete).catch((e) => ({ threw: String(e) }));
+    const cancelled = await Promise.race([d2.evaluate(() => global.__profileDelete), sleep(15000).then(() => ({ timedOut: true }))]).catch((e) => ({ threw: String(e) }));
     check('Cancel keeps the profile', cancelled.cancelled === true && fs.existsSync(path.join(root, work.id)), JSON.stringify(cancelled));
     const removed = await waitFor(() => d2.evaluate((_e, id) => global.__profiles.remove(id, { confirmed: true }), work.id), 15000);
     check('a closed profile is deleted: its folder goes and it leaves the list', removed?.removed === true && !fs.existsSync(path.join(root, work.id)) && (await d2.evaluate(() => global.__profiles.store.list().length)) === 1, JSON.stringify(removed));
