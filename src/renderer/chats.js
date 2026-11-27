@@ -54,7 +54,17 @@
   let redraw = () => {};
   const search = tools.searcher(api, () => redraw());
   const live = tools.liveOrder(panel, () => { if (!panel.hidden && !panel.querySelector('.chat-rename-input')) render(); });
-  async function render() {
+  const rowList = Object.assign(document.createElement('ul'), { className: 'chat-items' });
+  // One redraw at a time, and the newest answer wins: chats:changed, New chat and a hover release can all ask at once, and each used
+  // to draw on its own (a slower api.list() landing after a newer one drew the older list again).
+  let drawing = null;
+  let drawAgain = false;
+  function render() {
+    if (drawing) { drawAgain = true; return drawing; }
+    drawing = (async () => { try { let n = 0; do { drawAgain = false; await draw(); } while (drawAgain && ++n < 3); } finally { drawing = null; } })();
+    return drawing;
+  }
+  async function draw() {
     const focusedRow = document.activeElement?.closest?.('.chat-item');
     const focusedId = panel.contains(focusedRow) ? focusedRow.dataset.id : null;
     const focusedAt = focusedId ? [...panel.querySelectorAll('.chat-item')].indexOf(focusedRow) : -1;
@@ -79,22 +89,21 @@
     const archivedCount = chats.filter((c) => c.archived).length;
     if (!archivedCount && view === 'archived') view = 'chats';
     const views = archivedCount || view === 'archived' ? tools.views(view, archivedCount, (v) => { view = v; render(); }) : null;
-    const list = document.createElement('ul');
-    list.className = 'chat-items';
+    const list = rowList; // (the same list every time: its rows that did not change stay as they are, see drawList)
     function drawList() {
       const query = search.query;
       const shown = tools.pick(chats, { query, view, hits: search.hits, folded: window.sidebarProjects ? tools.folded(knownProjects) : null }); // (a project's chats are under it in the Projects block)
       const rows = [];
       for (const g of tools.group(shown)) rows.push(tools.heading(g.label), ...g.chats.map((chat) => item(chat, chat.id === current)));
-      list.replaceChildren(...rows);
-      if (!shown.length && (query || view === 'archived')) list.append(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
+      if (!shown.length && (query || view === 'archived')) rows.push(Object.assign(document.createElement('li'), { className: 'chat-list-empty', textContent: query ? window.chatTr('chats.noMatch', 'No chats match') : window.chatTr('chats.noArchived', 'No archived chats') }));
+      tools.keep(list, rows); // (no flash on a burst of redraws: a running chat's spinner, the Done row)
     }
     redraw = drawList;
     drawList();
     const block = window.sidebarProjects && knownProjects.length ? window.sidebarProjects.block({ projects: knownProjects, chats, current, open: openChat, rerender: render, close: () => closePanel(false) }) : null;
     const first = !knownProjects.length ? Object.assign(document.createElement('button'), { type: 'button', className: 'chat-project-hint', textContent: window.chatTr('chatpage.project.new', 'New project') }) : null; // (the first project is made from here)
     if (first) first.onclick = async () => { await loadProjects(); window.sidebarProjects?.newProject(); };
-    panel.replaceChildren(head, ...(block ? [block] : first ? [first] : []), ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list);
+    tools.keep(panel, [head, ...(block ? [block] : first ? [first] : []), ...(searchBox ? [searchBox] : []), ...(views ? [views] : []), list], { reuse: false }); // (the list stays in place, so its rows are not re-inserted)
     play();
     if (typing && searchBox) searchBox.focus();
     else if (focusedId) { // the same row, or after a delete the one now in its place

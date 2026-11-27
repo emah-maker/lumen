@@ -133,6 +133,35 @@
       }
       return chats.filter((c) => (view === 'archived' ? c.archived : !c.archived && !(c.project && folded?.has(c.project))));
     },
+    // Put the rows into a list, keeping the ones that did not change: a redraw (every chats:changed, New chat, a hover release) used to
+    // rebuild every row, so a burst of them flashed the list (the spinner started over, the Done row's highlight blinked). A chat row is
+    // kept when it is drawn from the same chat (li.__sig) and looks the same; a heading when it says the same. Nothing is touched when
+    // every row is kept in the same order.
+    // reuse: false only places the nodes (no row is matched up): for a panel's own parts, kept in place when they are the same nodes.
+    keep(host, nodes, { reuse = true } = {}) {
+      const key = (n) => (n.dataset?.id ? `c:${n.dataset.id}` : `h:${n.outerHTML}`);
+      const old = new Map();
+      if (reuse) for (const n of host.children) if (!old.has(key(n))) old.set(key(n), n);
+      const next = !reuse ? nodes : nodes.map((n) => {
+        const k = key(n);
+        const was = old.get(k);
+        if (!was || was.__sig !== n.__sig || was.outerHTML !== n.outerHTML || was.querySelector('.chat-rename-input')) return n;
+        old.delete(k);
+        return was;
+      });
+      // in place: what is not drawn any more goes first, then a kept node in its place is not touched (moving it would start its
+      // spinner over); only new or moved ones go in
+      let changed = false;
+      const keepSet = new Set(next);
+      for (const n of [...host.childNodes]) if (!keepSet.has(n)) { n.remove(); changed = true; }
+      let cur = host.firstChild;
+      for (const n of next) {
+        if (n === cur) { cur = cur.nextSibling; continue; }
+        host.insertBefore(n, cur);
+        changed = true;
+      }
+      return changed;
+    },
     // The projects whose chats go under them in the Projects block: every one not archived (an archived project's chats stay in the list).
     folded(projects) { return new Set((projects || []).filter((p) => !p.archived).map((p) => p.id)); },
     // Chats / Archived switch (shown once something is archived or the Archived view is open).
@@ -296,6 +325,9 @@
       const li = document.createElement('li');
       li.className = `chat-item${isCurrent ? ' current' : ''}`;
       li.dataset.id = chat.id;
+      // keep(): a row drawn from the same chat is the same row. The times are left out (a working chat is saved again and again: its
+      // time on screen is in the row's look, which keep() compares too).
+      try { li.__sig = `${isCurrent ? 1 : 0}${JSON.stringify({ ...chat, updated: 0, created: 0 })}`; } catch { /* no reuse for this row */ }
       const openBtn = document.createElement('button');
       openBtn.type = 'button';
       openBtn.className = 'chat-open';
