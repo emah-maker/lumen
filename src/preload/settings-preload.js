@@ -127,6 +127,10 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
     removeExtension: call('prefs:remove-extension'),
     pinExtension: call('prefs:extension-pin'),
     extensionSites: call('prefs:extension-sites'),
+    extensionEnabled: call('prefs:extension-enabled'), // [extensions] the on/off switch
+    pickUnpacked: call('prefs:unpacked-pick'), // [extensions] Developer mode → Load unpacked
+    addUnpacked: call('prefs:unpacked-add'),
+    reloadUnpacked: call('prefs:unpacked-reload'),
     extensionOptions: call('prefs:extension-options'),
     openUrl: call('prefs:open-url'),
     reset: call('prefs:reset'),

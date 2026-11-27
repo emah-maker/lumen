@@ -36,6 +36,7 @@ function extensionPermissionLines(manifest = {}) {
   const permissions = [...(manifest.permissions || []), ...(manifest.optional_permissions || [])].filter((p) => typeof p === 'string');
   const hosts = [
     ...(manifest.host_permissions || []),
+    ...(manifest.optional_host_permissions || []), // (sites it can ask for later, as optional_permissions above: left out, they came as a surprise)
     ...permissions.filter((p) => p.includes('://') || p === '<all_urls>'),
     ...(manifest.content_scripts || []).flatMap((c) => c.matches || []),
   ].filter((h) => typeof h === 'string');

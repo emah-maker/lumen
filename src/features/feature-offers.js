@@ -93,6 +93,7 @@ const QUIET = {
   secureDnsCustom: 'only matters with a custom secure DNS server, typed in its row',
   newTabHiddenTiles: 'the new-tab page records the tiles removed from it',
   extensionPins: 'pinned from the puzzle menu; Lumen records the order',
+  extensionsDevMode: 'for extension developers only: a card offering it to everyone would be noise',
   connectorAlways: 'added from an approval card only',
   aiWordAlways: 'added from the Word edit card only',
   telegramFiles: 'only matters with Telegram, whose setup shows it',
