@@ -80,6 +80,17 @@ const BACKGROUND_INFO = {
   sunset: { colors: ['#f0584a', '#ffc26b', '#8a1f4b'], avg: '#7a2a4a' },
 };
 
+// Whether a picture reads as light or dark (RGBA pixels, as dominantColors takes): 'light' when its mean WCAG luminance is at or above
+// LIGHT_PICTURE. White text and dark-glass cards can't be made readable over a pale picture (a snowy field, a white sky) without a heavy
+// scrim, so the page turns to dark text and white glass over one, as it does over a light gradient. Deterministic.
+const LIGHT_PICTURE = 0.42;
+function pictureTone(pixels) {
+  let sum = 0; let n = 0;
+  const f = (v) => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+  for (let i = 0; i + 3 < pixels.length; i += 4) { if (pixels[i + 3] < 128) continue; sum += 0.2126 * f(pixels[i]) + 0.7152 * f(pixels[i + 1]) + 0.0722 * f(pixels[i + 2]); n++; }
+  return n && sum / n >= LIGHT_PICTURE ? 'light' : 'dark';
+}
+
 // The most prominent, distinct, reasonably colourful colours of a picture: pixels is RGBA (canvas
 // getImageData, or a bitmap from main), n colours at most. Deterministic.
 function dominantColors(pixels, n = 3) {
@@ -148,7 +159,7 @@ function paletteForMode(mode, look) {
 
 const api = {
   MODES, cleanMode, isHex, hexToRgb, rgbToHex, rgbToHsl, hslToRgb, luminance, contrast, mix, ensureContrast, pickText, harmonies,
-  BACKGROUND_INFO, dominantColors, paletteFor, paletteForMode,
+  BACKGROUND_INFO, dominantColors, pictureTone, LIGHT_PICTURE, paletteFor, paletteForMode,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.WidgetColors = api;

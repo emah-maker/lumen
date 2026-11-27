@@ -73,9 +73,9 @@
     function render() {
       dirty = false;
       const { p, id, effect } = lookOf();
-      const tone = BG.toneOf(id, dark.matches); // 'plain', 'dark' or 'light': the same call the new-tab page makes
       const image = id === 'image' ? picture() : null;
-      const mode = BG.modeOf(id, dark.matches);
+      const tone = BG.toneOf(id, dark.matches, image?.tone); // 'plain', 'dark' or 'light': the same call the new-tab page makes
+      const mode = BG.modeOf(id, dark.matches, image?.tone);
       const light = Boolean(opts.state()?.graphics?.light); // Graphics: Light (Settings > Advanced): no blur behind glass, a calmer effect, as on the page
       box.className = `bg-preview ntp tone-${tone}${effect !== 'none' ? ' has-fx' : ''}${light ? ' gfx-light' : ''}`;
       box.dataset.gfx = light ? 'light' : 'full';

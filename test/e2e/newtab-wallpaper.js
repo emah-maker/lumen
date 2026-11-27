@@ -143,6 +143,27 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       }
       check(`${tag}: the clock, greeting and date are readable on ${id} (${rows.map((r) => `${r.k} ${r.mean}:1, worst ${r.worst}`).join('; ')})`, rows.length >= 2 && rows.every((r) => r.ok), JSON.stringify(rows));
     };
+    // A widget card's text over the card as drawn (its glass over the background): the card's title (small, muted) and its body text meet AA,
+    // >= 4.5 on the mean pixel behind them and >= 3 on the worst 5%. The card is scrolled into view; the text is hidden to read what is behind it.
+    const cardContrast = async (tag, id) => {
+      const boxes = await home(`(() => { const c = document.querySelector('.w-card[data-id="wwall001"]'); if (!c) return null; c.scrollIntoView({ block: 'center' }); const out = {};
+        for (const [k, s] of [['title', '.w-head h2'], ['body', '.w-body textarea, .w-body .w-note, .w-body p']]) { const e = c.querySelector(s); if (!e || e.offsetParent === null) continue;
+          const r = e.getBoundingClientRect(); const st = getComputedStyle(e); const color = k === 'body' && e.tagName === 'TEXTAREA' && !e.value ? getComputedStyle(e, '::placeholder').color : st.color;
+          out[k] = { x: r.left + 4, y: r.top + 2, w: Math.min(r.width - 8, 160), h: Math.min(r.height - 4, 18), color, size: parseFloat(st.fontSize), weight: Number(st.fontWeight) || 400 }; }
+        return out; })()`);
+      if (!boxes || !Object.keys(boxes).length) { check(`${tag}: ${id}: the notes card is on the page`, false, JSON.stringify(boxes)); return; }
+      await home("document.querySelectorAll('.w-card[data-id=\"wwall001\"] .w-head h2, .w-card[data-id=\"wwall001\"] .w-body').forEach((e) => { e.style.visibility = 'hidden'; }); true");
+      const px = await behind(Object.fromEntries(Object.entries(boxes).map(([k, v]) => [k, { x: v.x, y: v.y, w: v.w, h: v.h }])));
+      await home("document.querySelectorAll('.w-card[data-id=\"wwall001\"] .w-head h2, .w-card[data-id=\"wwall001\"] .w-body').forEach((e) => { e.style.visibility = ''; }); window.scrollTo(0, 0); true");
+      const rows = [];
+      for (const [k, v] of Object.entries(boxes)) {
+        const bg = px[k]; const t = parse(v.color);
+        const mix = { r: t.r * t.a + bg.r * (1 - t.a), g: t.g * t.a + bg.g * (1 - t.a), b: t.b * t.a + bg.b * (1 - t.a) };
+        const Lt = lum(mix.r, mix.g, mix.b); const mean = ratio(Lt, lum(bg.r, bg.g, bg.b)); const worst = Math.min(ratio(Lt, bg.lo), ratio(Lt, bg.hi));
+        rows.push({ k, mean: +mean.toFixed(2), worst: +worst.toFixed(2), ok: mean >= 4.5 && worst >= 3 });
+      }
+      check(`${tag}: a widget card's text is readable on ${id} (${rows.map((r) => `${r.k} ${r.mean}:1, worst ${r.worst}`).join('; ')})`, rows.every((r) => r.ok), JSON.stringify(rows));
+    };
     // What a layer of the same art over the page paints at the left margin: the page must paint the same, whatever the theme.
     const probeBand = async (art) => {
       await home(`(() => { const p = document.createElement('div'); p.id = 'probe'; p.style.cssText = 'position:fixed;inset:0;z-index:99999;background:' + ${JSON.stringify(art)}; document.body.append(p); return true; })()`);
@@ -168,8 +189,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
           check(`${t}: ${id}: the top band shows the background (${b.r},${b.g},${b.b}), not black`, b.black < 0.05 && b.r + b.g + b.b > 60, JSON.stringify(b));
         }
         await textContrast(t, id);
+        await cardContrast(t, id);
       }
     }
+    // Frosted cards (see-through, blurred) on the brightest dark backgrounds and a light Studio one, in both themes: still AA.
+    await set('newTabWidgetGlass', 'frosted');
+    for (const t of ['dark', 'light']) {
+      await theme(t);
+      for (const id of ['aurora', 'sunset', 'nebula', 'dusk', 'mist', 'peach']) { await applyBg(id); await cardContrast(t, `${id} with frosted cards`); }
+    }
+    await set('newTabWidgetGlass', 'solid');
+    // ---------- a pale picture (a snowy, light-blue photo): measured light, so dark text and white glass cards, readable, in both themes ----------
+    const pale = await app.evaluate(({ nativeImage }) => {
+      const w = 160, h = 100, buf = Buffer.alloc(w * h * 4); let s = 7;
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const k = y / h; let r = 196 + 40 * k, g = 216 + 28 * k, b = 236 + 16 * k; s = (Math.imul(s, 1664525) + 1013904223) >>> 0; if (s % 97 === 0) { r = g = b = 255; }
+        const o = (y * w + x) * 4; buf[o] = Math.min(255, b); buf[o + 1] = Math.min(255, g); buf[o + 2] = Math.min(255, r); buf[o + 3] = 255; // BGRA
+      }
+      return nativeImage.createFromBitmap(buf, { width: w, height: h }).toJPEG(92).toString('base64');
+    });
+    fs.writeFileSync(path.join(profile, 'newtab-wallpaper.jpg'), Buffer.from(pale, 'base64'));
+    await set('newTabImage', Date.now());
+    for (const t of ['light', 'dark']) {
+      await theme(t);
+      await applyBg('image'); await sleep(600);
+      const st = await home("({ bg: document.body.dataset.bg, light: document.body.classList.contains('tone-light'), text: getComputedStyle(document.getElementById('greeting')).color })");
+      check(`${t}: a pale picture is measured light: dark text and white glass cards (${st.text})`, st.bg === 'image' && st.light && lum(...Object.values(parse(st.text)).slice(0, 3)) < 0.1, JSON.stringify(st));
+      await band(`bg-pale-picture-${t}`);
+      await textContrast(t, 'a pale picture');
+      await cardContrast(t, 'a pale picture');
+      // With an effect drawn over it (Stars, a still frame) and each card glass: the cards stay white glass, not the dark glass made for a dark picture.
+      for (const glass of ['solid', 'frosted', 'clear']) {
+        await set('newTabWidgetGlass', glass); await applyBg('image', { effect: 'stars', still: true }); await sleep(500);
+        const bgc = await home("getComputedStyle(document.querySelector('.w-card[data-id=\"wwall001\"]')).backgroundColor");
+        const c = parse(bgc);
+        check(`${t}: a pale picture with Stars and ${glass} cards: the card is white glass (${bgc})`, c.a === 0 || (c.r > 200 && c.g > 200 && c.b > 200), bgc);
+        await cardContrast(t, `a pale picture with Stars and ${glass} cards`);
+      }
+      await set('newTabWidgetGlass', 'solid'); await applyBg('image');
+    }
+    // The orange fixture (a mid-tone picture) stays dark: white text under the dark scrim.
+    fs.copyFileSync(fixture, path.join(profile, 'newtab-wallpaper.jpg'));
+    await set('newTabImage', Date.now() + 1); await applyBg('image'); await sleep(600);
+    const og = await home("({ light: document.body.classList.contains('tone-light'), text: getComputedStyle(document.getElementById('greeting')).color })");
+    check(`a mid-tone picture stays dark: white text (${og.text})`, !og.light && lum(...Object.values(parse(og.text)).slice(0, 3)) > 0.8, JSON.stringify(og));
+    await cardContrast('dark', 'a mid-tone picture');
     // The accent follows the background's tone: light shades over a light background, dark ones over a dark one.
     await theme('dark');
     await applyBg('peach'); const pl = await home("getComputedStyle(document.documentElement).getPropertyValue('--accent').trim()");

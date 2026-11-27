@@ -58,6 +58,7 @@ function lookOf(l) {
     glass: ['frosted', 'clear'].includes(look.widgetGlass) ? look.widgetGlass : 'solid', // [look] Widget cards
     packed: look.widgetsPacked === true, // off unless switched on: cards stay where they are put. [widgets] Keep widgets packed
     imageColors: Array.isArray(look.imageColors) ? look.imageColors.filter((c) => hex(c)).slice(0, 3) : [], // [widgets] Match screen colours
+    imageTone: look.imageTone === 'light' ? 'light' : 'dark', // a picture measured light keeps dark text and white glass (widget-colors.js pictureTone)
   };
 }
 function effectStyleOf(s) {
@@ -74,7 +75,7 @@ let currentLook = lookOf(null);
 window.newtabLook = () => currentLook; // the editor on the clock card (newtab-setup.js) starts from what is shown
 function applyLook(look) {
   currentLook = look;
-  const tone = window.Backgrounds.toneOf(look.background, dark.matches); // 'plain' (the page's own colours), 'dark' (white text) or 'light' (dark text); a Studio one follows the theme
+  const tone = window.Backgrounds.toneOf(look.background, dark.matches, look.imageTone); // 'plain' (the page's own colours), 'dark' (white text) or 'light' (dark text); a Studio one follows the theme
   document.body.dataset.bg = look.background;
   document.body.classList.toggle('on-media', tone !== 'plain');
   document.body.classList.toggle('tone-light', tone === 'light');
@@ -95,7 +96,7 @@ function applyLook(look) {
 }
 // [look] The accent's tokens (features/theme-colors.js) in the shades the page is drawn in: the system's on Plain, light on a light
 // background, dark on any other.
-const modeOf = (look) => window.Backgrounds.modeOf(look.background, dark.matches); // (features/backgrounds.js: the Settings preview asks the same)
+const modeOf = (look) => window.Backgrounds.modeOf(look.background, dark.matches, look.imageTone); // (features/backgrounds.js: the Settings preview asks the same)
 const ACCENT_VARS = ['--accent', '--accent-rgb', '--accent-bright', '--accent-deep', '--accent-text', '--accent-soft', '--ring', '--on-accent'];
 function applyAccent(look) {
   const mode = modeOf(look);
@@ -120,7 +121,7 @@ function applyEffect(look) {
 dark.addEventListener('change', () => applyLook(currentLook));
 // [widgets] what newtab-widgets.js needs to tint cards from the page's own look
 window.widgetLook = () => {
-  const light = window.Backgrounds.toneOf(currentLook.background, dark.matches) === 'light'; // (a light background reads like Plain in the light theme: dark text)
+  const light = window.Backgrounds.toneOf(currentLook.background, dark.matches, currentLook.imageTone) === 'light'; // (a light background reads like Plain in the light theme: dark text)
   return {
     accent: currentLook.accent[modeOf(currentLook)] || getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
     background: light ? 'plain' : currentLook.background, dark: light ? false : dark.matches, imageColors: currentLook.imageColors,
