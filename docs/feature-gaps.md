@@ -49,7 +49,7 @@ Polish in the same round:
 | **History** | Searchable page, remove an entry, clear by time range | Per-visit timeline, journeys | Same as Chrome | Per-visit | Partial: one entry per address (latest visit), page not localized | Later: a per-visit list needs a new history store | M |
 | **Bookmarks** | Ctrl+D, manager, a bookmarks bar under the toolbar (added: chips, nested folders as menus, », drag to reorder, links and tabs dropped on it, right-click Edit / Delete / New folder, Ctrl+Shift+B), HTML import and export | Bar, nested folders, side panel | Pinned tabs replace them | Favorites bar, nested folders | Have; partial: HTML import and export keep one folder level, and the bar's order stays on each computer (sync carries the bookmarks, not their order) | Nested folders in HTML import and export: later, small | S |
 | **Downloads** | Panel and page, ask where to save, risky files held, Save … As (added) | Same | Same | Same | Have | — | — |
-| **Find in page** | Count, next and previous, Esc | Same (no match case either) | Same | Plus match case and "begins with" | Have | Match case: later, small | S |
+| **Find in page** | Count, next and previous, Esc, Match case (Aa, kept while the window is open) | Same (no match case either) | Same | Plus match case and "begins with" | Have | Whole word: Chromium's find has no option for it | — |
 | **Zoom** | Pill in the address bar, default zoom, per-site zoom remembered (added) | Same, plus a +/− bubble | Same | Same | Have | — | — |
 | **Print** | Ctrl+P opens Lumen's print preview, then the system printer or Save as PDF | Built-in preview | System | System | Have: Lumen's own print preview (destination, pages, layout) | — | — |
 | **Reader mode** | Address-bar button and ⋯ menu | Reading mode side panel | — | Reader | Have (no font or width settings) | Later: font and width controls are small and nice to have | S |
@@ -76,10 +76,10 @@ Polish in the same round:
 | **About and version** | Settings → Updates and about (versions, paths), Internals, macOS About panel (added) | `chrome://version` | Same | About Safari | Have | — | — |
 | **Task manager** | Settings → Advanced (every process, memory and CPU) | Shift+Esc window, end process | Same | Activity Monitor | Partial: no end process | Later | S |
 | **Fonts** | Font size and minimum font size | Plus font families | Same | Same | Partial | No: rarely changed | S |
-| **Media hub and autoplay** | — | Global media controls, autoplay settings | Media controls in the sidebar | Autoplay per site | Missing | Later: a small media button for tabs playing audio would fit the tab strip, which already shows audio | M |
+| **Media hub and autoplay** | Toolbar media button (added): each playing tab with its title, artist and artwork, play/pause, previous/next, mute and go to tab; media keys control the last-played tab; the speaker on a tab mutes it | Global media controls, autoplay settings | Media controls in the sidebar | Autoplay per site | Partial: no autoplay settings, no seek bar | Later: autoplay per site | S |
 | **Profiles and guest mode** | Profiles (added): each its own folder and window, with a name, color and avatar; switch, add, edit, delete from ⋯ → Profiles or the toolbar; plus private windows | Profiles, guest | Spaces with profiles | Profiles | Partial: no guest mode | Guest mode: private windows cover most of it | S |
 | **Sync** | Through a folder in your own cloud drive, passphrase-encrypted: bookmarks, history, chats, widgets, settings | Google account | Arc account | iCloud | Have (no Lumen servers or accounts) | — | — |
-| **Split view** | Two tabs side by side: tab menu → Open in split view, or drop a tab on the page's right edge; draggable divider | Edge and Chrome split screen | Split view | — | Have | Not kept across restarts; two tabs only | — |
+| **Split view** | Two tabs side by side: tab menu → Open in split view, or drop a tab on the page's right edge; draggable divider | Edge and Chrome split screen | Split view | — | Have: kept across restarts, with the divider's place | Two tabs only | — |
 | **Translation** | Your connected AI, Google Translate with consent, or on this device (Bergamot) | Built in | Built in | Built in, on device | Have | — | — |
 | **Error pages** | Certificate, HTTPS-only, Safe Browsing, crashed, and network errors with their own wording and hint: offline, site not found, refused, timed out, reset, proxy, redirect loop, blocked (added) | Same, plus an offline game | Same | Same | Partial: the error, history, bookmarks and downloads pages aren't localized | Yes: localize these pages (they need the strings handed in, as the settings page does) | M |
 | **Notifications** | Web notifications through the permission prompt; Lumen's own for background tasks | Plus quieter prompts | Same | Same | Have | — | — |
@@ -87,11 +87,7 @@ Polish in the same round:
 
 ## Next up
 
-The biggest gaps worth the work, roughly in order:
-
-1. **Media controls** for tabs playing audio (M).
-
-Done: the **bookmarks bar** (added in 0.5.115) and **profiles** (see [Profiles](profiles.md)).
+Nothing is queued. Done: the **bookmarks bar** (added in 0.5.115), **profiles** (see [Profiles](profiles.md)), **media controls** for tabs playing sound, and the **localized pages** (error, history, bookmarks, downloads, reading list and reader pages, and every Settings row).
 
 The error, history, bookmarks, downloads, reading list and reader pages and every Settings row take their wording from `src/locales/en.json`; `test/units/localized-pages-units.js` fails if English is typed back into them.
 

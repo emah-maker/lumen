@@ -77,6 +77,9 @@
         </div>
         <div class="external-pills" id="external-pills" hidden></div><!-- [external apps] "<app> is using Lumen" with Stop and Take over (renderer/app.js) -->
         <div class="update-pill external-ask" id="external-bar" role="group" aria-label="An app wants to use Lumen" data-i18n-aria-label="external.region" hidden></div><!-- [external apps] "<app> wants to use Lumen" with Allow this time and Deny, a pill like the update one (renderer/app.js) -->
+        <button class="icon-btn media-btn" id="media-btn" type="button" hidden title="Media controls" aria-label="Media controls" aria-haspopup="dialog" aria-expanded="false" data-i18n-aria-label="media.button"><!-- [media controls] shown while a tab plays sound: its pop-up lists them (renderer/media-hub.js) -->
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 12V3.5l7-1.5V10.5"/><circle class="solid" cx="4.5" cy="12" r="1.8"/><circle class="solid" cx="11.5" cy="10.5" r="1.8"/></svg>
+        </button>
         <button class="icon-btn focus-btn" id="focus-btn" type="button" title="Focus mode" aria-label="Focus mode" aria-haspopup="menu" data-i18n-title="focus.button" data-i18n-aria-label="focus.button"><!-- [focus] a menu to start focus mode; while it is on, the time left (renderer/focus.js) -->
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle class="dot" cx="8" cy="8" r="1.6"/></svg>
           <span class="focus-time" id="focus-time" hidden></span>
@@ -116,6 +119,7 @@
     <div class="findbar" id="findbar" hidden>
       <div class="findbar-inner">
         <input id="find-input" type="text" spellcheck="false" placeholder="Find in page" aria-label="Find in page" data-i18n-placeholder="find.placeholder" data-i18n-aria-label="find.placeholder" />
+        <button class="icon-btn find-case" id="find-case" aria-pressed="false" title="Match case" aria-label="Match case" data-i18n-title="find.matchCase" data-i18n-aria-label="find.matchCase"><span aria-hidden="true">Aa</span></button>
         <span class="find-count" id="find-count" aria-live="polite"></span>
         <button class="icon-btn" id="find-prev" title="Previous (Shift+Enter)" aria-label="Previous match" data-i18n-title="find.previous.title" data-i18n-aria-label="find.previous">
           <svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4"/></svg>

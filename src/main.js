@@ -228,7 +228,9 @@ const isWebUrl = (url) => /^https?:\/\//i.test(url);
 app.userAgentFallback = require('./browser/chrome-identity').userAgent(process.platform, process.versions.chrome); // (browser/chrome-identity.js)
 // Google's sign-in on other sites (One Tap, "Sign in with Google") uses FedCM when the browser says it is Chrome.
 // Electron has no FedCM, so that prompt would never appear; with the API off, Google uses its iframe prompt.
-app.commandLine.appendSwitch('disable-features', 'FedCm');
+// HardwareMediaKeyHandling: the media keys are Lumen's own while a tab plays, for the last-played tab (features/media-hub.js); Chromium's
+// handling of them as well would act on each press twice.
+app.commandLine.appendSwitch('disable-features', 'FedCm,HardwareMediaKeyHandling');
 // Windows hands a playing video to a hardware overlay plane, which sits above everything else and ignores the page's clipping.
 // With Lumen's stacked page views (and a laptop's two GPUs) it came out as a gray rectangle over the page, in the wrong
 // place and bigger than the video (Muse's animated avatar). Videos are drawn by the compositor instead, as with any other content.
@@ -348,6 +350,7 @@ const UI_ONLY_IPC = new Set([
   'aifiles:preview', 'aifiles:open', // files the AI made: the file card's preview and Open / Show in folder (features/ai-files.js)
   'chat:open-page', 'chatpage:state', 'chatpage:back', 'chatpage:link',
   'pagecontext:get', 'pagecontext:set', 'ui:strings', 'usage:get',
+  'media:list', 'media:act', // [media controls] the toolbar's media pop-up (features/media-hub.js)
   'tab:mute', 'tab:ai-off', 'tabs:hide-ai', 'tabs:hide-ai-menu', 'tabs:undo-ai-close', 'chat:open-note', 'phone:note-action', 'phone:wifi-open', 'tabsearch:closed', 'tabsearch:reopen', 'cmdbar:data', 'cmdbar:run', 'tab:dragprep', 'tab:dragstart', 'tab:dragmove', 'tab:selection', 'tab:move-block', 'tab:dragend', 'tab:dragcancel', 'translate:act', 'account:act',
   'tabs:strip-menu', 'tabs:side', // [side tabs] the layout menu, and the side list's saved width and fold
   'split:ratio', 'split:close', // [split view] the divider dragged, and its close button
@@ -471,7 +474,19 @@ const closedChipTabs = new Map(); // [tab chips] id -> { t, u }: the last title 
 const closedTabs = []; // URLs, most recent last
 const closedInfo = []; // what each closedTabs entry was besides its address: pinned, group, place, back/forward (features/closed-tabs.js)
 const closedTabsKept = require('./features/closed-tabs');
-const tabTools = require('./features/tab-tools').create({ onChange: () => sendTabs(), isWebUrl }); // tab search, tab audio
+const tabTools = require('./features/tab-tools').create({ onChange: () => { sendTabs(); mediaHub.refresh(); }, isWebUrl }); // tab search, tab audio
+// [media controls] the toolbar's media button and pop-up, and the media keys (features/media-hub.js; the pages' side: preload/media-hub-preload.js)
+const mediaHub = require('./features/media-hub').create({
+  tabOf: (wc) => allTabsEverywhere().find((t) => alive(t) && t.view.webContents === wc) || null,
+  tabFields: (t) => ({ id: t.id, title: alive(t) ? t.view.webContents.getTitle() : t.sleepTitle || '', favicon: t.favicon || '', muted: tabTools.state(t, alive(t)).muted }),
+  setMuted: (t, muted) => tabTools.setMuted(t, muted),
+  show: (t) => { const at = tabAnywhere(t.id); if (!at) return; withWindow(at.rec, () => { switchTab(at.t.id); }); if (rcAlive(at.rec)) { if (at.rec.win.isMinimized()) at.rec.win.restore(); at.rec.win.focus(); } },
+  audibleTabs: () => allTabsEverywhere().filter((t) => alive(t) && tabTools.state(t, true).audible),
+  onList: (list) => sendAllUis('media:list', list),
+  keys: TEST ? null : { register: (name, fn) => require('electron').globalShortcut.register(name, fn), unregister: (name) => require('electron').globalShortcut.unregister(name) }, // (never in a test run: the keys are the whole computer's)
+});
+ipcMain.on('media-hub:report', (event, json) => mediaHub.report(event, json)); // from any web frame: untrusted, parsed and capped there
+if (TEST) global.__mediaHub = mediaHub;
 
 // ---------- settings / API key ----------
 
@@ -1308,6 +1323,7 @@ const WEBAUTHN_PRELOAD = path.join(__dirname, 'preload', 'webauthn-preload.js');
 app.on('session-created', (ses) => setImmediate(() => { if (app.isReady() && ses === session.defaultSession) return; require('./features/passkeys').gateSession(ses, WEBAUTHN_PRELOAD); })); // (the main session's is in PAGE_PRELOADS)
 const PAGE_PRELOADS = [
   { id: 'lumen-page-dialogs', filePath: path.join(__dirname, 'preload', 'page-dialogs-preload.js') },
+  { id: 'lumen-media-hub', filePath: path.join(__dirname, 'preload', 'media-hub-preload.js') }, // [media controls] what the page plays, for the toolbar's media pop-up (features/media-hub.js)
   // Dropdown menus stay readable on dark-styled sites (features/select-contrast-preload.js).
   { id: 'lumen-select-contrast', filePath: path.join(__dirname, 'features', 'select-contrast-preload.js') },
   { id: 'lumen-page-first-keys', filePath: PAGE_FIRST_PRELOAD },
@@ -4767,7 +4783,7 @@ function agentRequestCloseTab(id) {
 // other tab is awake and the page area is wide enough, layout() shows both, each in its own rectangle with a gap between them for the divider
 // (drawn by the UI, renderer/split.js). The side last clicked is the tab in front: the toolbar, the sidebar's chat and the shortcuts follow it.
 // A pair that cannot be shown (the other tab asleep, in full screen, a narrow window) keeps its tabs paired and shows the one in front alone.
-// Not saved with the session: a restart brings the tabs back unpaired.
+// Saved with the session (sessionEntry's `splits`): a restart brings the pairs back with the divider where it was.
 const SPLIT_MIN_TABS = 2;
 // The user clicked in the other side of the pair on show: it becomes the tab in front.
 function activateSplitSide(tab) {
@@ -4813,7 +4829,10 @@ ipcMain.on('split:ratio', (_e, ratio) => {
   if (!front?.split || !Number.isFinite(ratio)) return;
   front.split.ratio = splitLayout.clampRatio(ratio, contentBounds.width);
   layout();
+  clearTimeout(splitSaveTimer); // the divider's place is in the saved session: a drag sends many ratios, saved once it rests
+  splitSaveTimer = setTimeout(() => saveSession({ background: true }), 1500);
 });
+let splitSaveTimer = null;
 ipcMain.on('split:close', () => { if (activeId != null) closeSplit(activeId); });
 // A tab dropped on the right edge of the page area (a drag out of the strip, finishCardDrag) opens beside the tab in front.
 function dropIntoSplit(src, tabId, cursor, wasFront = null) {
@@ -4846,6 +4865,7 @@ if (TEST) {
     menu: (id) => splitMenuItems(tabs.find((t) => t.id === id)).map((i) => ({ label: i.label })),
     clickMenu: (id) => { splitMenuItems(tabs.find((t) => t.id === id))[0]?.click(); },
     click: (id) => { const tab = tabs.find((t) => t.id === id); if (tab) activateSplitSide(tab); },
+    session: () => sessionEntry(), // what this window would save (test/e2e/split-restore.js)
     drop: (id, x, y) => { const o = win.getContentBounds(); return dropIntoSplit(curRec, id, { x: o.x + x, y: o.y + y }); },
     state: () => {
       const sp = splitView();
@@ -7726,6 +7746,7 @@ function sessionEntry() {
     chatHomes: chatBind.snapshotHomes(saved.map((t) => t.id)), // which of those tabs is the chat's home
     sidebars: sidebarTabs.snapshot(saved.map((t) => t.id), sidebarSharers), // [sidebar per tab] where the sidebar is open
     groups: tabGroups.snapshot(),
+    ...(saved.some((t) => t.split) ? { splits: splitLayout.snapshotPairs(saved) } : {}), // [split view] each pair by position in `urls`, with its divider ratio (none: the field is left out, and the module unloaded)
   };
 }
 
@@ -7782,6 +7803,7 @@ function restoreTabsFrom(saved) {
   const active = Math.min(Math.max(0, saved.active || 0), saved.urls.length - 1);
   const live = require('./features/session-restore').liveIndices(saved.urls.length, active);
   let activeTabId = null;
+  const byIndex = []; // [split view] the tab made from each saved index
   saved.urls.forEach((url, i) => {
     // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
     let tab;
@@ -7800,7 +7822,9 @@ function restoreTabsFrom(saved) {
     if (saved.aiOpened?.[i]) manners.restoreMark(tab, saved.aiOpened[i]); // [ai manners] (after pinned: a pinned tab is the user's)
     chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid), [saved.chatHomes?.[i] === true]); // [chat per tab] (a chat saved in several tabs comes back in each)
     sidebarTabs.restore([tab.id], [saved.sidebars?.[i]]); // [sidebar per tab]
+    byIndex[i] = tab;
   });
+  if (Array.isArray(saved.splits) && saved.splits.length) splitLayout.restorePairs(tabs, byIndex, saved.splits); // [split view] (an older session has none; switchTab below wakes the front pair's other side)
   tabGroups.cleanup();
   tabGroups.arrange();
   switchTab(activeTabId ?? tabs[0].id);
@@ -11806,6 +11830,8 @@ ipcMain.on('address:menu', (e, point, hasSelection) => {
   Menu.buildFromTemplate(items).popup({ window: w, x: n(point?.x), y: n(point?.y) });
 });
 ipcMain.on('tab:ai-off', (_e, id) => { const tab = tabs.find((x) => x.id === id); if (tab) setKeepOff(tab, !manners.isKeptOff(tab)); }); // [ai off-tab] only the UI can send this: no AI tool reaches it
+ipcMain.handle('media:list', () => mediaHub.list());
+ipcMain.on('media:act', (_e, id, action) => { if (Number.isFinite(id) && typeof action === 'string') mediaHub.act(id, action); });
 ipcMain.on('tab:mute', (_e, id) => { const tab = tabs.find((t) => t.id === id); if (tab) tabTools.setMuted(tab, !tabTools.state(tab, alive(tab)).muted); });
 ipcMain.handle('tabsearch:closed', () => tabTools.closedEntries(closedTabs));
 ipcMain.handle('tabsearch:reopen', (_e, index, url) => reopenClosed(index, url));
@@ -12008,7 +12034,7 @@ ipcMain.on('find:start', (_e, text, options = {}) => {
     ui()?.send('find:result', { activeMatchOrdinal: 0, matches: 0 });
     return;
   }
-  wc.findInPage(text, { forward: options.forward !== false, findNext: !options.findNext });
+  wc.findInPage(text, { forward: options.forward !== false, findNext: !options.findNext, matchCase: options.matchCase === true }); // (Match case, the find bar's Aa)
 });
 ipcMain.on('find:stop', (_e, close) => { // closing the bar keeps the match selected and hands the keyboard back to the page; an emptied field clears it
   const wc = activeTab()?.webContents;
