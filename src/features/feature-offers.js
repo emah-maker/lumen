@@ -26,6 +26,9 @@
 // on the card first), setup ("Set up…": opens `section`; nothing is changed here), tip (a new thing to know about, with
 // no setting: just the line). `section`: where the setting lives in Settings ("More in Settings" opens it).
 const OFFERS = [
+  // ---- 0.5.115
+  // [bookmarks bar] features/bookmark-bar.js: the bar under the toolbar, on the new-tab page only by default (Ctrl+Shift+B)
+  { id: 'bookmarksBar', key: 'bookmarksBar', since: '0.5.115', kind: 'choice', choices: ['newtab', 'always', 'never'], section: 'appearance' },
   // ---- 0.5.97
   // [ai tab tidy] features/ai-tab-tidy.js: Lumen closes the AI's leftover tabs itself, keeps the ones its answer links to for a while, about 8 per chat
   { id: 'aiTabsTidy', key: 'aiTabsTidy', since: '0.5.97', kind: 'toggle', section: 'ai-tabs' },

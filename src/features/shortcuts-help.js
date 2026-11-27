@@ -48,6 +48,7 @@ const SECTIONS = [
       ['shortcuts.bookmarkPage', ['mod+d']],
       ['shortcuts.bookmarkAllTabs', ['mod+shift+d']],
       ['shortcuts.bookmarks', ['mod+shift+o']],
+      ['shortcuts.bookmarksBar', ['mod+shift+b']], // [bookmarks bar]
       ['shortcuts.saveForLater', ['mod+shift+y']],
       ['shortcuts.openFile', ['mod+o']],
       ['shortcuts.findFiles', ['mod+shift+f']],

@@ -85,6 +85,7 @@ const DEFAULTS = {
   defaultZoom: 1,
   fontSize: 16,
   showBookmarkButton: true,
+  bookmarksBar: 'newtab', // [bookmarks bar] newtab (on the new-tab page only, as in Chrome) | always | never; Ctrl+Shift+B switches always and newtab
   showAiOffButton: true, // the shield in the address bar that keeps the AI from acting on a tab
   extensionsToolbar: 'pinned', // [extensions] pinned (only the extensions I pin; the others are in the puzzle button's menu) | all | none (no extension buttons: they still run)
   extensionsDevMode: false, // [extensions] Developer mode: Settings → Extensions shows Load unpacked and each unpacked extension's Reload (browser/extension-manage.js)
@@ -327,6 +328,7 @@ function validate(key, value) {
     case 'organizeDelaySeconds': return pick(Number(value), [2, 5, 10, 30, 60], null);
     case 'startup': return pick(value, ['restore', 'newtab', 'pages'], null);
     case 'tabLayout': return pick(value, ['top', 'side'], null);
+    case 'bookmarksBar': return pick(value, ['newtab', 'always', 'never'], null);
     case 'extensionsToolbar': return pick(value, ['pinned', 'all', 'none'], null);
     case 'extensionPins': return cleanPins(value);
     case 'sideTabsWidth': return Number.isFinite(Number(value)) ? Math.min(420, Math.max(160, Math.round(Number(value)))) : null;
@@ -555,7 +557,7 @@ function create(deps) {
   }
   function uiPrefs() {
     const p = prefs();
-    return { compactTabs: p.compactTabs, tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed, showBookmarkButton: p.showBookmarkButton, showAiOffButton: p.showAiOffButton, extensionsToolbar: p.extensionsToolbar, extensionPins: p.extensionPins, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents, sidebarNewChat: p.sidebarNewChat !== false, autoNewChat: p.autoNewChat !== false, planModeDefault: p.planModeDefault === true, preferFractions: p.aiPreferFractions === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
+    return { compactTabs: p.compactTabs, tabLayout: p.tabLayout, sideTabsWidth: p.sideTabsWidth, sideTabsCollapsed: p.sideTabsCollapsed, showBookmarkButton: p.showBookmarkButton, bookmarksBar: p.bookmarksBar, showAiOffButton: p.showAiOffButton, extensionsToolbar: p.extensionsToolbar, extensionPins: p.extensionPins, reduceMotion: p.reduceMotion, focusRings: p.focusRings, lite: Boolean(deps.performance?.active()), lightGfx: Boolean(deps.graphics?.light()), softwareGfx: Boolean(deps.graphics?.software()), safeDrawing: process.argv.includes('--lumen-safe-gpu'), accent: accentOf(p.accentColor, wallpaperSeed(p)), handsOff: p.aiHandsOff === true, hideAiTabs: p.hideAiTabs === true, permissionMode: permissionMode.modeOf(p), helpers: p.aiSubagents, sidebarNewChat: p.sidebarNewChat !== false, autoNewChat: p.autoNewChat !== false, planModeDefault: p.planModeDefault === true, preferFractions: p.aiPreferFractions === true, sleepDim: p.tabSleepDim !== false, switchTiming: p.recordSwitchTimings === true };
   }
 
   // ---- [look] the new-tab page's design (newtab.js reads it from the page's hash) ----
@@ -965,6 +967,7 @@ function create(deps) {
       case 'graphicsMode': deps.graphics?.refresh(); break; // (the pages follow through the onChange below, or the checks that already push for this key)
       case 'tabSleep': case 'tabSleepMode': case 'tabSleepMinutes': case 'tabSleepHow': case 'tabSleepFreePercent': case 'tabSleepLumenGb': case 'tabSleepMaxAwake': case 'tabSleepKeepPinned': case 'tabSleepKeepRecent': case 'tabSleepNever': case 'tabSleepFreezeFirstMinutes': case 'tabSleepPressure': case 'tabSleepKeepAudio': case 'tabSleepKeepForms': case 'tabSleepKeepTransfers': case 'tabSleepKeepGroups': case 'tabSleepSoon': case 'tabSleepSoonMinutes': case 'tabSleepOnReturn': deps.onTabSleepChange?.(key); break;
       case 'screenReaderSupport': deps.onScreenReaderChange?.(); break;
+      case 'bookmarksBar': deps.onBookmarksBarChange?.(); break; // [bookmarks bar] every window lays out again (the new-tab page's room for it)
       case 'tabSleepDim': case 'tabSleepShowFreed': deps.onTabSleepChange?.(key); break; // (the strip and the hover card follow: main.js sends the tab list again)
       case 'tabPreload': deps.onTabPreloadChange?.(key); break;
       case 'tabReadyRecent': deps.onTabReadyChange?.(); break;
@@ -975,7 +978,7 @@ function create(deps) {
     }
     const wallpaperAccent = prefs().accentColor === TC.MATCH_WALLPAPER && ['newTabBackground', 'newTabShuffle', 'newTabImage'].includes(key); // [look] "Match wallpaper": the accent follows the background
     if (key === 'accentColor' || wallpaperAccent) deps.refreshAccent?.(); // [look] Lumen's own pages take the new shades
-    if (wallpaperAccent || ['compactTabs', 'tabLayout', 'sideTabsWidth', 'sideTabsCollapsed', 'showBookmarkButton', 'showAiOffButton', 'extensionsToolbar', 'extensionPins', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'autoNewChat' || key === 'planModeDefault' || key === 'aiPreferFractions' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
+    if (wallpaperAccent || ['compactTabs', 'tabLayout', 'sideTabsWidth', 'sideTabsCollapsed', 'showBookmarkButton', 'bookmarksBar', 'showAiOffButton', 'extensionsToolbar', 'extensionPins', 'reduceMotion', 'focusRings', 'accentColor', 'askBeforeActing', 'bypassPermissions', 'aiHandsOff', 'hideAiTabs'].includes(key) || key === 'aiSubagents' || key === 'tabSleepDim' || key === 'recordSwitchTimings' || key === 'sidebarNewChat' || key === 'autoNewChat' || key === 'planModeDefault' || key === 'aiPreferFractions' || key === 'graphicsMode') (deps.broadcastUi ? deps.broadcastUi('prefs:ui', uiPrefs()) : deps.ui()?.send('prefs:ui', uiPrefs()));
     if (key === 'accentColor' || key.startsWith('newTab') || key === 'homeWidgets' || key === 'reduceMotion' || key === 'performanceMode' || key === 'graphicsMode') deps.refreshNewTabs?.(); // [look] open new-tab pages follow at once
     return undefined;
   }
