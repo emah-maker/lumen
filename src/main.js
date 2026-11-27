@@ -330,6 +330,7 @@ const UI_ONLY_IPC = new Set([
   'content-bounds', 'content-bounds:ack', 'view:freeze', 'view:frozen', 'view:freeze-alive', 'view:thaw', 'chat:full', 'view:warm', 'gpu:restart',
   'tab:new', 'tab:close', 'tab:switch', 'tab:move', 'tab:context-menu',
   'group:context-menu', 'group:toggle', 'group:rename', 'tabs:organize', 'tabs:undo-organize',
+  'bookmarks-bar:get', 'bookmarks-bar:folder-menu', 'bookmarks-bar:overflow-menu', 'bookmarks-bar:context-menu', 'bookmarks-bar:save', 'bookmarks-bar:move', 'bookmarks-bar:drop', 'bookmarks-bar:open', 'bookmarks-bar:toggle', 'bookmarks-bar:rect', // [bookmarks bar] features/bookmark-bar-main.js
   'bookmark:toggle', 'zoom:reset', 'downloads:menu', 'downloads:warm', 'page:reader', 'files:open',
   'nav:go', 'nav:go-com', 'nav:back', 'nav:forward', 'nav:history-menu', 'nav:reload', 'find:start', 'find:stop', 'address:menu',
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
@@ -2448,6 +2449,11 @@ function splitMark(t) {
   const mate = t.split ? splitPartner(t) : null;
   return mate ? { split: t.split.left === t.id ? 'left' : 'right', splitWith: mate.id } : {};
 }
+function bookmarkBarShown() {
+  const front = tabs.find((t) => t.id === activeId && alive(t));
+  const mode = bookmarkBarMode();
+  return { mode, shown: bookmarkBarModel.shownFor(mode, { newTab: Boolean(front && isNewTab(front.view.webContents.getURL()) && chatFullTab !== front.id) }) };
+}
 function tabState() {
   const active = activeTab();
   const history = active?.webContents.navigationHistory;
@@ -2531,6 +2537,7 @@ function tabState() {
     }),
     activeId,
     sidebar: tabSidebarOpen(tabs.find((t) => t.id === activeId)), // [sidebar per tab] whether the sidebar is open on the tab in front
+    bookmarksBar: bookmarkBarShown(), // [bookmarks bar] { mode, shown } for the tab in front
     canGoBack: active ? canGoBack(active.webContents) : false,
     canGoForward: history ? history.canGoForward() : false,
   };
@@ -2566,6 +2573,7 @@ function sendTabsBody(coalesced) {
   pushAccountUi(); // [account tabs] the address bar's account chip, the toolbar's extensions and the sign-in bar follow the tab in front
   if (!tabStripGate.shouldSend(curRec || tabStripGate, state, coalesced !== true)) return;
   if (!tabStripGate.repeated(curRec || tabStripGate)) ui()?.send('tabs', state);
+  bookmarkBarRt.pushIfChanged(); // [bookmarks bar] (every bookmark change ends in a sendTabs)
   agentTargetHook?.();
   tabChipsRt?.changed(); // [tab chips] a chip's title or icon follows the tab
   chatPageRt?.pushTarget(); // the chat page's "working on" tab follows tab changes
@@ -2681,14 +2689,14 @@ function sendSplitLayout(sp) {
   ui()?.send('split:layout', msg);
 }
 // The rectangle a tab's page fills: its side of a split pair, else the whole tab area.
-const pageRect = (tab, sp) => (sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : contentBounds);
+const pageRect = (tab, sp) => (sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : isNewTab(tab.view.webContents.getURL()) ? newTabArea() : contentBounds); // [bookmarks bar] newTabArea
 // Bounds and full-width layout for a view that is about to be shown (layoutBody sets the same again afterwards).
 function presizeTab(tab, sp) {
   try {
     const at = pageRect(tab, sp);
     const now = tab.view.getBounds();
     if (now.x !== at.x || now.y !== at.y || now.width !== at.width || now.height !== at.height) tab.view.setBounds({ x: at.x, y: at.y, width: at.width, height: at.height });
-    if (!sp && isNewTab(tab.view.webContents.getURL())) { const overlay = sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds }); if (overlay) setOverlay(tab, overlay); }
+    if (!sp && isNewTab(tab.view.webContents.getURL())) { const overlay = sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: newTabArea() }); if (overlay) setOverlay(tab, overlay); }
   } catch { /* gone */ }
 }
 // The width a new-tab page lays itself out at: the page area with the sidebar closed (a new-tab page keeps that layout under the sidebar).
@@ -2696,7 +2704,7 @@ const pageWidth = () => Math.max(contentBounds.width, contentBounds.fullWidth ||
 // The spare new-tab page follows the tab area's size while it waits, so the page it hands over is already laid out for it.
 function sizeSpares() {
   const w = pageWidth();
-  const h = contentBounds.height;
+  const h = newTabArea().height;
   try { // (spareNewTab is declared further down: not yet during start-up)
     const s = spareNewTab;
     if (!s || !(w > 0) || !(h > 0) || s.view.webContents.isDestroyed()) return;
@@ -2715,7 +2723,7 @@ function sizeHiddenNewTabsSoon() {
   hiddenNewTabTimer = setTimeout(() => {
     hiddenNewTabTimer = null;
     const width = pageWidth();
-    const height = contentBounds.height;
+    const height = newTabArea().height;
     if (!(width > 0) || !(height > 0)) return;
     for (const tab of tabs) {
       if (tab.id === activeId || tab.split || tab.fullscreen || !alive(tab) || tab.view.getVisible()) continue;
@@ -2762,14 +2770,14 @@ function layoutBody() {
     // features/sidebar-overlay.js). Kept while the view is only hidden for a moment (the sidebar's
     // snapshot), so the page isn't laid out twice; dropped for every other tab and page.
     const overlay = visible && !sp && !tab.fullscreen && isNewTab(tab.view.webContents.getURL())
-      ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: contentBounds })
+      ? sidebarOverlay.overlayParams({ newTab: true, fullscreen: false, bounds: newTabArea() })
       : null;
     // The full-width layout goes on BEFORE the view narrows and comes off AFTER it has widened again: the other way round, the page
     // was laid out once at the narrow width (a resize event, the cards reflowing, widgets re-rendering) every time the sidebar closed.
     if (overlay) setOverlay(tab, overlay);
     if (visible) {
       if (tab.fillDue) { tab.fillDue = false; fillCheck(tab.id, 'show', 350); } // (just brought to the front: is its page the size of the tab area?)
-      const at = sp ? (tab.split.left === tab.id ? sp.rects.left : sp.rects.right) : contentBounds; // [split view] a side of the pair
+      const at = pageRect(tab, sp); // [split view] a side of the pair; [bookmarks bar] the new-tab page below the bar
       if (tab.fullscreen) {
         const [width, height] = win.getContentSize();
         tab.view.setBounds({ x: 0, y: 0, width, height });
@@ -2786,8 +2794,8 @@ function layoutBody() {
   sizeSpares();
   sizeHiddenNewTabsSoon();
   sendSplitLayout(sp);
-  spotifyWeb.clip(contentBounds); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
-  appleMusicWeb.clip(contentBounds);
+  spotifyWeb.clip(newTabArea()); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
+  appleMusicWeb.clip(newTabArea());
   spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
   appleMusicWeb.sync(); // [widgets] and so does the Apple Music card's
   raiseOverlays();
@@ -2989,7 +2997,7 @@ function makeSpareNewTab() {
   if (!spareForced && sparePolicy.spareAction({ hasSpare: false, firstTabDone, memory: spareMemory(), idle: sparePolicy.isIdle(newTabUsedAt) }) !== 'make') return; // (still starting up, short of memory, or no new tab for a long while: the check below makes it later)
   const prefs = settingsBackend.tabWebPreferences(false);
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
-  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: pageWidth(), height: contentBounds.height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0 (the page area's width with the sidebar closed: a new tab opened beside the sidebar keeps that layout)
+  try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: pageWidth(), height: newTabArea().height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0 (the page area's width with the sidebar closed: a new tab opened beside the sidebar keeps that layout)
   try { view.setBackgroundColor(pageBackground()); } catch {} // (taken while still loading: the theme's color, not white)
   const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
@@ -5760,6 +5768,31 @@ function bookmarks() {
   const saved = readSettings().bookmarks;
   return Array.isArray(saved) ? saved : SEED_SITES.map(([url, title]) => ({ url, title }));
 }
+// [bookmarks bar] Under the toolbar, as in Chrome (features/bookmark-bar-main.js; the model is features/bookmark-bar.js, the bar renderer/bookmarks-bar.js).
+// settings.bookmarkLayout keeps the bar's order and its empty folders; Settings → Appearance → Show bookmarks bar is bookmarksBar.
+const bookmarkBarModel = require('./features/bookmark-bar');
+const bookmarkBarMode = () => bookmarkBarModel.cleanMode(readSettings().bookmarksBar);
+const bookmarkBarRt = require('./features/bookmark-bar-main').createBookmarkBarMain({
+  ipcMain, Menu, nativeImage: require('electron').nativeImage, dialog: electronDialog, t,
+  read: () => ({ list: bookmarks(), layout: readSettings().bookmarkLayout }),
+  write: ({ list, layout }) => writeSettings({ ...readSettings(), bookmarks: list, bookmarkLayout: layout }),
+  changed: () => { sendTabs(); managers.pushBookmarks(); },
+  mode: bookmarkBarMode,
+  setMode: (mode) => settingsBackend.set('bookmarksBar', mode),
+  icon: (url) => faviconStore.get(hostOf(url)) || '',
+  open: (url, how) => (how === 'window' ? openNewWindow(url) : how === 'here' ? goFromAddress(url) : openTab(url, { background: how === 'background' })),
+  openManager: () => managers.open('bookmarks'),
+  windowOf: () => win,
+  broadcast: (channel, payload) => { for (const r of winRecs) if (rcAlive(r) && !r.win.webContents.isDestroyed()) r.win.webContents.send(channel, payload); },
+  gen: () => settingsGen,
+});
+bookmarkBarRt.register();
+if (TEST) global.__bookmarkBar = { rt: bookmarkBarRt, under: (point) => bookmarkBarUnder({ card: true, rec: curRec }, point), area: () => newTabArea(), boundsLog: [] }; // (test/e2e/bookmarks-bar.js; boundsLog: every page-area top the UI reported)
+// The new-tab page's view in 'newtab' mode: the bar is drawn over the top of the page area and only this page leaves room for it.
+function newTabArea(r = contentBounds) {
+  const h = bookmarkBarModel.newTabInset(bookmarkBarMode());
+  return h ? { ...r, y: r.y + h, height: Math.max(0, r.height - h) } : r;
+}
 
 // Sites visited often (at least 3 times), one per host, skipping favorites and CAPTCHA pages.
 let historyVersion = 0; // bumped on every visit or import: frequentSites is remembered until it changes
@@ -5873,6 +5906,7 @@ async function cacheFavicon(pageUrl, iconUrls, force = false) {
       const bytes = Buffer.from(await res.arrayBuffer());
       if (!res.ok || !type.startsWith('image/') || bytes.length > 40000) continue;
       faviconStore.set(host, `data:${type.split(';')[0]};base64,${bytes.toString('base64')}`);
+      bookmarkBarRt.pushSoon(); // [bookmarks bar] its chip gets the icon
       return;
     } catch {
       // This candidate is unavailable; try the next (with none, the new-tab page shows a letter).
@@ -5947,6 +5981,7 @@ function bookmarksMenu() {
     { label: marked ? t('menu.removeBookmark') : t('menu.bookmarkPage'), accelerator: 'CmdOrCtrl+D', enabled: isWebUrl(current), click: toggleBookmark },
     { label: t('menu.bookmarkAllTabs'), accelerator: 'CmdOrCtrl+Shift+D', enabled: tabs.some((x) => isWebUrl(tabUrl(x))), click: bookmarkAllTabs },
     { label: t('menu.showAllBookmarks'), accelerator: 'CmdOrCtrl+Shift+O', click: () => managers.open('bookmarks') },
+    { label: t('menu.showBookmarksBar'), type: 'checkbox', checked: bookmarkBarMode() === 'always', ...shortcutHint('CmdOrCtrl+Shift+B'), click: () => bookmarkBarRt.toggle() }, // [bookmarks bar]
     { label: t('menu.saveForLater'), accelerator: 'CmdOrCtrl+Shift+Y', enabled: isWebUrl(current), click: () => saveForLater(tabs.find((x) => x.id === activeId)) },
     { label: t('menu.showReadingList'), click: () => managers.open('readinglist') },
     { type: 'separator' },
@@ -6433,6 +6468,7 @@ function handleShortcut(event, input) {
   else if (mod && /^[1-9]$/.test(key)) { const shown = tabs.filter((x) => !aiTabHidden(x)); const t = key === '9' ? shown[shown.length - 1] : shown[Number(key) - 1]; if (t) switchTab(t.id); } // (Ctrl+N counts the tabs the strip shows)
   else if (mod && zoomKeyStep(input) !== null) zoomBy(wc, zoomKeyStep(input)); // Ctrl + = - 0, the numpad's too (features/zoom-steps.js)
   else if (mod && input.shift && key === 'd') bookmarkAllTabs();
+  else if (mod && input.shift && !input.alt && key === 'b') bookmarkBarRt.toggle(); // [bookmarks bar] Ctrl+Shift+B, as in Chrome
   else if (mod && key === 'd') toggleBookmark();
   else if (process.platform === 'darwin' && input.meta && key === 'h') app.hide(); // Cmd+H hides the app on macOS; History is Cmd+Y
   else if (mod && key === 'h') openHistoryPage();
@@ -7850,7 +7886,7 @@ function macMenu() {
         normal({ label: t('menu.showAllHistory'), ...shown('Cmd+Y'), click: openHistoryPage }),
       ],
     },
-    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }), normal({ label: t('menu.saveForLater'), ...shown('Shift+Cmd+Y'), click: () => saveForLater(tabs.find((x) => x.id === activeId)) }), normal({ label: t('menu.showReadingList'), click: () => managers.open('readinglist') })] },
+    { label: t('menu.bookmarks'), submenu: [normal({ label: t('menu.bookmarkPage'), ...shown('Cmd+D'), click: toggleBookmark }), normal({ label: t('menu.bookmarkAllTabs'), ...shown('Shift+Cmd+D'), click: bookmarkAllTabs }), normal({ label: t('menu.showAllBookmarks'), ...shown('Shift+Cmd+O'), click: () => managers.open('bookmarks') }), normal({ label: t('menu.showBookmarksBar'), ...shown('Shift+Cmd+B'), click: () => bookmarkBarRt.toggle() }), normal({ label: t('menu.saveForLater'), ...shown('Shift+Cmd+Y'), click: () => saveForLater(tabs.find((x) => x.id === activeId)) }), normal({ label: t('menu.showReadingList'), click: () => managers.open('readinglist') })] },
     // Chrome's Tab menu. The menu bar is built once, so Pin and Mute (whose labels change) stay in the tab's own menu.
     {
       label: t('menu.tab'),
@@ -8670,6 +8706,7 @@ function tickTabDrag() {
     finishTabDrag(d.card ? 'cancel' : 'commit');
     return;
   }
+  if (d.card) { const over = bookmarkBarUnder(d, cursor); const key = over ? Math.round(over.x) : null; if (d.barOver !== key) { d.barOver = key; d.rec.win.webContents.send('bookmarks-bar:tab-over', over ? { x: over.x } : null); } } // [bookmarks bar] where it would land
   if (d.card) {
     const at = { x: cursor.x - CARD_HOLD.x, y: cursor.y - CARD_HOLD.y };
     if (at.x !== d.cardAt.x || at.y !== d.cardAt.y) {
@@ -8732,9 +8769,29 @@ function endDragQuietly(d) {
   if (rcAlive(d.rec)) d.rec.win.webContents.removeListener('before-input-event', d.escape);
   if (d.card || d.chip) hideDragCard(d, 'cancel');
 }
+// [bookmarks bar] A tab dragged out of the strip and let go over its window's bookmarks bar is bookmarked there and goes back to
+// its place, not torn off into a window. `point` is the cursor in screen pixels (tests pass one).
+function bookmarkBarUnder(d, point) {
+  if (!d?.card || !rcAlive(d.rec)) return null;
+  const r = bookmarkBarRt.rectFor(d.rec.win.webContents);
+  if (!r) return null;
+  const cb = d.rec.win.getContentBounds();
+  const x = point.x - cb.x, y = point.y - cb.y;
+  return x >= r.x && x <= r.x + r.width && y >= r.y - 4 && y <= r.y + r.height + 4 ? { x, y } : null;
+}
+function bookmarkBarTabDrop(d, point = cursorPoint()) {
+  const at = bookmarkBarUnder(d, point);
+  const tab = at ? tabById(d.rec, d.tabId) : null;
+  const url = tab ? tabUrl(tab) : '';
+  if (!isWebUrl(url)) return false;
+  d.rec.win.webContents.send('bookmarks-bar:tab-drop', { url, title: tabTitle(tab) || '', x: at.x });
+  return true;
+}
+if (TEST) global.__bookmarkBarTabDrop = (point) => { const d = tabDrag; const ok = Boolean(d && bookmarkBarTabDrop(d, point)); if (ok) finishTabDrag('cancel'); return ok; };
 function finishTabDrag(reason) {
   const d = tabDrag;
   if (!d) return;
+  if (reason === 'commit' && d.card && bookmarkBarTabDrop(d)) reason = 'cancel'; // [bookmarks bar] (see bookmarkBarTabDrop)
   tabDrag = null;
   clearInterval(d.timer);
   const rec = d.rec;
@@ -9085,7 +9142,7 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
-      additionalArguments: TEST ? [require('./test-mode').PRELOAD_FLAG] : [], // preload.js's test-only calls
+      additionalArguments: [...(TEST ? [require('./test-mode').PRELOAD_FLAG] : []), `--lumen-bookmarks-bar=${bookmarkBarMode()}`], // preload.js's test-only calls; [bookmarks bar] where the bar goes, known before the first paint (no page resize once the UI reports)
     },
   });
   const seedBounds = rcAlive(boundsFrom) && winRecs.has(boundsFrom) ? withWindow(boundsFrom, () => ({ ...contentBounds })) : null;
@@ -9307,7 +9364,8 @@ function createWindow({ size = null, position = null, adopt = null, restore = nu
       rec.holdViews = true; // (layout() keeps tab views hidden until the UI reports where they go)
       if (!seedBounds) { // laid out at about the size it will have, so the page isn't laid out twice
         const [width, height] = w.getContentSize();
-        contentBounds = { x: 0, y: GUESS_TOOLBAR_HEIGHT, width, height: Math.max(0, height - GUESS_TOOLBAR_HEIGHT) };
+        const top = GUESS_TOOLBAR_HEIGHT + (bookmarkBarMode() === 'always' ? bookmarkBarModel.BAR_HEIGHT : 0); // [bookmarks bar] shown always: part of the toolbar
+        contentBounds = { x: 0, y: top, width, height: Math.max(0, height - top) };
       }
     }
     if (rec.agent) openTab('about:blank'); else restoreSession(restore); // [agent window] one blank tab; the agent opens the rest
@@ -11068,7 +11126,7 @@ function tradingviewAccountLists() {
 const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive, onAuth) => ({
   WebContentsView, get session() { return session.defaultSession; }, isWebUrl, // getter: defaultSession is only usable after app ready
   getWindow: () => win,
-  getBounds: () => contentBounds,
+  getBounds: () => newTabArea(), // [bookmarks bar] (the music cards live on the new-tab page, below the bar)
   userAgent: () => app.userAgentFallback, // (browser/chrome-identity.js: a sign-in page, Apple's above all, refuses "Electron" in it)
   hideWindow: (w) => { if (TEST_BACKGROUND && w && !w.isDestroyed()) { w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive(); } }, // (tests only: a sign-in popup never shows or takes focus)
   activeNewTab: () => { const t = activeTab(); const tab = tabs.find((x) => x.id === activeId); return t && tab && tab.view.getVisible() && !tab.fullscreen && isNewTab(t.webContents.getURL()) ? t.webContents : null; },
@@ -11287,6 +11345,7 @@ const settingsBackend = settingsPage.create({
   onTelegramChange: () => telegram.refresh(), // [telegram] start or stop listening to the bot
   onKeysOffChange: () => { client = null; for (const p of Object.keys(providers.PROVIDERS)) if (p !== 'local') refreshModels(p).catch(() => {}); modelsChanged(); }, // [key switches] the picker drops or regains that provider's models
   onTabSleepChange: () => tabSleepSettingChanged(),
+  onBookmarksBarChange: () => { for (const r of [...winRecs].filter(rcAlive)) withWindow(r, () => { layout(); sendTabs(); }); bookmarkBarRt.push(); }, // [bookmarks bar]
   onScreenReaderChange: () => a11yMode?.settingChanged(), // [a11y mode]
   onRoutineWebhooksChange: () => bgTasks.syncWebhooks(), // [routines] Settings → Routines → web links: the 127.0.0.1 listener follows the switch and the port
   tabSleep: { status: () => sleepStatus(), unloadAll: () => unloadBackgroundTabs(null), currentSite: () => currentSleepSite() }, // [tabs] Settings → Tabs and browsing > Page unloading
@@ -11387,6 +11446,7 @@ function applyContentBounds(bounds) {
     height: Math.max(0, Math.round(bounds.height)),
     fullWidth: Math.max(0, Math.round(Number(bounds.fullWidth) || 0)), // the page area's width with the sidebar closed
   };
+  if (TEST) global.__bookmarkBar?.boundsLog.push(contentBounds.y);
   if (curRec) { curRec.boundsReported = true; curRec.holdViews = false; } // (a first tab opened while the UI loaded shows now)
   if (curRec && contentBounds.fullWidth > contentBounds.width) curRec.sidebarColumn = contentBounds.fullWidth - contentBounds.width; // [sidebar per tab] the sidebar's width, for a switch to a tab with it open (fitTabSidebar)
   layout();
@@ -14116,8 +14176,7 @@ function finishDelete(id) {
   imageStore().removeChat(id); // its pictures go with it
   uploads().removeChat(id); // [uploads] and the files attached to it
   if (folder) serial(() => mirror().trash(folder, id)).catch(() => {}); // [project folders] its Markdown file moves to Chats/Deleted (never erased)
-  require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {}); // its Antigravity home (conversation) goes too
-  require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {}); // and its Codex home (thread)
+  require('./ai/chat-homes').removeChatHomes(app.getPath('userData'), id); // its CLI engines' homes (Antigravity's conversation, Codex's thread) go too
 }
 let trashSwept = false;
 function sweepTrash() { // chats hidden by a Lumen that quit inside the undo time
@@ -14182,8 +14241,7 @@ ipcMain.handle('chats:delete', (event, id) => {
     chats().remove(id);
     imageStore().removeChat(id);
     uploads().removeChat(id);
-    require('./ai/antigravity').removeChatHome(app.getPath('userData'), id).catch(() => {});
-    require('./ai/codex').removeChatHome(app.getPath('userData'), id).catch(() => {});
+    require('./ai/chat-homes').removeChatHomes(app.getPath('userData'), id);
   };
   if (id === chatId) {
     chatGeneration++;
@@ -14491,13 +14549,12 @@ setTimeout(() => {
   const listTrusted = () => { try { return chats().trusted() && chats().list().length > 0; } catch { return false; } };
   if (listTrusted()) try { imageStore().prune(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to prune */ }
   if (listTrusted()) try { uploads().sweep(new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys()].filter(Boolean))); } catch { /* nothing to sweep */ } // [uploads] old pending files, files of chats that are gone
-  // Antigravity homes of chats that are gone (pruned past the history limit, or cleared): antigravity.js chatHomeFor. (Never with an
+  // The CLI engines' homes (ai/chat-homes.js: Antigravity's, Codex's) of chats that are gone (pruned past the history limit, or cleared). (Never with an
   // empty list: a history that could not be read must not cost every chat its conversation.)
   try {
     if (listTrusted()) {
       const keep = new Set([chatId, ...chats().list().map((c) => c.id), ...chatRuns.keys(), ...chatBind.entries().map(([, c]) => c)].filter(Boolean));
-      require('./ai/antigravity').pruneChatHomes(app.getPath('userData'), keep).catch(() => {});
-      require('./ai/codex').pruneChatHomes(app.getPath('userData'), keep).catch(() => {}); // Codex homes (threads) likewise
+      require('./ai/chat-homes').pruneChatHomes(app.getPath('userData'), keep);
     }
   } catch { /* nothing to prune */ }
 }, 30000).unref?.();
@@ -14780,253 +14837,14 @@ ipcMain.handle('settings:set-safe-browsing-key', async (_e, key) => {
   await safeBrowsing.refresh().catch(() => {});
   return { ...safeBrowsing.status(), keyStored: Boolean(keys.safebrowsing), keyEnv: Boolean(process.env.GOOGLE_SAFE_BROWSING_API_KEY) };
 });
-// ---- [local AI] Settings → AI → Local. The address, the toggle and Detect. Only this computer's addresses unless the user confirms one.
-const localState = () => {
-  const lm = require('./ai/local-models');
-  const c = lm.clean(readSettings().localAI);
-  return { enabled: c.enabled, flavor: c.flavor, url: c.url, confirmedHost: c.confirmedHost, models: c.models, defaults: lm.DEFAULT_URLS, names: lm.LABELS };
-};
-// What the user entered -> { ok, cfg } (the address checked) or { ok: false, error, needsConfirm?, host? }.
-function localCheck(input) {
-  const lm = require('./ai/local-models');
-  const cur = lm.clean(readSettings().localAI);
-  const flavor = lm.FLAVORS.includes(input?.flavor) ? input.flavor : cur.flavor;
-  const n = lm.normalizeUrl(flavor, input?.url);
-  if (!n.ok) return { ok: false, error: n.error };
-  let confirmedHost = '';
-  if (!n.local) {
-    if (cur.confirmedHost !== n.host && input?.confirmRemote !== true) return { ok: false, needsConfirm: true, host: n.host, error: n.host + ' isn’t on this computer. Messages and the page text you share would be sent there. Use it only if you run that server yourself.' };
-    confirmedHost = n.host;
-  }
-  const same = cur.flavor === flavor && cur.url === n.url;
-  return { ok: true, cfg: { ...cur, flavor, url: n.url, confirmedHost, models: same ? cur.models : [] } };
-}
-ipcMain.handle('settings:local-get', () => localState());
-ipcMain.handle('settings:local-save', async (_e, input) => {
-  const r = localCheck(input);
-  if (!r.ok) return r;
-  writeSettings({ ...readSettings(), localAI: { ...r.cfg, enabled: input?.enabled === true } });
-  await refreshModels('local');
-  return { ok: true, ...localState() };
+// ---- [sign-ins] Settings → AI → Local, provider keys, and the OpenRouter, Spotify and Anthropic CLI sign-ins (features/ai-sign-ins.js).
+const aiSignIns = require('./features/ai-sign-ins').create({
+  ipcMain, net, app, TEST, t, readSettings, writeSettings, refreshModels, modelsChanged, providers, secretBox, ENV_KEYS, OPENROUTER_CACHE,
+  tabs: () => tabs, openTab, closeTab, onTabGone, widgets, spotifyRedirectPort, cliAuth, anthropicKeyOn, storedApiKey,
+  clearClient: () => { client = null; },
+  clearCliLoginValid: () => { cliLoginValid = null; },
 });
-ipcMain.handle('settings:local-detect', async (_e, input) => {
-  const r = localCheck(input);
-  if (!r.ok) return r;
-  const found = await require('./ai/local-models').detect(r.cfg, { fetchImpl: require('./browser/net-fetch').netFetch() });
-  if (!found.ok) return found;
-  writeSettings({ ...readSettings(), localAI: { ...r.cfg, enabled: input?.enabled === true, models: found.models } });
-  await refreshModels('local');
-  return { ...found, ...localState() };
-});
-// Auto-detect: when Local has no models yet, look for LM Studio or Ollama at their usual addresses and fill in the one that
-// answers. The switch is left as it was: finding a server doesn't put its models in every picker.
-ipcMain.handle('settings:local-auto', async () => {
-  const lm = require('./ai/local-models');
-  const cur = lm.clean(readSettings().localAI);
-  if (cur.models.length) return { ok: true, skipped: true, ...localState() };
-  if (TEST && !process.env.LUMEN_TEST_LOCAL_AUTODETECT) return { ok: false, skipped: true }; // a test run never finds the tester's own LM Studio
-  const found = await lm.autoDetect({ prefer: cur.flavor === 'ollama' && cur.url !== lm.DEFAULT_URLS.ollama ? 'ollama' : 'lmstudio', fetchImpl: require('./browser/net-fetch').netFetch() });
-  if (!found.ok) return found;
-  writeSettings({ ...readSettings(), localAI: { ...cur, flavor: found.flavor, url: found.url, confirmedHost: '', models: found.models } });
-  await refreshModels('local');
-  return { ...found, ...localState() };
-});
-// LM Studio's model loader and stats, against the saved address (never one the page passes in).
-ipcMain.handle('settings:local-lms-status', async () => {
-  const lm = require('./ai/local-models');
-  return lm.lmStudioStatus(readSettings().localAI, { fetchImpl: require('./browser/net-fetch').netFetch() });
-});
-ipcMain.handle('settings:local-lms-load', async (_e, model) => {
-  const lm = require('./ai/local-models');
-  return lm.lmStudioLoad(readSettings().localAI, model, { fetchImpl: require('./browser/net-fetch').netFetch() });
-});
-ipcMain.handle('settings:local-lms-unload', async (_e, id) => {
-  const lm = require('./ai/local-models');
-  return lm.lmStudioUnload(readSettings().localAI, id, { fetchImpl: require('./browser/net-fetch').netFetch() });
-});
-ipcMain.handle('settings:local-lms-bench', async (_e, model) => {
-  const lm = require('./ai/local-models');
-  return lm.lmStudioBenchmark(readSettings().localAI, model, { fetchImpl: require('./browser/net-fetch').netFetch() });
-});
-ipcMain.handle('settings:set-provider-key', async (_e, provider, key) => {
-  if (!providers.PROVIDERS[provider]) return false;
-  let unverified = false;
-  if (key) {
-    const check = await providers.checkKey(provider, String(key).trim());
-    if (check.ok === false) throw new Error(check.message);
-    unverified = check.ok === null;
-  }
-  saveProviderKey(provider, key);
-  await refreshModels(provider);
-  return unverified ? { ok: true, unverified: true } : true;
-});
-// ---- OpenRouter: the full model list for "More models…", and "Sign in with OpenRouter" (OAuth PKCE:
-// openrouter.ai asks the user, then redirects to a one-time loopback address with a code that is
-// exchanged for a key; the key is stored encrypted like a pasted one).
-ipcMain.handle('openrouter:models', async () => {
-  const { models } = await providers.openRouterCatalog({ cacheFile: OPENROUTER_CACHE(), onRefresh: () => refreshModels('openrouter') });
-  return models.map(({ id, name, tools, context, pricePerM, free }) => ({ id, name, tools, context, pricePerM, free }));
-});
-function saveProviderKey(provider, key) {
-  const settings = readSettings();
-  const keys = { ...(settings.keys || {}) };
-  if (key) {
-    if (!secretBox.available()) throw new Error(`OS encryption is unavailable; set ${ENV_KEYS[provider]} instead.`);
-    keys[provider] = secretBox.encrypt(String(key).trim());
-  } else {
-    delete keys[provider];
-  }
-  writeSettings({ ...settings, keys });
-}
-// Ends a sign-in that is waiting, from the Cancel button (or a second click).
-let cancelOpenRouterSignIn = null;
-ipcMain.handle('openrouter:cancel', () => { cancelOpenRouterSignIn?.(); return true; });
-ipcMain.handle('openrouter:sign-in', () => new Promise((resolve) => {
-  cancelOpenRouterSignIn?.(); // one sign-in at a time
-  const crypto = require('crypto');
-  const verifier = crypto.randomBytes(32).toString('base64url');
-  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-  let authTab = null;
-  let done = false;
-  const finish = (result) => {
-    if (done) return;
-    done = true;
-    clearTimeout(timer);
-    unwatch();
-    cancelOpenRouterSignIn = null;
-    server.close();
-    if (authTab && tabs.some((t) => t.id === authTab)) setTimeout(() => { if (tabs.some((t) => t.id === authTab)) closeTab(authTab); }, 1200);
-    resolve(result);
-  };
-  cancelOpenRouterSignIn = () => finish({ ok: false, cancelled: true, message: t('openrouter.cancelled') });
-  // Closing the sign-in tab (or it failing to load, offline, and the user closing it) cancels at
-  // once (onTabGone), instead of leaving the button disabled until the 5-minute timeout.
-  let unwatch = () => {}; // set once the tab exists
-  const server = require('http').createServer(async (req, res) => {
-    const code = new URL(req.url, 'http://127.0.0.1').searchParams.get('code');
-    if (!code) { res.writeHead(404).end(); return; }
-    try {
-      const r = await net.fetch(`${providers.PROVIDERS.openrouter.baseURL}/auth/keys`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...providers.PROVIDERS.openrouter.headers },
-        body: JSON.stringify({ code, code_verifier: verifier, code_challenge_method: 'S256' }),
-      });
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok || !body.key) throw new Error(body?.error?.message || `HTTP ${r.status}`);
-      saveProviderKey('openrouter', body.key);
-      await refreshModels('openrouter');
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end('<title>Signed in</title><body style="font:15px system-ui;padding:40px">Signed in to OpenRouter. You can close this tab.</body>');
-      finish({ ok: true });
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' }).end('<title>Sign-in failed</title><body style="font:15px system-ui;padding:40px">OpenRouter sign-in failed. Close this tab and try again.</body>');
-      finish({ ok: false, message: t('openrouter.failed', { error: err.message }) });
-    }
-  });
-  const timer = setTimeout(() => finish({ ok: false, message: t('openrouter.timeout') }), 5 * 60 * 1000);
-  server.on('error', (err) => finish({ ok: false, message: t('openrouter.cantStart', { error: err.message }) }));
-  server.listen(0, '127.0.0.1', () => {
-    const callback = `http://127.0.0.1:${server.address().port}/callback`;
-    const url = `https://openrouter.ai/auth?${new URLSearchParams({ callback_url: callback, code_challenge: challenge, code_challenge_method: 'S256', key_label: 'Lumen' })}`;
-    authTab = openTab(url).id;
-    if (!done) unwatch = onTabGone(authTab, () => cancelOpenRouterSignIn?.());
-  });
-}));
-
-// ---- Spotify widget sign-in (OAuth Authorization Code + PKCE, no client secret): the user's own Client
-// ID, Spotify asks in an ordinary tab, then redirects to the registered loopback address with a code.
-// features/widgets.js trades the code for tokens and stores the refresh token encrypted (widgetSecret).
-let cancelSpotifySignIn = null;
-ipcMain.handle('spotify:cancel', () => { cancelSpotifySignIn?.(); return true; });
-ipcMain.handle('spotify:disconnect', () => widgets.spotifyDisconnect());
-// One sign-in at a time; resolves { ok, message, cancelled?, allowlist? }. Used by Settings (spotify:sign-in) and by the Spotify card's Reconnect / Connect buttons (do=reconnect).
-const spotifySignIn = (clientId) => new Promise((resolve) => {
-  cancelSpotifySignIn?.();
-  let session;
-  try { session = widgets.spotifyStart(clientId); } catch (err) { resolve({ ok: false, message: err.message }); return; }
-  let authTab = null;
-  let done = false;
-  const finish = (result) => {
-    if (done) return;
-    done = true;
-    clearTimeout(timer);
-    unwatch();
-    cancelSpotifySignIn = null;
-    server.close();
-    if (authTab && tabs.some((x) => x.id === authTab)) setTimeout(() => { if (tabs.some((x) => x.id === authTab)) closeTab(authTab); }, 1200);
-    resolve(result);
-  };
-  cancelSpotifySignIn = () => finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
-  // Closing the sign-in tab cancels at once, instead of waiting for the 5-minute timeout.
-  let unwatch = () => {}; // set once the tab exists
-  const page = (title, text) => `<title>${title}</title><body style="font:15px system-ui;padding:40px">${text}</body>`;
-  const server = require('http').createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://127.0.0.1');
-    if (url.pathname !== '/callback') { res.writeHead(404).end(); return; }
-    if (url.searchParams.get('state') !== session.state) { res.writeHead(400).end(); return; } // not our sign-in: ignore, keep waiting
-    if (url.searchParams.get('error')) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Not connected', 'Spotify was not connected. You can close this tab.'));
-      finish({ ok: false, cancelled: true, message: t('spotify.cancelled') });
-      return;
-    }
-    try {
-      await session.exchange(url.searchParams.get('code'));
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Connected', 'Spotify is connected to Lumen. You can close this tab.'));
-      finish({ ok: true, message: t('spotify.connected') });
-    } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('Sign-in failed', 'Spotify sign-in failed. Close this tab and try again.'));
-      finish({ ok: false, allowlist: err.allowlist === true, message: err.allowlist === true ? err.message : t('spotify.failed', { error: err.message }) });
-    }
-  });
-  // (Lumen's own Spotify app, in Spotify's development mode, only lets 25 listed accounts in: for anyone else Spotify's own page says so and never comes back here)
-  const timer = setTimeout(() => finish(session.builtin ? { ok: false, allowlist: true, message: t('spotify.timeoutBuiltin') } : { ok: false, message: t('spotify.timeout') }), 5 * 60 * 1000);
-  server.on('error', (err) => finish({ ok: false, message: t(err.code === 'EADDRINUSE' ? 'spotify.portBusy' : 'spotify.cantStart', { error: err.message, port: spotifyRedirectPort() }) }));
-  server.listen(spotifyRedirectPort(), '127.0.0.1', () => { authTab = openTab(session.url).id; if (!done) unwatch = onTabGone(authTab, () => cancelSpotifySignIn?.()); });
-});
-ipcMain.handle('spotify:sign-in', (_event, clientId) => spotifySignIn(clientId));
-
-// ---- sign in with the Anthropic CLI (an OAuth profile instead of an API key)
-const CLI_BIN = () => path.join(app.getPath('userData'), 'bin');
-
-async function cliStatus() {
-  const ant = await cliAuth.findAnt(CLI_BIN());
-  const { profile, signedIn: hasFile } = cliAuth.profileState();
-  // A credentials file can outlive its tokens: confirm with the CLI when it's available.
-  const signedIn = hasFile && (ant ? await cliAuth.verifyLogin(ant) : true);
-  return {
-    installed: Boolean(ant),
-    path: ant || null,
-    signedIn,
-    profile,
-    // A saved or exported API key takes precedence over the CLI profile.
-    shadowedBy: !anthropicKeyOn() ? null : storedApiKey() ? 'saved key' : 'ANTHROPIC_API_KEY',
-  };
-}
-
-ipcMain.handle('cli:status', cliStatus);
-ipcMain.handle('cli:login', async (event) => {
-  const progress = (text) => { if (!event.sender.isDestroyed()) event.sender.send('cli:progress', text); };
-  try {
-    let ant = await cliAuth.findAnt(CLI_BIN());
-    if (!ant) {
-      progress('Installing the Anthropic CLI…');
-      ant = await cliAuth.installAnt(CLI_BIN());
-    }
-    progress('Finish signing in in your web browser…');
-    const result = await cliAuth.login(ant);
-    client = null; // the next request picks up the new profile
-    if (result.ok) { cliLoginValid = null; modelsChanged(); }
-    return { ...(await cliStatus()), ok: result.ok, cancelled: Boolean(result.cancelled), message: result.ok ? '' : result.message || 'Sign-in did not complete.' };
-  } catch (err) {
-    return { ...(await cliStatus()), ok: false, message: err.message };
-  }
-});
-ipcMain.handle('cli:cancel', () => cliAuth.cancelLogin());
-ipcMain.handle('cli:logout', async () => {
-  const ant = await cliAuth.findAnt(CLI_BIN());
-  if (ant) await cliAuth.logout(ant);
-  client = null;
-  return cliStatus();
-});
+const { spotifySignIn } = aiSignIns; // (the Spotify card's Reconnect / Connect: widgets.spotifyReconnect)
 
 ipcMain.handle('settings:set-search-engine', (_e, id) => setSearchEngine(id));
 ipcMain.handle('settings:search-engines', () => ({ searchEngine: readSettings().searchEngine || DEFAULT_ENGINE, searchEngines: Object.entries(SEARCH_ENGINES).map(([id, e]) => ({ id, label: e.label, url: e.url })) })); // (the Search engine row of General: not the whole of settings:get, which also lists the models and looks for the AI command-line tools)

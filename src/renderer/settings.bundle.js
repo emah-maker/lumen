@@ -5828,6 +5828,7 @@ select('fontSize', tr('settings.row.fontSize', 'Font size'), tr('settings.row.th
 );
 card.group('Toolbar').append(
 toggle('showBookmarkButton', tr('settings.row.showBookmarkButton', 'Show bookmark button'), tr('settings.row.theStarInThe', 'The star in the address bar. Ctrl+D bookmarks either way.')),
+select('bookmarksBar', tr('settings.row.showBookmarksBar', 'Show bookmarks bar'), tr('settings.row.yourBookmarksUnderThe', 'Your bookmarks under the toolbar, as in Chrome. Ctrl+Shift+B switches between always and the new tab page only.'), [['newtab', 'On the new tab page'], ['always', 'Always'], ['never', 'Never']]),
 toggle('showAiOffButton', tr('settings.row.showTheAiRead', 'Show the AI read-only button in the address bar'), tr('settings.row.theShieldThatKeeps', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.')),
 );
 

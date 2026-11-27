@@ -1,0 +1,62 @@
+/* The bookmarks bar (renderer/bookmarks-bar.js). Its height is features/bookmark-bar.js BAR_HEIGHT: main.js leaves the new-tab
+   page that much room in 'newtab' mode, and test/units/bookmark-bar-units.js checks the two agree. */
+:root { --bookmarks-bar-h: 32px; }
+
+.bookmarks-bar {
+  position: relative; display: flex; align-items: center; gap: var(--sp-1);
+  height: var(--bookmarks-bar-h); padding: 0 var(--sp-4) var(--sp-1); box-sizing: border-box;
+  background: var(--bg); color: var(--text); font-size: var(--fs-sm); user-select: none;
+  -webkit-app-region: no-drag; contain: layout paint;
+}
+/* 'newtab' mode: over the top of the page area, where only the new-tab page leaves room for it. It reads as part of the toolbar:
+   the page area's top line moves below it. */
+.bookmarks-bar.bm-overlay { position: absolute; top: 0; left: 0; right: 0; z-index: 3; box-shadow: 0 1px 0 var(--hairline); }
+.viewport:has(> .bookmarks-bar.bm-overlay:not([hidden])) { box-shadow: none; }
+
+.bm-items { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--sp-1); overflow: hidden; }
+
+.bm-chip {
+  flex: none; display: inline-flex; align-items: center; gap: var(--sp-3); max-width: 180px; height: 26px; padding: 0 var(--sp-4);
+  border: none; border-radius: var(--r-md); background: transparent; color: var(--text); font-size: var(--fs-sm); line-height: 1;
+  transition: background-color var(--t-fast) ease-out, box-shadow var(--t-fast) ease-out, opacity var(--t-fast) ease-out;
+}
+.bm-chip:hover, .bm-chip.open, .bm-chip[aria-expanded="true"] { background: var(--hover); }
+.bm-chip:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.bm-chip.dragging { opacity: 0.45; }
+.bm-chip.drop-into { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.bm-icon { flex: none; width: 16px; height: 16px; border-radius: var(--r-xs); object-fit: contain; }
+.bm-glyph { color: var(--muted); }
+.bm-folder .bm-glyph { color: var(--accent-text); }
+.bm-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* » for the chips that don't fit */
+#bm-overflow { flex: none; width: 26px; padding: 0; justify-content: center; color: var(--muted); }
+#bm-overflow:hover, #bm-overflow[aria-expanded="true"] { color: var(--text); }
+#bm-overflow svg { width: 14px; height: 14px; }
+
+.bm-empty { padding: 0 var(--sp-4); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Where a dragged chip, link or tab will land */
+.bm-caret { position: absolute; left: 0; top: 6px; width: 2px; height: 20px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+
+/* Edit, Rename, New folder: a form in the bar itself */
+.bm-edit { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--sp-4); }
+.bm-field { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; color: var(--muted); }
+.bm-field-title, .bm-field-name { flex: 1 1 200px; }
+.bm-field-url { flex: 2 1 260px; }
+.bm-field-folder { flex: 1 1 160px; }
+.bm-field-name { white-space: nowrap; }
+.bm-field input {
+  flex: 1 1 auto; min-width: 60px; height: 24px; padding: 0 var(--sp-4); border: none; border-radius: var(--r-sm);
+  background: var(--field); color: var(--text); font: inherit; outline: none;
+}
+.bm-field input:focus { background: var(--surface-raised); box-shadow: 0 0 0 1px var(--border), 0 0 0 3px var(--accent-soft); }
+.bm-field input:focus-visible { box-shadow: 0 0 0 1px var(--border), var(--focus-ring); }
+.bm-error { color: var(--danger); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bm-error:empty { display: none; }
+.bm-btn { flex: none; height: 24px; padding: 0 var(--sp-5); border: none; border-radius: var(--r-sm); background: var(--field); color: var(--text); font-size: var(--fs-sm); }
+.bm-btn:hover { background: var(--hover); }
+.bm-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.bm-primary, .bm-primary:hover { background: var(--accent-deep); color: var(--on-accent); }
+
+@media (prefers-reduced-motion: reduce) { .bm-chip { transition: none; } }
+:root.pref-reduce-motion .bm-chip { transition: none; }
