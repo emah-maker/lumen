@@ -150,7 +150,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await ui.click('#update-action');
   const installs = await waitFor(() => app.evaluate(() => global.__stager.swaps.length && global.__stager.swaps));
   check('Restart to update hands the staged update to the swap and quits', JSON.stringify(installs) === '[{"fake":true}]' && (await app.evaluate(() => global.__quits)) === 1, JSON.stringify(installs));
-  const saved = JSON.parse(fs.readFileSync(path.join(profile, 'settings.json'), 'utf8')).session;
+  const saved = JSON.parse(fs.readFileSync(path.join(profile, 'session.json'), 'utf8')).session; // (the saved session's own file: settings/session-store.js)
   check('the session is saved before the swap', Array.isArray(saved?.urls) && saved.urls.some((u) => u.endsWith('/keep-me')), JSON.stringify(saved));
 
   await app.close();

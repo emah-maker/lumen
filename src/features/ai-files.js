@@ -56,10 +56,46 @@ const FILE_URL = /file:\/\/[^\s"'<>`)\]|*?]+/gi;
 const QUOTED = new RegExp(`([\`"'])(${ROOT}[^\`"'\\n<>|*?]*?\\.${EXT})\\1`, 'g');
 const ANGLE = new RegExp(`<(${ROOT}[^<>\\n|*?]*?\\.${EXT})>`, 'g');
 const LINK = new RegExp(`\\]\\(\\s*<?(${ROOT}[^\\n()<>|*?]*?\\.${EXT})>?(?:\\s+"[^"\\n]*")?\\s*\\)`, 'g');
-const WIN_SPACED = new RegExp(`(?<![A-Za-z0-9])([A-Za-z]:[\\\\/][^\\n"'<>|*?\`]*?\\.${EXT})${END}`, 'g'); // "C:\My Docs\a.html in a browser"
-const WIN_TOKEN = new RegExp(`(?<![A-Za-z0-9])([A-Za-z]:[\\\\/][^\\s"'<>|*?\`]+?\\.${EXT})${END}`, 'g');
-const POSIX = new RegExp(`(?:^|[\\s("'\`<])(/[^\\s"'<>|*?\`]+?\\.${EXT})${END}`, 'gm');
-const TILDE = new RegExp(`(?:^|[\\s("'\`<])(~[\\\\/][^\\s"'<>|*?\`]+?\\.${EXT})${END}`, 'gm');
+// Bare paths: a start (a drive "C:\", or "/" or "~/" after a space, bracket or quote), then the shortest run of name characters
+// that ends in ".ext" not followed by more of a name. As regexes (/(?<![A-Za-z0-9])([A-Za-z]:[\\/][^\n"'<>|*?`]*?\.ext)(?!...)/g and
+// the like) the lazy run was retried from every start, so a long line of starts with no ending ("C:/ C:/ C:/ ...", "(/(/(/...") took
+// quadratic time on a model's reply. scanPaths finds the same matches in one pass: where each run of name characters next reaches a
+// valid ".ext" ending is worked out once, right to left, and each start then looks it up.
+const SPACED_STOP = /[\n"'<>|*?`]/; // "C:\My Docs\a.html in a browser": spaces allowed
+const TOKEN_STOP = /[\s"'<>|*?`]/;
+const NAME_GOES_ON = /[A-Za-z0-9_\\/]/; // a character that would go on with the name (END)
+const ALNUM = /[A-Za-z0-9]/;
+const BEFORE_PATH = /[\s("'`<]/; // what may come just before a "/" or "~/" path
+const driveAt = (t, i) => (/[A-Za-z]/.test(t[i]) && t[i + 1] === ':' && (t[i + 2] === '\\' || t[i + 2] === '/') && (i === 0 || !ALNUM.test(t[i - 1])) ? 3 : 0);
+const slashAt = (t, i) => (t[i] === '/' && (i === 0 || BEFORE_PATH.test(t[i - 1])) ? 1 : 0);
+const tildeAt = (t, i) => (t[i] === '~' && (t[i + 1] === '\\' || t[i + 1] === '/') && (i === 0 || BEFORE_PATH.test(t[i - 1])) ? 2 : 0);
+// The matches of a start (rootAt: its length, or 0) + name characters (at least minRun) + ".ext" + END, in order, not overlapping.
+function scanPaths(t, rootAt, stop, minRun) {
+  const n = t.length;
+  // endAt[p]: where the first valid ".ext" at or after p ends, with no stop character before it; -1 if there is none
+  const endAt = new Int32Array(n + 1).fill(-1);
+  let next = -1;
+  let run = 0; // letters and digits just right of p
+  for (let p = n - 1; p >= 0; p--) {
+    const ch = t[p];
+    if (ch === '.' && run >= 1 && run <= 8 && (p + 1 + run >= n || !NAME_GOES_ON.test(t[p + 1 + run]))) next = p + 1 + run;
+    else if (stop.test(ch)) next = -1;
+    endAt[p] = next;
+    run = ALNUM.test(ch) ? run + 1 : 0;
+  }
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const root = rootAt(t, i);
+    if (!root) continue;
+    const from = i + root + minRun;
+    if (from > n || (minRun && stop.test(t[i + root]))) continue;
+    const end = endAt[from];
+    if (end < 0) continue;
+    out.push(t.slice(i, end));
+    i = end - 1; // (the next match starts after this one)
+  }
+  return out;
+}
 const trimEnd = (p) => String(p).replace(/[.,;:!?]+$/, '');
 
 function findPaths(text, { home = require('os').homedir(), platform = process.platform } = {}) {
@@ -73,9 +109,11 @@ function findPaths(text, { home = require('os').homedir(), platform = process.pl
   const add = (p) => { if (found.size < MAX_CANDIDATES) found.add(native(trimEnd(p))); };
   for (const m of s.matchAll(FILE_URL)) { const p = fromFileUrl(trimEnd(m[0])); if (p) add(p); }
   const plain = s.replace(FILE_URL, ' ');
-  for (const re of [QUOTED, ANGLE, LINK, WIN_SPACED, WIN_TOKEN]) for (const m of plain.matchAll(re)) add(re === QUOTED ? m[2] : m[1]);
-  for (const m of plain.matchAll(POSIX)) add(m[1]);
-  for (const m of plain.matchAll(TILDE)) add(m[1]);
+  for (const re of [QUOTED, ANGLE, LINK]) for (const m of plain.matchAll(re)) add(re === QUOTED ? m[2] : m[1]);
+  for (const p of scanPaths(plain, driveAt, SPACED_STOP, 0)) add(p);
+  for (const p of scanPaths(plain, driveAt, TOKEN_STOP, 1)) add(p);
+  for (const p of scanPaths(plain, slashAt, TOKEN_STOP, 1)) add(p);
+  for (const p of scanPaths(plain, tildeAt, TOKEN_STOP, 1)) add(p);
   return [...found];
 }
 
