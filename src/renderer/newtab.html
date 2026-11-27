@@ -91,7 +91,7 @@
     html body[data-wglass="frosted"] .w-card, html body[data-wglass="frosted"] .w-card.tinted {
       background: color-mix(in srgb, var(--card) 55%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.4); backdrop-filter: blur(18px) saturate(1.4);
     }
-    html body.on-media[data-wglass="frosted"] .w-card, html body.on-media[data-wglass="frosted"] .w-card.tinted { background: rgba(255, 255, 255, 0.07); }
+    html body.on-media[data-wglass="frosted"] .w-card, html body.on-media[data-wglass="frosted"] .w-card.tinted { background: rgba(16, 18, 24, 0.3); } /* smoked, see-through glass: as the solid card above, white text stays AA over a bright patch */
     html body.on-media.has-effect[data-wglass="frosted"] .w-card { background: rgba(28, 28, 32, 0.42); -webkit-backdrop-filter: none; backdrop-filter: none; }
     html body[data-wglass="clear"] .w-card, html body[data-wglass="clear"] .w-card.tinted, html body.on-media.has-effect[data-wglass="clear"] .w-card {
       background: color-mix(in srgb, var(--card) 14%, transparent); box-shadow: 0 0 0 0.5px var(--border); -webkit-backdrop-filter: none; backdrop-filter: none;
@@ -114,6 +114,9 @@
     body.on-media input { background: rgba(255, 255, 255, 0.16); color: #fff; box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.22); }
     body.on-media input:focus { background: rgba(20, 20, 24, 0.62); }
     body.on-media .frequent a, body.on-media .privacy, body.on-media .w-card { background: rgba(255, 255, 255, 0.1); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
+    /* A widget card over a dark background is smoked (dark) glass, not white glass: a white tint over a bright patch (Aurora's glows, a
+       mid-tone picture) left its white text under AA (test/e2e/newtab-wallpaper.js cardContrast). A light background turns it white below. */
+    body.on-media .w-card { background: rgba(16, 18, 24, 0.4); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.14); }
     /* [look] A light background (features/backgrounds.js: tone "light", pastel gradients and light solids): the page keeps its dark text
        and the cards turn white glass, whatever the system theme. Everything above that assumes a dark picture is turned over here. */
     body.on-media.tone-light {
@@ -218,7 +221,7 @@
     body.gfx-light #backdrop::before { animation: none; }
     html body.gfx-light :is(input, .frequent a, .privacy, .mode, .empty, .w-card, .w-card.tinted, .clock-card, .w-stack-menu, .w-stack-panel, .w-dock-row, .w-dock-hint, .w-firstrun, .w-sz-note, .w-sz-frame::after) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
     html body.gfx-light[data-wglass="frosted"] .w-card, html body.gfx-light[data-wglass="frosted"] .w-card.tinted { background: color-mix(in srgb, var(--card) 72%, transparent); }
-    html body.gfx-light.on-media[data-wglass="frosted"] .w-card, html body.gfx-light.on-media[data-wglass="frosted"] .w-card.tinted { background: rgba(255, 255, 255, 0.13); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.2); }
+    html body.gfx-light.on-media[data-wglass="frosted"] .w-card, html body.gfx-light.on-media[data-wglass="frosted"] .w-card.tinted { background: rgba(16, 18, 24, 0.46); box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.16); }
     html body.gfx-light.on-media.has-effect[data-wglass="frosted"] .w-card { background: rgba(28, 28, 32, 0.42); }
     body.gfx-light.on-media:not(.has-effect) .frequent a, body.gfx-light.on-media:not(.has-effect) .privacy { background: rgba(255, 255, 255, 0.13); }
     body.gfx-light.on-media[data-clock-card="glass"] .clock-card { background: rgba(255, 255, 255, 0.18); }

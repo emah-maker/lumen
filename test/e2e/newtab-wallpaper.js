@@ -192,6 +192,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         await cardContrast(t, id);
       }
     }
+    // Frosted cards (see-through, blurred) on the brightest dark backgrounds and a light Studio one, in both themes: still AA.
+    await set('newTabWidgetGlass', 'frosted');
+    for (const t of ['dark', 'light']) {
+      await theme(t);
+      for (const id of ['aurora', 'sunset', 'nebula', 'dusk', 'mist', 'peach']) { await applyBg(id); await cardContrast(t, `${id} with frosted cards`); }
+    }
+    await set('newTabWidgetGlass', 'solid');
     // ---------- a pale picture (a snowy, light-blue photo): measured light, so dark text and white glass cards, readable, in both themes ----------
     const pale = await app.evaluate(({ nativeImage }) => {
       const w = 160, h = 100, buf = Buffer.alloc(w * h * 4); let s = 7;
