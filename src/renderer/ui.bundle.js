@@ -18150,11 +18150,24 @@ const label = tr('passwords.button', 'Saved passwords for this site');
 btn.title = label;
 btn.setAttribute('aria-label', label);
 const offer = st?.offer || null;
-const key = offer ? `${offer.site}|${offer.username}|${offer.update}` : '';
+const key = offer ? `${offer.site}|${offer.username}|${offer.update}|${offer.generated}` : '';
 if (key === shown) return;
 shown = key;
 if (!offer) { bar.hidden = true; bar.replaceChildren(); return; }
 const vars = { site: offer.site, username: offer.username };
+if (offer.generated) {
+
+const said = el('span', 'infobar-text', tr('passwords.generated', 'Lumen saved the strong password for {site}', vars));
+said.append(' ', el('span', 'infobar-note', offer.username || tr('passwords.noUsername', 'no username')));
+const ok = button(tr('passwords.generated.ok', 'OK'), () => act('not-now'), 'primary');
+const close = el('button', 'infobar-close', '×');
+close.type = 'button';
+close.setAttribute('aria-label', tr('passwords.offer.close', 'Close'));
+close.addEventListener('click', () => act('not-now'));
+bar.replaceChildren(said, ok, close);
+bar.hidden = false;
+return;
+}
 const text = el('span', 'infobar-text', offer.update
 ? tr('passwords.offer.update', 'Update the saved password for {username} on {site}?', vars)
 : tr('passwords.offer', 'Save password for {site}?', vars));

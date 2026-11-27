@@ -86,6 +86,8 @@ if (location.protocol === 'file:' && /\/renderer\/settings\.html$/.test(location
       removeAll: call('settings:passwords-delete-all'),
       importCsv: call('settings:passwords-import'),
       removeNever: call('settings:passwords-never-remove'),
+      generate: call('settings:passwords-generate'), // Generate a password: made in the main process (crypto.randomBytes)
+      copyGenerated: call('settings:passwords-copy-generated'), // its Copy: the clipboard is cleared after 30 seconds
     },
     // [memory] Settings → AI → Instructions and memory (ai/memory.js): the saved entries, edited and deleted here
     memory: {
