@@ -149,6 +149,10 @@ Settings → Tabs and browsing → **Tab layout** lists the tabs down the left o
 
 Right-click a tab → **Open in split view** to show it next to the tab you are on, or drag a tab out of the strip and drop it on the right edge of the page. Drag the divider to resize (double-click for an even split); the button on the divider, or **Close split view** in the tab menu, ends it. The tab you clicked last is the one the address bar, the AI and the shortcuts use, so the AI can work in one side while you read the other. Split views are not kept across restarts.
 
+## Profiles
+
+Keep work and home apart: ⋯ menu → **Profiles** → **Add profile…** makes a new, empty Lumen with its own name, color and avatar, and its own cookies, history, bookmarks, passwords, chats, settings and extensions. Each profile opens in its own window; once you have more than one, the toolbar's round profile button switches between them. **Edit this profile…** changes the name, color or avatar, and **Delete profile** (after you confirm) moves a closed profile's folder to the Recycle Bin. What you had before is the **Default** profile, left where it was. See [Profiles](docs/profiles.md).
+
 ## Two accounts on one site (account tabs)
 
 A tab can sign in as someone else. Right-click a tab, a page or a link → **Open with another account** → **Account 2** (or **New account**). That tab gets its own cookies, logins and site storage, kept apart from your main ones and kept across restarts, so your school Microsoft account and your personal one can both stay signed in. Links, pop-ups and new tabs opened from it stay in the same account. Its tab has a short colored line, and the address bar names the account; click the name to rename it, change its color, open a new tab in it, or open the page in your main account.
@@ -405,6 +409,7 @@ Something broken, or something missing? [Open an issue on GitHub](https://github
 - [The AI working in Word](docs/word.md): reads and edits Word documents directly (Windows), down to one paragraph by number or heading, with each paragraph's formatting read back, a real table of contents, fields and checkpoints to restore; or `.docx` files without Word; with an approval for every change and a live card in the chat
 - [The AI using other apps](docs/desktop-apps.md): Word, File Explorer, Finder and more on Windows and macOS: per-app approval, what is never available, the banner and Stop
 - [Skills](docs/skills.md): saved instructions you run with `/`, SKILL.md folders shared with Claude Code and other agents, skills the AI uses on its own, and the opt-in offers to save and improve them
+- [Profiles](docs/profiles.md): separate Lumens for work and home, each with its own cookies, history, passwords, chats, settings and extensions; switch, add, edit and delete them, and what stays shared
 - [Sync through a folder](docs/sync.md): keep bookmarks, history, chats, widgets and settings the same on your computers through a cloud-drive folder, encrypted with a passphrase only you know, with no Lumen server
 - [Notes](docs/notes.md): the sidebar notepad, adding from a reply or a page, asking the AI about a note, and where notes are kept
 - [Memory](docs/memory.md): what the AI remembers about you between chats, how it decides, Search past chats, and where to see and delete it

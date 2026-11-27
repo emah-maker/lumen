@@ -31,6 +31,7 @@ const PAGES = {
   telegram: { title: 'Phone (Telegram)', file: 'docs/telegram.md' },
   'phone-wifi': { title: 'Receive from phone (Wi-Fi)', file: 'docs/phone-wifi.md' },
   sync: { title: 'Sync through a folder', file: 'docs/sync.md' },
+  profiles: { title: 'Profiles', file: 'docs/profiles.md' },
   notes: { title: 'Notes', file: 'docs/notes.md' },
   memory: { title: 'Memory', file: 'docs/memory.md' },
   skills: { title: 'Skills', file: 'docs/skills.md' },
