@@ -16,6 +16,8 @@
 // test/units/password-units.js runs them in Node; they are stringified into the page scripts, so they use
 // nothing from outside themselves.
 
+const { generatePassword } = require('./password-generator');
+
 const PASSWORD_WORLD = 1077; // agent.js uses 1001 (CLAUDE_WORLD); main.js has its own for page text and skills
 
 // A field: { type, value, autocomplete, name, id, visible, form, order, readOnly, disabled }.
@@ -71,6 +73,33 @@ function fillTargets(fields, focused = -1) {
   return { username: user ? user.order : -1, password: pw.order };
 }
 
+// Where "Use a strong password" goes: { fields: [order, ...], minLength, maxLength, pattern }, or null
+// when the focused field isn't a new password. A new password is a field marked
+// autocomplete="new-password" (and the confirm field after it), or, on a form that marks none, the
+// last two password fields of a form with two or more (sign-up: password and confirm; change password:
+// current, new, confirm). A field marked current-password never is, and one password field alone is a
+// sign-in. The constraints are the strictest of the fields filled: the largest minlength, the smallest
+// maxlength, the focused field's pattern (else the other's).
+function generatorTargets(fields, focused = -1) {
+  const ac = (f) => String(f.autocomplete || '').toLowerCase();
+  const usable = (f) => f.type === 'password' && f.visible && !f.readOnly && !f.disabled && !notALogin(f);
+  const field = fields.find((f) => f.order === focused);
+  if (!field || !usable(field) || /current-password/.test(ac(field))) return null;
+  const same = fields.filter((f) => usable(f) && f.form === field.form);
+  const fresh = same.filter((f) => !/current-password/.test(ac(f)));
+  const first = fresh.findIndex((f) => /new-password/.test(ac(f)));
+  let group;
+  if (first >= 0) group = fresh.slice(first, first + 2);
+  else if (same.length >= 2 && fresh.length === same.length) group = fresh.slice(-2);
+  else return null;
+  if (!group.includes(field)) return null;
+  const num = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : 0);
+  const mins = group.map((f) => num(f.minLength)).filter(Boolean);
+  const maxes = group.map((f) => num(f.maxLength)).filter(Boolean);
+  const pattern = field.pattern || (group.find((f) => f.pattern) || {}).pattern || '';
+  return { fields: group.map((f) => f.order), minLength: mins.length ? Math.max(...mins) : 0, maxLength: maxes.length ? Math.min(...maxes) : 0, pattern };
+}
+
 // Shared by both scripts: the rules above, and collect(), which lists the page's input fields (open
 // shadow roots included) with their descriptions. A field that was a password field when the user typed
 // in it still counts as one after a "show password" button turned it into a text field.
@@ -78,6 +107,7 @@ const HELPERS = `
   ${notALogin.toString()}
   ${pickCredentials.toString()}
   ${fillTargets.toString()}
+  ${generatorTargets.toString()}
   const state = window.__lumenPasswords || (window.__lumenPasswords = { seen: new WeakSet() });
   const collect = () => {
     const els = [];
@@ -94,7 +124,7 @@ const HELPERS = `
       const s = getComputedStyle(el);
       const visible = r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
       const type = state.seen.has(el) ? 'password' : String(el.type || '').toLowerCase();
-      return { el, info: { type, value: el.value, autocomplete: el.getAttribute('autocomplete') || '', name: el.name || '', id: el.id || '', visible, form, order, readOnly: el.readOnly, disabled: el.disabled } };
+      return { el, info: { type, value: el.value, autocomplete: el.getAttribute('autocomplete') || '', name: el.name || '', id: el.id || '', visible, form, order, readOnly: el.readOnly, disabled: el.disabled, minLength: el.minLength, maxLength: el.maxLength, pattern: el.getAttribute('pattern') || '' } };
     });
   };
 `;
@@ -142,6 +172,8 @@ function watch() {
       const got = pickCredentials(list.map((d) => d.info));
       if (!got) return false;
       noted = got;
+      // The strong password offer() filled: main.js saves it without asking (the user chose it here).
+      if (state.generated && got.password === state.generated) noted.generated = true;
       field = (list.find((d) => d.info.type === 'password' && d.el.value === got.password) || {}).el || null;
       clearTimeout(expiry);
       expiry = setTimeout(() => { noted = null; field = null; stopWatching(); }, 30000);
@@ -167,9 +199,112 @@ function watch() {
   })()`;
 }
 
+// "Use a strong password": while the user is in a new-password field (generatorTargets), a small box
+// under it offers one. Choosing it (a trusted click on the box, or ↓ then Enter in the field) makes a
+// password here with crypto.getRandomValues (features/password-generator.js), fills it into the
+// password and confirm fields and resolves with { generated: true }, so main.js knows the tab now holds
+// a password (run_script is refused there) and arms the offer again; the password itself stays in this
+// world (state.generated), where watch() recognises it when the form is submitted. The box is in a
+// closed shadow root and never shows the password. Resolves null when main.js stops it.
+function offer(label, note) {
+  return `(() => {
+    ${HELPERS}
+    ${generatePassword.toString()}
+    if (state.offering) return state.offering;
+    let resolveIt;
+    state.offering = new Promise((resolve) => { resolveIt = resolve; });
+    const listeners = [];
+    const on = (target, type, fn) => { target.addEventListener(type, fn, true); listeners.push([target, type, fn]); };
+    let host = null;
+    let button = null;
+    let field = null;
+    let target = null;
+    let picked = false;
+    const hide = () => { if (host) host.remove(); host = null; button = null; field = null; target = null; picked = false; };
+    const finish = (value) => {
+      for (const [t, type, fn] of listeners) t.removeEventListener(type, fn, true);
+      hide();
+      state.offering = null;
+      state.stopOffer = null;
+      resolveIt(value);
+    };
+    const place = () => {
+      if (!host || !field) return;
+      const r = field.getBoundingClientRect();
+      if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight) { hide(); return; }
+      host.style.top = Math.min(r.bottom + 4, innerHeight - 56) + 'px';
+      host.style.left = Math.max(4, Math.min(r.left, innerWidth - 300)) + 'px';
+    };
+    const show = (el, tgt) => {
+      hide();
+      field = el;
+      target = tgt;
+      host = document.createElement('lumen-password-offer');
+      host.style.cssText = 'all:initial;position:fixed;z-index:2147483647;display:block;';
+      const root = host.attachShadow({ mode: 'closed' });
+      const css = document.createElement('style');
+      css.textContent = ':host{color-scheme:light dark}button{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:2px;min-width:220px;max-width:296px;padding:8px 12px;border-radius:8px;cursor:pointer;font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;background:Canvas;color:CanvasText;border:1px solid color-mix(in srgb,CanvasText 18%,transparent);box-shadow:0 4px 16px rgba(0,0,0,.18)}button:hover,button.on,button:focus-visible{background:color-mix(in srgb,Highlight 14%,Canvas)}b{font-weight:600}span{opacity:.72;font-size:12px}';
+      button = document.createElement('button');
+      button.type = 'button';
+      const b = document.createElement('b');
+      b.textContent = ${JSON.stringify(String(label))};
+      const s = document.createElement('span');
+      s.textContent = ${JSON.stringify(String(note))};
+      button.append(b, s);
+      button.addEventListener('pointerdown', (e) => e.preventDefault()); // the field keeps the focus
+      button.addEventListener('mousedown', (e) => e.preventDefault());
+      button.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (e.isTrusted) choose(); });
+      root.append(css, button);
+      document.documentElement.appendChild(host);
+      place();
+    };
+    const consider = (el) => {
+      // Only password fields (or ones that were, before a "show password" button) are looked at further.
+      if (!el || el.tagName !== 'INPUT' || (String(el.type).toLowerCase() !== 'password' && !state.seen.has(el))) { hide(); return; }
+      if (el === field && host) return;
+      if (state.generated && el.value === state.generated) { hide(); return; }
+      const list = collect();
+      const order = list.findIndex((d) => d.el === el);
+      const tgt = generatorTargets(list.map((d) => d.info), order);
+      if (!tgt) { hide(); return; }
+      show(el, { ...tgt, els: tgt.fields.map((i) => list[i].el) });
+    };
+    const choose = () => {
+      const tgt = target;
+      if (!tgt) return;
+      const password = generatePassword({ length: 20, symbols: true, minLength: tgt.minLength, maxLength: tgt.maxLength, pattern: tgt.pattern }, (n) => crypto.getRandomValues(new Uint8Array(n)));
+      if (!password) { hide(); return; }
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      for (const el of tgt.els) {
+        el.focus();
+        setter.call(el, password);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        state.seen.add(el);
+      }
+      state.generated = password;
+      finish({ generated: true });
+    };
+    on(document, 'focusin', (e) => consider(e.target));
+    on(document, 'focusout', () => setTimeout(() => { if (host && document.activeElement !== field) hide(); }, 0));
+    on(document, 'keydown', (e) => {
+      if (!host || !e.isTrusted || e.target !== field) return;
+      if (e.key === 'Escape') { hide(); return; }
+      if (e.key === 'ArrowDown') { picked = true; button.classList.add('on'); e.preventDefault(); return; }
+      if (e.key === 'Enter' && picked) { e.preventDefault(); e.stopPropagation(); choose(); return; }
+      if (e.key !== 'Shift') { picked = false; button.classList.remove('on'); }
+    });
+    on(window, 'scroll', place);
+    on(window, 'resize', place);
+    state.stopOffer = () => finish(null);
+    consider(document.activeElement);
+    return state.offering;
+  })()`;
+}
+
 // main.js runs these on navigation (flush) and when Save passwords is turned off (stop).
 const FLUSH = '(() => { const s = window.__lumenPasswords; if (s && s.flush) s.flush(); return true; })()';
-const STOP = '(() => { const s = window.__lumenPasswords; if (s && s.stop) s.stop(); return true; })()';
+const STOP = '(() => { const s = window.__lumenPasswords; if (s && s.stop) s.stop(); if (s && s.stopOffer) s.stopOffer(); return true; })()';
 
 // Puts one login into the page. Returns 'filled' (a password field was filled), 'username' (only the
 // username: step one of a two-step sign-in) or 'none'. The values are set through the input's own value
@@ -199,4 +334,4 @@ function fill(username, password) {
   })()`;
 }
 
-module.exports = { PASSWORD_WORLD, pickCredentials, fillTargets, notALogin, watch, fill, FLUSH, STOP };
+module.exports = { PASSWORD_WORLD, pickCredentials, fillTargets, generatorTargets, notALogin, watch, offer, fill, FLUSH, STOP };

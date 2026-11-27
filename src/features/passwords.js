@@ -28,6 +28,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const page = require('./password-page');
+const generator = require('./password-generator');
 
 const MAX_ENTRIES = 5000;
 const MAX_USERNAME = 512;
@@ -312,8 +313,8 @@ function createVault({ file, cipher, now = () => Date.now(), onChange = null }) 
 function createPasswords(deps) {
   const now = deps.now || (() => Date.now());
   const vault = createVault({ file: deps.file, cipher: deps.cipher, now, onChange: deps.onChange });
-  const states = new WeakMap(); // tab -> { doc, armed, offer, filled: Set of sites }
-  const stateFor = (tab) => { let s = states.get(tab); if (!s) { s = { doc: 0, armed: 0, offer: null, filled: new Set() }; states.set(tab, s); } return s; };
+  const states = new WeakMap(); // tab -> { doc, armed, offering, offer, filled: Set of sites }
+  const stateFor = (tab) => { let s = states.get(tab); if (!s) { s = { doc: 0, armed: 0, offering: 0, offer: null, filled: new Set() }; states.set(tab, s); } return s; };
   const live = (tab) => (tab?.view?.webContents && !tab.view.webContents.isDestroyed() ? tab.view.webContents : null);
 
   // Why OS encryption can't protect saved passwords here, or null when it can. Linux's "basic_text"
@@ -352,6 +353,23 @@ function createPasswords(deps) {
       // Still the same page (a single-page site): watch for the next sign-in.
       setTimeout(() => { if (st.doc === doc && st.armed === token && live(tab)) arm(tab); }, 500);
     }).catch(() => {});
+    armOffer(tab, v.site);
+  }
+
+  // "Use a strong password" on sign-up forms (password-page.js offer). Not while an outside program
+  // drives Lumen over CDP: it could read the field, as with a fill. When the user picks one, the tab
+  // counts as filled on this site (agent.js refuses run_script there), and the offer is armed again.
+  function armOffer(tab, site) {
+    const st = stateFor(tab);
+    if (st.offering || deps.outsideDriver?.()) return;
+    const doc = st.doc;
+    const token = ++st.offering;
+    run(tab, page.offer(deps.t('passwords.generate'), deps.t('passwords.generate.note'))).then((got) => {
+      if (st.offering === token) st.offering = 0;
+      if (!got?.generated) return;
+      st.filled.add(site);
+      setTimeout(() => { if (st.doc === doc && !st.offering && st.armed && live(tab)) armOffer(tab, site); }, 500);
+    }).catch(() => { if (st.offering === token) st.offering = 0; });
   }
 
   // The user signed in: offer to save (or update) unless it's already saved exactly like this.
@@ -363,6 +381,15 @@ function createPasswords(deps) {
     let had;
     try { had = vault.find(site, username); } catch { return; } // an unreadable vault: don't offer what can't be saved
     if (had && had.password === password) return;
+    // A strong password Lumen made on this page: saved without asking (the user chose it), then the bar
+    // says so. Only what the page script itself filled counts (watch() compares it with its own copy).
+    if (got.generated === true) {
+      let entry;
+      try { entry = vault.upsert({ site, username, password }).entry; } catch (err) { deps.notify?.(deps.t('passwords.saveFailed'), err.message); return; }
+      stateFor(tab).offer = { site, username: entry.username, generated: true, at: now() };
+      deps.sendTabs();
+      return;
+    }
     stateFor(tab).offer = { site, username, password, update: Boolean(had), at: now() };
     deps.sendTabs();
   }
@@ -381,6 +408,7 @@ function createPasswords(deps) {
       const st = stateFor(tab);
       st.doc++;
       st.armed = 0;
+      st.offering = 0;
     });
   }
 
@@ -390,7 +418,7 @@ function createPasswords(deps) {
     if (st.offer && now() - st.offer.at > OFFER_MS) st.offer = null;
     const v = verdictFor(tab);
     const saved = v.ok ? safeCount(v.site) : 0;
-    const offer = st.offer && enabled() ? { site: st.offer.site, username: st.offer.username, update: st.offer.update } : null;
+    const offer = st.offer && enabled() ? { site: st.offer.site, username: st.offer.username, update: Boolean(st.offer.update), generated: Boolean(st.offer.generated) } : null;
     if (!offer && !saved) return null;
     return { site: v.site, saved, offer };
   }
@@ -450,7 +478,7 @@ function createPasswords(deps) {
     const offer = st.offer;
     if (action === 'menu') { deps.popupMenu(menuTemplate(tab)); return; }
     st.offer = null;
-    if (offer && action === 'save' && enabled()) {
+    if (offer?.generated) { /* already saved: the bar only said so */ } else if (offer && action === 'save' && enabled()) {
       try { vault.upsert(offer); } catch (err) { deps.notify?.(deps.t('passwords.saveFailed'), err.message); }
     } else if (offer && action === 'never') {
       deps.writeSettings({ ...deps.readSettings(), passwordsNever: cleanNever([...never(), offer.site]) });
@@ -465,6 +493,7 @@ function createPasswords(deps) {
       if (!st) continue;
       st.offer = null;
       st.armed = 0;
+      st.offering = 0;
       run(tab, page.STOP).catch(() => {});
     }
   }
@@ -513,6 +542,20 @@ function createPasswords(deps) {
     if (!password) return false;
     deps.clipboard.writeText(password);
     setTimeout(() => { try { if (deps.clipboard.readText() === password) deps.clipboard.clear(); } catch {} }, CLIPBOARD_MS).unref?.();
+    return true;
+  }
+
+  // Settings → Saved passwords → Generate a password. Made here with crypto.randomBytes; the page shows
+  // it and Copy puts it on the clipboard, cleared after 30 seconds like a saved one. Never kept or logged.
+  function generate(opts) {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    const length = Math.min(Math.max(Math.round(Number(o.length)) || generator.DEFAULT_LENGTH, generator.MIN_LENGTH), generator.MAX_LENGTH);
+    return generator.generatePassword({ length, symbols: o.symbols !== false }, (n) => crypto.randomBytes(n));
+  }
+  function copyText(text) {
+    if (typeof text !== 'string' || !text || text.length > generator.MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(text)) return false;
+    deps.clipboard.writeText(text);
+    setTimeout(() => { try { if (deps.clipboard.readText() === text) deps.clipboard.clear(); } catch {} }, CLIPBOARD_MS).unref?.();
     return true;
   }
 
@@ -614,6 +657,8 @@ function createPasswords(deps) {
     'settings:passwords-delete': (id) => { if (cleanId(id)) vault.remove(id); return listed(); },
     'settings:passwords-delete-all': () => deleteAll(),
     'settings:passwords-import': () => importFile(),
+    'settings:passwords-generate': (opts) => generate(opts),
+    'settings:passwords-copy-generated': (text) => copyText(text),
     'settings:passwords-never-remove': (site) => {
       if (!validSite(site)) return settingsState();
       deps.writeSettings({ ...deps.readSettings(), passwordsNever: never().filter((s) => s !== site) });
