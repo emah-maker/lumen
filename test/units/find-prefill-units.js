@@ -43,6 +43,7 @@ const J = (v) => JSON.stringify(v);
     const ctx = {
       findbar, findInput, findHideTimer: null, clearTimeout() {}, requestAnimationFrame() {}, Number, document: { activeElement: focused ? findInput : null },
       window: { browser: { find: (text, o) => log.push(['find', text, o.findNext]) } }, findStep: (fwd) => log.push(['step', fwd]), syncFindButtons() {},
+      findOpts: (forward, findNext) => ({ forward, findNext, matchCase: false }), // (the Match case options: test/e2e/find-case.js)
     };
     vm.runInNewContext(`${fn}; this.openFind = openFind;`, ctx);
     return { ctx, findInput, log };

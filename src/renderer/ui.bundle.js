@@ -11867,6 +11867,9 @@ const findInput = $('find-input');
 
 let findHideTimer = null;
 
+let findMatchCase = false;
+const findOpts = (forward, findNext) => ({ forward, findNext, matchCase: findMatchCase });
+
 
 
 function openFind(opts) {
@@ -11880,7 +11883,7 @@ requestAnimationFrame(() => findbar.classList.add('open'));
 syncFindButtons(0);
 findInput.focus();
 findInput.select();
-if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
+if (findInput.value) window.browser.find(findInput.value, findOpts(true, false));
 }
 
 function closeFind() {
@@ -11896,7 +11899,7 @@ findHideTimer = setTimeout(() => { if (!findbar.classList.contains('open')) find
 function syncFindButtons(matches) { const off = !findInput.value || !matches; $('find-prev').disabled = off; $('find-next').disabled = off; }
 
 function findStep(forward) {
-if (findInput.value) window.browser.find(findInput.value, { forward, findNext: true });
+if (findInput.value) window.browser.find(findInput.value, findOpts(forward, true));
 }
 
 window.browser.onOpenFind(openFind);
@@ -11906,7 +11909,7 @@ findbar.classList.toggle('no-match', Boolean(findInput.value) && !matches);
 syncFindButtons(matches);
 });
 findInput.addEventListener('input', () => {
-if (findInput.value) window.browser.find(findInput.value, { forward: true, findNext: false });
+if (findInput.value) window.browser.find(findInput.value, findOpts(true, false));
 else {
 window.browser.stopFind();
 $('find-count').textContent = '';
@@ -11921,6 +11924,13 @@ findbar.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.prevent
 $('find-next').onclick = () => findStep(true);
 $('find-prev').onclick = () => findStep(false);
 $('find-close').onclick = closeFind;
+
+$('find-case').onclick = () => {
+findMatchCase = !findMatchCase;
+$('find-case').setAttribute('aria-pressed', String(findMatchCase));
+if (findInput.value) { syncFindButtons(0); window.browser.find(findInput.value, findOpts(true, false)); }
+findInput.focus();
+};
 
 
 

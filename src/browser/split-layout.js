@@ -80,4 +80,33 @@ function partnerOf(tabs, tab) {
 // 'left' | 'right' | null: which side of its pair the tab is.
 const sideOf = (tab) => (tab?.split ? (tab.split.left === tab.id ? 'left' : 'right') : null);
 
-module.exports = { GAP, MIN_PANE, MIN_AREA, DROP_EDGE, DROP_MAX, clampRatio, compute, ratioFromX, inDropZone, link, unlink, partnerOf, sideOf };
+// ---- the session: pairs saved by position in the saved tab list (tab ids are new after a restart) ----
+// `saved` is the window's saved tabs in order. Returns [{ left, right, ratio }] with indices into it; a pair whose other tab is not saved
+// (a private research tab, say) is left out. Kept inside the window's session entry (sessionEntry's `splits`).
+function snapshotPairs(saved) {
+  const out = [];
+  const seen = new Set();
+  for (const t of saved) {
+    const pair = t?.split;
+    if (!pair || seen.has(pair)) continue;
+    seen.add(pair);
+    const left = saved.findIndex((x) => x.id === pair.left), right = saved.findIndex((x) => x.id === pair.right);
+    if (left < 0 || right < 0 || left === right) continue;
+    out.push({ left, right, ratio: Math.round((Number.isFinite(pair.ratio) ? pair.ratio : 0.5) * 1000) / 1000 });
+  }
+  return out;
+}
+// The restored tabs (`byIndex[i]` is the tab made from saved index i) paired again as saved. Bad entries (out of range, the same tab twice,
+// a tab already paired: a hand-edited session) are skipped; an older session has no `splits` at all. Returns how many pairs were made.
+function restorePairs(tabs, byIndex, splits) {
+  if (!Array.isArray(splits)) return 0;
+  let n = 0;
+  for (const s of splits) {
+    const a = byIndex[s?.left], b = byIndex[s?.right];
+    if (!a || !b || a === b || a.split || b.split) continue;
+    if (link(tabs, a.id, b.id, Number.isFinite(s.ratio) ? s.ratio : 0.5)) n++;
+  }
+  return n;
+}
+
+module.exports = { GAP, MIN_PANE, MIN_AREA, DROP_EDGE, DROP_MAX, clampRatio, compute, ratioFromX, inDropZone, link, unlink, partnerOf, sideOf, snapshotPairs, restorePairs };

@@ -4783,7 +4783,7 @@ function agentRequestCloseTab(id) {
 // other tab is awake and the page area is wide enough, layout() shows both, each in its own rectangle with a gap between them for the divider
 // (drawn by the UI, renderer/split.js). The side last clicked is the tab in front: the toolbar, the sidebar's chat and the shortcuts follow it.
 // A pair that cannot be shown (the other tab asleep, in full screen, a narrow window) keeps its tabs paired and shows the one in front alone.
-// Not saved with the session: a restart brings the tabs back unpaired.
+// Saved with the session (sessionEntry's `splits`): a restart brings the pairs back with the divider where it was.
 const SPLIT_MIN_TABS = 2;
 // The user clicked in the other side of the pair on show: it becomes the tab in front.
 function activateSplitSide(tab) {
@@ -4829,7 +4829,10 @@ ipcMain.on('split:ratio', (_e, ratio) => {
   if (!front?.split || !Number.isFinite(ratio)) return;
   front.split.ratio = splitLayout.clampRatio(ratio, contentBounds.width);
   layout();
+  clearTimeout(splitSaveTimer); // the divider's place is in the saved session: a drag sends many ratios, saved once it rests
+  splitSaveTimer = setTimeout(() => saveSession({ background: true }), 1500);
 });
+let splitSaveTimer = null;
 ipcMain.on('split:close', () => { if (activeId != null) closeSplit(activeId); });
 // A tab dropped on the right edge of the page area (a drag out of the strip, finishCardDrag) opens beside the tab in front.
 function dropIntoSplit(src, tabId, cursor, wasFront = null) {
@@ -4862,6 +4865,7 @@ if (TEST) {
     menu: (id) => splitMenuItems(tabs.find((t) => t.id === id)).map((i) => ({ label: i.label })),
     clickMenu: (id) => { splitMenuItems(tabs.find((t) => t.id === id))[0]?.click(); },
     click: (id) => { const tab = tabs.find((t) => t.id === id); if (tab) activateSplitSide(tab); },
+    session: () => sessionEntry(), // what this window would save (test/e2e/split-restore.js)
     drop: (id, x, y) => { const o = win.getContentBounds(); return dropIntoSplit(curRec, id, { x: o.x + x, y: o.y + y }); },
     state: () => {
       const sp = splitView();
@@ -7742,6 +7746,7 @@ function sessionEntry() {
     chatHomes: chatBind.snapshotHomes(saved.map((t) => t.id)), // which of those tabs is the chat's home
     sidebars: sidebarTabs.snapshot(saved.map((t) => t.id), sidebarSharers), // [sidebar per tab] where the sidebar is open
     groups: tabGroups.snapshot(),
+    ...(saved.some((t) => t.split) ? { splits: splitLayout.snapshotPairs(saved) } : {}), // [split view] each pair by position in `urls`, with its divider ratio (none: the field is left out, and the module unloaded)
   };
 }
 
@@ -7798,6 +7803,7 @@ function restoreTabsFrom(saved) {
   const active = Math.min(Math.max(0, saved.active || 0), saved.urls.length - 1);
   const live = require('./features/session-restore').liveIndices(saved.urls.length, active);
   let activeTabId = null;
+  const byIndex = []; // [split view] the tab made from each saved index
   saved.urls.forEach((url, i) => {
     // Only the tab you were on loads now; the rest load when first opened (addRestoredTab).
     let tab;
@@ -7816,7 +7822,9 @@ function restoreTabsFrom(saved) {
     if (saved.aiOpened?.[i]) manners.restoreMark(tab, saved.aiOpened[i]); // [ai manners] (after pinned: a pinned tab is the user's)
     chatBind.restore([tab.id], [saved.chats?.[i]], (cid) => chats().list().some((c) => c.id === cid), [saved.chatHomes?.[i] === true]); // [chat per tab] (a chat saved in several tabs comes back in each)
     sidebarTabs.restore([tab.id], [saved.sidebars?.[i]]); // [sidebar per tab]
+    byIndex[i] = tab;
   });
+  if (Array.isArray(saved.splits) && saved.splits.length) splitLayout.restorePairs(tabs, byIndex, saved.splits); // [split view] (an older session has none; switchTab below wakes the front pair's other side)
   tabGroups.cleanup();
   tabGroups.arrange();
   switchTab(activeTabId ?? tabs[0].id);
@@ -12026,7 +12034,7 @@ ipcMain.on('find:start', (_e, text, options = {}) => {
     ui()?.send('find:result', { activeMatchOrdinal: 0, matches: 0 });
     return;
   }
-  wc.findInPage(text, { forward: options.forward !== false, findNext: !options.findNext });
+  wc.findInPage(text, { forward: options.forward !== false, findNext: !options.findNext, matchCase: options.matchCase === true }); // (Match case, the find bar's Aa)
 });
 ipcMain.on('find:stop', (_e, close) => { // closing the bar keeps the match selected and hands the keyboard back to the page; an emptied field clears it
   const wc = activeTab()?.webContents;
