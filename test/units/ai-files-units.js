@@ -55,6 +55,18 @@ const has = (list, p) => list.some((x) => same(x, p));
   check('a dot in a folder name does not end the path', dotted.includes('C:\\Users\\e.mah\\x.html'), dotted.join('|'));
   const gitBash = aiFiles.findPaths('Saved /c/Users/me/x.html', { home: root, platform: 'win32' });
   check('a Git Bash path is read as the drive path', gitBash.includes('C:/Users/me/x.html'), gitBash.join('|'));
+  // A reply built to be slow: a long line of path starts with no ".ext" ending. The old lazy regexes retried the rest of the line from
+  // every start (quadratic: about 5 s for one 200,000-character reply); the scan is one pass. Each must finish well under a second.
+  const LONG = 200000; // findPaths reads this much of a reply
+  for (const [name, unit] of [['drives with spaces', 'C:/ '], ['drives in one token', 'C:/-'], ['slashes after brackets', '(/'], ['tilde paths', '(~/'], ['markdown links', '](C:/'], ['dotted names', 'C:\\a.b ']]) {
+    const text = unit.repeat(Math.ceil(LONG / unit.length)).slice(0, LONG);
+    const t0 = process.hrtime.bigint();
+    const out = aiFiles.findPaths(text, { home: root, platform: 'linux' });
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    check(`an adversarial reply (${name}) is scanned in linear time`, ms < 1000, `${Math.round(ms)} ms, ${out.length} found`);
+  }
+  const tail = aiFiles.findPaths(`${'C:/ '.repeat(40000)}see C:\\Users\\me\\a.html now`, { home: root });
+  check('a real path after a long run of starts is still found', tail.includes('C:\\Users\\me\\a.html'),tail.slice(0, 3).join('|'));
 }
 
 // ---- what a file is
