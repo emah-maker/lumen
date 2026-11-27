@@ -44,14 +44,14 @@
         <div class="mt-title">
           <span data-i18n="meeting.title">Meeting helper</span>
         </div>
-        <div style="display: flex; gap: 6px; align-items: center;">
+        <div class="mt-head-actions">
           <button type="button" class="mt-stealth-pill" id="mt-stealth-btn" title="Toggle invisible overlay mode (hidden from screen share)">
             ${SHIELD} <span id="mt-stealth-label">Stealth</span>
           </button>
           <button type="button" class="mt-live-pill" id="mt-live-btn" title="Toggle live audio listener">
             <span class="mt-pulse-dot"></span> <span id="mt-live-label">Listen</span>
           </button>
-          <button type="button" class="icon-btn" id="mt-close-btn" title="Close meeting helper" style="width: 24px; height: 24px;">
+          <button type="button" class="icon-btn mt-close" id="mt-close-btn" title="Close meeting helper">
             ${CLOSE}
           </button>
         </div>
@@ -69,7 +69,7 @@
         <div class="mt-prompt-box">
           <div class="mt-prompt-input-row">
             <input type="text" class="mt-prompt-input" id="mt-prompt-input" placeholder="Type what was just asked, then press Enter..." data-i18n-placeholder="meeting.prompt.placeholder" autocomplete="off" />
-            <button type="button" class="btn" id="mt-prompt-send" style="padding: 0 12px; font-size: 12px;">Ask</button>
+            <button type="button" class="btn" id="mt-prompt-send">Ask</button>
           </div>
           <div class="mt-prompt-opts">
             <label class="mt-checkbox-label">
@@ -79,7 +79,7 @@
             <span id="mt-prompt-status"></span>
           </div>
         </div>
-        <div id="mt-answers-container" style="display: flex; flex-direction: column; gap: 8px;"></div>
+        <div id="mt-answers-container" class="mt-answers"></div>
       </div>
 
       <!-- Context View -->
@@ -106,11 +106,11 @@
       <div class="mt-view" id="mt-view-transcript" hidden>
         <div class="mt-transcript-bar">
           <span class="mt-transcript-count" id="mt-transcript-count">0 items</span>
-          <div style="display: flex; gap: 6px;">
+          <div class="mt-transcript-actions">
             <input type="file" id="mt-transcript-file" accept=".txt,.vtt,.srt,.json" style="display: none;" />
-            <button type="button" class="btn" id="mt-transcript-import" style="font-size: 11px; padding: 2px 8px;">Import</button>
-            <button type="button" class="btn" id="mt-transcript-copy" style="font-size: 11px; padding: 2px 8px;">Copy</button>
-            <button type="button" class="btn" id="mt-transcript-clear" style="font-size: 11px; padding: 2px 8px;">Clear</button>
+            <button type="button" class="btn" id="mt-transcript-import">Import</button>
+            <button type="button" class="btn" id="mt-transcript-copy">Copy</button>
+            <button type="button" class="btn" id="mt-transcript-clear">Clear</button>
           </div>
         </div>
         <ul class="mt-transcript-list" id="mt-transcript-list"></ul>
@@ -118,14 +118,14 @@
 
       <!-- Summary View -->
       <div class="mt-view" id="mt-view-summary" hidden>
-        <div class="mt-summary-actions" style="flex-direction: column; gap: 6px;">
-          <textarea class="mt-context-textarea" id="mt-summary-custom" rows="2" placeholder="Optional: paste transcript or notes here (or leave blank to summarize captured session)..." style="font-size: 12px;"></textarea>
-          <div style="display: flex; gap: 6px;">
-            <button type="button" class="btn" id="mt-summarize-btn" style="flex: 1; font-size: 12px;">Summarize Meeting</button>
-            <button type="button" class="btn" id="mt-save-chat-btn" style="flex: 1; font-size: 12px;" disabled>Save as Chat</button>
+        <div class="mt-summary-actions">
+          <textarea class="mt-context-textarea" id="mt-summary-custom" rows="2" placeholder="Optional: paste transcript or notes here (or leave blank to summarize captured session)..."></textarea>
+          <div class="mt-summary-buttons">
+            <button type="button" class="btn" id="mt-summarize-btn">Summarize Meeting</button>
+            <button type="button" class="btn" id="mt-save-chat-btn" disabled>Save as Chat</button>
           </div>
         </div>
-        <div id="mt-summary-content" class="mt-summary-body" style="min-height: 120px;">Click 'Summarize Meeting' to generate executive summary and action items.</div>
+        <div id="mt-summary-content" class="mt-summary-body">Click 'Summarize Meeting' to generate executive summary and action items.</div>
       </div>
     </div>
   `;

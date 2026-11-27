@@ -16,13 +16,14 @@
 .task-panel { z-index: var(--z-panel-over); } /* over the chat list if both were ever open */
 .task-head { gap: var(--sp-2); }
 .task-head h2 { flex: 1; min-width: 0; margin: 0 var(--sp-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-note { margin: 0 var(--sp-10) var(--sp-3); font-size: 11px; color: var(--muted); }
-.task-items { display: block; }
+.task-note { margin: 0 var(--sp-10) var(--sp-4); font-size: 11px; color: var(--muted); }
+.task-items { display: flex; flex-direction: column; gap: var(--sp-1); }
 .task-row {
-  display: flex; align-items: flex-start; gap: var(--sp-5); width: 100%; padding: var(--sp-4) var(--sp-6); border: 0; border-radius: var(--radius);
-  background: none; color: inherit; font: inherit; text-align: left; cursor: default;
+  display: flex; align-items: flex-start; gap: var(--sp-5); width: 100%; padding: var(--sp-5) var(--sp-6); border: 0; border-radius: var(--r-lg);
+  background: none; color: inherit; font: inherit; text-align: left; cursor: default; transition: background-color var(--t-fast) ease-out;
 }
-.task-row:hover, .task-row:focus-visible { background: var(--hover); outline: none; }
+.task-row:hover, .task-row:focus-visible { background: color-mix(in srgb, var(--accent) 6%, var(--hover)); outline: none; }
+.task-row:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
 .task-text { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; flex: 1; }
 .task-title { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-meta { font-size: 11px; color: var(--muted); margin: 0; overflow-wrap: anywhere; }
@@ -40,7 +41,7 @@
 @media (prefers-reduced-motion: reduce) { .task-dot.running { animation: none; } }
 
 .task-scroll { flex: 1; overflow-y: auto; padding: 0 var(--sp-8) var(--sp-10); scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-.task-detail h3 { margin: var(--sp-8) 0 var(--sp-2); font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.task-detail h3 { margin: var(--sp-10) 0 var(--sp-3); font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
 .task-status { display: flex; align-items: flex-start; gap: var(--sp-4); margin: var(--sp-2) 0; font-size: 12px; color: var(--muted); }
 .task-status .task-dot { margin-top: var(--sp-2); }
 .task-error { margin: var(--sp-3) 0; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
@@ -48,7 +49,9 @@
 .task-prompt { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-actions { display: flex; flex-wrap: wrap; gap: var(--sp-3); margin: var(--sp-6) 0 var(--sp-2); }
 .task-actions .btn.danger.armed { background: var(--danger-soft); color: var(--danger); }
-.task-result { padding: 0; }
+/* The result is a roomy raised card: the thing the task was for */
+.task-detail .task-result { margin: 0; padding: var(--sp-5) var(--sp-6); border-radius: var(--r-xl); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
+.task-detail .task-result > :last-child { margin-bottom: 0; }
 .task-steps { margin: 0; padding-left: var(--sp-10); font-size: 12px; color: var(--muted); }
 .task-steps li { padding: var(--sp-px) 0; overflow-wrap: anywhere; }
 .task-steps li.failed { color: var(--danger); }
@@ -58,7 +61,7 @@
 .task-runs .task-dot { margin-top: var(--sp-2); }
 .task-approval { margin: var(--sp-5) 0 0; }
 .task-approval-actions { flex-wrap: wrap; }
-.task-edit { margin: var(--sp-5) 0; padding: var(--sp-5); border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--hairline); }
+.task-edit { margin: var(--sp-5) 0; padding: var(--sp-6); border-radius: var(--r-xl); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--hairline); }
 
 .task-settings { margin: var(--sp-4) var(--sp-8) var(--sp-8); font-size: 12px; color: var(--muted); }
 .task-settings summary { cursor: default; padding: var(--sp-2) 0; }
@@ -67,9 +70,9 @@
 .task-field.stack { flex-direction: column; align-items: stretch; gap: var(--sp-2); }
 .task-field input[type="text"], .task-field input[type="number"], .task-field input[type="datetime-local"], .task-field select, .task-field textarea {
   flex: 1; min-width: 0; padding: var(--sp-2) var(--sp-4); font: inherit; font-size: 12px; color: var(--text);
-  background: var(--field); border: 1px solid transparent; border-radius: var(--r-sm); outline: none;
+  background: var(--field); border: 1px solid transparent; border-radius: var(--r-md); outline: none; transition: box-shadow var(--t-fast) ease-out, border-color var(--t-fast) ease-out;
 }
-.task-field input:focus-visible, .task-field select:focus-visible, .task-field textarea:focus-visible { border-color: var(--accent); box-shadow: var(--focus-ring); }
+.task-field input:focus-visible, .task-field select:focus-visible, .task-field textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); } /* (a thin accent edge and a soft halo, like the composer) */
 .task-field textarea { resize: vertical; min-height: 56px; }
 .task-field .task-minutes { flex: none; width: 64px; }
 
@@ -103,7 +106,7 @@
 p.task-live { white-space: normal; overflow-wrap: anywhere; margin: var(--sp-1) 0 var(--sp-3); }
 .task-new { flex: none; align-self: center; padding: var(--sp-px) var(--sp-3); border-radius: var(--r-md); font-size: 10px; font-weight: 600; background: var(--accent-soft); color: var(--accent-text); }
 .task-row.unseen .task-title { font-weight: 600; }
-.task-needs-you { margin: 0 var(--sp-6) var(--sp-4); padding: var(--sp-4) var(--sp-5); border-radius: var(--radius); background: var(--surface); box-shadow: 0 0 0 1px var(--warning); }
+.task-needs-you { margin: 0 var(--sp-6) var(--sp-5); padding: var(--sp-5) var(--sp-6); border-radius: var(--r-xl); background: var(--surface-raised); box-shadow: 0 0 0 1px var(--warning); }
 .task-needs-you h3 { margin: 0 0 var(--sp-2); font-size: 12px; font-weight: 600; color: var(--warning); }
 .task-needs-item + .task-needs-item { margin-top: var(--sp-4); }
 .task-link { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 12px; font-weight: 600; text-align: left; cursor: default; }

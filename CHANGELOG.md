@@ -4,6 +4,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The Tasks, Research, Notes and Meeting panels match the new chat.** Each panel uses the same roomy look: a task's result, an open source on the Research board, the Meeting helper's answers, its transcript and its summary sit on raised cards, and list rows are rounder with a soft hover. Search boxes, the note editor, quote fields and the Meeting helper's boxes show a thin accent edge and a soft glow while you type instead of a thick ring. The Meeting helper now has the same header and tabs as the other panels, with whole-pixel text and the theme's own radii. Fixed: the Notes list showed the word "null" above the notes, and each note's preview started with its title again ("# Reading list Thinking, Fast…"). Pictures of every panel, light or dark: `node scripts/measure/panel-shots.js <folder> [light|dark]`.
 ## 0.5.114 (2026-11-26)
 
 - **The chat no longer shifts when your first reply finishes.** At the end of a chat's first reply, the "This chat: …" usage line appeared under the header and the context meter appeared above the box, each pushing the chat about 20 px. Both lines now keep their room from the start, blank until there is something to show. Tests: test/e2e/chat-no-jump.js, test/e2e/composer-bar.js.
