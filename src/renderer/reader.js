@@ -29,7 +29,7 @@ function clean(root) {
 }
 
 window.lumenRender = (data) => {
-  document.title = data.title || 'Reader';
+  document.title = data.title || data.readerTitle || '';
   if (data.lang) document.documentElement.lang = data.lang;
   let site = data.siteName || '';
   try { site = site || new URL(data.url).hostname.replace(/^www\./, ''); } catch {}

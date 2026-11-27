@@ -2898,7 +2898,7 @@ const clean = connClean;
 const statusNote = h('span', { class: 'note', id: id('status'), role: 'status', 'aria-live': 'polite' });
 const msg = h('span', { class: 'note', id: id('message'), role: 'status', 'aria-live': 'polite' });
 const connectBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-connect` });
-const disconnectBtn = armedButton('Disconnect', 'Disconnect? Click again', () => doDisconnect(), 'danger', `conn-${svc.id}-disconnect`);
+const disconnectBtn = armedButton(tr('settings.row.disconnect', 'Disconnect'), tr('settings.row.disconnectClickAgain', 'Disconnect? Click again'), () => doDisconnect(), 'danger', `conn-${svc.id}-disconnect`);
 
 const signInBtn = h('button', { class: 'primary', type: 'button', id: `conn-${svc.id}-signin`, text: tr('settings.apps.signIn', 'Sign in'), hidden: true, 'aria-label': `Sign in to ${svc.name}`, onclick: async () => { await C.signIn(svc.id); say(`Sign in to ${svc.name} in the tab that opened, then ask the AI again.`, 'ok'); } });
 const switchBtn = svc.id === 'github' ? h('button', { type: 'button', id: 'github-switch', text: tr('settings.widgets.github.switch', 'Switch account'), hidden: true, onclick: async () => { try { const r = await W.githubStart({ privateRepos: githubPriv() }); if (r?.state) ws = r.state; await refresh(); } catch (err) { say(clean(err), 'err'); } } }) : null;
@@ -3068,7 +3068,7 @@ const advanced = [];
 if (svc.id === 'github') {
 const tok = h('input', { type: 'password', id: 'conn-github-secret', autocomplete: 'off', spellcheck: false, placeholder: 'Paste a GitHub token', 'aria-label': 'GitHub access token' });
 inputs.push(tok);
-advanced.push(row(tr('settings.apps.githubToken', 'Use an access token instead'), 'Only if you can’t sign in above: paste a read-only token and press Connect. It is for the AI’s GitHub connector; the new tab card keeps its own sign-in (Card options → Advanced).', tok));
+advanced.push(row(tr('settings.apps.githubToken', 'Use an access token instead'), tr('settings.row.onlyIfYouCan', 'Only if you can’t sign in above: paste a read-only token and press Connect. It is for the AI’s GitHub connector; the new tab card keeps its own sign-in (Card options → Advanced).'), tok));
 }
 let ownRows = [];
 if (svc.id === 'gmail' || c0()?.kind === 'google') ownRows = googleClientRows();
@@ -4080,18 +4080,18 @@ const heading = (key, sub) => { const r = row(providerName(key), sub); r.classLi
 
 function usageCountRows(key, u) {
 const t = u.providers?.[key];
-if (!t || !t.week.turns) return [row(`${providerName(key)}: what Lumen counted`, 'Nothing in the last 7 days.')];
+if (!t || !t.week.turns) return [row(tr('settings.row.whatLumenCounted', `{providerName}: what Lumen counted`, { providerName: providerName(key) }), tr('settings.row.nothingInTheLast', 'Nothing in the last 7 days.'))];
 const rows = [];
-rows.push(row('Last used', `${clock(t.lastAt)}${t.lastModel ? ` · ${t.lastModel}` : ''}`));
-rows.push(row(`${providerName(key)}: what Lumen counted`, `${countLine('Today', t.today)}. ${countLine('Last 7 days', t.week)}. Lumen’s own use only, not what is left of a plan.`));
+rows.push(row(tr('settings.row.lastUsed', 'Last used'), `${clock(t.lastAt)}${t.lastModel ? ` · ${t.lastModel}` : ''}`));
+rows.push(row(tr('settings.row.whatLumenCounted', `{providerName}: what Lumen counted`, { providerName: providerName(key) }), tr('settings.row.lumenSOwnUse', `{countLine}. {countLine2}. Lumen’s own use only, not what is left of a plan.`, { countLine: countLine('Today', t.today), countLine2: countLine('Last 7 days', t.week) })));
 const days = h('div', { class: 'list', id: `usage-days-${key}` }, t.days.filter((d) => d.turns).map((d) => h('div', { class: 'item' },
 h('span', { class: 'grow', text: new Date(d.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }) }),
 h('span', { class: 'note', text: `${d.turns} turn${d.turns === 1 ? '' : 's'} · ${tokens(d.tokens)} tokens${d.costUSD > 0 ? ` · ≈${dollars(d.costUSD)}` : ''}` }))));
-rows.push(stackRow('Per day', null, days));
+rows.push(stackRow(tr('settings.row.perDay', 'Per day'), null, days));
 const models = h('div', { class: 'list', id: `usage-models-${key}` }, t.models.map((m) => h('div', { class: 'item' },
 h('span', { class: 'grow', text: m.model || 'Unknown model' }),
 h('span', { class: 'note', text: `${m.turns} turn${m.turns === 1 ? '' : 's'} · ${tokens(m.tokens)} tokens${m.costUSD > 0 ? ` · ≈${dollars(m.costUSD)}` : ''}` }))));
-rows.push(stackRow('Per model', null, models));
+rows.push(stackRow(tr('settings.row.perModel', 'Per model'), null, models));
 return rows;
 }
 
@@ -4103,14 +4103,14 @@ const idp = key === 'grokbuild' ? 'usage-budget' : `usage-budget-${key}`;
 const rows = [];
 for (const p of b?.status?.periods || []) {
 const fmt = b.status.unit === 'tokens' ? (n) => `${tokens(Math.round(n))} tokens` : dollars;
-rows.push(meterRow(`${providerName(key)} ${p.kind === 'daily' ? 'daily' : 'weekly'} budget`, p.percent, `${fmt(p.used)} of ${fmt(p.limit)} · resets ${clock(p.resetsAt)}`));
+rows.push(meterRow(p.kind === 'daily' ? tr('settings.row.providerDailyBudget', '{name} daily budget', { name: providerName(key) }) : tr('settings.row.providerWeeklyBudget', '{name} weekly budget', { name: providerName(key) }), p.percent, tr('settings.row.usedOfResets', '{used} of {limit} · resets {when}', { used: fmt(p.used), limit: fmt(p.limit), when: clock(p.resetsAt) })));
 }
 const unit = h('select', { id: `${idp}-unit`, 'aria-label': `${providerName(key)} budget unit` }, h('option', { value: 'usd', text: 'Dollars (API prices)' }), h('option', { value: 'tokens', text: 'Tokens' }));
 unit.value = cfg.unit;
 const amount = (id, label, value) => h('input', { type: 'number', id, min: '0', step: 'any', placeholder: 'None', 'aria-label': label, value: value ? String(value) : '' });
 const daily = amount(`${idp}-daily`, `${providerName(key)} daily budget`, cfg.daily);
 const weekly = amount(`${idp}-weekly`, `${providerName(key)} weekly budget`, cfg.weekly);
-rows.push(stackRow(`${providerName(key)} budget (optional)`, 'An alert, not a limit: Lumen tells you at 80% and 100% of what it counted for this AI, shows a bar toward it, and never blocks anything. A day ends at midnight, a week on Monday. Leave both empty for none.',
+rows.push(stackRow(tr('settings.row.budgetOptional', `{providerName} budget (optional)`, { providerName: providerName(key) }), tr('settings.row.anAlertNotA', 'An alert, not a limit: Lumen tells you at 80% and 100% of what it counted for this AI, shows a bar toward it, and never blocks anything. A day ends at midnight, a week on Monday. Leave both empty for none.'),
 h('div', { class: 'controls' }, unit, h('label', { class: 'note', text: 'Daily' }), daily, h('label', { class: 'note', text: 'Weekly' }), weekly,
 h('button', { id: `${idp}-save`, text: 'Save budget', onclick: async () => { await S.setUsageBudget({ unit: unit.value, daily: daily.value, weekly: weekly.value, ...(key === 'grokbuild' ? {} : { engine: key }) }); refresh(); } }))));
 return rows;
@@ -4119,11 +4119,11 @@ return rows;
 
 function usageRateRows(key, u) {
 const v = u.rate?.[key];
-if (!v) return [row(`${providerName(key)} rate limits`, key === 'gemini' ? 'Gemini’s endpoint sends no rate-limit headers, so there is nothing to show.' : 'None seen yet. They are read from the headers of a reply, so they appear after your next message with this AI.')];
+if (!v) return [row(tr('settings.row.rateLimits', `{providerName} rate limits`, { providerName: providerName(key) }), key === 'gemini' ? 'Gemini’s endpoint sends no rate-limit headers, so there is nothing to show.' : 'None seen yet. They are read from the headers of a reply, so they appear after your next message with this AI.')];
 const rows = v.buckets.map((b) => (b.expired
-? row(b.label, 'Reset since the last reply; the next one shows the new reading.')
-: meterRow(b.label, b.percent, `${Math.round(b.remaining).toLocaleString()} of ${Math.round(b.limit).toLocaleString()} left${b.resetsAt ? ` · resets ${new Date(b.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}` : ''}`)));
-rows.push(row('', `As of ${clock(v.at)}, from the last reply. These are the API’s per-minute limits, not a plan balance.`));
+? row(b.label, tr('settings.row.resetSinceTheLast2', 'Reset since the last reply; the next one shows the new reading.'))
+: meterRow(b.label, b.percent, tr('settings.row.remainingOfLeft', '{remaining} of {limit} left{reset}', { remaining: Math.round(b.remaining).toLocaleString(), limit: Math.round(b.limit).toLocaleString(), reset: b.resetsAt ? tr('settings.row.resetSuffix', ' · resets {time}', { time: new Date(b.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }) }) : '' }))));
+rows.push(row('', tr('settings.row.asOfFromThe', `As of {clock}, from the last reply. These are the API’s per-minute limits, not a plan balance.`, { clock: clock(v.at) })));
 return rows;
 }
 
@@ -4138,7 +4138,7 @@ out.push(...headOf(codexUsageRows(u), 'codex'), ...usageCountRows('codex', u), .
 
 const lim = u.limits?.antigravity;
 out.push(heading('antigravity', u.notes?.antigravity));
-if (lim) out.push(row('Antigravity limit reached', `${lim.resetsAt ? `Resets ${clock(lim.resetsAt)}` : 'No reset time was given'}${lim.model ? ` (${lim.model})` : ''}. ${lim.text || ''} This clears after your next Antigravity reply that works.`.trim()));
+if (lim) out.push(row(tr('settings.row.antigravityLimitReached', 'Antigravity limit reached'), `${lim.resetsAt ? `Resets ${clock(lim.resetsAt)}` : 'No reset time was given'}${lim.model ? ` (${lim.model})` : ''}. ${lim.text || ''} This clears after your next Antigravity reply that works.`.trim()));
 out.push(...usageCountRows('antigravity', u), ...usageBudgetRows('antigravity', u, refresh));
 for (const key of ['anthropic', 'openai', 'xai', 'gemini', 'openrouter']) {
 out.push(heading(key, u.notes?.[key]), ...usageRateRows(key, u), ...usageCountRows(key, u), ...usageBudgetRows(key, u, refresh));
@@ -4282,34 +4282,34 @@ const out = [];
 if (PROVIDER_CLI[key]) {
 const state = h('span', { class: 'note', id: `provider-state-${key}`, text: tr('settings.ai.checking', 'Checking…') });
 
-const status = row('Status', 'Where Lumen looks is listed under Connect an AI agent.');
+const status = row(tr('settings.row.status', 'Status'), tr('settings.row.whereLumenLooksIs', 'Where Lumen looks is listed under Connect an AI agent.'));
 status.querySelector('.desc').classList.remove('clamp');
 status.querySelector('.desc').before(state);
 checking.set(key, [state, status]);
 out.push(status);
 const [pref, fallback] = MENU_PREF[key];
-out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), `Shows ${providerName(key)} and its models in every model picker. Off hides it without uninstalling or signing out.`, undefined, { id: `provider-menu-${key}`, fallback }));
-if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], 'Full access to this computer', `${providerName(key)} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced).`, () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
+out.push(toggle(pref, tr('settings.ai.offerMenu', 'Offer in the model menu'), tr('settings.row.showsAndItsModels', `Shows {providerName} and its models in every model picker. Off hides it without uninstalling or signing out.`, { providerName: providerName(key) }), undefined, { id: `provider-menu-${key}`, fallback }));
+if (FULL_ACCESS_PREF[key]) out.push(toggle(FULL_ACCESS_PREF[key], tr('settings.row.fullAccessToThis', 'Full access to this computer'), tr('settings.row.worksAsInYour', `{providerName} works as in your terminal: its own shell and file tools run without asking. The same switch as under Full access (advanced).`, { providerName: providerName(key) }), () => { if (typeof syncCliAccess === 'function') syncCliAccess(); }, { id: `provider-full-${key}` }));
 } else {
 const k = keys[key] || {};
 const state = k.stored ? 'Key saved' : k.env ? 'Key from the environment' : 'No key';
-out.push(row('Connection', 'Add or change the key under API keys and sign-ins.', h('span', { class: `note key-state${k.stored || k.env ? ' set' : ''}`, id: `provider-state-${key}`, text: state })));
+out.push(row(tr('settings.row.connection', 'Connection'), tr('settings.row.addOrChangeThe', 'Add or change the key under API keys and sign-ins.'), h('span', { class: `note key-state${k.stored || k.env ? ' set' : ''}`, id: `provider-state-${key}`, text: state })));
 }
 const picker = h('select', { id: `provider-effort-${key}`, 'aria-label': `${providerName(key)} reasoning effort` },
 h('option', { value: '', text: 'Default' }), ...EFFORT_LEVELS[key].map((l) => h('option', { value: l, text: EFFORT_NAMES[l] })));
 picker.value = (st.prefs.aiEffort || {})[key] || '';
 picker.addEventListener('change', async () => { const next = { ...(st.prefs.aiEffort || {}) }; if (picker.value) next[key] = picker.value; else delete next[key]; await save('aiEffort', next); });
 window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'aiEffort') picker.value = (st.prefs.aiEffort || {})[key] || ''; });
-out.push(row('Reasoning effort', EFFORT_NOTES[key], picker));
+out.push(row(tr('settings.row.reasoningEffort', 'Reasoning effort'), EFFORT_NOTES[key], picker));
 if (autoKeys.has(key)) {
 const box = h('input', { type: 'checkbox', class: 'switch', id: `provider-auto-${key}`, role: 'switch', 'aria-label': `Auto may use ${providerName(key)}` });
 const sync = () => { box.checked = !(st.prefs.autoExclude || []).includes(key); };
 sync();
 window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'autoExclude') sync(); });
 box.addEventListener('change', async () => { const next = new Set(st.prefs.autoExclude || []); if (box.checked) next.delete(key); else next.add(key); await save('autoExclude', [...next]); });
-out.push(row('Auto may use it', 'When you choose Auto in the model menu, Lumen may pick this AI for a message.', box));
+out.push(row(tr('settings.row.autoMayUseIt', 'Auto may use it'), tr('settings.row.whenYouChooseAuto', 'When you choose Auto in the model menu, Lumen may pick this AI for a message.'), box));
 }
-out.push(row('Usage', 'Plan or rate limits where the provider publishes them, and what Lumen counted. Usage has the days, the models and a budget.', usageChip(key), h('button', { text: 'Open Usage', onclick: () => { location.hash = '#usage'; } })));
+out.push(row(tr('settings.row.usage', 'Usage'), tr('settings.row.planOrRateLimits', 'Plan or rate limits where the provider publishes them, and what Lumen counted. Usage has the days, the models and a budget.'), usageChip(key), h('button', { text: 'Open Usage', onclick: () => { location.hash = '#usage'; } })));
 return out;
 };
 for (const key of PROVIDER_ORDER) {
@@ -5196,7 +5196,7 @@ let ai = await S.ai.get();
 const modelOptions = () => [...new Set(ai.models.map((m) => m.group))].map((g) => h('optgroup', { label: g },
 ai.models.filter((m) => m.group === g).map((m) => { const o = h('option', { value: m.id, text: m.label, title: m.detail || '', selected: m.id === ai.model }); if (m.more) o.dataset.more = '1'; if (m.name) o.dataset.name = m.name; if (m.provider) o.dataset.provider = m.provider; if (m.detail) o.dataset.detail = m.detail; if (m.title) o.title = m.title; if (m.badges?.length) o.dataset.badges = m.badges.join(','); if (m.lastUsed) o.dataset.lastUsed = m.lastUsed; if (m.auto) o.dataset.auto = '1'; if (Number.isFinite(m.price)) o.dataset.price = String(m.price); if (m.context) o.dataset.context = String(m.context); return o; })));
 card.append(
-row('Model', tr('settings.ai.modelDesc', 'The model the assistant in the sidebar uses: the same menu, the same choice. Auto picks the best connected model for each message.'), h('select', {
+row(tr('settings.row.model', 'Model'), tr('settings.ai.modelDesc', 'The model the assistant in the sidebar uses: the same menu, the same choice. Auto picks the best connected model for each message.'), h('select', {
 id: 'ai-model',
 'aria-label': 'Model',
 onchange: async (e) => { if (!(await S.ai.setModel(e.target.value).catch(() => false))) await refreshModels(); },
@@ -5249,11 +5249,11 @@ const adhd = h('input', { type: 'checkbox', class: 'switch', id: 'ai-adhd', role
 const grouping = h('select', { id: 'ai-grouping', 'aria-label': 'Group tabs automatically', onchange: (e) => { S.ai.setTabGrouping(e.target.value); topicRow.hidden = e.target.value !== 'topic'; } },
 [['off', 'Off'], ['site', 'By site'], ['topic', 'By topic']].map(([value, text]) => h('option', { value, text, selected: ai.tabGrouping === value })));
 const topicAi = h('input', { type: 'checkbox', class: 'switch', id: 'ai-topic-ai', role: 'switch', 'aria-label': 'Use AI to name and group topics', checked: ai.topicAi, onchange: (e) => S.ai.setTopicAi(e.target.checked) });
-const topicRow = row('Use AI to name and group topics', 'Sends only tab titles and site names (never full addresses) to your chat’s cheapest model. Off: topics are found on this computer.', topicAi);
+const topicRow = row(tr('settings.row.useAiToName', 'Use AI to name and group topics'), tr('settings.row.sendsOnlyTabTitles', 'Sends only tab titles and site names (never full addresses) to your chat’s cheapest model. Off: topics are found on this computer.'), topicAi);
 topicRow.classList.add('sub-row');
 topicRow.hidden = ai.tabGrouping !== 'topic';
 const idleOrganize = h('input', { type: 'checkbox', class: 'switch', id: 'ai-organize-idle', role: 'switch', 'aria-label': 'Organize tabs automatically', checked: ai.organizeWhenIdle, onchange: (e) => S.ai.setOrganizeIdle(e.target.checked) });
-const idleRow = row('Organize tabs automatically', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Only when they are a mix: tabs that are all one topic are left alone.', idleOrganize);
+const idleRow = row(tr('settings.row.organizeTabsAutomatically', 'Organize tabs automatically'), tr('settings.row.aFewSecondsAfter', 'A few seconds after your tabs change, Lumen groups loose tabs on this computer (never with AI) and offers Undo. Only when they are a mix: tabs that are all one topic are left alone.'), idleOrganize);
 
 const autoUseBox = h('div', { class: 'auto-use', id: 'ai-auto-use', role: 'group', 'aria-label': tr('settings.ai.autoUse', 'Auto may use') });
 const renderAutoUse = () => {
@@ -5271,8 +5271,8 @@ return h('label', { class: 'auto-use-item' }, input, h('span', { text: p.label }
 renderAutoUse();
 autoUseRender = renderAutoUse;
 const forgetBtn = h('button', { id: 'ai-forget-organize', text: 'Forget organize learning', onclick: async () => { await S.ai.forgetOrganizeLearning(); forgetBtn.textContent = 'Forgotten'; setTimeout(() => { forgetBtn.textContent = 'Forget organize learning'; }, 2000); } });
-const forgetRow = row('What Organize learned', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.', forgetBtn);
-card.append(row('Short, focused answers', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.', adhd));
+const forgetRow = row(tr('settings.row.whatOrganizeLearned', 'What Organize learned'), tr('settings.row.whenYouDragA', 'When you drag a tab into or out of a group, or rename a group, Lumen remembers which sites and words go with which group name, on this computer only, so the next Organize prefers them.'), forgetBtn);
+card.append(row(tr('settings.row.shortFocusedAnswers', 'Short, focused answers'), tr('settings.row.answersLeadWithThe', 'Answers lead with the next step and stay brief (ADHD mode). Applies to new chats.'), adhd));
 const answers = slots.get('ai-answers');
 answers.append(
 toggle('aiPreferFractions', tr('settings.ai.preferFractions', 'Prefer fractions'), tr('settings.ai.preferFractionsDesc', 'Write exact values as fractions (4/3, not 1.333) and keep √ and π, unless you ask for decimals. Fractions show stacked. Applies to new chats.')),
@@ -5395,11 +5395,11 @@ answers.append(collapsible(tr('settings.ai.more', 'More options'), advancedRows,
 
 slots.get('ai-computer').group(tr('settings.ai.groupFullAccess', 'Full access (advanced)')).append(...cliAccessRows());
 card.at('tabs-groups').append(
-row('Group tabs automatically', 'By site: 3 or more tabs from one site. By topic: related tabs, once 4 or more are loose. Tabs you group by hand stay put.', grouping),
+row(tr('settings.row.groupTabsAutomatically', 'Group tabs automatically'), tr('settings.row.bySite3Or', 'By site: 3 or more tabs from one site. By topic: related tabs, once 4 or more are loose. Tabs you group by hand stay put.'), grouping),
 topicRow,
 idleRow,
-toggle('organizeOnlyMixed', 'Only when topics are mixed', 'Leave loose tabs alone when they are all about one thing. Off: those get a group too.'),
-select('organizeDelaySeconds', 'Organize after', 'How long after your tabs change Lumen waits before grouping them.', [2, 5, 10, 30, 60].map((n) => [n, n < 60 ? `${n} seconds` : '1 minute']), { number: true }),
+toggle('organizeOnlyMixed', tr('settings.row.onlyWhenTopicsAre', 'Only when topics are mixed'), tr('settings.row.leaveLooseTabsAlone', 'Leave loose tabs alone when they are all about one thing. Off: those get a group too.')),
+select('organizeDelaySeconds', tr('settings.row.organizeAfter', 'Organize after'), tr('settings.row.howLongAfterYour', 'How long after your tabs change Lumen waits before grouping them.'), [2, 5, 10, 30, 60].map((n) => [n, n < 60 ? `${n} seconds` : '1 minute']), { number: true }),
 forgetRow,
 );
 
@@ -5414,7 +5414,7 @@ h('button', { text: 'Turn on AI', onclick: async () => renderOff(await S.ai.setA
 : [h('span', { class: 'note', text: 'None. The AI can work on any site you allow.' })]));
 };
 const offNote = h('span', { class: 'note', role: 'status', 'aria-live': 'polite' });
-card.at('ai-privacy').append(stackRow('Sites where AI is off', 'The AI can’t read, click or type on these sites, and outside agents are refused too. Also in the sidebar and a tab’s right-click menu.', offList,
+card.at('ai-privacy').append(stackRow(tr('settings.row.sitesWhereAiIs', 'Sites where AI is off'), tr('settings.row.theAiCanT', 'The AI can’t read, click or type on these sites, and outside agents are refused too. Also in the sidebar and a tab’s right-click menu.'), offList,
 h('div', { class: 'controls' }, offInput, h('button', {
 text: 'Turn off AI',
 onclick: async () => { const site = offInput.value.trim(); if (!site) return needSite(offNote, offInput); offNote.textContent = ''; offInput.value = ''; renderOff(await S.ai.setAiSite(site, true)); },
@@ -5435,7 +5435,7 @@ added ? h('span', { class: 'note', text: `Added ${new Date(added).toLocaleDateSt
 h('button', { text: 'Remove', 'aria-label': `Remove ${host}`, onclick: async () => renderSigned(await S.ai.removeSignedInSite(host)) })))
 : [h('span', { class: 'note', text: 'None. The AI reads pages signed out unless you allow a site when it asks.' })]));
 };
-card.at('ai-privacy').append(stackRow('Signed-in sites the AI can use', 'When the AI asks to read a page as you, you can allow it once or always for that site. Nothing is clicked or submitted there without the usual approvals. Banks, payments and password managers are only ever allowed once; outside agents never get this.', signedList,
+card.at('ai-privacy').append(stackRow(tr('settings.row.signedInSitesThe', 'Signed-in sites the AI can use'), tr('settings.row.whenTheAiAsks', 'When the AI asks to read a page as you, you can allow it once or always for that site. Nothing is clicked or submitted there without the usual approvals. Banks, payments and password managers are only ever allowed once; outside agents never get this.'), signedList,
 h('div', { class: 'controls' }, clearSigned)));
 renderSigned();
 
@@ -5483,7 +5483,7 @@ h('span', { class: 'grow', text: name, title: decodeURI(url).replace(/^file:\/\/
 h('button', { text: 'Remove', 'aria-label': `Remove ${name}`, onclick: async () => renderShared(await S.ai.removeSharedFile(url)) })))
 : [h('span', { class: 'note', text: 'None. The AI asks before it looks at a file on your computer.' })]));
 };
-card.at('ai-privacy').append(stackRow('Files on this computer the AI can see', 'When you ask about a file in front of you ("what does this say?"), Lumen asks once; choosing Allow always for this file lists it here. Turn AI off for local files under Sites where AI is off to stop it for every file.', sharedList,
+card.at('ai-privacy').append(stackRow(tr('settings.row.filesOnThisComputer', 'Files on this computer the AI can see'), tr('settings.row.whenYouAskAbout', 'When you ask about a file in front of you ("what does this say?"), Lumen asks once; choosing Allow always for this file lists it here. Turn AI off for local files under Sites where AI is off to stop it for every file.'), sharedList,
 h('div', { class: 'controls' }, clearShared)));
 renderShared();
 
@@ -5501,7 +5501,7 @@ h('span', { class: 'grow', text: `${e.site || 'No site'}: ${e.missing}${e.tool ?
 h('span', { class: 'note', text: e.date })))
 : [h('span', { class: 'note', text: 'Nothing yet. When the AI still hands a task back to you after a second try, it is noted here.' })]));
 };
-card.at('ai-privacy').append(stackRow('Show what the AI couldn’t do', 'When the AI hands a task back to you even after Lumen asks it to try another way, Lumen notes the date, the site, what was missing and the tool error. No page content or personal data. It stays on this computer; copy it and send it to us if you like. Turn it off with the switch above.', gapList,
+card.at('ai-privacy').append(stackRow(tr('settings.row.showWhatTheAi', 'Show what the AI couldn’t do'), tr('settings.row.whenTheAiHands', 'When the AI hands a task back to you even after Lumen asks it to try another way, Lumen notes the date, the site, what was missing and the tool error. No page content or personal data. It stays on this computer; copy it and send it to us if you like. Turn it off with the switch above.'), gapList,
 h('div', { class: 'controls' }, gapCopy, gapClear)));
 renderGaps();
 
@@ -5582,7 +5582,7 @@ return line;
 };
 renderKeys();
 const accounts = slots.get('ai-keys-page');
-accounts.group('API keys').append(stackRow('API keys', tr('settings.ai.keysDesc', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider. Switch a key off to stop Lumen using it without removing it: its models leave the model menu and nothing is sent with it until you switch it back on.'), keys));
+accounts.group('API keys').append(stackRow(tr('settings.row.apiKeys', 'API keys'), tr('settings.ai.keysDesc', 'Any one is enough. Keys are encrypted with your OS keychain and sent only to their provider. Switch a key off to stop Lumen using it without removing it: its models leave the model menu and nothing is sent with it until you switch it back on.'), keys));
 
 
 const cliNote = status('ai-cli-status');
@@ -5621,7 +5621,7 @@ const mcpToggle = h('input', { type: 'checkbox', class: 'switch', id: 'ai-mcp', 
 const agents = card.at('ai-agents');
 
 agents.group(tr('settings.ai.groupLetAgents', 'Let agents use Lumen'));
-agents.append(row('Allow AI agents to connect', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Programs that use Chrome DevTools instead (Playwright) are under Advanced.', mcpToggle));
+agents.append(row(tr('settings.row.allowAiAgentsTo', 'Allow AI agents to connect'), tr('settings.row.letsClaudeCodeCodex', 'Lets Claude Code, Codex, Grok Build and other MCP clients on this computer drive Lumen. Each agent works in a Lumen window of its own. Programs that use Chrome DevTools instead (Playwright) are under Advanced.'), mcpToggle));
 const snippets = h('div', { class: 'list', id: 'ai-snippets' }, mcp.snippets.map((snip) => {
 const copy = h('button', { text: 'Copy', onclick: async () => { await navigator.clipboard.writeText(snip.text).catch(() => {}); copy.textContent = 'Copied'; setTimeout(() => { copy.textContent = 'Copy'; }, 1400); } });
 const note = status();
@@ -5687,7 +5687,7 @@ h('pre', { class: 'mono code', text: snip.text }),
 snip.secondary ? h('p', { class: 'note', text: snip.secondary }) : null,
 note);
 }));
-agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow('Connect an AI agent', 'Add Lumen to an agent’s MCP settings.', snippets));
+agents.subpage('connect-agents', tr('settings.connectAgents', 'Connect an AI agent'), 'Add Lumen to Claude Code, Codex, Grok Build, Antigravity and other MCP clients.', 'mcp claude codex gemini antigravity agy grok').append(stackRow(tr('settings.row.connectAnAiAgent', 'Connect an AI agent'), tr('settings.row.addLumenToAn', 'Add Lumen to an agent’s MCP settings.'), snippets));
 
 agents.subpage('external-apps', tr('settings.ea.title', 'Let other apps use Lumen'), tr('settings.ea.titleDesc', 'Claude Desktop, Cursor, VS Code and Claude Code, outside Lumen: a token for each, and a list you can revoke from.'), 'mcp claude desktop cursor vscode visual studio code copilot continue external apps token connect').append(buildExternalApps());
 
@@ -5716,7 +5716,7 @@ else if (running?.listening && running.port === p) autoNote.textContent = `Liste
 else autoNote.textContent = `Restart Lumen to open ${endpoint}.`;
 autoRestart.hidden = !(enabled && !running?.error && !(running?.listening && running.port === p));
 };
-const portRow = row('Port (localhost only)', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.', port, copyUrl, autoRestart);
+const portRow = row(tr('settings.row.portLocalhostOnly', 'Port (localhost only)'), tr('settings.row.anyProgramOnThis', 'Any program on this computer that has this address (it includes a secret key) can control your tabs and read what’s in them, including sites you’re signed in to. Turn it off when you’re done: turning it back on makes a new address.'), port, copyUrl, autoRestart);
 portRow.querySelector('.text').append(autoNote);
 const saveAuto = async () => {
 const asked = Number(port.value);
@@ -5734,7 +5734,7 @@ port.addEventListener('change', saveAuto);
 portRow.hidden = !auto.enabled;
 portRow.classList.add('sub-row');
 describe(auto.enabled, auto.port);
-card.at('automation').append(withKeywords(row('Allow automation tools (Chrome DevTools Protocol)', `A separate, lower-level way in than “Allow AI agents to connect” (Settings → AI): for Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.${auto.internalPort ? ' While on, other programs on this computer can reach Lumen’s internal debugging port too.' : ''} Takes effect after a restart.`, autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
+card.at('automation').append(withKeywords(row(tr('settings.row.allowAutomationToolsChrome', 'Allow automation tools (Chrome DevTools Protocol)'), tr('settings.row.automationToolsDesc', 'A separate, lower-level way in than “Allow AI agents to connect” (Settings → AI): for Playwright, Playwright MCP and other CDP tools. They see only your tabs, and unlike the AI in the sidebar they don’t ask before acting on a site.{port} Takes effect after a restart.', { port: auto.internalPort ? tr('settings.row.automationToolsPort', ' While on, other programs on this computer can reach Lumen’s internal debugging port too.') : '' }), autoToggle), 'developer developers devtools debugging debugger remote debugging cdp playwright puppeteer'), portRow);
 
 }
 
@@ -5760,7 +5760,7 @@ return true;
 function buildImport(card) {
 
 const importRow = h('div', { class: 'controls', id: 'ai-import' });
-const importEl = row('Import bookmarks and history', 'From another browser on this computer. Cookies are not imported; passwords come from a file you export (below).', importRow);
+const importEl = row(tr('settings.row.importBookmarksAndHistory', 'Import bookmarks and history'), tr('settings.row.fromAnotherBrowserOn', 'From another browser on this computer. Cookies are not imported; passwords come from a file you export (below).'), importRow);
 S.ai.importBrowsers().then((found) => {
 const note = status('import-status');
 note.setAttribute('role', 'status');
@@ -5819,30 +5819,30 @@ return row;
 
 function buildAppearance(card) {
 card.group('Theme and color');
-card.append(select('theme', 'Theme', 'Lumen and the websites you visit follow this (websites see it as prefers-color-scheme). Open Google results reload to match.', [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]));
+card.append(select('theme', tr('settings.row.theme', 'Theme'), tr('settings.row.lumenAndTheWebsites', 'Lumen and the websites you visit follow this (websites see it as prefers-color-scheme). Open Google results reload to match.'), [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]));
 buildLook(card);
 card.group('Page display').append(
-select('defaultZoom', 'Page zoom', 'The default for every site. Sites you zoom by hand keep their own level.', st.zooms.map((z) => [z, `${Math.round(z * 100)}%`]), { number: true }),
-toggle('pinchZoom', 'Pinch to zoom', 'Pinch on a trackpad or touch screen to magnify part of a page, as in Chrome. The page keeps its layout; Ctrl/Cmd + and − still change the page zoom.'),
-select('fontSize', 'Font size', 'The default text size websites start from. Applies to new tabs.', st.fontSizes.map((s) => [s, { 9: 'Very small', 12: 'Small', 16: 'Medium (recommended)', 20: 'Large', 24: 'Very large' }[s]]), { number: true }),
+select('defaultZoom', tr('settings.row.pageZoom', 'Page zoom'), tr('settings.row.theDefaultForEvery', 'The default for every site. Sites you zoom by hand keep their own level.'), st.zooms.map((z) => [z, `${Math.round(z * 100)}%`]), { number: true }),
+toggle('pinchZoom', tr('settings.row.pinchToZoom', 'Pinch to zoom'), tr('settings.row.pinchOnATrackpad', 'Pinch on a trackpad or touch screen to magnify part of a page, as in Chrome. The page keeps its layout; Ctrl/Cmd + and − still change the page zoom.')),
+select('fontSize', tr('settings.row.fontSize', 'Font size'), tr('settings.row.theDefaultTextSize', 'The default text size websites start from. Applies to new tabs.'), st.fontSizes.map((s) => [s, { 9: 'Very small', 12: 'Small', 16: 'Medium (recommended)', 20: 'Large', 24: 'Very large' }[s]]), { number: true }),
 );
 card.group('Toolbar').append(
-toggle('showBookmarkButton', 'Show bookmark button', 'The star in the address bar. Ctrl+D bookmarks either way.'),
-select('bookmarksBar', 'Show bookmarks bar', 'Your bookmarks under the toolbar, as in Chrome. Ctrl+Shift+B switches between always and the new tab page only.', [['newtab', 'On the new tab page'], ['always', 'Always'], ['never', 'Never']]),
-toggle('showAiOffButton', 'Show the AI read-only button in the address bar', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.'),
+toggle('showBookmarkButton', tr('settings.row.showBookmarkButton', 'Show bookmark button'), tr('settings.row.theStarInThe', 'The star in the address bar. Ctrl+D bookmarks either way.')),
+select('bookmarksBar', tr('settings.row.showBookmarksBar', 'Show bookmarks bar'), tr('settings.row.yourBookmarksUnderThe', 'Your bookmarks under the toolbar, as in Chrome. Ctrl+Shift+B switches between always and the new tab page only.'), [['newtab', 'On the new tab page'], ['always', 'Always'], ['never', 'Never']]),
+toggle('showAiOffButton', tr('settings.row.showTheAiRead', 'Show the AI read-only button in the address bar'), tr('settings.row.theShieldThatKeeps', 'The shield that keeps the AI from acting on a tab. The tab menu has the same choice, and a tab already kept off keeps its shield.')),
 );
 
-const collapsedRow = toggle('sideTabsCollapsed', 'Side tabs: icons only', 'Shrinks the side list to icons. It opens out while the pointer is over it.');
+const collapsedRow = toggle('sideTabsCollapsed', tr('settings.row.sideTabsIconsOnly', 'Side tabs: icons only'), tr('settings.row.shrinksTheSideList', 'Shrinks the side list to icons. It opens out while the pointer is over it.'));
 const syncCollapsedRow = () => { collapsedRow.hidden = st.prefs.tabLayout !== 'side'; };
 syncCollapsedRow();
 window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'tabLayout') syncCollapsedRow(); });
 card.at('tabs-strip').append(
-select('tabLayout', 'Tab layout', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.', [['top', 'Top'], ['side', 'Side']]),
+select('tabLayout', tr('settings.row.tabLayout', 'Tab layout'), tr('settings.row.topPutsTheTabs', 'Top puts the tabs across the top of the window. Side lists them down the left, with groups you can fold, pinned tabs first and a list you can resize. You can also right-click the empty part of the tab strip to switch.'), [['top', 'Top'], ['side', 'Side']]),
 collapsedRow,
-toggle('compactTabs', 'Compact tabs', 'Shorter tabs in the tab strip.'),
+toggle('compactTabs', tr('settings.row.compactTabs', 'Compact tabs'), tr('settings.row.shorterTabsInThe', 'Shorter tabs in the tab strip.')),
 );
 
-card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', 'Dark mode for all websites (experimental)', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a restart.'), 'forceDarkWebsites'));
+card.at('experimental').append(withRelaunch(toggle('forceDarkWebsites', tr('settings.row.darkModeForAll', 'Dark mode for all websites (experimental)'), tr('settings.row.chromiumDarkensSitesThat', 'Chromium darkens sites that have no dark theme of their own. Takes effect after a restart.')), 'forceDarkWebsites'));
 }
 
 
@@ -5875,11 +5875,11 @@ swatches.append(b);
 custom.addEventListener('change', () => pickColor(custom.value.toLowerCase()));
 swatches.append(custom);
 box.append(
-stackRow('Effect color', 'Automatic is white over a background and your text color on Plain.', modes, swatches),
-select('newTabEffectAmount', 'Amount', null, [['few', 'Few'], ['normal', 'Normal'], ['many', 'Many']]),
-select('newTabEffectSpeed', 'Speed', null, [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']]),
-select('newTabEffectSize', 'Size', null, [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']]),
-toggle('newTabEffectInteract', 'React to the pointer', 'Particles reach for it, stars light up, bubbles and snow move aside.'),
+stackRow(tr('settings.row.effectColor', 'Effect color'), tr('settings.row.automaticIsWhiteOver', 'Automatic is white over a background and your text color on Plain.'), modes, swatches),
+select('newTabEffectAmount', tr('settings.row.amount', 'Amount'), null, [['few', 'Few'], ['normal', 'Normal'], ['many', 'Many']]),
+select('newTabEffectSpeed', tr('settings.row.speed', 'Speed'), null, [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']]),
+select('newTabEffectSize', tr('settings.row.size', 'Size'), null, [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']]),
+toggle('newTabEffectInteract', tr('settings.row.reactToThePointer', 'React to the pointer'), tr('settings.row.particlesReachForIt', 'Particles reach for it, stars light up, bubbles and snow move aside.')),
 );
 render();
 return box;
@@ -5907,7 +5907,7 @@ onclick: async () => { await save('accentColor', TC.MATCH_WALLPAPER); renderSwat
 custom.addEventListener('change', async () => { await save('accentColor', custom.value); renderSwatches(); });
 swatches.append(custom);
 scheme.addEventListener('change', paintSwatches);
-card.append(row('Accent color', 'Buttons, links and focus rings across Lumen. Each color is fitted to stay readable in light and dark; the last swatch takes it from the new-tab background.', swatches));
+card.append(row(tr('settings.row.accentColor', 'Accent color'), tr('settings.row.buttonsLinksAndFocus', 'Buttons, links and focus rings across Lumen. Each color is fitted to stay readable in light and dark; the last swatch takes it from the new-tab background.'), swatches));
 paintSwatches();
 renderSwatches();
 }
@@ -5965,13 +5965,13 @@ h('span', { class: 'ct-label', text }),
 ]) : null;
 const seg = (key, label, options) => choices(key, label, 'segctl', options, (v, text) => text);
 return { clock: [
-stackRow('Clock style', 'The clock’s typeface and layout. Classic is the original look.', clockTiles),
-row('Hours', 'Automatic follows your system language.', seg('newTabClockHours', 'Hours', [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']])),
-toggle('newTabClockSeconds', 'Show seconds', null),
-toggle('newTabClockDate', 'Show the date', 'The date with the clock. In Thin it sits above the time.'),
-row('Behind the clock', 'A card behind the clock and date. Glass blurs the background behind it.', seg('newTabClockCard', 'Behind the clock', [['none', 'None'], ['soft', 'Soft'], ['glass', 'Glass']])),
-toggle('newTabClockShadow', 'Stronger text shadow', 'Makes the clock and greeting easier to read over a background or picture.'),
-], greeting: greetingTiles ? [stackRow('Greeting font', 'The typeface of “Good evening”. Match clock uses the clock’s.', greetingTiles)] : [] };
+stackRow(tr('settings.row.clockStyle', 'Clock style'), tr('settings.row.theClockSTypeface', 'The clock’s typeface and layout. Classic is the original look.'), clockTiles),
+row(tr('settings.row.hours', 'Hours'), tr('settings.row.automaticFollowsYourSystem', 'Automatic follows your system language.'), seg('newTabClockHours', 'Hours', [['auto', 'Automatic'], ['12', '12-hour'], ['24', '24-hour']])),
+toggle('newTabClockSeconds', tr('settings.row.showSeconds', 'Show seconds'), null),
+toggle('newTabClockDate', tr('settings.row.showTheDate', 'Show the date'), tr('settings.row.theDateWithThe', 'The date with the clock. In Thin it sits above the time.')),
+row(tr('settings.row.behindTheClock', 'Behind the clock'), tr('settings.row.aCardBehindThe', 'A card behind the clock and date. Glass blurs the background behind it.'), seg('newTabClockCard', 'Behind the clock', [['none', 'None'], ['soft', 'Soft'], ['glass', 'Glass']])),
+toggle('newTabClockShadow', tr('settings.row.strongerTextShadow', 'Stronger text shadow'), tr('settings.row.makesTheClockAnd', 'Makes the clock and greeting easier to read over a background or picture.')),
+], greeting: greetingTiles ? [stackRow(tr('settings.row.greetingFont', 'Greeting font'), tr('settings.row.theTypefaceOfGood', 'The typeface of “Good evening”. Match clock uses the clock’s.'), greetingTiles)] : [] };
 }
 
 
@@ -6048,12 +6048,12 @@ const list = [...fxTiles.querySelectorAll('button')]; const at = list.indexOf(do
 list[(at + step + list.length) % list.length].click(); list[(at + step + list.length) % list.length].focus();
 });
 slots.get('home-background').append(
-toggle('newTabShuffle', 'Shuffle daily', 'A new gradient every day: the same one all day, never the same twice in a row.', () => renderTiles()),
-stackRow('New tab background', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.', preview.el, shuffleNote, sections, picture),
+toggle('newTabShuffle', tr('settings.row.shuffleDaily', 'Shuffle daily'), tr('settings.row.aNewGradientEvery', 'A new gradient every day: the same one all day, never the same twice in a row.'), () => renderTiles()),
+stackRow(tr('settings.row.newTabBackground', 'New tab background'), tr('settings.row.behindTheNewTab', 'Behind the new-tab page. Gradients and solids are drawn by Lumen (nothing is downloaded). A picture is resized and kept in your Lumen profile; it never leaves this computer.'), preview.el, shuffleNote, sections, picture),
 );
-slots.get('home-page').append(select('newTabWidgetGlass', 'Widget cards', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.',
+slots.get('home-page').append(select('newTabWidgetGlass', tr('settings.row.widgetCards', 'Widget cards'), tr('settings.row.howSeeThroughThe', 'How see-through the widget cards are. Clear is as transparent as possible while text stays readable; it looks best on a gradient or your own picture.'),
 [['solid', 'Solid'], ['frosted', 'Frosted glass'], ['clear', 'Clear']]));
-slots.get('home-effect').append(stackRow('Animated effect', 'Light on purpose: few shapes, at most 30 frames a second, paused while the tab is hidden, a single still frame with Reduce motion or Performance mode. It never covers the search box or the cards.', fxTiles), effectOptions);
+slots.get('home-effect').append(stackRow(tr('settings.row.animatedEffect', 'Animated effect'), tr('settings.row.lightOnPurposeFew', 'Light on purpose: few shapes, at most 30 frames a second, paused while the tab is hidden, a single still frame with Reduce motion or Performance mode. It never covers the search box or the cards.'), fxTiles), effectOptions);
 effectOptions.hidden = st.prefs.newTabEffect === 'none';
 const name = h('input', { type: 'text', id: 'pref-newTabName', class: 'grow', placeholder: 'Your name', maxlength: '40', 'aria-label': 'Name for the greeting' });
 name.value = st.prefs.newTabName || '';
@@ -6066,24 +6066,24 @@ const dependents = [];
 const syncHeader = (on) => { for (const r of dependents) { r.classList.toggle('off', !on); for (const el of r.querySelectorAll('input, select, button')) el.disabled = !on; } };
 const dep = (...rows) => { dependents.push(...rows); return rows; };
 clockPage.group('Header').append(
-toggle('newTabHeader', 'Show the header', 'The clock, date and greeting at the top of the page. Turn off to hide all of it.', syncHeader),
-...dep(toggle('newTabClock', 'Show the clock', 'Off keeps the date and the greeting.')),
+toggle('newTabHeader', tr('settings.row.showTheHeader', 'Show the header'), tr('settings.row.theClockDateAnd', 'The clock, date and greeting at the top of the page. Turn off to hide all of it.'), syncHeader),
+...dep(toggle('newTabClock', tr('settings.row.showTheClock', 'Show the clock'), tr('settings.row.offKeepsTheDate', 'Off keeps the date and the greeting.'))),
 );
 clockPage.group('Clock').append(...dep(
-select('newTabClockSize', 'Clock size', 'It grows into the space above the search box; where cards leave no room it is drawn a step smaller. In Edit layout you can also drag its corner.', [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
+select('newTabClockSize', tr('settings.row.clockSize', 'Clock size'), tr('settings.row.itGrowsIntoThe', 'It grows into the space above the search box; where cards leave no room it is drawn a step smaller. In Edit layout you can also drag its corner.'), [['s', 'Small'], ['m', 'Medium'], ['l', 'Large'], ['xl', 'Extra large']]),
 ...clockStyle.clock,
 ));
 clockPage.group('Greeting').append(...dep(
-row('Name', '“Good evening, …” on the new-tab page. Leave it empty for no name.', name),
+row(tr('settings.row.name', 'Name'), tr('settings.row.goodEveningOnThe', '“Good evening, …” on the new-tab page. Leave it empty for no name.'), name),
 ...clockStyle.greeting,
 ));
 syncHeader(Boolean(st.prefs.newTabHeader));
 page.append(
-select('newTabSearchWidth', 'Search bar width', 'Automatic fills the column. A wider bar is only drawn as wide as the cards beside it allow. In Edit layout you can also drag its edges.', [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => (x === 640 ? -1 : y === 640 ? 1 : x - y)).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
-toggle('newTabFavorites', 'Show favorites', 'Your bookmarks on the new-tab page.'),
-toggle('newTabFrequent', 'Show frequently visited sites', null),
-toggle('newTabPrivacy', 'Show ads and trackers blocked', null),
-toggle('newTabWidgetsPacked', 'Keep widgets packed', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.'),
+select('newTabSearchWidth', tr('settings.row.searchBarWidth', 'Search bar width'), tr('settings.row.automaticFillsTheColumn', 'Automatic fills the column. A wider bar is only drawn as wide as the cards beside it allow. In Edit layout you can also drag its edges.'), [...new Set([480, 560, 640, 720, 800, 960, st.prefs.newTabSearchWidth])].sort((x, y) => (x === 640 ? -1 : y === 640 ? 1 : x - y)).map((w) => [w, w === 640 ? 'Automatic' : `${w} px`]), { number: true }),
+toggle('newTabFavorites', tr('settings.row.showFavorites', 'Show favorites'), tr('settings.row.yourBookmarksOnThe', 'Your bookmarks on the new-tab page.')),
+toggle('newTabFrequent', tr('settings.row.showFrequentlyVisitedSites', 'Show frequently visited sites'), null),
+toggle('newTabPrivacy', tr('settings.row.showAdsAndTrackers', 'Show ads and trackers blocked'), null),
+toggle('newTabWidgetsPacked', tr('settings.row.keepWidgetsPacked', 'Keep widgets packed'), tr('settings.row.onCardsSlideUp', 'On: cards slide up into gaps as you move and resize them. Off (default): a card stays where you put it.')),
 );
 renderTiles();
 }
@@ -7215,7 +7215,7 @@ const reset = h('button', { id: 'widget-reset', text: 'Reset layout', title: 'Ev
 const home = h('div', { class: 'widget-home' },
 h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'On your new tab page' }), list, h('p', { class: 'group-foot' }, listNote)),
 h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Add a widget' }), catalog, h('p', { class: 'group-foot', text: 'Widgets show a service; they never hold its sign-in. Connect a service under Apps and connections first.' })),
-h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row('Reset layout', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.', reset))));
+h('div', { class: 'group' }, h('h2', { class: 'group-title', text: 'Layout' }), h('div', { class: 'card' }, row(tr('settings.row.resetLayout', 'Reset layout'), tr('settings.row.everyWidgetBackTo', 'Every widget back to its default size, packed in order. To move or resize cards, use Edit layout on the new-tab page.'), reset))));
 card.el.append(home, formHost);
 renderList();
 
@@ -7269,7 +7269,7 @@ host.append(h('span', { class: 'note error', role: 'alert', text }));
 
 async function buildQuick(card) {
 const engines = await S.ai.searchEngines();
-const theme = select('theme', tr('settings.quick.theme', 'Theme'), 'Lumen and the websites you visit follow this (websites see it as prefers-color-scheme). Open Google results reload to match.', [['system', tr('settings.theme.system', 'System')], ['light', tr('settings.theme.light', 'Light')], ['dark', tr('settings.theme.dark', 'Dark')]], { id: 'pref-theme-quick' });
+const theme = select('theme', tr('settings.quick.theme', 'Theme'), tr('settings.row.lumenAndTheWebsites', 'Lumen and the websites you visit follow this (websites see it as prefers-color-scheme). Open Google results reload to match.'), [['system', tr('settings.theme.system', 'System')], ['light', tr('settings.theme.light', 'Light')], ['dark', tr('settings.theme.dark', 'Dark')]], { id: 'pref-theme-quick' });
 theme.dataset.nosearch = '1';
 const engine = h('select', { id: 'pref-searchEngine', 'aria-label': tr('settings.search.label', 'Search engine'), onchange: (e) => S.ai.setSearchEngine(e.target.value) },
 engines.searchEngines.map((e) => h('option', { value: e.id, text: e.label, selected: e.id === engines.searchEngine })));
@@ -7331,7 +7331,7 @@ const range = h('select', { id: 'clear-range', 'aria-label': 'Time range' },
 [['hour', 'Last hour'], ['day', 'Last 24 hours'], ['week', 'Last 7 days'], ['month', 'Last 4 weeks'], ['all', 'All time']].map(([v, t]) => h('option', { value: v, text: t })));
 const box = (id, text, checked) => h('label', { class: 'check' }, h('input', { type: 'checkbox', id, checked }), text);
 const result = status('clear-status');
-slots.get('privacy-clear').append(stackRow('Clear browsing data', 'Removes cookies and site data for sites used in the range. Cached files are always cleared completely.',
+slots.get('privacy-clear').append(stackRow(tr('settings.row.clearBrowsingData', 'Clear browsing data'), tr('settings.row.removesCookiesAndSite', 'Removes cookies and site data for sites used in the range. Cached files are always cleared completely.'),
 h('div', { class: 'controls start' }, h('span', { class: 'note', text: 'Time range' }), range),
 box('clear-history', 'Browsing history', true), box('clear-cookies', 'Cookies and other site data', false),
 box('clear-cache', 'Cached images and files', true), box('clear-downloads', 'Download list', false),
@@ -7348,16 +7348,16 @@ flash(result, parts.length ? `Cleared ${parts.join(', ')}.` : 'Nothing selected.
 
 card.group(tr('settings.private.group', 'Private windows')).append(withKeywords(row(tr('settings.private.label', 'Private windows (incognito)'), tr('settings.private.desc', 'Press Ctrl+Shift+N, or use New Private Window in the menu. A private window doesn’t save history, cookies, passwords or its tabs, and forgets everything when you close it. Downloads stay in your Downloads folder, and sites and your network can still see you.')), 'incognito inprivate private browsing window shortcut ctrl+shift+n'));
 slots.get('privacy-tracking').append(
-toggle('blockThirdPartyCookies', 'Block third-party cookies (best effort)', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.'),
-toggle('sendDoNotTrack', 'Send a “Do Not Track” request', 'Adds DNT: 1 to every request. Most sites ignore it.'),
-toggle('sendGpc', 'Send Global Privacy Control', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.'),
+toggle('blockThirdPartyCookies', tr('settings.row.blockThirdPartyCookies', 'Block third-party cookies (best effort)'), tr('settings.row.lumenStopsSendingCookies', 'Lumen stops sending cookies with requests to other sites embedded in a page. Those sites can still set cookies, and scripts inside their frames can still read them, so this reduces tracking but does not end it.')),
+toggle('sendDoNotTrack', tr('settings.row.sendADoNot', 'Send a “Do Not Track” request'), tr('settings.row.addsDnt1To', 'Adds DNT: 1 to every request. Most sites ignore it.')),
+toggle('sendGpc', tr('settings.row.sendGlobalPrivacyControl', 'Send Global Privacy Control'), tr('settings.row.addsSecGpc1', 'Adds Sec-GPC: 1 to every request. In some places (e.g. California) sites must honor it as an opt-out of data sale.')),
 withKeywords(toggle('hideTabActivity', tr('settings.privacy.hideTab', 'Hide when you leave the tab'), tr('settings.privacy.hideTabDesc', '')), 'visibility focus blur switch tab window away exit intent proctoring track'),
 withKeywords(toggle('hideWindowSize', tr('settings.privacy.hideSize', 'Hide your window size'), tr('settings.privacy.hideSizeDesc', '')), 'split screen window size screen resolution fingerprint'),
 withKeywords(toggle('fingerprintProtection', tr('settings.privacy.fingerprint', 'Protect against fingerprinting'), tr('settings.privacy.fingerprintDesc', '')), 'fingerprint canvas webgl audio battery tracking unique identify'),
 withKeywords(toggle('webrtcIpProtection', tr('settings.privacy.webrtc', 'Hide your IP address from WebRTC'), tr('settings.privacy.webrtcDesc', '')), 'webrtc ip address leak vpn local network'),
 withKeywords(toggle('stripTrackingParams', tr('settings.privacy.stripParams', 'Remove tracking from links'), tr('settings.privacy.stripParamsDesc', '')), 'utm fbclid gclid query parameters url clean'),
 withKeywords(toggle('blockTrackingPings', tr('settings.privacy.pings', 'Block tracking pings'), tr('settings.privacy.pingsDesc', '')), 'beacon sendbeacon ping hyperlink auditing analytics'),
-withKeywords(toggle('httpsOnly', 'Always use secure connections', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.'), 'https only ssl tls certificate encryption insecure http'),
+withKeywords(toggle('httpsOnly', tr('settings.row.alwaysUseSecureConnections', 'Always use secure connections'), tr('settings.row.upgradesHttpAddressesTo', 'Upgrades http:// addresses to https:// and warns before loading a site that has no secure version. Local addresses are left alone.')), 'https only ssl tls certificate encryption insecure http'),
 );
 
 
@@ -7392,10 +7392,10 @@ s.keyStored ? h('button', { class: 'danger', text: 'Remove', onclick: () => put(
 keyNote].filter(Boolean));
 };
 slots.get('privacy-safe').append(
-toggle('safeBrowsing', 'Warn about dangerous sites (Google Safe Browsing)',
-'Pages are checked on your computer against Google’s lists of phishing and malware sites. Only a partial hash of a matching address is sent, never the address or your cookies. Needs your own Google API key (free for non-commercial use). No list is perfect.',
+toggle('safeBrowsing', tr('settings.row.warnAboutDangerousSites', 'Warn about dangerous sites (Google Safe Browsing)'),
+tr('settings.row.pagesAreCheckedOn', 'Pages are checked on your computer against Google’s lists of phishing and malware sites. Only a partial hash of a matching address is sent, never the address or your cookies. Needs your own Google API key (free for non-commercial use). No list is perfect.'),
 async () => renderSb(await S.ai.safeBrowsing())),
-stackRow('Safe Browsing API key', 'Encrypted with your OS keychain. Create one in the Google Cloud console.', sbNote, sbKey),
+stackRow(tr('settings.row.safeBrowsingApiKey', 'Safe Browsing API key'), tr('settings.row.encryptedWithYourOs', 'Encrypted with your OS keychain. Create one in the Google Cloud console.'), sbNote, sbKey),
 );
 S.ai.safeBrowsing().then(renderSb).catch(() => {});
 
@@ -7419,7 +7419,7 @@ const ublockMode = () => inUse() !== 'lumen';
 blockerSel.value = inUse();
 
 const aboutRow = (mode) => {
-const el = row(`While ${UBLOCK_NAMES[mode]} is on`, `It blocks in normal windows; its toolbar button pauses it on a site and opens its settings. Private windows keep Lumen’s blocker (extensions don’t run there). Lumen’s other protections keep working, with these differences: ${UBLOCK_DIFFERENCES.map((d) => d.charAt(0).toLowerCase() + d.slice(1, -1)).join('; ')}.${mode === 'ublock-origin' ? ` ${UBLOCK_ORIGIN_NOTE}` : ''}`);
+const el = row(tr('settings.row.whileIsOn', 'While {name} is on', { name: UBLOCK_NAMES[mode] }), tr('settings.row.ublockOnDesc', 'It blocks in normal windows; its toolbar button pauses it on a site and opens its settings. Private windows keep Lumen’s blocker (extensions don’t run there). Lumen’s other protections keep working, with these differences: {differences}.{note}', { differences: ublockDifferences().map((d) => d.charAt(0).toLowerCase() + d.slice(1, -1)).join('; '), note: mode === 'ublock-origin' ? ` ${ublockOriginNote()}` : '' }));
 el.id = 'ad-blocker-ublock-note';
 el.classList.add('warn');
 el.dataset.mode = mode;
@@ -7427,8 +7427,8 @@ return el;
 };
 let ublockAbout = aboutRow(ublockMode() ? inUse() : 'ublock');
 const lumenRows = [
-toggle('adblock', 'Block ads and trackers', 'Built-in blocker using uBlock Origin-compatible filter lists.'),
-stackRow('Sites allowed to show ads', 'The blocker is off on these sites.', allowList,
+toggle('adblock', tr('settings.row.blockAdsAndTrackers', 'Block ads and trackers'), tr('settings.row.builtInBlockerUsing', 'Built-in blocker using uBlock Origin-compatible filter lists.')),
+stackRow(tr('settings.row.sitesAllowedToShow', 'Sites allowed to show ads'), tr('settings.row.theBlockerIsOff', 'The blocker is off on these sites.'), allowList,
 h('div', { class: 'controls' }, allowInput, h('button', {
 text: 'Add site',
 onclick: async () => { const host = allowInput.value.trim(); if (!host) return needSite(allowNote, allowInput); allowNote.textContent = ''; await save('adblockAllow', [...st.prefs.adblockAllow, host], allowInput); allowInput.value = ''; renderAllow(); },
@@ -7454,7 +7454,7 @@ paintBlocker();
 window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'adBlocker') { blockerSel.value = inUse(); paintBlocker(); } });
 paintBlocker();
 slots.get('privacy-adblock').append(
-withKeywords(row('Ad blocker', 'Lumen’s own blocker, or uBlock Origin Lite or uBlock Origin installed as an extension for you. Open pages reload with the one you choose.', blockerSel, blockerNote), 'ublock ublock origin lite extension'),
+withKeywords(row(tr('settings.row.adBlocker', 'Ad blocker'), tr('settings.row.lumenSOwnBlocker', 'Lumen’s own blocker, or uBlock Origin Lite or uBlock Origin installed as an extension for you. Open pages reload with the one you choose.'), blockerSel, blockerNote), 'ublock ublock origin lite extension'),
 ublockAbout,
 ...lumenRows,
 );
@@ -7479,8 +7479,8 @@ h('button', { text: 'Revoke', class: 'revoke', onclick: async () => { await S.re
 const permissions = slots.get('site-permissions');
 permissions.link.dataset.search += ' camera microphone mic location geolocation gps notifications alerts popups pop-ups clipboard revoke devices hid usb serial bluetooth keyboard gamepad hardware block allow permission';
 withKeywords(permissions.link, 'camera microphone mic webcam location geolocation notifications alerts popups pop-ups clipboard usb bluetooth hid serial keyboard gamepad hardware devices block allow');
-permissions.append(withKeywords(stackRow('Default for new sites', 'Ask shows a prompt the first time a site asks; Block refuses without asking.', defaults), 'camera microphone location notifications clipboard permission ask block'));
-permissions.append(withKeywords(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), 'What you allowed or blocked. Revoke to be asked again.', granted), 'camera microphone location notifications alerts popups clipboard permission revoke'));
+permissions.append(withKeywords(stackRow(tr('settings.row.defaultForNewSites', 'Default for new sites'), tr('settings.row.askShowsAPrompt', 'Ask shows a prompt the first time a site asks; Block refuses without asking.'), defaults), 'camera microphone location notifications clipboard permission ask block'));
+permissions.append(withKeywords(stackRow(tr('settings.perm.allowedLabel', 'Allowed and blocked sites'), tr('settings.row.whatYouAllowedOr', 'What you allowed or blocked. Revoke to be asked again.'), granted), 'camera microphone location notifications alerts popups clipboard permission revoke'));
 renderGranted();
 
 const devices = h('div', { class: 'list', id: 'device-grants' });
@@ -7511,7 +7511,7 @@ h('button', { text: 'Remove', class: 'revoke', 'aria-label': `Remove cookies and
 filter.addEventListener('input', renderSites);
 const loadSites = async () => { siteList = await S.siteData(); renderSites(); };
 const data = slots.get('site-data');
-data.append(stackRow('Sites with cookies', 'Remove deletes a site’s cookies (you’ll be signed out of it) and what it stored on this computer. Clear browsing data removes everything at once.', filter, sites));
+data.append(stackRow(tr('settings.row.sitesWithCookies', 'Sites with cookies'), tr('settings.row.removeDeletesASite', 'Remove deletes a site’s cookies (you’ll be signed out of it) and what it stored on this computer. Clear browsing data removes everything at once.'), filter, sites));
 loadSites();
 }
 
@@ -7558,7 +7558,7 @@ input.checked = pw.enabled;
 renderNote();
 renderLogins();
 });
-const toggleRow = withKeywords(row('Save passwords', 'Offers to save a password when you sign in, and fills it in from the key in the address bar. Never in private windows. Encrypted with your system’s keychain; the AI and outside agents can’t read them.', input), 'autofill auto fill sign-in login logins credentials keychain');
+const toggleRow = withKeywords(row(tr('settings.row.savePasswords', 'Save passwords'), tr('settings.row.offersToSaveA', 'Offers to save a password when you sign in, and fills it in from the key in the address bar. Never in private windows. Encrypted with your system’s keychain; the AI and outside agents can’t read them.'), input), 'autofill auto fill sign-in login logins credentials keychain');
 toggleRow.querySelector('.label').addEventListener('click', () => input.click());
 toggleRow.querySelector('.text').append(note);
 card.group('Passwords').append(toggleRow);
@@ -7629,7 +7629,7 @@ h('span', { class: 'grow', text: site }),
 h('button', { text: 'Remove', 'aria-label': `Remove ${site}`, onclick: async () => { pw = await P.removeNever(site); renderNever(); } })))
 : [h('span', { class: 'note', text: 'None.' })]));
 const deleteAll = armedButton(tr('settings.passwords.deleteAll', 'Delete all saved passwords'), tr('settings.passwords.deleteAllSure', 'Delete all? Click again'), async () => { pw = await P.removeAll(); renderLogins(); }, 'danger', 'passwords-delete-all');
-page.append(stackRow('Saved passwords', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask you to confirm first (Touch ID, Windows Hello or your system password).',
+page.append(stackRow(tr('settings.row.savedPasswords', 'Saved passwords'), tr('settings.row.onlyOnThisComputer', 'Only on this computer, encrypted with your system’s keychain. Show and Copy ask you to confirm first (Touch ID, Windows Hello or your system password).'),
 h('div', { class: 'controls' }, search), list,
 h('div', { class: 'controls' }, result,
 h('button', { id: 'passwords-import', text: 'Import from Google or Safari…', onclick: async () => {
@@ -7637,7 +7637,7 @@ if (await importPasswords(result)) renderLogins();
 } }),
 deleteAll)));
 page.append(buildPasswordGenerator(P));
-page.append(stackRow('Never saved for', 'Sites where you chose “Never for this site”. Remove one to be asked again.', never));
+page.append(stackRow(tr('settings.row.neverSavedFor', 'Never saved for'), tr('settings.row.sitesWhereYouChose', 'Sites where you chose “Never for this site”. Remove one to be asked again.'), never));
 renderLogins();
 }
 
@@ -7824,14 +7824,14 @@ const where = h('span', { class: 'mono desc', id: 'download-dir' });
 const showDir = () => { where.textContent = st.prefs.downloadDir || st.defaultDownloadDir; };
 showDir();
 
-const locationRow = row('Location', null, h('button', { text: 'Change…', onclick: async () => { st = await S.pickDownloadDir(); showDir(); } }),
+const locationRow = row(tr('settings.row.location', 'Location'), null, h('button', { text: 'Change…', onclick: async () => { st = await S.pickDownloadDir(); showDir(); } }),
 h('button', { text: 'Use Downloads folder', onclick: async () => { await save('downloadDir', ''); showDir(); } }));
 locationRow.querySelector('.text').append(where);
 card.append(
 locationRow,
-toggle('askWhereToSave', 'Ask where to save each file before downloading', null),
+toggle('askWhereToSave', tr('settings.row.askWhereToSave', 'Ask where to save each file before downloading'), null),
 withKeywords(row(tr('settings.print.label', 'Printing'), tr('settings.print.desc', 'Press Ctrl+P (⌘P on macOS) on a page, or choose Print in the ⋯ menu, to open the print preview. There you pick a printer or Save as PDF, the pages, the layout and the margins; Lumen remembers your choices. Ctrl+Shift+P prints with the system dialog.')), 'print printer printing pdf paper page ctrl+p save as pdf'),
-select('pdfViewer', 'Open PDFs with', 'Lumen’s viewer shows the text, links and zoom like a page, and the AI can read, scroll and draw on it. Chrome’s viewer is the browser’s built-in one. PDFs inside a page always use Chrome’s.', [['lumen', 'Lumen’s viewer'], ['chrome', 'Chrome’s viewer']]),
+select('pdfViewer', tr('settings.row.openPdfsWith', 'Open PDFs with'), tr('settings.row.lumenSViewerShows', 'Lumen’s viewer shows the text, links and zoom like a page, and the AI can read, scroll and draw on it. Chrome’s viewer is the browser’s built-in one. PDFs inside a page always use Chrome’s.'), [['lumen', 'Lumen’s viewer'], ['chrome', 'Chrome’s viewer']]),
 );
 const list = h('div', { class: 'list', id: 'downloads-list' });
 const render = async () => {
@@ -7842,7 +7842,7 @@ h('span', { class: 'note', text: d.state === 'progressing' ? (d.total ? `${Math.
 d.state === 'completed' ? h('button', { text: 'Show in folder', onclick: () => S.showDownload(d.id) }) : null))
 : [h('span', { class: 'note', text: 'No downloads yet.' })]));
 };
-slots.get('downloads-recent').append(stackRow('Recent downloads', 'Kept across restarts. The toolbar’s download button shows them too, and you can drag files out of it.', list, h('div', { class: 'controls' },
+slots.get('downloads-recent').append(stackRow(tr('settings.row.recentDownloads', 'Recent downloads'), tr('settings.row.keptAcrossRestartsThe', 'Kept across restarts. The toolbar’s download button shows them too, and you can drag files out of it.'), list, h('div', { class: 'controls' },
 armedButton(tr('settings.downloads.clear', 'Clear list'), tr('settings.downloads.clearSure', 'Clear the list? Click again'), async () => { await S.clearDownloads(); render(); }, '', 'downloads-clear'))));
 render();
 }
@@ -7865,26 +7865,26 @@ function grokUsageRows(u, refresh) {
 const g = u.grok;
 if (!g) return [];
 const rows = [];
-rows.push(row('Grok Build', 'Grok doesn’t share your plan’s limits, so this shows Lumen’s own use; set a budget to get a progress bar.'));
+rows.push(row(tr('settings.row.grokBuild', 'Grok Build'), tr('settings.row.grokDoesnTShare', 'Grok doesn’t share your plan’s limits, so this shows Lumen’s own use; set a budget to get a progress bar.')));
 if (g.limit) {
 const when = g.limit.resetsAt ? `resets at ${new Date(g.limit.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : 'no reset time was given';
-rows.push(row('Grok limit reached', `${when}. ${g.limit.text || ''} This clears after your next Grok reply that works.`.trim()));
+rows.push(row(tr('settings.row.grokLimitReached', 'Grok limit reached'), `${when}. ${g.limit.text || ''} This clears after your next Grok reply that works.`.trim()));
 }
 const line = (label, w) => `${label}: ${w.turns} turn${w.turns === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens · ${dollars(w.costUSD)} at API prices`;
-rows.push(row('Lumen’s Grok use', g.windows?.d7?.turns
+rows.push(row(tr('settings.row.lumenSGrokUse', 'Lumen’s Grok use'), g.windows?.d7?.turns
 ? `${line('Last 5 hours', g.windows.h5)}. ${line('Last 7 days', g.windows.d7)}. This is Lumen’s own use, not what’s left of your plan.`
 : 'No Grok chats in Lumen in the last 7 days.'));
 const cfg = g.budget?.config || { unit: 'usd', daily: 0, weekly: 0 };
 for (const p of g.budget?.status?.periods || []) {
 const fmt = g.budget.status.unit === 'tokens' ? (n) => `${tokens(Math.round(n))} tokens` : dollars;
-rows.push(meterRow(p.kind === 'daily' ? 'Grok daily budget' : 'Grok weekly budget', p.percent, `${fmt(p.used)} of ${fmt(p.limit)} · resets ${new Date(p.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`));
+rows.push(meterRow(p.kind === 'daily' ? tr('settings.row.grokDailyBudget', 'Grok daily budget') : tr('settings.row.grokWeeklyBudget', 'Grok weekly budget'), p.percent, tr('settings.row.usedOfResets', '{used} of {limit} · resets {when}', { used: fmt(p.used), limit: fmt(p.limit), when: new Date(p.resetsAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) })));
 }
 const unit = h('select', { id: 'usage-budget-unit', 'aria-label': 'Budget unit' }, h('option', { value: 'usd', text: 'Dollars (API prices)' }), h('option', { value: 'tokens', text: 'Tokens' }));
 unit.value = cfg.unit;
 const amount = (id, label, value) => h('input', { type: 'number', id, min: '0', step: 'any', placeholder: 'None', 'aria-label': label, value: value ? String(value) : '' });
 const daily = amount('usage-budget-daily', 'Daily budget', cfg.daily);
 const weekly = amount('usage-budget-weekly', 'Weekly budget', cfg.weekly);
-rows.push(stackRow('Grok budget (optional)', 'Counts Lumen’s own Grok use. The sidebar bar becomes a progress bar toward it (a day ends at midnight, a week on Monday), turns amber at 80% and red at 100%, and never blocks anything. Leave both empty for none.',
+rows.push(stackRow(tr('settings.row.grokBudgetOptional', 'Grok budget (optional)'), tr('settings.row.countsLumenSOwn', 'Counts Lumen’s own Grok use. The sidebar bar becomes a progress bar toward it (a day ends at midnight, a week on Monday), turns amber at 80% and red at 100%, and never blocks anything. Leave both empty for none.'),
 h('div', { class: 'controls' }, unit, h('label', { class: 'note', text: 'Daily' }), daily, h('label', { class: 'note', text: 'Weekly' }), weekly,
 h('button', { id: 'usage-budget-save', text: 'Save budget', onclick: async () => { await S.setUsageBudget({ unit: unit.value, daily: daily.value, weekly: weekly.value }); refresh(); } }))));
 return rows;
@@ -7895,19 +7895,19 @@ function codexUsageRows(u) {
 const c = u.codex;
 if (!c) return [];
 const when = (t) => (window.usageBars?.clockOf ? window.usageBars.clockOf(t, Date.now()) : new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }));
-const rows = [row('Codex CLI', 'Read from Codex’s own session logs on this computer (numbers only, never your prompts). Codex doesn’t report a price, so there is no dollar figure.')];
-if (c.reached) rows.push(row('Codex limit reached', c.reached.resetsAt ? `Resets ${when(c.reached.resetsAt)}.` : 'Codex didn’t say when it resets.'));
+const rows = [row(tr('settings.row.codexCli', 'Codex CLI'), tr('settings.row.readFromCodexS', 'Read from Codex’s own session logs on this computer (numbers only, never your prompts). Codex doesn’t report a price, so there is no dollar figure.'))];
+if (c.reached) rows.push(row(tr('settings.row.codexLimitReached', 'Codex limit reached'), c.reached.resetsAt ? `Resets ${when(c.reached.resetsAt)}.` : 'Codex didn’t say when it resets.'));
 const plan = c.planType ? ` (${c.planType[0].toUpperCase()}${c.planType.slice(1)} plan)` : '';
-const win = (label, w) => (w ? (w.expired ? row(label, 'Reset since the last reading; the next Codex reply shows the new one.') : meterRow(label, w.percent, w.resetsAt ? `Resets ${when(w.resetsAt)}` : null)) : null);
+const win = (label, w) => (w ? (w.expired ? row(label, tr('settings.row.resetSinceTheLast', 'Reset since the last reading; the next Codex reply shows the new one.')) : meterRow(label, w.percent, w.resetsAt ? `Resets ${when(w.resetsAt)}` : null)) : null);
 
 const label = (w, fallback) => `Codex ${window.usageBars?.windowLabel ? window.usageBars.windowLabel(w.minutes, fallback) : fallback === 'week' ? 'weekly limit' : '5-hour limit'}`;
 const list = Array.isArray(c.windows) ? c.windows.filter(Boolean) : [c.fiveHour, c.weekly].filter(Boolean);
 const shown = list.map((w, i) => win(`${label(w, i ? 'week' : '5h')}${i ? '' : plan}`, w)).filter(Boolean);
 rows.push(...shown);
-if (!shown.length) rows.push(row('Codex plan limits', c.note || 'Codex hasn’t reported its plan limits yet.'));
-else if (c.readAt) rows.push(row('', `As of ${when(c.readAt)}, the last Codex reply on this computer. Limits are shared with Codex on other devices and in the cloud.`));
+if (!shown.length) rows.push(row(tr('settings.row.codexPlanLimits', 'Codex plan limits'), c.note || 'Codex hasn’t reported its plan limits yet.'));
+else if (c.readAt) rows.push(row('', tr('settings.row.asOfTheLast', `As of {when}, the last Codex reply on this computer. Limits are shared with Codex on other devices and in the cloud.`, { when: when(c.readAt) })));
 const line = (label, w) => `${label}: ${w.sessions} session${w.sessions === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens (${tokens(w.cached)} cached, ${tokens(w.output)} output)`;
-rows.push(row('Codex tokens', c.week?.sessions ? `${line('Today', c.today)}. ${line('Last 7 days', c.week)}.` : 'No Codex sessions in the last 7 days.'));
+rows.push(row(tr('settings.row.codexTokens', 'Codex tokens'), c.week?.sessions ? `${line('Today', c.today)}. ${line('Last 7 days', c.week)}.` : 'No Codex sessions in the last 7 days.'));
 return rows;
 }
 
@@ -7925,30 +7925,30 @@ return chip;
 async function buildUsage(card) {
 const body = h('div', { class: 'usage' });
 const render = async (refresh) => {
-body.replaceChildren(row('Checking your usage…', null));
+body.replaceChildren(row(tr('settings.row.checkingYourUsage', 'Checking your usage…'), null));
 const u = await S.usage({ refresh }).catch((err) => ({ error: err.message }));
-if (!u || u.error) { body.replaceChildren(row('Usage isn’t available', u?.error || 'No answer.')); return; }
+if (!u || u.error) { body.replaceChildren(row(tr('settings.row.usageIsnTAvailable', 'Usage isn’t available'), u?.error || 'No answer.')); return; }
 const parts = [];
 
 if (u.plan?.available && u.plan.limits.length) {
 for (const l of u.plan.limits) parts.push(meterRow(l.label === 'Current session' ? '5-hour limit (current session)' : l.label, l.percent, l.resets ? `Resets ${l.resets}` : null));
 } else if (u.meter) {
-parts.push(meterRow('5-hour limit', u.meter.percent, `Resets ${new Date(u.meter.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`));
+parts.push(meterRow(tr('settings.row.5HourLimit', '5-hour limit'), u.meter.percent, tr('settings.row.resetsAt', 'Resets {time}', { time: new Date(u.meter.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) })));
 } else {
-parts.push(row('Your Claude plan', u.plan?.reason ? `Couldn’t read it: ${u.plan.reason}` : 'Chat once with “Claude · your account (Claude Code)” to see your limits here.'));
+parts.push(row(tr('settings.row.yourClaudePlan', 'Your Claude plan'), u.plan?.reason ? `Couldn’t read it: ${u.plan.reason}` : 'Chat once with “Claude · your account (Claude Code)” to see your limits here.'));
 }
 const EXTRA = { 'in use': 'In use: you’re past your plan’s limit and on extra usage.', rejected: 'Off for your plan: at the limit, Claude waits for the reset.', allowed: 'Available: past the limit, Claude can keep going on extra usage.' };
-if (u.status?.overage) parts.push(row('Extra usage', EXTRA[u.status.overage] || String(u.status.overage).replace(/_/g, ' ')));
+if (u.status?.overage) parts.push(row(tr('settings.row.extraUsage', 'Extra usage'), EXTRA[u.status.overage] || String(u.status.overage).replace(/_/g, ' ')));
 
 
 const w = u.lumen.window;
 const share = w.limitPoints != null
 ? `≈ ${w.limitPoints < 1 ? '<1' : Math.round(w.limitPoints)} of those points came from Lumen's sidebar${w.unknown ? ` (${w.unknown} turn${w.unknown === 1 ? '' : 's'} couldn’t be measured)` : ''}.`
 : w.turns ? 'How far each turn moved the meter shows up after your next chat.' : 'No Claude Code chats in Lumen in this window.';
-parts.push(row('Lumen’s sidebar, this 5-hour window', `${w.turns} turn${w.turns === 1 ? '' : 's'} · ${tokens(w.tokens)} tokens · ${dollars(w.costUSD)} at API prices. ${share}`));
+parts.push(row(tr('settings.row.lumenSSidebarThis', 'Lumen’s sidebar, this 5-hour window'), tr('settings.row.turnsTokensCost', '{turns} · {tokens} tokens · {cost} at API prices. {share}', { turns: w.turns === 1 ? tr('settings.row.turnOne', '{n} turn', { n: w.turns }) : tr('settings.row.turnOther', '{n} turns', { n: w.turns }), tokens: tokens(w.tokens), cost: dollars(w.costUSD), share })));
 const mcp = (u.plan?.contributions || []).map((c) => `${c.lumen}% in the last ${c.period}`).join(', ');
 const machine = navigator.platform.startsWith('Mac') ? 'Mac' : navigator.platform.startsWith('Win') ? 'PC' : 'computer';
-if (mcp) parts.push(row('Claude Code driving Lumen (MCP)', `Share of this ${machine}’s Claude Code usage from Lumen’s browser tools: ${mcp}.`));
+if (mcp) parts.push(row(tr('settings.row.claudeCodeDrivingLumen', 'Claude Code driving Lumen (MCP)'), tr('settings.row.shareOfThisS', `Share of this {machine}’s Claude Code usage from Lumen’s browser tools: {mcp}.`, { machine: machine, mcp: mcp })));
 
 const engines = Object.entries(u.lumen.byEngine);
 const list = h('div', { class: 'list', id: 'usage-engines' }, engines.length
@@ -7956,7 +7956,7 @@ const list = h('div', { class: 'list', id: 'usage-engines' }, engines.length
 h('span', { class: 'grow', text: ENGINE_NAMES[id] || id }),
 h('span', { class: 'note', text: `${e.turns} turn${e.turns === 1 ? '' : 's'} · ${tokens(e.tokens)} tokens${e.costUSD ? ` · ${dollars(e.costUSD)} at API prices` : ''}` })))
 : [h('span', { class: 'note', text: 'Nothing yet.' })]);
-parts.push(stackRow('Lumen, last 7 days', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.', list));
+parts.push(stackRow(tr('settings.row.lumenLast7Days', 'Lumen, last 7 days'), tr('settings.row.plansDonTBill', 'Plans don’t bill per token; the API-price figure is only a yardstick for how heavy the use was.'), list));
 parts.push(...providerUsageRows(u, () => render(false)));
 parts.push(row('', null,
 h('button', { id: 'usage-refresh', text: 'Refresh', onclick: () => render(true) }),
@@ -7964,7 +7964,7 @@ h('button', { text: 'Clear Lumen’s usage log', onclick: async () => { await S.
 body.replaceChildren(...parts);
 };
 card.append(toggle('usageBars', tr('settings.usage.bars', 'Show usage bars in pickers'), tr('settings.usage.barsDesc', 'A thin bar beside each provider in the model menus, the AI status card and here under Accounts, with how much of its plan window is used and when it resets. It uses the numbers Lumen already has and never asks the network. Models that are out of usage are marked too.'), () => window.usageBars?.load(true)));
-card.append(row('What counts', 'Limits are shared by everything on your Claude account: Claude Code in a terminal, claude.ai and the Claude apps. The share from Lumen is approximate.'), body);
+card.append(row(tr('settings.row.whatCounts', 'What counts'), tr('settings.row.limitsAreSharedBy', 'Limits are shared by everything on your Claude account: Claude Code in a terminal, claude.ai and the Claude apps. The share from Lumen is approximate.')), body);
 render(false);
 }
 
@@ -7987,9 +7987,9 @@ preview.textContent = st.acceptLanguagePreview ? `Accept-Language: ${st.acceptLa
 };
 add.addEventListener('change', async () => { if (!add.value) return; await save('languages', [...st.prefs.languages, add.value]); render(); });
 render();
-card.append(stackRow('Preferred languages', 'Websites see these, in this order, when they choose a language (the Accept-Language header).', list, h('div', { class: 'controls' }, add, preview)));
+card.append(stackRow(tr('settings.row.preferredLanguages', 'Preferred languages'), tr('settings.row.websitesSeeTheseIn', 'Websites see these, in this order, when they choose a language (the Accept-Language header).'), list, h('div', { class: 'controls' }, add, preview)));
 
-card.append(toggle('spellcheck', 'Check spelling when you type', 'Misspelled words are underlined; right-click one for suggestions.', () => renderSpell()));
+card.append(toggle('spellcheck', tr('settings.row.checkSpellingWhenYou', 'Check spelling when you type'), tr('settings.row.misspelledWordsAreUnderlined', 'Misspelled words are underlined; right-click one for suggestions.'), () => renderSpell()));
 const spell = h('div', { class: 'list', id: 'spellcheck-languages' });
 const renderSpell = () => {
 if (st.platform === 'darwin') {
@@ -8117,10 +8117,10 @@ h('div', { class: 'controls start' }, pickLang, go, stop, note)),
 
 function buildAccessibility(card) {
 card.append(
-toggle('reduceMotion', 'Reduce motion', 'Turns off animations in Lumen (tabs, sidebar, these pages).'),
-select('minimumFontSize', 'Minimum font size', 'Websites can’t make text smaller than this. Applies to new tabs.', [[0, 'None'], [6, '6'], [9, '9'], [12, '12'], [16, '16'], [20, '20'], [24, '24']], { number: true }),
-toggle('focusRings', 'Show a focus ring', 'Always outline the focused control in Lumen, not only when using the keyboard.'),
-select('screenReaderSupport', 'Screen reader support', 'Automatic: page accessibility stays on for a screen reader (Narrator, NVDA, JAWS, VoiceOver). Other programs that read windows, like a password manager, get only Lumen’s own buttons, so big pages don’t freeze Lumen. On: always, for a screen reader Lumen doesn’t recognise.', [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']]),
+toggle('reduceMotion', tr('settings.row.reduceMotion', 'Reduce motion'), tr('settings.row.turnsOffAnimationsIn', 'Turns off animations in Lumen (tabs, sidebar, these pages).')),
+select('minimumFontSize', tr('settings.row.minimumFontSize', 'Minimum font size'), tr('settings.row.websitesCanTMake', 'Websites can’t make text smaller than this. Applies to new tabs.'), [[0, 'None'], [6, '6'], [9, '9'], [12, '12'], [16, '16'], [20, '20'], [24, '24']], { number: true }),
+toggle('focusRings', tr('settings.row.showAFocusRing', 'Show a focus ring'), tr('settings.row.alwaysOutlineTheFocused', 'Always outline the focused control in Lumen, not only when using the keyboard.')),
+select('screenReaderSupport', tr('settings.row.screenReaderSupport', 'Screen reader support'), tr('settings.row.automaticPageAccessibilityStays', 'Automatic: page accessibility stays on for a screen reader (Narrator, NVDA, JAWS, VoiceOver). Other programs that read windows, like a password manager, get only Lumen’s own buttons, so big pages don’t freeze Lumen. On: always, for a screen reader Lumen doesn’t recognise.'), [['auto', 'Automatic'], ['on', 'On'], ['off', 'Off']]),
 );
 }
 
@@ -8143,7 +8143,7 @@ count();
 window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'recordSwitchTimings') count(); });
 }
 function buildSystem(card) {
-card.group(tr('settings.advanced.groupGraphics', 'Graphics and effects')).append(withRelaunch(toggle('hardwareAcceleration', 'Use graphics acceleration when available', 'Turn off if pages flicker or draw incorrectly. Takes effect after a restart.'), 'hardwareAcceleration', 'relaunch'));
+card.group(tr('settings.advanced.groupGraphics', 'Graphics and effects')).append(withRelaunch(toggle('hardwareAcceleration', tr('settings.row.useGraphicsAccelerationWhen', 'Use graphics acceleration when available'), tr('settings.row.turnOffIfPages', 'Turn off if pages flicker or draw incorrectly. Takes effect after a restart.')), 'hardwareAcceleration', 'relaunch'));
 const perfRow = select('performanceMode', tr('settings.performance.label', 'Performance mode'), tr('settings.performance.desc', 'Runs Lumen lighter on a slow computer: background tabs sleep sooner, smaller caches, no blur or animation. Auto turns it on when needed.'),
 [['auto', tr('settings.performance.auto', 'Auto')], ['on', tr('settings.performance.on', 'Always on')], ['off', tr('settings.performance.off', 'Off')]], { after: () => showPerfNote() });
 const perfNote = h('span', { class: 'note', id: 'performance-note' });
@@ -8183,7 +8183,7 @@ card.append(gfxRow);
 buildUnloading(card.at('tabs-sleep'));
 buildSwitchTiming(card.at('adv-diagnostics'));
 if (st.platform === 'darwin') {
-card.at('behavior').append(toggle('keepRunningInBackground', 'Keep Lumen running when its window is closed', 'Lumen stays in the Dock; click it to open a window.'));
+card.at('behavior').append(toggle('keepRunningInBackground', tr('settings.row.keepLumenRunningWhen', 'Keep Lumen running when its window is closed'), tr('settings.row.lumenStaysInThe', 'Lumen stays in the Dock; click it to open a window.')));
 }
 
 
@@ -8209,7 +8209,7 @@ else if (note.className.includes('warn') || note.className.includes('err')) note
 };
 sync();
 for (const el of [mode, rules, bypass, pac]) { el.addEventListener('change', sync); el.addEventListener('input', sync); }
-slots.get('adv-network').append(stackRow('Proxy', 'Applies to every tab as soon as you press Apply.', h('div', { class: 'controls start' }, mode), rules, bypass, pac,
+slots.get('adv-network').append(stackRow(tr('settings.row.proxy', 'Proxy'), tr('settings.row.appliesToEveryTab', 'Applies to every tab as soon as you press Apply.'), h('div', { class: 'controls start' }, mode), rules, bypass, pac,
 h('div', { class: 'controls' }, note, Object.assign(apply, {
 onclick: async () => {
 if (mode.value === 'fixed_servers' && !rules.value.trim()) { flash(note, 'Enter the proxy server first, for example proxy:8080.', 'err'); rules.focus(); return; }
@@ -8310,13 +8310,13 @@ const out = await S.addUnpacked(picked.dir);
 render(out.list);
 if (out.error) flash(note, out.error, 'err'); else flash(note, `Loaded ${picked.name}.`);
 } });
-card.append(select('extensionsToolbar', 'Show extensions in the toolbar', 'Only the ones I pin keeps the rest in the puzzle button’s menu, as Chrome does. Hide all removes the extension buttons and the puzzle button; extensions keep running, and they are listed here and in the ⋯ menu.',
+card.append(select('extensionsToolbar', tr('settings.row.showExtensionsInThe', 'Show extensions in the toolbar'), tr('settings.row.onlyTheOnesI', 'Only the ones I pin keeps the rest in the puzzle button’s menu, as Chrome does. Hide all removes the extension buttons and the puzzle button; extensions keep running, and they are listed here and in the ⋯ menu.'),
 [['pinned', 'Only the ones I pin'], ['all', 'All of them'], ['none', 'Hide all']]));
 window.addEventListener('lumen-pref', (e) => { if (e.detail.key === 'extensionsToolbar') render(shownItems); });
 render(await S.extensions());
-card.append(stackRow('Installed extensions', 'Turn one off to stop it without removing it; it stays off after a restart. Removing one deletes it and its data. An extension that asks for every site can be held to the ones you list; reload open pages after changing it.', list,
+card.append(stackRow(tr('settings.row.installedExtensions', 'Installed extensions'), tr('settings.row.turnOneOffTo', 'Turn one off to stop it without removing it; it stays off after a restart. Removing one deletes it and its data. An extension that asks for every site can be held to the ones you list; reload open pages after changing it.'), list,
 h('div', { class: 'controls' }, note, loadUnpacked, h('button', { text: 'Open Chrome Web Store', onclick: () => S.openUrl('https://chromewebstore.google.com/') }))));
-card.append(toggle('extensionsDevMode', 'Developer mode', 'Load an extension from a folder on this computer (one with a manifest.json), and reload it from that folder after you change it. Lumen runs a copy, so it never writes into your folder.', (on) => { loadUnpacked.hidden = !on; }));
+card.append(toggle('extensionsDevMode', tr('settings.row.developerMode', 'Developer mode'), tr('settings.row.loadAnExtensionFrom', 'Load an extension from a folder on this computer (one with a manifest.json), and reload it from that folder after you change it. Lumen runs a copy, so it never writes into your folder.'), (on) => { loadUnpacked.hidden = !on; }));
 }
 
 
@@ -8329,6 +8329,8 @@ const UBLOCK_DIFFERENCES = [
 "The AI’s network log doesn’t see requests made inside embedded frames from other sites."
 ];
 
+const ublockDifferences = () => UBLOCK_DIFFERENCES.map((d, i) => tr(`settings.row.ublockDifference${i + 1}`, d));
+const ublockOriginNote = () => tr('settings.row.ublockOriginNote', UBLOCK_ORIGIN_NOTE);
 const UBLOCK_NAMES = { ublock: 'uBlock Origin Lite', 'ublock-origin': 'uBlock Origin' };
 
 const UBLOCK_ORIGIN_NOTE = 'uBlock Origin comes from its author’s GitHub releases (the Chrome Web Store no longer offers it): Lumen checks each download’s signature and looks for a new release once a day.';
@@ -8339,7 +8341,7 @@ return new Promise((resolve) => {
 const dlg = h('dialog', { class: 'confirm-dialog', id: 'ublock-confirm', 'aria-labelledby': 'ublock-confirm-title' },
 h('h3', { id: 'ublock-confirm-title', text: `Use ${name}?` }),
 h('p', { text: `Lumen installs it from ${from} and turns its own blocker off in normal windows; private windows keep Lumen’s. Do Not Track, Global Privacy Control, third-party cookie blocking, tracking-link cleanup, Safe Browsing and Focus mode keep working, with these differences:` }),
-h('ul', { id: 'ublock-confirm-list' }, UBLOCK_DIFFERENCES.map((d) => h('li', { text: d }))),
+h('ul', { id: 'ublock-confirm-list' }, ublockDifferences().map((d) => h('li', { text: d }))),
 h('p', { class: 'note', text: 'You can switch back here at any time: Lumen removes it and turns its own blocker on again.' }),
 h('form', { method: 'dialog', class: 'confirm-buttons' },
 h('button', { value: 'cancel', id: 'ublock-confirm-cancel', text: 'Cancel', autofocus: true }),
@@ -8409,7 +8411,7 @@ const versions = h('table', { id: 'about-versions' },
 h('tr', {}, h('th', { text: 'Component' }), h('th', { text: 'Version' })),
 [['Lumen', a.version], ['Electron', a.versions.electron], ['Chromium', a.versions.chrome], ['Node.js', a.versions.node], ['V8', a.versions.v8], ['Anthropic CLI (pinned)', a.cliPinned], ['OS', a.os]]
 .map(([k, v]) => h('tr', { 'data-component': k }, h('td', { text: k }), h('td', { class: 'mono', text: v }))));
-aboutPage.append(stackRow('Lumen', 'Every AI, one browser. Free software under the GPL-3.0 license.', versions));
+aboutPage.append(stackRow(tr('settings.row.lumen', 'Lumen'), tr('settings.row.everyAiOneBrowser', 'Every AI, one browser. Free software under the GPL-3.0 license.'), versions));
 
 const details = () => [...versions.querySelectorAll('tr[data-component]')].map((r) => `${r.cells[0].textContent}: ${r.cells[1].textContent}`).join('\n');
 const copyDetails = h('button', { id: 'about-copy', type: 'button', text: 'Copy version details', onclick: async () => {
@@ -8418,8 +8420,8 @@ setTimeout(() => { copyDetails.textContent = 'Copy version details'; }, 1600);
 } });
 const issues = 'https://github.com/emah-maker/lumen/issues';
 const report = h('a', { id: 'about-report', href: issues, text: 'Report a problem', onclick: (e) => { e.preventDefault(); S.openUrl(issues); } });
-aboutPage.append(row('Found a problem?', 'Copy the version details and include them in your report.', report, copyDetails));
-aboutPage.append(stackRow('Build', null, h('table', {},
+aboutPage.append(row(tr('settings.row.foundAProblem', 'Found a problem?'), tr('settings.row.copyTheVersionDetails', 'Copy the version details and include them in your report.'), report, copyDetails));
+aboutPage.append(stackRow(tr('settings.row.build', 'Build'), null, h('table', {},
 [['App', a.appPath], ['Executable', a.exePath], ['Profile', a.userData], ['Packaged', a.packaged ? 'Yes' : 'No (development)']]
 .map(([k, v]) => h('tr', {}, h('td', { text: k }), h('td', { class: 'mono', text: v }))))));
 
@@ -8432,7 +8434,7 @@ table.replaceChildren(h('tr', {}, h('th', { text: 'Process' }), h('th', { class:
 h('td', { text: p.name }), h('td', { class: 'num', text: bytes(p.memoryKB * 1024) }), h('td', { class: 'num', text: `${p.cpu}%` }), h('td', { class: 'num', text: p.pid }),
 h('td', {}, p.tabIds.length === 1 ? h('button', { text: 'Restart', title: 'End this tab’s process and reload it', onclick: async () => { await S.restartTab(p.tabIds[0]); setTimeout(render, 800); } }) : null))));
 };
-slots.get('task-manager').append(stackRow('Task manager', 'Every Lumen process, with memory (working set) and CPU.', table));
+slots.get('task-manager').append(stackRow(tr('settings.row.taskManager', 'Task manager'), tr('settings.row.everyLumenProcessWith', 'Every Lumen process, with memory (working set) and CPU.'), table));
 await render();
 
 
@@ -8453,19 +8455,19 @@ sync();
 
 async function buildInternals(card) {
 const data = await S.internals();
-card.append(stackRow('GPU features', data.hardwareAcceleration ? 'Graphics acceleration is on.' : 'Graphics acceleration is off (System settings).',
+card.append(stackRow(tr('settings.row.gpuFeatures', 'GPU features'), data.hardwareAcceleration ? 'Graphics acceleration is on.' : 'Graphics acceleration is off (System settings).',
 h('table', { id: 'gpu-status' }, Object.entries(data.gpuFeatures).map(([k, v]) => h('tr', {}, h('td', { text: k }), h('td', { class: /enabled/.test(v) ? 'ok' : 'note', text: v }))))));
 if (data.gpuDevices.length) {
-card.append(stackRow('GPU devices', null, h('table', {}, data.gpuDevices.map((d) => h('tr', {},
+card.append(stackRow(tr('settings.row.gpuDevices', 'GPU devices'), null, h('table', {}, data.gpuDevices.map((d) => h('tr', {},
 h('td', { class: 'mono', text: `vendor 0x${d.vendorId.toString(16)} · device 0x${d.deviceId.toString(16)}` }), h('td', { text: d.active ? 'Active' : '' }), h('td', { class: 'mono', text: d.driver }))))));
 }
 for (const s of data.sessions) {
-card.append(stackRow(`Session: ${s.name}`, null, h('table', { id: 'session-info' },
+card.append(stackRow(tr('settings.row.session', `Session: {name}`, { name: s.name }), null, h('table', { id: 'session-info' },
 [['Persistent', s.persistent ? 'Yes' : 'No'], ['Storage', s.storagePath || '(in memory)'], ['Cache', bytes(s.cacheBytes)], ['Cookies', s.cookies ?? '—'],
 ['Proxy for https://example.com', s.proxyForExample], ['Spell check', s.spellcheck ? 'On' : 'Off'], ['User agent', s.userAgent]]
 .map(([k, v]) => h('tr', {}, h('td', { text: k }), h('td', { class: 'mono', text: String(v) }))))));
 }
-if (data.commandLine.length) card.append(stackRow('Command-line switches', null, h('span', { class: 'mono', text: data.commandLine.join(' ') })));
+if (data.commandLine.length) card.append(stackRow(tr('settings.row.commandLineSwitches', 'Command-line switches'), null, h('span', { class: 'mono', text: data.commandLine.join(' ') })));
 }
 
 
