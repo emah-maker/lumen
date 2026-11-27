@@ -77,7 +77,7 @@ Polish in the same round:
 | **Task manager** | Settings → Advanced (every process, memory and CPU) | Shift+Esc window, end process | Same | Activity Monitor | Partial: no end process | Later | S |
 | **Fonts** | Font size and minimum font size | Plus font families | Same | Same | Partial | No: rarely changed | S |
 | **Media hub and autoplay** | — | Global media controls, autoplay settings | Media controls in the sidebar | Autoplay per site | Missing | Later: a small media button for tabs playing audio would fit the tab strip, which already shows audio | M |
-| **Profiles and guest mode** | One profile, plus private windows | Profiles, guest | Spaces with profiles | Profiles | Missing | Later: every store (settings, keys, history) would need a profile root | L |
+| **Profiles and guest mode** | Profiles (added): each its own folder and window, with a name, color and avatar; switch, add, edit, delete from ⋯ → Profiles or the toolbar; plus private windows | Profiles, guest | Spaces with profiles | Profiles | Partial: no guest mode | Guest mode: private windows cover most of it | S |
 | **Sync** | Through a folder in your own cloud drive, passphrase-encrypted: bookmarks, history, chats, widgets, settings | Google account | Arc account | iCloud | Have (no Lumen servers or accounts) | — | — |
 | **Split view** | Two tabs side by side: tab menu → Open in split view, or drop a tab on the page's right edge; draggable divider | Edge and Chrome split screen | Split view | — | Have | Not kept across restarts; two tabs only | — |
 | **Translation** | Your connected AI, Google Translate with consent, or on this device (Bergamot) | Built in | Built in | Built in, on device | Have | — | — |
@@ -90,9 +90,8 @@ Polish in the same round:
 The biggest gaps worth the work, roughly in order:
 
 1. **Media controls** for tabs playing audio (M).
-2. **Profiles** (L): when there's demand.
 
-Done: the **bookmarks bar** (added in 0.5.115).
+Done: the **bookmarks bar** (added in 0.5.115) and **profiles** (see [Profiles](profiles.md)).
 
 The error, history, bookmarks, downloads, reading list and reader pages and every Settings row take their wording from `src/locales/en.json`; `test/units/localized-pages-units.js` fails if English is typed back into them.
 
