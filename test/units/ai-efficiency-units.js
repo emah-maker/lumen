@@ -261,6 +261,47 @@ const size = (x) => JSON.stringify(x).length;
     check('step time: a call refused at its gate never ran, so it has no ms', outcomes[3].gated === true && outcomes[3].ms === undefined, JSON.stringify(outcomes[3]));
   }
 
+  // ---- [parallel tabs] calls that name different tabs run together; one tab, or the task's tab, keeps its order
+  {
+    const { runToolUses, toolLane, mayOverlap } = require('../../src/ai/loop-guard');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    // A trace of starts and ends; "acting" names here (video_frames, handle_dialog) are not reads, so before this change they ran one by one.
+    const trace = async (uses, laneOf = toolLane) => {
+      const log = [];
+      const out = await runToolUses(uses.map((u, i) => ({ ...u, id: `c${i}` })), {
+        laneOf,
+        gate: async (u) => { log.push(`gate:${u.id}`); },
+        exec: async (u) => { log.push(`start:${u.id}`); await wait(u.ms ?? 40); log.push(`end:${u.id}`); return u.id; },
+      });
+      return { log, out, before: (a, b) => log.indexOf(a) < log.indexOf(b) };
+    };
+    let t = await trace([{ name: 'video_frames', input: { tab_id: 1, at: ['0:01'] } }, { name: 'video_frames', input: { tab_id: 2, at: ['0:01'] } }]);
+    check('parallel tabs: acting calls on two different tab_ids run together', t.before('start:c1', 'end:c0') && t.out.every((o) => o.ok), t.log.join(' '));
+    t = await trace([{ name: 'video_frames', input: { tab_id: 1 } }, { name: 'handle_dialog', input: { tab_id: 1, accept: true } }]);
+    check('parallel tabs: two calls on the same tab keep their order', t.before('end:c0', 'start:c1'), t.log.join(' '));
+    t = await trace([{ name: 'video_frames', input: { tab_id: 1 } }, { name: 'video_frames', input: {} }]);
+    check('parallel tabs: a call with no tab_id waits for the call before it', t.before('end:c0', 'gate:c1'), t.log.join(' '));
+    t = await trace([{ name: 'click', input: {} }, { name: 'video_frames', input: { tab_id: 3 } }]);
+    check('parallel tabs: a call with a tab_id waits for an action in the task\'s tab before it', t.before('end:c0', 'start:c1'), t.log.join(' '));
+    t = await trace([{ name: 'handle_dialog', input: { tab_id: 4, accept: true } }, { name: 'screenshot', input: { tab_id: 5 } }, { name: 'get_console', input: { tab_id: 4 } }]);
+    check('parallel tabs: a read on another tab joins the acting call; a read on the acting call\'s own tab waits for it', t.before('start:c1', 'end:c0') && t.before('end:c0', 'start:c2'), t.log.join(' '));
+    t = await trace([{ name: 'video_frames', input: { tab_id: 1 } }, { name: 'read_page', input: {} }]);
+    check('parallel tabs: a read of the task\'s tab (no tab_id) waits for an acting call on a named tab (it may be the same tab)', t.before('end:c0', 'start:c1'), t.log.join(' '));
+    t = await trace([{ name: 'video_frames', input: { tab_id: 1 }, ms: 80 }, { name: 'video_frames', input: { tab_id: 2 }, ms: 10 }, { name: 'video_frames', input: { tab_id: 1 }, ms: 10 }]);
+    check('parallel tabs: results still come back in call order, and a later call on a busy tab waits for that tab', t.out.map((o) => o.value).join() === 'c0,c1,c2' && t.before('end:c0', 'start:c2'), t.log.join(' '));
+    check('parallel tabs: calls that move, close or regroup tabs, or act in the task\'s tab, have no lane', [
+      { name: 'switch_tab', input: { tab_id: 2 } }, { name: 'close_tab', input: { tab_id: 2 } }, { name: 'group_tabs', input: { tab_ids: [1, 2], name: 'x' } },
+      { name: 'click', input: { element_id: 3, tab_id: 2 } }, { name: 'screenshot', input: {} }, { name: 'screenshot', input: { tab_id: '2' } },
+    ].every((u) => toolLane(u) === null) && toolLane({ name: 'screenshot', input: { tab_id: 2 } }) === 2 && toolLane({ name: 'handle_dialog', input: { tab_id: 0 } }) === 0, '');
+    check('parallel tabs: overlap rules (reads always; an action with no tab never; named tabs when they differ)',
+      mayOverlap({ read: true, lane: null }, { read: true, lane: null }) && !mayOverlap({ read: false, lane: null }, { read: true, lane: 2 }) && !mayOverlap({ read: true, lane: null }, { read: false, lane: 2 })
+      && mayOverlap({ read: false, lane: 1 }, { read: false, lane: 2 }) && !mayOverlap({ read: false, lane: 1 }, { read: true, lane: 1 }), '');
+    const halted = await runToolUses([{ name: 'video_frames', input: { tab_id: 1 } }, { name: 'video_frames', input: { tab_id: 2 } }, { name: 'click', input: {} }].map((u, i) => ({ ...u, id: `h${i}` })), {
+      laneOf: toolLane, gate: async () => {}, exec: async (u) => { if (u.id === 'h0') throw new Error('closed'); await wait(20); return u.id; }, halts: (o) => o && o.ok === false,
+    });
+    check('parallel tabs: a halting outcome lets the call running beside it finish and skips the calls after the group', halted[0].ok === false && halted[1].ok && halted[2].skipped, JSON.stringify(halted));
+  }
+
   // ---- [agent cursors] the cursor script, for the lead AI and a helper, with what it does there; the screenshot's hide / show
   {
     const scripts = require('../../src/ai/page-scripts');
