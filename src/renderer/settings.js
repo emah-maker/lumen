@@ -3818,10 +3818,14 @@ const REMEMBER = 'lumen.settings.category';
 const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
 const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
+// (one pass for the sections that finish together: at once when the last pass is 100 ms old or more, else when it is, so the first section to
+// finish under a search is shown in the next task instead of always 100 ms later)
 let reshowTimer = 0;
-const reshowSoon = () => { if (!reshowTimer) reshowTimer = setTimeout(() => { reshowTimer = 0; show(); }, 100); }; // (one pass for the sections that finish together)
+let lastShow = 0;
+const reshowSoon = () => { if (!reshowTimer) reshowTimer = setTimeout(() => { reshowTimer = 0; show(); }, Math.max(0, 100 - (performance.now() - lastShow))); };
 let searchedBefore = false; // (rows keep their search marks until the next show() without a search clears them)
 function show() {
+  lastShow = performance.now();
   const SS = window.settingsSearch;
   const words = SS.parse(query());
   const searching = words.length > 0;
@@ -4161,6 +4165,20 @@ async function init() {
     allDone = true;
     document.body.dataset.ready = '1';
   })();
+  // [search speed] A search builds first the sections that can hold what it asks for: each page whose row in its list matches the words (its
+  // label, description and keywords: "proxy" is Network and proxy's) has its builders started at once, ahead of the one-by-one buildAll. A
+  // builder that makes its rows without waiting (Advanced's) has them in place before the search looks, so the answer is in the same frame.
+  const buildFor = (words) => {
+    if (allDone || !words.length) return;
+    const SS = window.settingsSearch;
+    const want = new Set();
+    for (const [id, slot] of slots) {
+      if (!slot.isSub || !slot.link || id.endsWith('~parent')) continue;
+      if (!SS.matchesAll(String(slot.link.dataset.search || ''), words)) continue;
+      for (const sid of neededBuilds({ cat: slot.cat, sub: id })) if (!started.has(sid)) want.add(sid);
+    }
+    for (const sid of want) buildOne(sid);
+  };
   // (AI model's builder also makes the sub-pages and rows other pages link to, so it always runs; the page's own builders run beside it)
   const wanted = guessView();
   const hash = location.hash.slice(1);
@@ -4172,7 +4190,7 @@ async function init() {
   document.addEventListener('contentvisibilityautostatechange', fitSoon, true); // (a list laid out now: its long descriptions get their Show more)
   document.fonts?.ready.then(fitDescs).catch(() => {});
   // Searching shows what is built at once and the rest as it finishes (see reshowSoon), so a search typed right after the page opens answers in one frame instead of waiting for every section.
-  $('search').addEventListener('input', () => { revealFolded(); show(); if (!allDone) buildAll().then(() => { if (searchedBefore) show(); }); });
+  $('search').addEventListener('input', () => { revealFolded(); buildFor(window.settingsSearch.parse(query())); show(); if (!allDone) buildAll().then(() => { if (searchedBefore) show(); }); });
   $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
   // Ctrl+F or "/" focuses search; Escape clears it.
   document.addEventListener('keydown', (e) => {
