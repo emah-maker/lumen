@@ -143,10 +143,14 @@ function createScreenshot(deps) {
     let covered = 0;
     try {
       for (const target of slicePlan(size.height, vh)) {
-        const actual = await wc.executeJavaScript(`new Promise((resolve) => { scrollTo({ left: ${sx}, top: ${Math.round(target)}, behavior: 'instant' }); const t = setTimeout(done, 150); function done() { clearTimeout(t); resolve(scrollY); } requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 40))); })`);
-        if (target === 0) { /* the first slice keeps fixed and sticky parts */ } else {
-          await wc.executeJavaScript(`(() => { if (window.${SHOT_HIDE}) return; const keep = []; const w = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT); let n = 0; while (w.nextNode() && n++ < 30000) { const e = w.currentNode; const p = getComputedStyle(e).position; if (p === 'fixed' || p === 'sticky') { keep.push([e, e.style.getPropertyValue('visibility'), e.style.getPropertyPriority('visibility')]); e.style.setProperty('visibility', 'hidden', 'important'); } } window.${SHOT_HIDE} = keep; })()`);
-        }
+        // The first slice keeps fixed and sticky parts; the later ones hide them (once), in the same task as the scroll, so the paint
+        // waited for below shows both. (Hidden after that wait, the capture could come before the hiding was painted: a fixed
+        // header drawn twice in the sewn page.)
+        const hide = target === 0 ? '' : `if (!window.${SHOT_HIDE}) { const keep = []; const w = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT); let n = 0; while (w.nextNode() && n++ < 30000) { const e = w.currentNode; const p = getComputedStyle(e).position; if (p === 'fixed' || p === 'sticky') { keep.push([e, e.style.getPropertyValue('visibility'), e.style.getPropertyPriority('visibility')]); e.style.setProperty('visibility', 'hidden', 'important'); } } window.${SHOT_HIDE} = keep; }`;
+        // Painted: two frames after the change (a page being drawn), or 150 ms for a page that is not drawn (no frames come; the capture draws it).
+        // (The 150 ms used to race the frames on every page: on a busy computer the slice was taken before the change was drawn. The 3 s only keeps a
+        // page that stops drawing from holding the screenshot.)
+        const actual = await wc.executeJavaScript(`new Promise((resolve) => { ${hide} scrollTo({ left: ${sx}, top: ${Math.round(target)}, behavior: 'instant' }); const t = setTimeout(done, document.visibilityState === 'hidden' ? 150 : 3000); function done() { clearTimeout(t); resolve(scrollY); } requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 40))); })`);
         const img = (await captureVisible(ctx)).image;
         const { width: iw, height: ih } = img.getSize();
         if (iw < outW || Math.abs(ih / vh - rowScale) > 0.02) throw new Error('the window changed size');

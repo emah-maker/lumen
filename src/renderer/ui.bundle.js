@@ -4265,15 +4265,31 @@ if (mission) mission.dataset.shortcut = navigator.platform.startsWith('Mac') ? '
 const messages = $('messages');
 
 
+
+
 let stepUILoad = null;
+let stepUILoading = false;
 function loadStepUI() {
 if (window.stepUI) { window.stepUI.init(messages); return Promise.resolve(); }
 if (stepUILoad) return stepUILoad;
 const head = document.head;
 head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
 const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('card-items.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages));
+stepUILoading = true;
+stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('card-items.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)).finally(() => { stepUILoading = false; });
 return stepUILoad;
+}
+
+
+const CARD_EVENTS = new Set(['tool', 'tool_update', 'tool_done', 'thumb', 'desktop_card', 'card_files', 'helper', 'agent', 'skill', 'review']);
+function holdForStepUI(t0, event) {
+t0.held = [event];
+stepUILoad.catch(() => {}).then(() => {
+const held = t0.held || [];
+t0.held = null;
+if (turn !== t0) return;
+for (const ev of held) { try { onAgentEvent(ev); } catch (err) { console.error('[step ui]', err); } }
+});
 }
 if (window.stepUI) window.stepUI.init(messages);
 function plainStep(event, label) {
@@ -5695,6 +5711,7 @@ return;
 const late = finishedTurn(event.runId);
 if (late && /^(card_files|thumb|helper|agent|skill|review|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
 if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
+if (stepUILoading && !window.stepUI && CARD_EVENTS.has(event.type)) { holdForStepUI(turn, event); return; }
 if (event.chatId && !shownChatId) nameChat(event.chatId);
 
 if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; }
