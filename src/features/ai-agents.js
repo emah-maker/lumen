@@ -198,7 +198,13 @@ function setupAiAgents(deps) {
   // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
   // take effect without a restart. Cheap when repeated.)
   // (And, with Keep Grok Build connected on, the chat's own Grok Build process: warmGrokChat.)
-  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { pokeGrokWarmup(); } catch {} try { warmGrokChat(); } catch {} try { warmCodexChat(); } catch {} });
+  // (And, for a chat on an API model, a connection to its provider: ai/api-preconnect.js.)
+  let preconnect = null;
+  const warmApi = () => {
+    preconnect ||= require('../ai/api-preconnect').createPreconnect({ session: require('electron').session?.defaultSession, hasKey: (p) => Boolean(agent.getKey?.(p)) });
+    preconnect.warm(agent.messages?.settings?.model);
+  };
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { warmApi(); } catch {} try { pokeGrokWarmup(); } catch {} try { warmGrokChat(); } catch {} try { warmCodexChat(); } catch {} });
   // Every Claude Code engine: the sidebar's, each chat's own, the background and side ones.
   const ccEngines = () => [claudeCode, codex, ...warmChats.engines(), ...bgEngines, ...sideEngines].filter((e) => e && typeof e.purgeDirs === 'function');
   app.on?.('will-quit', () => {

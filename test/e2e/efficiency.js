@@ -48,6 +48,14 @@ const AGENT = path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js');
   const landed = await run('navigate', { url: site });
   check('navigate returns the head of the page (no read_page needed)', landed.includes('Loaded ') && landed.includes('Shop') && landed.includes('Checkout') && landed.length < 1200, landed);
   check('navigate read:false returns just the load line', !(await run('navigate', { url: site, read: false })).includes('Checkout'), '');
+  // [fewer round trips] A click that lands on another page returns that page's head, as navigate does; observe's diff is not doubled.
+  const clicked = await run('click', { text: 'Deals' });
+  check('click onto another page returns its head (no read_page needed)', clicked.startsWith('Clicked element') && /Page is now \S+\/b\./.test(clicked) && (clicked.split('Page is now')[1] || '').includes('Checkout') && clicked.length < 1600, clicked);
+  const stayed = await run('click', { text: 'Apply coupon' });
+  check('a click that stays on the page adds no head', !stayed.includes('Checkout') && !stayed.includes('Page is now'), stayed);
+  const observed = await run('click', { text: 'Home', observe: true });
+  check('click with observe: its diff only, no head on top', /\/a\b/.test(observed) && (observed.match(/<untrusted_page_content/g) || []).length <= 1, observed);
+  await run('navigate', { url: site, read: false });
   const compact = await run('read_page', { mode: 'compact' });
   check('compact: headings, landmarks, inline links', compact.includes('# Checkout') && compact.includes('[nav: Main]') && /\[\d+\]Contact us/.test(compact), compact);
   check('compact: controls with refs', /\[\d+\] textbox "Name"/.test(compact) && /\[\d+\] select "Size" = "Small"/.test(compact) && /\[\d+\] checkbox "Gift wrap"/.test(compact), compact);
