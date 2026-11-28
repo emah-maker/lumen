@@ -33,6 +33,17 @@ function loginRedirect(requested, landed) {
   return looksLogin(b) && !looksLogin(a);
 }
 
+// A read of a deeper page on a site that landed on that site's front page instead (x.com/home -> https://x.com/ since
+// late 2026): on its own that is often just a moved page, so it is a wall only when the short front page it landed on
+// asks the reader to sign in (AUTH_PROMPT, checked in classifyPage).
+const AUTH_PROMPT = /continue with (phone|google|apple|email|microsoft|facebook)|email or (username|phone)|phone, email,? or username|create (an |your )?account|(sign|log) ?in to |don'?t have an account|already have an account|join today|sign up (with|for)/i;
+function homeBounce(requested, landed) {
+  let a; let b;
+  try { a = new URL(requested); b = new URL(landed); } catch { return false; }
+  const site = (h) => h.replace(/^www\./i, '').toLowerCase();
+  return site(a.host) === site(b.host) && a.pathname.replace(/\/+$/, '') !== '' && b.pathname === '/';
+}
+
 function classifyPage(sig = {}) {
   const textLen = Number(sig.textLen) || 0;
   const head = String(sig.textHead || '').slice(0, 3000);
@@ -44,6 +55,7 @@ function classifyPage(sig = {}) {
   // Walls are short: a long article that mentions "subscribe to continue" in a footer is still an article.
   if (textLen < 4000) {
     if (sig.loginRedirect) return { kind: 'wall', reason: 'sign-in' };
+    if (sig.homeBounce && textLen < 1500 && AUTH_PROMPT.test(both)) return { kind: 'wall', reason: 'sign-in' };
     if ((sig.hasCaptcha && textLen < 1500) || BOT.test(both)) return { kind: 'wall', reason: 'bot check' };
     if (CONSENT.test(both) && textLen < 1500) return { kind: 'wall', reason: 'consent' };
     if (PAYWALL.test(both) && textLen < 2500) return { kind: 'wall', reason: 'paywall' };
@@ -261,4 +273,4 @@ function slicePage(text, { maxChars, offset } = {}) {
   return { text: text.slice(from, to), from, to, total, more, note };
 }
 
-module.exports = { classifyPage, loginRedirect, healthLine, compactJson, extractAssignedJson, jsonLdEntities, formatStructured, summarizeStructured, unwrapIsland, slicePage, clampChars, MAX_CHARS_DEFAULT };
+module.exports = { classifyPage, loginRedirect, homeBounce,healthLine, compactJson, extractAssignedJson, jsonLdEntities, formatStructured, summarizeStructured, unwrapIsland, slicePage, clampChars, MAX_CHARS_DEFAULT };
