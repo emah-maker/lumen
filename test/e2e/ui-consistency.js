@@ -27,7 +27,7 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
 
 // ---------- 1. lint ----------
 // Files whose look was brought onto the scale. (Chat-page internals, the TradingView card and the generated bundle are left out.)
-const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css', 'prefs.css', 'routines.css', 'settings.css', 'settings-skills.css', 'settings-macros.css', 'settings-routines.css', 'pdfviewer.css', 'eml.css', 'private.css', 'notes.css', 'meeting.css'];
+const SCALED = ['styles.css', 'extras.css', 'managers.css', 'picker.css', 'slash.css', 'tab-search.css', 'tasks-loader.css', 'tasks.css', 'research.css', 'macros.css', 'translate.css', 'prefs.css', 'routines.css', 'settings.css', 'settings-skills.css', 'settings-macros.css', 'settings-routines.css', 'pdfviewer.css', 'eml.css', 'private.css', 'notes.css', 'meeting.css'];
 // The popups (suggestions, downloads panel, dialogs, print preview, drag card, tool overlay) can't link tokens.css under their CSP, so they
 // keep a small palette of their own, but their radii and type sizes sit on the same scale.
 const POPUPS = ['newtab.html', 'error.html', 'unloaded.html', 'suggest.html', 'downloads-panel.html', 'dialog.html', 'print-preview.html', 'drag-card.html', 'tool-overlay.html'];
@@ -86,7 +86,7 @@ const lines = (f) => read(f).split('\n').map((text, i) => ({ text, n: i + 1 }));
   check('paddings, margins and gaps sit on the spacing scale (2 4 6 8 10 12 16 20 24 28 32 40 48)', offScale.length === 0, `${offScale.length}: ${offScale.slice(0, 8).join(' | ')}`);
   // A 1 px nudge in the files that link tokens.css is var(--sp-px), so it reads as meant (a gap between siblings is never 1 px).
   const rawPx = [];
-  for (const f of ['styles.css', 'step-ui.css', 'chat-actions.css', 'chats.css', 'chat-page.css', 'settings.css', 'managers.css', 'extras.css', 'picker.css', 'slash.css', 'tasks.css']) {
+  for (const f of ['styles.css', 'step-ui.css', 'chat-actions.css', 'chats.css', 'chat-page.css', 'settings.css', 'managers.css', 'extras.css', 'picker.css', 'slash.css', 'tasks-loader.css', 'tasks.css']) {
     for (const { text, n } of lines(f)) {
       if (/off-scale:|sr-only|clip:/.test(text)) continue; // (the visually-hidden pattern's 1 px box is not spacing)
       for (const m of text.replace(/\/\*.*?\*\//g, '').matchAll(/(?<![\w-])(?:padding|margin|(?:row-|column-)?gap)(?:-[a-z]+)?\s*:\s*([^;}"]+)/g)) {

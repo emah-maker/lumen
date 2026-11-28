@@ -515,7 +515,9 @@ const src = (file) => fs.readFileSync(path.join(__dirname, '..', '..', file), 'u
     check('every research.* string the panel uses is in en.json', keys.length > 20 && keys.every((k) => typeof locale[k] === 'string'), keys.filter((k) => typeof locale[k] !== 'string').join());
     check('chip ids all have a translation', Object.keys(locale).filter((k) => k.startsWith('research.chip.type.')).length === Object.keys(quality.KIND_LABEL).length && Object.keys(quality.KIND_LABEL).every((k) => locale[`research.chip.type.${k}`]));
     check('tool step labels exist for both tools', ['tool.find_sources', 'tool.find_sources.related', 'tool.research_board.add', 'tool.research_board.quote', 'tool.research_board.cite'].every((k) => locale[k]) && /find_sources: \(i\) =>/.test(src('src/renderer/chat-core.js')));
-    check('index.html and the bundles include the panel (regenerated)', /id="research-panel"/.test(src('src/renderer/index.html')) && /const api = window\.assistant\?\.research;/.test(src('src/renderer/ui.bundle.js')) && /\.rs-chip\.bad/.test(src('src/renderer/ui.bundle.css')));
+    // (research.js and .css are not in the startup bundle: tasks-loader.js stands in and loads them in an idle moment or on first use)
+    const bundleJs = src('src/renderer/ui.bundle.js');
+    check('index.html has the panel; the bundle has its stand-in and loads research.js and .css later, not at startup (regenerated)', /id="research-panel"/.test(src('src/renderer/index.html')) && /later\('research\.css', 'research\.js'\)/.test(bundleJs) && /window\.researchUi = \{\s*decorate:/.test(bundleJs) && !/const api = window\.assistant\?\.research;/.test(bundleJs) && !/\.rs-chip\.bad/.test(src('src/renderer/ui.bundle.css')) && /\.rs-chip\.bad/.test(src('src/renderer/research.css')));
     // the markdown a /research answer uses
     const md = require('../../src/renderer/markdown.js');
     const html = md.render('Sleep loss hurts memory [[1]](https://x.org/p#:~:text=reduces%20memory) and [[12]](https://y.org/a.pdf#page=4).\n\n```sources\n[1] Smith (2020). Sleep.\n```');

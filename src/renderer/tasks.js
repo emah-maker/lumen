@@ -1,7 +1,8 @@
 // The sidebar's Tasks panel: background tasks the AI does on its own (features/background-runner.js).
 // A list with status dots, a detail view (steps, result, approval cards), the "Run in the background?"
 // confirmation card, the composer's background button and the /background and /watch commands, and the
-// toast banner for a finished task. Loaded after chat-core.js and app.js (same page). The panel's Routines
+// toast banner for a finished task. Loaded by tasks-loader.js (in an idle moment after start, or on first use; it stands in
+// until then), after chat-core.js and app.js (same page). The panel's Routines
 // view, and a routine's editor and history, are renderer/routines.js (window.lumenRoutines).
 
 (() => {
@@ -520,8 +521,9 @@
   // ---- entry points
   sendBg.onclick = () => openCreate({ prompt: composerInput.value.trim(), fromComposer: true });
   composerInput.addEventListener('input', updateSendBg);
-  // /background <request> and /watch <address> <what to watch for>: caught before the chat sends them.
-  byId('composer').addEventListener('submit', (e) => {
+  // /background <request> and /watch <address> <what to watch for>: caught before the chat sends them. (tasks-loader.js listens on the
+  // composer from startup, ahead of slash.js's "/" menu, and hands each submit here once this file is loaded)
+  function onSubmit(e) {
     const text = composerInput.value.trim();
     const bgCmd = /^\/background\s+([\s\S]+)/i.exec(text);
     const watchCmd = /^\/watch(?:\s+(\S+))?(?:\s+([\s\S]+))?$/i.exec(text);
@@ -534,7 +536,7 @@
     composerInput.dispatchEvent(new Event('input'));
     if (bgCmd) openCreate({ prompt: bgCmd[1].trim() });
     else openCreate({ watchUrl: /^[a-z][a-z0-9+.-]*:\/\//i.test(watchCmd[1] || '') ? watchCmd[1] : (watchCmd[1] ? `https://${watchCmd[1]}` : ''), condition: (watchCmd[2] || '').trim() });
-  }, true);
+  }
 
   button.onclick = () => (panel.hidden ? openPanel() : closePanel(true));
   panel.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !creating) { e.preventDefault(); if (open) { open = null; render(); } else closePanel(true); } });
@@ -548,7 +550,7 @@
   window.lumenTasks = {
     api, h, btn, iconBtn, clock, ago, statusText, showSidebar, refresh, closePanel,
     state: () => state,
-    openPanel,
+    openPanel, openCreate, toast, submit: onSubmit,
     openTask: (id) => { open = id; return render(); },
     announce: (text) => { live.textContent = text; },
   };

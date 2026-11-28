@@ -1,12 +1,6 @@
 /* The sidebar's Research board and the Sources list in an answer (renderer/research.js). Built on the chat list panel (chats.css) and
    the theme variables, so light and dark follow the rest of the UI. */
 
-#research-btn { position: relative; }
-#research-btn.active { color: var(--accent); background: var(--accent-soft); }
-.research-badge {
-  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 var(--sp-2); border-radius: var(--r-sm);
-  background: var(--accent-deep); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
-}
 .research-panel { z-index: var(--z-panel-over); }
 
 .rs-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); padding: var(--sp-1) var(--sp-6) var(--sp-4) var(--sp-10); }
