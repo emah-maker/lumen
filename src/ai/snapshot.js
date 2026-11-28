@@ -864,7 +864,7 @@ async function batch(agent, wc, input, h) {
 async function execute(agent, name, input, h) {
   reads.tick(name);
   if (name === 'read_page' && (input.mode === 'compact' || input.since_last)) return compact(agent, agent.requireTab(), input, h, { dedupe: true });
-  if (name === 'read_page' && input.mode === 'outline') return pageReading.readOutline((code, ms) => h.runScript(agent.requireTab(), code, ms)); // headings, links by region, next page (page-outline.js)
+  if (name === 'read_page' && input.mode === 'outline') { const wc = agent.requireTab(); return pageReading.readOutline((code, ms) => h.runScript(wc, code, ms), { requested: h.askedFor ? h.askedFor(wc) : '' }); } // headings, links by region, next page (page-outline.js)
   if (name === 'read_page' && input.extract === 'tables') {
     const wc = agent.requireTab();
     const r = await h.runScript(wc, serialize(extractTables, { selector: input.selector ? String(input.selector) : '' }), 25000);

@@ -635,8 +635,22 @@ async function startingChecks(check) {
     const ready = await e.read();
     check(`${type} card: once the page is ready the card is not "Starting…" and goes back to the usual refresh`, ready.reason === '' && MCF.startingRefreshMs({ type, data: ready }) === 0 && MCF.startingRefreshMs({ type: 'weather', data: { mode: 'status', reason: 'loading' } }) === 0 && MCF.startingRefreshMs({ type, data: { ...hidden, mode: 'api' } }) === 0 && MCF.startingRefreshMs(null) === 0, JSON.stringify(ready.reason));
   }
+  // A page never in front (the spare new-tab page: main sends it no new data, and Chromium calls it visible) stops the quick asks after
+  // STARTING_TRIES; new data from main starts the count again. Live run 2026-11-27: the spare asked every 3-6 s for a whole minute.
+  {
+    const w = { id: 'w1', type: 'spotify', data: { mode: 'status', reason: 'loading' }, updated: 5 };
+    let tried = null;
+    let asks = 0;
+    for (let i = 0; i < 100 && typeof MCF.startingTried === 'function' && MCF.startingRefreshMs(w, tried) > 0; i++) { tried = MCF.startingTried(tried, w); asks++; }
+    check('"Starting…" card on a page main sends nothing new (the spare page): the quick asks stop after STARTING_TRIES', asks > 0 && asks === MCF.STARTING_TRIES && MCF.STARTING_TRIES <= 12, String(asks));
+    check('…and new data from main (a later "updated") asks quickly again', Boolean(tried) && MCF.startingRefreshMs({ ...w, updated: 6 }, tried) === MCF.STARTING_REFRESH_MS && MCF.startingTried(tried, { ...w, updated: 6 }).n === 1, JSON.stringify(tried));
+  }
   const src = fs.readFileSync(path.join(__dirname, '../../src/renderer/newtab-widgets.js'), 'utf8');
-  check('new-tab page: the refresh tick uses the short "Starting…" retry and arms a timer for it (the minute tick alone left the card on Starting… after the page came to the front)', /MusicCardFeatures\.startingRefreshMs\(w\)/.test(src) && /function armStarting\(/.test(src) && /armStarting\(\)/.test(src.slice(src.indexOf('lastList.current = valid'))), '');
+  const mainSrc = fs.readFileSync(path.join(__dirname, '../../src/main.js'), 'utf8');
+  const makeSpare = mainSrc.slice(mainSrc.indexOf('function makeSpareNewTab('), mainSrc.indexOf('function makeSpareNewTab(') + 3000);
+  check('spare new-tab page: its own navigations (a card timer\'s ?widget=… ask) are cancelled until it is a tab (they reloaded it every 3 s), and the handler goes when it is taken', /view\.webContents\.on\('will-navigate', hold\)/.test(makeSpare) && /removeListener\('will-navigate', s\.hold\)/.test(mainSrc), '');
+  check('spare new-tab page: when it becomes a tab main tells it (newtabTaken) and its cards may ask quickly again', /executeJavaScript\('window\.newtabTaken\?\.\(\)'/.test(mainSrc) && /window\.newtabTaken = \(\) => \{ startingAsks\.clear\(\);/.test(src), '');
+  check('new-tab page: the refresh tick uses the short "Starting…" retry, counted per data main sent, and arms a timer for it (the minute tick alone left the card on Starting… after the page came to the front)', /MusicCardFeatures\.startingRefreshMs\(w, startingAsks\.get\(w\.id\)\)/.test(src) && /MusicCardFeatures\.startingTried\(/.test(src) &&/function armStarting\(/.test(src) && /armStarting\(\)/.test(src.slice(src.indexOf('lastList.current = valid'))), '');
 }
 
 module.exports = async function musicCardFeaturesUnits(check) {

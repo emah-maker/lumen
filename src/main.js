@@ -3029,7 +3029,12 @@ function makeSpareNewTab() {
   const view = new WebContentsView({ webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, ...prefs } });
   try { view.setBounds({ x: 0, y: 0, ...(withWindow(curRec, () => ({ width: pageWidth(), height: newTabArea().height })) || { width: 1200, height: 800 }) }); } catch {} // laid out at a tab's size, not 0×0 (the page area's width with the sidebar closed: a new tab opened beside the sidebar keeps that layout)
   try { view.setBackgroundColor(pageBackground()); } catch {} // (taken while still loading: the theme's color, not white)
-  const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now() };
+  // Until it is a tab (openTab's will-navigate handles a tab's widget buttons and Ask AI), the page's own navigations are cancelled: a card's
+  // timer (widgetAct: a "Starting Spotify…" re-ask, a warm-up) loads the page itself with ?widget=…, which reloaded the spare every 3 s
+  // (live run 2026-11-27) and lost what it asked. Nothing on a page nobody sees needs doing: the tab it becomes asks again.
+  const hold = (event) => event.preventDefault();
+  view.webContents.on('will-navigate', hold);
+  const s = { view, prefs: JSON.stringify(prefs), ready: false, at: Date.now(), hold };
   view.webContents.once('did-finish-load', () => { s.ready = true; });
   // A spare whose renderer died (out of memory, killed) is replaced shortly, not found dead at the next Ctrl+T.
   view.webContents.once('render-process-gone', () => { if (spareNewTab === s) { closeSpareNewTab(); setTimeout(makeSpareNewTab, 2000).unref?.(); } });
@@ -3061,6 +3066,7 @@ function takeSpareNewTab() {
   spareNewTab = null;
   const fresh = !s.view.webContents.isDestroyed() && !s.view.webContents.isCrashed() && s.prefs === JSON.stringify(settingsBackend.tabWebPreferences(false)); // (no age limit: its data comes with the tab)
   if (!fresh) { try { s.view.webContents.close(); } catch {} return null; }
+  s.view.webContents.removeListener('will-navigate', s.hold); // (a tab now: its own will-navigate handler takes over)
   return { view: s.view, ready: s.ready };
 }
 // The next one is made right away: Ctrl+T pressed again a moment later finds
@@ -3284,6 +3290,9 @@ function openTab(url = newTabUrl(), { background = false, openerId = null, group
       // (activeId read inside the tab's own window: with another window current, the check failed and the page stayed hidden.)
       .finally(() => { tab.spareFilling = false; if (alive(tab)) withWindow(tab.rec, () => { if (tab.id === activeId) layout(); }); });
   }
+  // The page is a tab now (it can't tell: a spare is never document.hidden): a card that gave up its quick "Starting…" re-asks while it
+  // was the spare starts them again (newtab-widgets.js). Not awaited: the tab is shown without it.
+  if (spare) wc.executeJavaScript('window.newtabTaken?.()', true).catch(() => {});
 
   if (openerId) tabGroups.joinOpener(tab, tabs.find((t) => t.id === openerId));
   else if (groupId) tabGroups.add(id, groupId);

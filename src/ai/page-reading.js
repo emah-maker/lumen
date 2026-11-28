@@ -174,12 +174,35 @@ function finishRead(raw, { maxChars, offset, requested = '' } = {}) {
   return { title: raw.title, text: parts.join('\n\n'), health: verdict.kind, article };
 }
 
+// The redirect signals for a page the AI asked for at `requested` and is on at `landed` (a sign-in page, or the site's front page:
+// page-health.js loginRedirect / homeBounce). Nothing without both addresses.
+function bounce(requested, landed) {
+  const both = Boolean(requested && landed);
+  return { loginRedirect: both && health.loginRedirect(requested, landed), homeBounce: both && health.homeBounce(requested, landed) };
+}
+
+// navigate's own answer: the wall line when the page asked for at `requested` landed on a sign-in page, or on the site's front page asking
+// to sign in (x.com/home signed out -> x.com/), else ''. The page is only looked at when the address moved that way.
+async function landedWall(requested, landed, runScript) {
+  const b = bounce(requested, landed);
+  if (!b.loginRedirect && !b.homeBounce) return '';
+  const [page, probe] = await Promise.all([
+    runScript(`({ title: document.title, text: document.body ? document.body.innerText.slice(0, 3000) : '', textLen: document.body ? document.body.innerText.length : 0 })`),
+    runScript(probeScript(false)).catch(() => ({})),
+  ]).catch(() => [null, null]);
+  if (!page) return '';
+  const verdict = health.classifyPage({ ...(probe || {}), title: page.title, textHead: page.text, textLen: page.textLen, ...b });
+  return verdict.kind === 'wall' ? health.healthLine(verdict) : '';
+}
+
 // read_page's full read of the active tab: the extra lines (health, and structured data for a shell page or when
 // asked for) to put in front of the page text, '' for an ordinary page. Runs the probe through `runScript`.
-async function fullReadExtras(page, runScript, { structured = false } = {}) {
+// requested / landed: the address navigate asked for and the one the tab is on (agent.js askedFor), so x.com/home sent to x.com's
+// sign-in front page is a wall here too, not only in read_urls.
+async function fullReadExtras(page, runScript, { structured = false, requested = '', landed = '' } = {}) {
   let probe = await runScript(probeScript(false)).catch(() => null);
   if (!probe) return '';
-  const verdict = health.classifyPage({ ...probe, title: page.title, textHead: page.text.slice(0, 3000), textLen: page.totalTextChars });
+  const verdict = health.classifyPage({ ...probe, title: page.title, textHead: page.text.slice(0, 3000), textLen: page.totalTextChars, ...bounce(requested, landed || page.url) });
   const shell = verdict.kind === 'js_shell' || verdict.kind === 'data_shell';
   const lines = [health.healthLine(verdict)];
   if (shell || structured) {
@@ -202,10 +225,10 @@ function outlineScript() {
   })()`;
 }
 
-async function readOutline(runScript) {
+async function readOutline(runScript, { requested = '' } = {}) {
   const [page, probe] = await Promise.all([runScript(outlineScript(), 15000), runScript(probeScript(true), 15000).catch(() => ({}))]);
-  const verdict = health.classifyPage({ ...probe, title: page.title, textHead: page.text, textLen: page.textLen });
+  const verdict = health.classifyPage({ ...probe, title: page.title, textHead: page.text, textLen: page.textLen, ...bounce(requested, page.url) });
   return formatOutline(page.outline, { title: page.title, url: page.url, healthLine: health.healthLine(verdict), structured: (() => { const s = health.summarizeStructured(probe); return s ? `Structured data: ${s}` : ''; })() });
 }
 
-module.exports = { runIn, readBackground, finishRead, fullReadExtras, readOutline, probeScript, outlineScript, backgroundReadScript, pageProbe, ISLAND_GLOBALS };
+module.exports = { runIn, readBackground, finishRead, fullReadExtras, readOutline, landedWall, probeScript, outlineScript, backgroundReadScript, pageProbe, ISLAND_GLOBALS };

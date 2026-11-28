@@ -74,13 +74,23 @@ function nextRepeat(mode, modes = ['off', 'all', 'one']) {
 // The engine card's "Starting Spotify…" / "Starting Apple Music…" (the engine said reason 'loading'): how soon a visible new-tab page asks
 // again, 0 for any other card or state. A page that was not in front asked with wake:false (main.js engineFacade), which starts nothing, so
 // the visible page has to ask again itself; at the usual 45 s refresh the card sat on "Starting…" long after the page came to the front.
+// `tried` (startingTried): the quick asks made since this card's data last came from main. A page that is never in front (the spare
+// new-tab page: main never sends it new data, and Chromium says it is visible) would otherwise ask every 3 s for as long as it exists,
+// each ask making main refresh the card and redraw every open new tab. After STARTING_TRIES asks with no new data it waits for the usual
+// refresh; new data (main answered: the page is a tab now, or the engine moved on) starts the count again.
 const STARTING_REFRESH_MS = 3000;
-function startingRefreshMs(w) {
+const STARTING_TRIES = 10;
+function startingRefreshMs(w, tried = null) {
   const d = w && w.data;
-  return w && (w.type === 'spotify' || w.type === 'applemusic') && d && d.mode === 'status' && d.reason === 'loading' ? STARTING_REFRESH_MS : 0;
+  if (!(w && (w.type === 'spotify' || w.type === 'applemusic') && d && d.mode === 'status' && d.reason === 'loading')) return 0;
+  return tried && tried.updated === w.updated && tried.n >= STARTING_TRIES ? 0 : STARTING_REFRESH_MS;
+}
+// The count after one more quick ask for card `w` (`tried`: the count before, or null).
+function startingTried(tried, w) {
+  return tried && tried.updated === w.updated ? { updated: w.updated, n: tried.n + 1 } : { updated: w.updated, n: 1 };
 }
 
-const api = { TIERS, TIER_MIN, FEATURES, ENGINES, tierOf, featuresAt, engineOf, caps, shown, nextRepeat, startingRefreshMs, STARTING_REFRESH_MS };
+const api = { TIERS, TIER_MIN, FEATURES, ENGINES, tierOf, featuresAt, engineOf, caps, shown, nextRepeat, startingRefreshMs, startingTried, STARTING_REFRESH_MS, STARTING_TRIES };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.MusicCardFeatures = api;
 })();
