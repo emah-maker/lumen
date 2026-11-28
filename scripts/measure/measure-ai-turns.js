@@ -4,8 +4,9 @@
 //   node scripts/measure/measure-ai-turns.js [--runs=5] [--app=<folder>] [--only=navigate]
 // Run it under the e2e lock: node scripts/test/e2e-lock.js run --owner measure -- node scripts/measure/measure-ai-turns.js
 // Pages: /plain/N (a small page), /redirect/N (302 to /plain/N), /jsredirect/N (location.replace at parse), /spa/N (an app shell that
-// draws its text 150 ms after load and pushes a route), /slow/N (answers after 300 ms), /heavy/N (text and an image that takes 400 ms: interactive may read it before the image), /shell/N (little text and an image that takes 400 ms: dom-ready long before load).
+// draws its text 150 ms after load and pushes a route), /slow/N (answers after 300 ms), /heavy/N (text and an image that takes 400 ms: wait "interactive" is meant to return before the image, but Electron's executeJavaScript* run only once the page stops loading, so it can't yet), /shell/N (little text and an image that takes 400 ms: dom-ready long before load).
 require('../../test/helpers/_tmp-cleanup');
+/* global document */ // (the ui.evaluate callbacks run in the browser window)
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
 const path = require('path');
