@@ -79,6 +79,15 @@
         }
         grid.append(box);
       }
+      // [about you] demographic (EEO) questions: what the AI and automations do with gender, race or ethnicity, veteran and disability
+      const demo = el('fieldset', { className: 'pab-group' }, el('legend', { textContent: tr('about.demographics', 'Demographic questions') }));
+      const pick = el('select', { className: 'pjp-input pab-input' });
+      pick.dataset.key = 'demographics';
+      for (const [v, label] of [['saved', tr('about.demographics.saved', 'Use my saved answers')], ['decline', tr('about.demographics.decline', 'Choose “Decline to self-identify”')], ['ask', tr('about.demographics.ask', 'Ask me')]]) pick.append(el('option', { value: v, textContent: label, selected: about.demographics === v }));
+      pick.addEventListener('change', () => send({ demographics: pick.value }));
+      demo.append(el('label', { className: 'pab-field' }, el('span', { textContent: tr('about.demographics.label', 'Gender, race or ethnicity, veteran, disability') }), pick),
+        el('p', { className: 'pjp-note', textContent: tr('about.demographics.tip', 'The AI never picks these for you. Saved answers are the ones in Saved answers below.') }));
+      grid.append(demo);
       c.append(grid);
       return c;
     }

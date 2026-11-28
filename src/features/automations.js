@@ -201,6 +201,12 @@ const PROFILE_KEYS = PROFILE_FIELDS.map((f) => f.key);
 // Questions only ever answered from an answer the user saved for that question: never from the boxes above, never guessed.
 const SENSITIVE = /gender|\bsex\b|\brace\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|date of birth|birth ?date|\bage\b|social security|\bssn\b|salary|compensation|pay expectation|criminal|convict/;
 const SECRET = /pass(word|wd|code|phrase)|one.?time|\botp\b|verification code|card.?(number|num)|cvv|cvc|security code|iban|routing|account number/;
+// [about you] Demographic (EEO) questions follow the profile's choice (features/project-about.js): 'saved' (a saved answer, else the user),
+// 'decline' (the form's "Decline to self-identify" / "Prefer not to say" option), 'ask' (always the user's).
+const DEMOGRAPHIC = /gender|\bsex\b|\brace\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun/;
+const DEMOGRAPHICS = ['saved', 'decline', 'ask'];
+const DECLINE_OPTION = /decline|prefer not|do not wish|don ?t wish|not wish to|choose not|rather not|not to (say|answer|disclose|identify|self)|no answer|not specified|undisclosed/;
+const declineOption = (options) => (Array.isArray(options) ? options.find((o) => o && !o.placeholder && DECLINE_OPTION.test(normLabel(o.text || o.value))) : null) || null;
 const RESUME = /r[eé]sum[eé]|\bcv\b|curriculum/;
 const COVER = /cover ?letter|motivation letter/;
 
@@ -230,6 +236,7 @@ function normalizeProfile(input, { now = Date.now() } = {}) {
     coverLetterTemplate: clean(r.coverLetterTemplate).slice(0, LIMITS.template),
     highlights: clean(r.highlights).trim().slice(0, LIMITS.text), // [about you] résumé facts the AI may use: skills, projects, numbers (the user's own words)
     resumeDrive: isObject(r.resumeDrive) && /^[A-Za-z0-9_-]{10,100}$/.test(String(r.resumeDrive.id)) ? { id: String(r.resumeDrive.id), name: oneLine(r.resumeDrive.name, 120) || 'Résumé in Drive' } : null, // [about you] a résumé kept in Google Drive: read for facts, never changed
+    demographics: DEMOGRAPHICS.includes(r.demographics) ? r.demographics : 'saved', // [about you]
     answers: dedupeAnswers((Array.isArray(r.answers) ? r.answers : []).filter(isObject).map((a) => ({ question: oneLine(a.question, LIMITS.field), answer: clean(a.answer).trim().slice(0, LIMITS.value) }))),
     updatedAt: now,
   };
@@ -263,6 +270,8 @@ function answerFor(field, profile) {
   const label = normLabel(field.label || field.placeholder || field.name);
   if (!label) return null;
   if (SECRET.test(label)) return null;
+  if (DEMOGRAPHIC.test(label) && profile?.demographics === 'ask') return null;
+  if (DEMOGRAPHIC.test(label) && profile?.demographics === 'decline') return { value: 'Decline to self-identify', source: 'decline' };
   let best = null;
   for (const a of profile?.answers || []) {
     const score = similarity(a.question, label);
@@ -340,11 +349,12 @@ function planFill(fields, profile, ctx = {}) {
     const answer = answerFor(f, profile);
     if (!answer) { ask(f); continue; }
     if (kind === 'select' || kind === 'radio') {
-      const option = matchOption(f.options, answer.value);
+      const option = answer.source === 'decline' ? declineOption(f.options) : matchOption(f.options, answer.value);
       if (!option) { ask(f); continue; } // a saved answer that is none of the choices: the user picks
       fills.push({ ref: f.ref, label, kind, value: option.text || option.value, option: option.value, source: answer.source });
       continue;
     }
+    if (answer.source === 'decline') { ask(f); continue; } // (a box to type in or tick: the user's)
     if (kind === 'checkbox') {
       const v = normLabel(answer.value);
       const on = /^(yes|y|true|checked|agree|i agree|1)$/.test(v);
