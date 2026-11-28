@@ -94,6 +94,49 @@ const check = (label, ok, detail = '') => { if (!ok) failures++; console.log(`${
     const shot = await agent.executeGuarded('screenshot', {});
     check('an image result gets the note as one more text block', shot.length === 2 && /Downloaded: b\.txt/.test(shot[1].text), JSON.stringify(shot));
   }
+  // [step time] How long a click's result waits for a download: none after a load that became a page, up to 400 ms after one that did not
+  // (a download never commits), and 100 ms from the click after one that loaded nothing.
+  {
+    const { EventEmitter } = require('events');
+    // Each case on a fresh agent and download list (a download one case reports must not count as another's).
+    const fresh = () => {
+      const { agent, downloads } = makeAgent();
+      const wc = new EventEmitter();
+      const state = { loading: false };
+      Object.assign(wc, { isDestroyed: () => false, isLoading: () => state.loading });
+      agent.taskTab = () => ({ id: 1, webContents: wc });
+      const nav = (commit) => { wc.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false }); if (commit) wc.emit('did-navigate', {}, 'http://a.test/next'); };
+      const timed = async (core) => { agent.executeGuardedCore = () => core({ nav, downloads, state }); const t = Date.now(); const out = await agent.executeGuarded('click', { text: 'x' }); return { out, ms: Date.now() - t, wc }; };
+      return timed;
+    };
+    const page = await fresh()(async ({ nav }) => { nav(true); return 'clicked'; });
+    check('download grace: a click whose load became a page (did-navigate) is not waited on for a download', page.out === 'clicked' && page.ms < 150, JSON.stringify(page.ms));
+    check('download grace: the listeners on the tab are removed afterwards', page.wc.listenerCount('did-start-navigation') === 0 && page.wc.listenerCount('did-navigate') === 0);
+    const dl = await fresh()(async ({ nav, downloads }) => { nav(false); setTimeout(() => downloads.unshift({ id: 9, name: 'Report.docx', path: docx, state: 'completed', received: 1, total: 1, started: Date.now(), endedAt: Date.now() }), 200); return 'clicked'; });
+    check('download grace: a load that never became a page (a download) is still waited on, and the file is reported', /^clicked\nDownloaded: Report\.docx/.test(dl.out) && dl.ms >= 190, JSON.stringify([dl.out, dl.ms]));
+    const slow = await fresh()(async ({ nav, state }) => { state.loading = true; nav(true); setTimeout(() => { state.loading = false; }, 50); return 'clicked'; });
+    check('download grace: a page still loading when the click returns gets the full wait', slow.ms >= 350, JSON.stringify(slow.ms));
+    const still = await fresh()(async () => { await new Promise((r) => setTimeout(r, 80)); return 'clicked'; });
+    check('download grace: a click that loaded nothing looks for a made file 100 ms from the click, not 100 ms after it settled', still.out === 'clicked' && still.ms >= 95 && still.ms < 160, JSON.stringify(still.ms));
+    const late = await fresh()(async ({ downloads }) => { await new Promise((r) => setTimeout(r, 30)); setTimeout(() => downloads.unshift({ id: 10, name: 'blob.txt', path: txt, state: 'completed', received: 1, total: 1, started: Date.now(), endedAt: Date.now() }), 40); return 'clicked'; });
+    check('download grace: a blob download the click made (within 100 ms of it) is still reported with it', /Downloaded: blob\.txt/.test(late.out), JSON.stringify([late.out, late.ms]));
+    // A click that fill_form (or batch) runs waits for no download itself: the outer call reports what started meanwhile.
+    {
+      const { agent } = makeAgent();
+      agent.taskTab = () => null;
+      agent.aiOffAfter = () => {};
+      agent.executeDebugged = (n, i) => agent.executeGuarded(n, i);
+      const inner = [];
+      agent.executeGuardedCore = async (n) => { if (n === 'fill_form') { const t = Date.now(); await agent.executeChecked('click', { element_id: 3 }); inner.push(Date.now() - t); } return `${n} ok`; };
+      let t = Date.now();
+      await agent.executeChecked('fill_form', { fields: [] });
+      const nested = inner[0];
+      t = Date.now();
+      await agent.executeChecked('click', { element_id: 3 });
+      const direct = Date.now() - t;
+      check('download grace: a click inside fill_form does not wait; a click of its own still does', nested < 50 && direct >= 95, JSON.stringify({ nested, direct }));
+    }
+  }
   {
     const { agent, downloads } = makeAgent();
     agent.executeGuardedCore = async () => 'ok';

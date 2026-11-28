@@ -115,6 +115,7 @@ const heldOwnerOf = (scope) => (scope ? scope.heldOwner || scope : null); // who
 const STOP_GRACE_MS = 8000; // how long a stopped run may take to wind down before it is ended without waiting (runOnce)
 const REDISPATCH = new Error('model fallback: another engine takes the turn'); // thrown by loop() to runTask, never shown
 const nestedCall = new AsyncLocalStorage(); // [ai controls] set inside execute(): tools a tool runs
+const innerCall = new AsyncLocalStorage(); // set around a tool that another tool runs (fill_form's clicks, batch steps), not around the outer one
 const TAB_CLOSED = 'The tab this task was working in was closed. Ask the user what to do next.';
 // Two chats' runs never drive one tab (see tabBusyElsewhere).
 const TAB_BUSY = 'That tab is in use by a task running in another chat. Open a new tab with open_tab (or switch_tab to another tab) to work here.';
@@ -186,7 +187,7 @@ const TOOLS = [
   },
   {
     name: 'screenshot',
-    description: 'Screenshot this tab or tab_id; pdf:true saves a PDF.',
+    description: 'Screenshot this tab or tab_id; pdf:true saves a PDF. Text: read_page.',
     input_schema: { type: 'object', properties: { tab_id: { type: 'integer' }, pdf: { type: 'boolean' } } },
   },
   {
@@ -238,7 +239,7 @@ const TOOLS = [
   },
   {
     name: 'fill_form',
-    description: 'Fill fields [{label,value}] (checkbox "true"/"false"); submit:true only if the user approved.',
+    description: 'Fill fields [{label,value}] (checkbox "true"/"false"); submit:true for search/filters, else only if the user approved.',
     input_schema: {
       type: 'object',
       properties: {
@@ -257,7 +258,7 @@ const TOOLS = [
   },
   {
     name: 'read_urls',
-    description: 'Read up to 6 URLs in hidden tabs, signed out (markdown, page health, structured data; max_chars+offset page). as_user:true asks to read the user\'s own pages signed in.',
+    description: 'Read up to 6 URLs in hidden tabs, signed out (markdown, health, structured data; max_chars+offset). as_user:true reads them signed in (asks).',
     input_schema: {
       type: 'object',
       properties: {
@@ -299,7 +300,7 @@ const TOOLS = [
   },
   {
     name: 'wait_for',
-    description: 'Wait (seconds 1-30) until all given hold: text, url (substring or * glob), gone (text/selector), network_idle, download (its path).',
+    description: 'Wait (1-30 s) until all hold: text, url (part or * glob), gone (text/selector), network_idle, download (path).',
     input_schema: {
       type: 'object',
       properties: {
@@ -319,7 +320,7 @@ const TOOLS = [
   },
   {
     name: 'get_console',
-    description: 'Console messages and errors since first use. Default: warnings+errors.',
+    description: 'Console messages since first use (default: warnings+errors).',
     input_schema: {
       type: 'object',
       properties: {
@@ -331,7 +332,7 @@ const TOOLS = [
   },
   {
     name: 'get_network',
-    description: 'Requests a tab made (status, host+path, ms) since first use. No headers or bodies.',
+    description: 'Requests a tab made (status, host+path, ms) since first use; no headers/bodies.',
     input_schema: {
       type: 'object',
       properties: {
@@ -411,7 +412,7 @@ const TOOLS = [
   },
   {
     name: 'drag',
-    description: 'Drag from from_id (or from_x,from_y) to to_id (or to_x,to_y): sliders, sortable lists, drop zones.',
+    description: 'Drag from from_id (or from_x,from_y) to to_id (or to_x,to_y): sliders, sorting, drop zones.',
     input_schema: {
       type: 'object',
       properties: {
@@ -422,7 +423,7 @@ const TOOLS = [
   },
   {
     name: 'list_files',
-    description: 'List a folder, newest first (folder: desktop (default), downloads, documents or a path; match: "*.png"). read: download or .eml text. find: file by name.',
+    description: 'List a folder, newest first (folder: desktop (default), downloads, documents or a path; match: "*.png"). read: a download/.eml as text. find: by name.',
     input_schema: {
       type: 'object',
       properties: { folder: { type: 'string' }, match: { type: 'string' }, limit: { type: 'integer' }, read: { type: 'string' }, find: { type: 'string' } },
@@ -1435,14 +1436,18 @@ async function waitForLoad(wc, timeoutMs = 8000) {
 // In the page (Claude's isolated world, same DOM): resolves once the DOM has had no mutations for
 // quietMs, or after capMs on a page that never settles (an animation, a ticker: mutations that never pause
 // for quietMs within capMs, so a constantly animating page costs ~capMs per action, not 1.5 s).
-function domQuiet({ quietMs, capMs, extendMs = 700 }) {
+// stillMs: resolves 'still' when the DOM has not changed at all by then and shows no loading marker (settleAfterAction then checks that
+// no request started either before it calls the page unchanged).
+function domQuiet({ quietMs, capMs, extendMs = 700, stillMs = 0 }) {
   return new Promise((resolve) => {
     let timer = null;
     let cap = null;
     let poll = null;
+    let still = null;
     let observer = null;
     let extended = false;
-    const finish = (why) => { clearTimeout(timer); clearTimeout(cap); clearInterval(poll); observer?.disconnect(); resolve(why); };
+    let seen = false;
+    const finish = (why) => { clearTimeout(timer); clearTimeout(cap); clearTimeout(still); clearInterval(poll); observer?.disconnect(); resolve(why); };
     // A loading marker the user can see (a spinner, a progress bar, a busy region): hidden or static ones
     // left in the page from before the action don't count.
     const shown = (el) => el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length > 0;
@@ -1465,16 +1470,24 @@ function domQuiet({ quietMs, capMs, extendMs = 700 }) {
       }
       finish(why);
     };
+    // Lumen's own marks on the page (the click ring, data-lumen-ui; the AI's cursors) are not the page changing.
+    const ours = (n) => Boolean(n && n.nodeType === 1 && (n.id === '__lumen-agent-cursors' || n.hasAttribute('data-lumen-ui')));
+    const theirs = (r) => { const nodes = [...(r.addedNodes || []), ...(r.removedNodes || [])]; return !ours(r.target) && !(nodes.length && nodes.every(ours)); };
     try {
-      observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(() => done('quiet'), quietMs); });
+      observer = new MutationObserver((records) => { if (Array.isArray(records) && records.length && !records.some(theirs)) return; seen = true; clearTimeout(timer); timer = setTimeout(() => done('quiet'), quietMs); });
       observer.observe(document.documentElement || document, { subtree: true, childList: true, attributes: true, characterData: true });
     } catch {}
     timer = setTimeout(() => done('quiet'), quietMs);
     cap = setTimeout(() => done('busy'), capMs);
+    if (stillMs > 0 && stillMs < quietMs) still = setTimeout(() => { if (!seen && !extended && !loading()) finish('still'); }, stillMs);
   });
 }
-const domQuietScript = (quietMs = 100, capMs = 650, extendMs = 700) => `(${domQuiet.toString()})({ quietMs: ${quietMs}, capMs: ${capMs}, extendMs: ${extendMs} })`;
+const domQuietScript = (quietMs = 100, capMs = 650, extendMs = 700, stillMs = 0) => `(${domQuiet.toString()})({ quietMs: ${quietMs}, capMs: ${capMs}, extendMs: ${extendMs}, stillMs: ${stillMs} })`;
 const DOM_QUIET = domQuietScript(100, 650);
+// [fewer waits] After a click or key: a page whose DOM has not changed at all STILL_MS after the action began, that shows no loading marker,
+// started no navigation and no request (the tab's request tracker) is left as it is: the action changed nothing to wait for.
+const STILL_MS = 60;
+const DOM_QUIET_STILL = domQuietScript(100, 650, 700, STILL_MS);
 
 // Waits (in the page) for the DOM to go quiet, at most ~capMs. Never throws: a page that is mid-navigation,
 // has no document yet, or does not answer just ends the wait.
@@ -1488,7 +1501,9 @@ async function quietWait(wc, quietMs = 100, capMs = 300, extendMs = 100) {
 // After an input (click, key, Enter, form submit): a navigation it starts is waited for as
 // waitForLoad does; otherwise only until the page's DOM goes quiet (~100 ms, at most ~650 ms), not a
 // fixed 550 ms. (A tab behind another one has its timers throttled, so there it can take ~1 s.)
-async function settleAfterAction(wc, timeoutMs = 8000) {
+// since + fetching: the time the action began and fetching(since), true when a request the page started since then is in flight (or that
+// can't be told): with both, a page that did not change at all is done at STILL_MS instead of a full quiet spell.
+async function settleAfterAction(wc, timeoutMs = 8000, { since = 0, fetching = null } = {}) {
   if (wc.isDestroyed()) throw new Error(TAB_CLOSED);
   let onStart = null;
   const started = new Promise((resolve) => {
@@ -1500,11 +1515,14 @@ async function settleAfterAction(wc, timeoutMs = 8000) {
     if (typeof wc.on === 'function') wc.on('did-start-navigation', onStart);
   });
   try {
-    const first = wc.isLoading() ? 'navigation' : await Promise.race([
+    const quiet = (script) => Promise.race([
       started,
-      runScript(wc, DOM_QUIET, 2500).catch(() => (wc.isDestroyed() || wc.isLoading() ? 'navigation' : 'quiet')),
+      runScript(wc, script, 2500).catch(() => (wc.isDestroyed() || wc.isLoading() ? 'navigation' : 'quiet')),
       sleep(2000).then(() => 'busy'),
     ]);
+    let first = wc.isLoading() ? 'navigation' : await quiet(since && fetching ? DOM_QUIET_STILL : DOM_QUIET);
+    // Unchanged so far, but a request is out: its answer may still change the page, so the usual quiet spell is waited for.
+    if (first === 'still' && !wc.isDestroyed() && !wc.isLoading() && (() => { try { return fetching(since) !== false; } catch { return true; } })()) first = await quiet(DOM_QUIET);
     if (first === 'navigation' || (!wc.isDestroyed() && wc.isLoading())) return await waitForLoad(wc, timeoutMs);
   } finally {
     if (!wc.isDestroyed() && typeof wc.removeListener === 'function') wc.removeListener('did-start-navigation', onStart);
@@ -1516,6 +1534,9 @@ async function settleAfterAction(wc, timeoutMs = 8000) {
 // page can neither see Claude's element registry nor tamper with it. run_script (code Claude
 // writes to use the page's own JavaScript) is the one thing that runs in the page's world.
 const CLAUDE_WORLD = 1001;
+
+const CLICK_DOWNLOAD_MS = 100; // executeGuarded: how long after a click that loaded nothing a download it made (a blob link) is looked for
+const CLICK_LAND_MS = 400; // verifiedClick: how long a click's first mouse event may take to reach the page before it counts as dropped
 
 // executeJavaScript never settles if the document is torn down mid-call, so bound it.
 function runScript(wc, script, timeoutMs = 10000, { mainWorld = false, userGesture = false } = {}) {
@@ -7503,6 +7524,13 @@ ${CLI_DESKTOP_RULE}`;
   glance(wc) { return runScript(wc, scripts.glance, 1500).catch(() => null); }
   // [fewer round trips] An action that took the tab to another document (not a #fragment jump): the new page's head comes back with its
   // result, as navigate's does, so the model needs no read_page just to see where it landed. Not under observe (its diff says it).
+  // [fewer waits] settleAfterAction's check that an action changed nothing: no request of this tab started or ended since `since` (its
+  // request tracker, page-debug.js; a fetch that came back before the check may still be drawn) and none is out. No tracker: it can't be
+  // told, so the usual wait.
+  settleCheck(wc, since) {
+    return { since, fetching: (from) => { const tracker = pageDebugShared.captureOf(wc)?.tracker; return !tracker || tracker.lastActivity >= from - 5 || tracker.pending(Date.now()).some((r) => r.at >= from - 5); } };
+  }
+
   async landedHead(wc, urlBefore, input) {
     if (input?.[snapshot.QUIET_LANDING] || wc.isDestroyed() || !landedElsewhere(urlBefore, wc.getURL())) return '';
     return snapshot.head(this, wc, { runScript, scripts }, { noTitle: false }).catch(() => '');
@@ -7716,12 +7744,14 @@ ${CLI_DESKTOP_RULE}`;
   }
 
   // The element registries again: the main frame's (read_page's walk) and each embedded frame's.
-  async refreshRegistry(wc) {
+  // reuse: keep the registry when the page has not changed since it was built (snapshot.js REGISTRY_FRESH); returns true when it was.
+  async refreshRegistry(wc, { reuse = false } = {}) {
     const own = !frames.available(wc); // without frames.js, the main frame's walk reaches same-origin frames itself
-    await runScript(wc, scripts.readPage(0, 0, { frames: own }));
-    if (own) return;
-    const { frames: list } = await frames.list(wc, { allow: this.frameAllow() });
-    await frames.each(wc, list, snapshot.registryScript(scripts, { frames: false }));
+    const r = await runScript(wc, snapshot.registryScript(scripts, { frames: own, reuse })); // the registry alone (read_page's walk and labels, not the page's text)
+    if (own) return Boolean(r?.reused);
+    const { frames: list } = await frames.list(wc, { allow: this.frameAllow() }); // (each embedded frame's registry is walked as before)
+    if (list?.length) await frames.each(wc, list, snapshot.registryScript(scripts, { frames: false }));
+    return Boolean(r?.reused);
   }
 
   // read_page's first page gets the embedded frames: their elements join `elements` (ids naming the
@@ -7817,8 +7847,9 @@ ${CLI_DESKTOP_RULE}`;
 
   async executeChecked(name, input) {
     const log = taskScope.getStore()?.log;
-    if (!log || nestedCall.getStore()) {
-      const result = await this.executeDebugged(name, input);
+    if (nestedCall.getStore() || !log) {
+      // (the tools a tool runs know they are nested, with or without a log: a nested click leaves the download wait to its caller)
+      const result = nestedCall.getStore() ? await innerCall.run(true, () => this.executeDebugged(name, input)) : await nestedCall.run(true, () => this.executeDebugged(name, input));
       this.aiOffAfter(name);
       return result;
     }
@@ -8030,19 +8061,24 @@ ${CLI_DESKTOP_RULE}`;
     const acts = ACTING_TOOL_NAMES.has(name) || name === 'batch';
     if (scope && acts) scope.lastActAt = t0;
     // [step time] A click may start a download a moment later (when the response headers arrive): the result waits up to 400 ms for one,
-    // but only after a click that started a page load (a link, a form). A click that loaded nothing gets 100 ms, enough for a file the page
-    // makes itself (a blob link), instead of the full wait on every button: about 300 ms off each such click. A download that starts
-    // later still reaches the AI with its next call (aiDownloads.news below).
-    const clicks = name === 'click' || name === 'click_at' || name === 'batch';
+    // but only after a click that started a page load (a link, a form) that has not become a page. A load that put a new page in the tab
+    // (did-navigate: Chromium never commits a response it downloads, it aborts that navigation) was not a download, so it gets no wait. A
+    // click that loaded nothing gets 100 ms from the click, enough for a file the page makes itself (a blob link), instead of the full wait
+    // on every button. A download that starts later still reaches the AI with its next call (aiDownloads.news below). A click that a
+    // fill_form or batch runs waits for none: the outer call reports what started meanwhile (from its own start), and batch waits itself.
+    const clicks = (name === 'click' || name === 'click_at' || name === 'batch') && !innerCall.getStore();
     let loaded = false;
+    let committed = false;
     let wc = null;
-    const onLoad = (event, _url, inPlace, isMainFrame) => { if ((event?.isMainFrame ?? isMainFrame) !== false && (event?.isSameDocument ?? inPlace) !== true) loaded = true; };
-    if (clicks) { try { wc = this.taskTab()?.webContents || null; if (wc && !wc.isDestroyed?.() && typeof wc.on === 'function') wc.on('did-start-navigation', onLoad); else wc = null; } catch { wc = null; } }
+    const onLoad = (event, _url, inPlace, isMainFrame) => { if ((event?.isMainFrame ?? isMainFrame) !== false && (event?.isSameDocument ?? inPlace) !== true) { loaded = true; committed = false; } };
+    const onCommit = () => { if (loaded) committed = true; }; // (did-navigate: the main frame only, never a same-document one)
+    if (clicks) { try { wc = this.taskTab()?.webContents || null; if (wc && !wc.isDestroyed?.() && typeof wc.on === 'function') { wc.on('did-start-navigation', onLoad); wc.on('did-navigate', onCommit); } else wc = null; } catch { wc = null; } }
     let result;
-    try { result = await this.executeGuardedCore(name, input); } finally { if (wc && !wc.isDestroyed?.() && typeof wc.removeListener === 'function') wc.removeListener('did-start-navigation', onLoad); }
+    try { result = await this.executeGuardedCore(name, input); } finally { if (wc && !wc.isDestroyed?.() && typeof wc.removeListener === 'function') { wc.removeListener('did-start-navigation', onLoad); wc.removeListener('did-navigate', onCommit); } }
     const lines = [];
     try {
-      const graceMs = !clicks ? 0 : (!wc || loaded || (!wc.isDestroyed?.() && wc.isLoading?.())) ? 400 : 100;
+      const stillLoading = Boolean(wc) && !wc.isDestroyed?.() && Boolean(wc.isLoading?.());
+      const graceMs = !clicks ? 0 : !wc ? 400 : loaded || stillLoading ? (committed && !stillLoading ? 0 : 400) : Math.max(0, CLICK_DOWNLOAD_MS - (Date.now() - t0));
       if (acts) lines.push(...await aiDownloads.afterAction(list, key, t0, { signal: scope?.signal, graceMs }));
       for (const line of aiDownloads.news(list, key)) if (!lines.includes(line)) lines.push(line);
     } catch { /* the result stands without it */ }
@@ -8354,6 +8390,7 @@ ${same}
         const urlBefore = wc.getURL();
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
+        const since = Date.now(); // [fewer waits] what the click may have changed is counted from here (settleAfterAction)
         // The task's tab is behind another one (the user switched away): mouse events need a tab on
         // screen, so it gets a click through the tab's own protocol session, else a DOM click. In an embedded frame the mouse goes
         // through the DevTools session (frames.js), and a DOM click is the fallback.
@@ -8364,20 +8401,20 @@ ${same}
           } else if (target.frame) await manners.agentInputAsync(wc, () => frames.mouseClick(wc, target.x, target.y)).catch(() => this.elementRun(wc, id, scripts.domClick));
           else if (!(await this.verifiedClick(wc, () => this.mouseClick(wc, x, y)))) await this.elementRun(wc, id, scripts.domClick); // never reached the page: page events
         });
-        await settleAfterAction(wc);
+        await settleAfterAction(wc, 8000, this.settleCheck(wc, since));
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
         return `Clicked element ${id} (${target.tag} ${quote(target.label || '')}).${moved}${await this.landedHead(wc, urlBefore, input)}`;
       }
       case 'fill_form': {
         this.noteAiTyped(); // [close guard] what the AI types into its own tab is not the user's unsaved work
         const wc = this.requireTab();
-        await this.refreshRegistry(wc); // fresh element registries for label matching (embedded frames' too)
+        const reused = await this.refreshRegistry(wc, { reuse: true }); // fresh element registries for label matching (embedded frames' too); kept when the page did not change
         const report = [];
         let lastId = null;
         for (const { label, value } of input.fields) {
           this.stopCheck();
           try {
-            const id = await this.resolveTarget(wc, label, 'field', false);
+            const id = await this.resolveTarget(wc, label, 'field', reused); // (a kept registry is rebuilt on a miss)
             lastId = id;
             const picked = await selectBoxes.choose(this, wc, id, value, quote(label)); // [select boxes] a dropdown: its option by text
             if (picked) { report.push(`${label}: ${picked}`); continue; }
@@ -8555,9 +8592,10 @@ ${same}
         const macCommand = process.platform === 'darwin' && [...input.key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'));
         const inFrame = !macCommand && await this.focusInFrame(wc);
         const urlBefore = wc.getURL();
+        const since = Date.now();
         if (inFrame) await manners.agentInputAsync(wc, () => frames.pressKey(wc, input.key, modifiers));
         else this.pressKey(wc, input.key, modifiers);
-        await settleAfterAction(wc);
+        await settleAfterAction(wc, 8000, this.settleCheck(wc, since));
         return `Pressed ${[...modifiers, input.key].join('+')}.${wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : ''}${await this.landedHead(wc, urlBefore, input)}`;
       }
       case 'click_at': {
@@ -8576,6 +8614,7 @@ ${same}
           return `Clicked at (${input.x}, ${input.y}) in the PDF viewer (sent; a click there only follows a link or selects text, and nothing confirms it landed). ${pdfInput.READ_PDF_HINT}`;
         }
         let seen = null; // the focus the click gave (read before the user's own focus is put back)
+        const since = Date.now();
         await this.keepUserFocus(wc, async () => {
           const zoom = wc.getZoomFactor();
           const landed = inFront
@@ -8584,7 +8623,7 @@ ${same}
           if (!landed && !(await runScript(wc, scripts.domClickAt(Math.round(input.x * ratio / zoom), Math.round(input.y * ratio / zoom))))) throw new Error('Nothing is at that position.');
           seen = await this.glance(wc);
         });
-        await settleAfterAction(wc);
+        await settleAfterAction(wc, 8000, this.settleCheck(wc, since));
         return `Clicked at (${input.x}, ${input.y}).${await this.afterClick(wc, before, urlBefore, seen)}${await this.landedHead(wc, urlBefore, input)}`;
       }
       case 'hover': {
@@ -8853,14 +8892,30 @@ ${same}
   // Sends a click with `send` and reports whether the page received it (a one-shot listener in the page). Input sent to a view
   // that is not painting yet (a window just torn off, minimized, hidden) can vanish without an error. If the listener cannot be
   // set up, the click is assumed to have landed, as before.
+  // The page waits for the click itself (clickProbeWait): one round trip, which ends the moment the first mouse event arrives. A navigation
+  // the click started (or the tab closing) counts as landed, as a read that throws did.
   async verifiedClick(wc, send) {
     let armed = false;
     try { armed = (await runScript(wc, scripts.clickProbeArm(), 3000)) === true; } catch {}
     await send();
     if (!armed) return true;
-    const landed = await manners.confirmLanded(() => runScript(wc, scripts.clickProbeRead(false), 3000));
-    try { await runScript(wc, scripts.clickProbeRead(true), 3000); } catch {}
-    return landed;
+    let onNav = null;
+    let onGone = null;
+    const navigated = new Promise((resolve) => {
+      onNav = (event, _url, inPlace, isMainFrame) => { if ((event?.isMainFrame ?? isMainFrame) !== false && (event?.isSameDocument ?? inPlace) !== true) resolve(true); };
+      onGone = () => resolve(true);
+      if (typeof wc.on === 'function') { wc.on('did-start-navigation', onNav); wc.on('destroyed', onGone); }
+    });
+    // A page whose timers are throttled (a tab behind another one) may end its own wait late: past CLICK_LAND_MS + 200 the record is read
+    // (and removed) from here, as the poll this replaced did, so a dropped click still gets its fallback in time.
+    let timer = null;
+    const late = new Promise((resolve) => { timer = setTimeout(() => resolve(runScript(wc, scripts.clickProbeRead(true), 1500).catch(() => true)), CLICK_LAND_MS + 200); });
+    try {
+      return await Promise.race([runScript(wc, scripts.clickProbeWait(CLICK_LAND_MS), CLICK_LAND_MS + 1500).catch(() => true), late, navigated]);
+    } finally {
+      clearTimeout(timer);
+      if (typeof wc.removeListener === 'function') { wc.removeListener('did-start-navigation', onNav); wc.removeListener('destroyed', onGone); }
+    }
   }
 
   async mouseClick(wc, x, y) {

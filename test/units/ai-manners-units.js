@@ -520,10 +520,31 @@ const refused = async (fn) => { try { await fn(); return null; } catch (e) { ret
     d.fire('click');
     check('probe: a click is seen, and the final read removes every listener', run(scripts.clickProbeRead(false)) === true && run(scripts.clickProbeRead(true)) === true && d.count() === 0);
     check('probe: after it is gone (page navigated) a read says landed', run(scripts.clickProbeRead(true)) === true);
+    // clickProbeWait: the page waits for the click itself (one round trip): true the moment a mouse event comes, false after the timeout, and
+    // the listeners are gone either way.
+    const d2 = dom();
+    const ctx2 = vm.createContext({ window: d2.win, Symbol, setTimeout, clearTimeout, Promise });
+    const run2 = (code) => vm.runInContext(code, ctx2);
+    run2(scripts.clickProbeArm());
+    const waiting = run2(scripts.clickProbeWait(5000));
+    const t0 = Date.now();
+    setTimeout(() => d2.fire('mousedown'), 20);
+    check('probe wait: resolves true as soon as the click arrives (not at the timeout), listeners removed', (await waiting) === true && Date.now() - t0 < 1000 && d2.count() === 0);
+    run2(scripts.clickProbeArm());
+    d2.fire('click');
+    check('probe wait: a click that came before the wait answers at once', run2(scripts.clickProbeWait(5000)) === true && d2.count() === 0);
+    run2(scripts.clickProbeArm());
+    check('probe wait: no click within the timeout is false (the caller falls back to page events), listeners removed', (await run2(scripts.clickProbeWait(30))) === false && d2.count() === 0);
+    check('probe wait: nothing armed (the page navigated) counts as landed', run2(scripts.clickProbeWait(30)) === true);
 
     // Wiring: agent.js falls back when the click did not land; main.js answers "in front" per window.
     const agentSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'ai', 'agent.js'), 'utf8').replace(/\r\n/g, '\n');
     const mainSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'main.js'), 'utf8').replace(/\r\n/g, '\n');
+    {
+      const body = agentSrc.slice(agentSrc.indexOf('async verifiedClick('), agentSrc.indexOf('async mouseClick('));
+      const reads = body.split('\n').filter((l) => l.includes('clickProbeRead('));
+      check('click: verifiedClick waits in the page in one round trip (clickProbeWait), a navigation it starts counts as landed, and the only direct read is the late one (a throttled page)', body.includes('scripts.clickProbeWait(CLICK_LAND_MS)') && body.includes("wc.on('did-start-navigation', onNav)") && reads.length === 1 && reads[0].includes('setTimeout(') && reads[0].includes('CLICK_LAND_MS + 200') && body.includes('clearTimeout(timer)'), reads.join(' | '));
+    }
     check('click: the ordinary and the background click are both verified, with the DOM click as the fallback', /else if \(!\(await this\.verifiedClick\(wc, \(\) => this\.mouseClick\(wc, x, y\)\)\)\) await this\.elementRun\(wc, id, scripts\.domClick\)/.test(agentSrc) && /return await this\.verifiedClick\(wc, \(\) => manners\.agentInputAsync/.test(agentSrc));
     check('front: taskTabInFront asks the window the tab lives in', /this\.browser\.tabInFront\(scope\.tabId\)/.test(agentSrc) && /tabInFront: inRun\(agentTabInFront\)/.test(mainSrc) && /activeIdOf\(rec\)/.test(mainSrc.slice(mainSrc.indexOf('const agentTabInFront'))));
   }

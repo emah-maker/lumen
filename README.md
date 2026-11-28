@@ -315,7 +315,7 @@ The sidebar agent, MCP clients and OpenAI/Grok/Gemini get the same cheaper tools
 | `read_page` with `mode: "compact"` | an outline with `[id]` refs (headings, landmarks, text with inline links, controls with values) instead of JSON plus raw text. `mode: "full"` (the default) is unchanged. |
 | `read_page` with `since_last: true` | only what changed since the last read |
 | `find` | matching controls and short text snippets, instead of reading the page |
-| `batch` | several actions (type, click, select, press, wait_for, scroll, hover) in one call, ending with what changed |
+| `batch` | several actions (type, click, select, press, wait_for, scroll, hover) in one call, ending with what changed; type and select can name a field by its label |
 | `read_page` with `extract: "tables" | "links" | "lists"` (and `selector`) | that data as JSON, so `run_script` is not needed to pull a table |
 | `navigate` / `open_tab` with `read: true` (and `wait_for: "text"`) | the new page's outline in the same call, instead of a separate `read_page` |
 | `click`, `click_at`, `type_text`, `press_key` with `observe: true` | the action's result plus what changed on the page, instead of a follow-up read or screenshot |
