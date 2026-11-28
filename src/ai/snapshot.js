@@ -175,6 +175,7 @@ function compactOutline(opts) {
   };
   // A web component's children are its open shadow root's; a slot's are the nodes assigned to it.
   const kids = (el) => {
+    if (el.id === '__lumen-agent-cursors') return []; // (the AI's own cursors: page-scripts.js agentCursor)
     if (el.shadowRoot) return el.shadowRoot.children;
     if (el.tagName === 'SLOT') { const assigned = el.assignedElements({ flatten: true }); if (assigned.length) return assigned; }
     return el.children;

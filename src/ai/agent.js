@@ -59,7 +59,12 @@ const subagents = require('./subagents'); // delegate: read-only helpers that wo
 let actingLib = null; // [acting helpers] parallel_tasks: helpers that act side by side, each in a background tab of its own (ai/acting-helpers.js, loaded on first use)
 const actingHelpers = () => (actingLib ||= require('./acting-helpers'));
 const agentTags = () => require('../features/agent-tags'); // [agent cursors] which helper or sub-agent a call is from
-const CURSOR_TOOLS = new Set(['click', 'type_text', 'fill_form', 'hover', 'scroll', 'drag']); // calls that show the agent's cursor where they acted
+// [step time] LUMEN_TOOL_TIMING=1 prints one line per tool call (name, ms, ok) to the console: how a run's time splits between its tools.
+const toolTiming = (name, ms, ok) => { if (process.env.LUMEN_TOOL_TIMING === '1') console.log(`[lumen] tool ${name} ${ms} ms${ok ? '' : ' (failed)'}`); };
+const CURSOR_AFTER = new Set(['fill_form', 'drag']); // [agent cursors] calls whose cursor goes where they ended (click, type_text, hover and scroll point it as they act)
+const ACT_MARK = new Set(['click', 'click_at', 'drag', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'go_back', 'go_forward', 'reload', 'hover', 'scroll']); // [tab acting] steps that mark their tab in the strip
+const LEAD_CURSOR = { key: 'lumen', label: 'Lumen', color: '#0a84ff' }; // [agent cursors] the lead AI's own cursor (a helper's: agent-tags.js)
+const CURSOR_WORDS = { click: 'Clicking', type: 'Typing', hover: 'Pointing', scroll: 'Scrolling' }; // (main passes the user's language: browser.cursorWords)
 const research = require('./research-tools'); // [research] find_sources (scholarly APIs) and research_board (the chat's source list)
 const memoryLib = require('./memory'); // [memory] saved memory across chats: the system prompt's block and the memory tool
 const postAnalysis = { run: (input) => require('./post-analysis').run(input) }; // [research pack] analyze_posts: outliers vs each account's median, local math (loaded with the first call)
@@ -4568,10 +4573,12 @@ ${prompt}` : prompt), historyImages: [] };
         halts: (o) => Boolean(signal.aborted || (o && o.ok === false && toolError(o.error) === TAB_CLOSED)),
         onOutcome: (use, o) => {
           if (o.skipped) return;
-          if (o.ok) emit({ type: 'tool_done', id: use.id, ok: true });
+          const ms = Number.isFinite(o.ms) ? { ms: o.ms } : {}; // [step time] how long the tool itself ran (the row's final time; never an approval's wait)
+          if (Number.isFinite(o.ms)) toolTiming(use.name, o.ms, o.ok);
+          if (o.ok) emit({ type: 'tool_done', id: use.id, ok: true, ...ms });
           else if (o.error?.invalid) emit({ type: 'tool_done', id: use.id, ok: false, error: o.error.message });
-          else if (signal.aborted) emit({ type: 'tool_done', id: use.id, ok: false, stopped: true });
-          else emit({ type: 'tool_done', id: use.id, ok: false, error: toolError(o.error).split('\n')[0] });
+          else if (signal.aborted) emit({ type: 'tool_done', id: use.id, ok: false, stopped: true, ...ms });
+          else emit({ type: 'tool_done', id: use.id, ok: false, error: toolError(o.error).split('\n')[0], ...ms });
         },
       });
       const results = [];
@@ -7618,22 +7625,36 @@ ${CLI_DESKTOP_RULE}`;
   // [ai controls] Also checks the per-site AI switch before and after the tool (the page may have
   // moved to such a site), and records what the outermost call changed in a sidebar run's log.
   async execute(name, input) {
-    const out = await this.executeRaw(name, input);
-    const tag = agentTags().current();
-    if (tag && CURSOR_TOOLS.has(name)) this.agentCursor(tag, input); // [agent cursors] (not awaited: a cursor never slows the call)
+    // [tab acting] the tab a step acts in is marked in the tab strip while it runs (main.js setActing): the outermost call only
+    let marked = null;
+    if (ACT_MARK.has(name) && !nestedCall.getStore() && this.browser.setActing) { try { marked = this.taskTab()?.id ?? null; } catch { marked = null; } if (marked != null) { try { this.browser.setActing(marked, true); } catch { marked = null; } } }
+    let out;
+    try { out = await this.executeRaw(name, input); } finally { if (marked != null) { try { this.browser.setActing(marked, false); } catch { /* the tab is gone */ } } }
+    if (CURSOR_AFTER.has(name)) this.agentCursor(input); // [agent cursors] (not awaited: a cursor never slows the call)
     return tabMarker.neutralize(out); // [tab chips] page text (a title, a quote) can never read as a [[tab:ID]] marker
   }
 
-  // [agent cursors] A helper's or sub-agent's cursor, in its own color with its name, moved to the element it just acted on
-  // (page-scripts.js agentCursor). Ids inside embedded frames are skipped: the cursor is drawn in the top page only.
-  agentCursor(tag, input) {
+  // [agent cursors] The AI's cursor on the page (page-scripts.js agentCursor): the lead AI's "Lumen", or a helper's or sub-agent's in its own
+  // color with its name, moved to the element it acts on with a word for what it does there ("Lumen · Clicking"), a ripple where it clicks
+  // and the field it types into outlined. Never awaited (a cursor never slows a call); off with Settings → AI → "Show the AI's cursor"
+  // (browser.aiCursor). Ids inside embedded frames are skipped: the cursor is drawn in the top page only. id null: a scroll (the right side).
+  pointAt(wc, id, kind) {
+    try {
+      if (this.browser.aiCursor?.() === false || !wc || wc.isDestroyed?.()) return;
+      if (id != null && (!Number.isInteger(id) || id >= actingHelpers().FRAME_ID_BASE)) return;
+      const tag = agentTags().current() || LEAD_CURSOR;
+      const action = this.browser.cursorWords?.()?.[kind] || CURSOR_WORDS[kind] || '';
+      runScript(wc, scripts.agentCursor(id, tag, { action, kind }), 2000).catch(() => {});
+    } catch { /* no tab: no cursor */ }
+  }
+
+  // fill_form and drag: the cursor goes to the last element the call named.
+  agentCursor(input) {
     try {
       const ids = actingHelpers().refIds(input);
       const id = ids[ids.length - 1];
-      if (!id || id >= actingHelpers().FRAME_ID_BASE) return;
-      const wc = this.taskTab()?.webContents;
-      if (!wc || wc.isDestroyed?.()) return;
-      runScript(wc, scripts.agentCursor(id, tag), 2000).catch(() => {});
+      if (!id) return;
+      this.pointAt(this.taskTab()?.webContents, id, '');
     } catch { /* no tab: no cursor */ }
   }
 
@@ -7861,10 +7882,21 @@ ${CLI_DESKTOP_RULE}`;
     const t0 = Date.now();
     const acts = ACTING_TOOL_NAMES.has(name) || name === 'batch';
     if (scope && acts) scope.lastActAt = t0;
-    const result = await this.executeGuardedCore(name, input);
+    // [step time] A click may start a download a moment later (when the response headers arrive): the result waits up to 400 ms for one,
+    // but only after a click that started a page load (a link, a form). A click that loaded nothing gets 100 ms, enough for a file the page
+    // makes itself (a blob link), instead of the full wait on every button: about 300 ms off each such click. A download that starts
+    // later still reaches the AI with its next call (aiDownloads.news below).
+    const clicks = name === 'click' || name === 'click_at' || name === 'batch';
+    let loaded = false;
+    let wc = null;
+    const onLoad = (event, _url, inPlace, isMainFrame) => { if ((event?.isMainFrame ?? isMainFrame) !== false && (event?.isSameDocument ?? inPlace) !== true) loaded = true; };
+    if (clicks) { try { wc = this.taskTab()?.webContents || null; if (wc && !wc.isDestroyed?.() && typeof wc.on === 'function') wc.on('did-start-navigation', onLoad); else wc = null; } catch { wc = null; } }
+    let result;
+    try { result = await this.executeGuardedCore(name, input); } finally { if (wc && !wc.isDestroyed?.() && typeof wc.removeListener === 'function') wc.removeListener('did-start-navigation', onLoad); }
     const lines = [];
     try {
-      if (acts) lines.push(...await aiDownloads.afterAction(list, key, t0, { signal: scope?.signal, graceMs: name === 'click' || name === 'click_at' || name === 'batch' ? 400 : 0 }));
+      const graceMs = !clicks ? 0 : (!wc || loaded || (!wc.isDestroyed?.() && wc.isLoading?.())) ? 400 : 100;
+      if (acts) lines.push(...await aiDownloads.afterAction(list, key, t0, { signal: scope?.signal, graceMs }));
       for (const line of aiDownloads.news(list, key)) if (!lines.includes(line)) lines.push(line);
     } catch { /* the result stands without it */ }
     if (!lines.length) return result;
@@ -8107,7 +8139,10 @@ ${same}
       }
       case 'screenshot': {
         const wc = this.screenshotWc(input);
-        let image = await captureTab(wc); // works on a tab behind another one too (features/tab-capture.js)
+        // [agent cursors] the AI's own picture never has a cursor over what it looks at (hidden for the capture, then back)
+        const cursors = await runScript(wc, scripts.cursorsHidden(true), 1500).catch(() => false);
+        let image;
+        try { image = await captureTab(wc); } finally { if (cursors) runScript(wc, scripts.cursorsHidden(false), 1500).catch(() => {}); } // works on a tab behind another one too (features/tab-capture.js)
         if (image.getSize().width > 1280) image = image.resize({ width: 1280 });
         const size = image.getSize();
         // click_at maps screenshot pixels back to view pixels with this ratio.
@@ -8145,6 +8180,7 @@ ${same}
         const id = input.element_id ?? await this.resolveTarget(wc, input.text, 'click');
         const target = await this.locateElement(wc, id);
         if (!target) throw new Error(`No element with id ${id}: the page changed since ids were read. Call read_page mode:"compact" (or find) for fresh ids, or click by visible text.`);
+        this.pointAt(wc, id, 'click'); // [agent cursors]
         const urlBefore = wc.getURL();
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
         const x = Math.round(target.x * zoom), y = Math.round(target.y * zoom);
@@ -8296,6 +8332,7 @@ ${same}
         this.noteAiTyped(); // [close guard] what the AI types into its own tab is not the user's unsaved work
         const wc = this.requireTab();
         await this.waitForUserTyping(wc, input.element_id); // [ai manners] the user is typing in this field: wait for a pause
+        this.pointAt(wc, input.element_id, 'type'); // [agent cursors]
         const inFrame = Boolean(frames.decodeId(input.element_id));
         const status = await this.keepUserFocus(wc, async () => {
           const st = await this.elementRun(wc, input.element_id, scripts.focusForTyping, { missing: 'missing' });
@@ -8377,6 +8414,7 @@ ${same}
         const wc = this.requireTab();
         const target = await this.locateElement(wc, input.element_id);
         if (!target) throw new Error(`No element with id ${input.element_id}. Call read_page to refresh ids.`);
+        this.pointAt(wc, input.element_id, 'hover'); // [agent cursors]
         const zoom = wc.getZoomFactor();
         // A tab behind another one gets no real mouse: its hover events are sent to the element instead.
         if (!this.taskTabInFront()) await this.elementRun(wc, input.element_id, scripts.domHover);
@@ -8431,6 +8469,7 @@ ${same}
         const screens = Math.min(Math.max(input.screens || 1, 0.25), 10);
         const pdf = await pdfInput.scrollPdf(wc, input.page > 0 ? { page: Math.floor(input.page) } : { screens: input.direction === 'up' ? -screens : screens }); // the viewer's own scroll (null: not a PDF tab)
         if (pdf) return JSON.stringify(pdf);
+        this.pointAt(wc, null, 'scroll'); // [agent cursors]
         const result = await runScript(wc, scripts.scroll(input.direction === 'up' ? -screens : screens)); // (resolves once the scroll position is stable)
         return JSON.stringify(result);
       }

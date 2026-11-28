@@ -173,6 +173,7 @@
       + '<details class="act-steps"><summary></summary><div class="act-list"></div></details>';
     const card = { el: el0, surface, entries: [], page: el0.querySelector('.act-page'), list: el0.querySelector('.act-list'), count: 0, running: 0, stopped: false, first: '', sum: el0.querySelector('.act-steps > summary'), sub: el0.querySelector('.act-sub'), tabref: el0.querySelector('.act-tabref'), title: el0.querySelector('.act-title'), icon: el0.querySelector('.act-icon'), shot: el0.querySelector('.act-shot'), img: el0.querySelector('.act-thumb'), site: el0.querySelector('.act-site'), siteIco: el0.querySelector('.act-site-ico'), siteName: el0.querySelector('.act-site-name'), status: el0.querySelector('.act-status'), statusText: el0.querySelector('.act-status-text'), shot2: el0.querySelector('.act-shot2'), img2: el0.querySelector('.act-thumb2'), say: el0.querySelector('.act-say'), filesBox: el0.querySelector('.act-files'), files: [], linkKey: '', sayText: '', resumeBtn: el0.querySelector('.act-resume'), stopBtn: el0.querySelector('.act-stop'), hadBrowser: surface === 'browser', firstSurface: surface, app: null, shellKind: 'terminal', tabsBox: el0.querySelector('.act-tabs'), tabsHead: el0.querySelector('.act-tabs-head'), tabsList: el0.querySelector('.act-tabs-list'), touched: [], tabEls: new Map(), tabsUser: false, liveAt: 0, liveText: '', liveTimer: 0, siteMode: false, btn: el0.querySelector('.act-btn'), task: '', tab: null, file: null, shell: false, writes: false, latest: '', live: el0.querySelector('.act-live'), said: '', toggle: el0.querySelector('.act-toggle'), closeAll: el0.querySelector('.act-closeall'), note: el0.querySelector('.act-tabs-note'), aiTabs: null, runId: null, closed: false };
     el0._card = card;
+    card.t0 = Date.now(); // [step time] the run's start, for the time in the step summary once it is done ("8 steps · 4.5s")
     el0.setAttribute('role', 'group');
     card.tabsHead.textContent = String.fromCharCode(160); // (stand-ins, so the slots a working Browser card keeps for them are a line tall: step-ui.css "steady")
     card.btn.textContent = tr('card.openPreview');
@@ -413,7 +414,8 @@
   function outcomeOf(card) {
     const clip = (t, n) => (t.length > n ? t.slice(0, n - 1).trimEnd() + '\u2026' : t);
     const line = String(card.outcome || '').split(/\n/).map((l) => l.replace(/^[\s>#*_`\-\d.)]+/, '').replace(/[*_`]/g, '').trim()).find(Boolean) || '';
-    if (line) { const first = line.match(/^.+?[.!?](?=\s|$)/)?.[0] || line; return clip(first.replace(/[.!?\s]+$/, ''), 80); }
+    const done = (t) => t.replace(/[.!?\s]+$/, '').toLowerCase() === trimStep(tr('card.state.completed')).toLowerCase(); // (a reply that only says "Done.": the status is "Done", never "Done: Done")
+    if (line && !done(line)) { const first = line.match(/^.+?[.!?](?=\s|$)/)?.[0] || line; return clip(first.replace(/[.!?\s]+$/, ''), 80); }
     const title = card.surface === 'browser' && card.navigated ? String(card.tab?.title || '').trim() : '';
     return title ? tr('card.status.opened', { title: clip(title, 70) }) : '';
   }
@@ -436,7 +438,12 @@
     const step = wordStep(card, trimStep(card.latest));
     if (state === 'stopped') return tr('card.status.stopped');
     if (card.surface === 'app' && card.app?.status === 'paused' && state === 'working') return tr('desktopcard.paused');
-    if (state === 'completed') { const result = outcomeOf(card); return result ? tr('card.status.done', { result }) : tr('card.state.completed'); }
+    if (state === 'completed') { // [step time] the run's whole time follows ("Done: Opened 'Shop' · 3.3s"; renderer/step-time.js: nothing under a second, and a card drawn again from a saved chat has none)
+      const result = outcomeOf(card);
+      const text = result ? tr('card.status.done', { result }) : tr('card.state.completed');
+      const took = card.t1 && window.stepTime ? window.stepTime.format(card.t1 - card.t0) : '';
+      return took ? tr('card.status.took', { status: text, time: took }) : text;
+    }
     if (state === 'approval') return tr('card.status.needs', { why: step ? tr('card.status.needsWhy', { step }) : tr('card.status.needsOk') });
     if (state === 'working' || state === 'helper') { const all = nowList(card); // (with the reply's newest step named, so the scrolled-out pill still says what is new)
       if (all.length >= 2) { const now = all.filter((x) => !x.who).at(-1)?.text; return now ? tr('card.status.manyNow', { count: all.length, step: now }) : tr('card.status.many', { count: all.length }); } }
@@ -794,7 +801,7 @@
         turn.noteRows = null;
         adoptPlain(turn, card); // (steps of this turn that came before the card: they belong in it)
       }
-      if (card.ended && !opts.late) { card.ended = false; card.stopped = false; } // (a late step, a helper's, does not undo the Done of the reply that started it) // (a step after the card said Done: it works again, and says Done at the turn's real end)
+      if (card.ended && !opts.late) { card.ended = false; card.stopped = false; card.t1 = 0; } // (a late step, a helper's, does not undo the Done of the reply that started it) // (a step after the card said Done: it works again, and says Done at the turn's real end)
       setSurface(card, surface, event.name);
       if (surface === 'browser' && !card.browserInit) { card.browserInit = true; card.task = SL().taskName(opts.task || ''); if (turn.lastThumb && !card.tab) { card.tab = turn.lastThumb.tab; setTabRow(card, turn.lastThumb.tab); } }
       markRow(row, surface, event.name);
@@ -810,7 +817,7 @@
     } else if (liveCard(turn)) {
       // A step that is on no surface of its own (a web search, a tool): in the turn's card, in order, not in a row of its own under it.
       const card = turn.card;
-      if (card.ended && !opts.late) { card.ended = false; card.stopped = false; } // (a late step, a helper's, does not undo the Done of the reply that started it)
+      if (card.ended && !opts.late) { card.ended = false; card.stopped = false; card.t1 = 0; } // (a late step, a helper's, does not undo the Done of the reply that started it)
       card.count++;
       if (running) card.running++;
       card.latest = label;
@@ -867,6 +874,7 @@
       card.running = 0;
       if (typeof event?.reply === 'string' && event.reply.trim()) card.outcome = event.reply;
       card.ended = true;
+      card.t1 ||= Date.now(); // [step time]
       card.sayText = '';
       refreshCard(turn, card);
       if (card.review) paintReview(card); // ([review loop] a chip still waiting goes with the reply, unless a reviewer works on)

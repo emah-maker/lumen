@@ -2019,6 +2019,7 @@ function onAgentEvent(event) {
       if (!step) break;
       step.classList.remove('running', 'done', 'failed', 'stopped');
       step.classList.add(event.ok ? 'done' : event.stopped ? 'stopped' : 'failed');
+      if (Number.isFinite(event.ms) && event.ms >= 0 && step.dataset.t0) step.dataset.t0 = String(Date.now() - event.ms); // [step time] how long the tool ran (main measures it): never the time an approval waited
       showStepTime(step, true);
       const plain = window.stepUI?.done(turn, step, event); // a built-in tool's failure reads as a sentence with a short reason
       if (event.ok && step.dataset.tool === 'annotate') annotateChip(step); // "Drew 4 marks" with Show again / Clear
@@ -2253,6 +2254,7 @@ function lateCardEvent(t, event) {
       if (!step) break;
       step.classList.remove('running', 'done', 'failed', 'stopped');
       step.classList.add(event.ok ? 'done' : event.stopped ? 'stopped' : 'failed');
+      if (Number.isFinite(event.ms) && event.ms >= 0 && step.dataset.t0) step.dataset.t0 = String(Date.now() - event.ms); // [step time] how long the tool ran (main measures it): never the time an approval waited
       showStepTime(step, true);
       window.stepUI?.done(t, step, event);
       break;
