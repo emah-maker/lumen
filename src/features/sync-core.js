@@ -193,6 +193,8 @@ const validRecord = (r) => r && typeof r === 'object' && Number.isFinite(r.t) &&
 //   has?(key)          true if the key still exists although scan did not list it
 //   apply(changes)     [{ key, value, deleted }] -> the keys it could not apply now (they are tried again next pass)
 //   combine?(winnerValue, versions)  a value made from the winner and the others (history keeps the larger visit count)
+//   combineOwn?        true: combine also when this device's record is the winner, once per set of other versions (the bookmarks bar's
+//                      order: a link another computer added keeps its place in our newer order). Our file keeps our record as it was.
 
 function createEngine({ dirs, key, deviceId, deviceName = '', platform = process.platform, appVersion = '', state, saveState = async () => {}, providers, now = () => Date.now() }) {
   const own = new Map(); // shard -> { records } what this device authored, as written (the authority for our own files)
@@ -349,7 +351,15 @@ function createEngine({ dirs, key, deviceId, deviceName = '', platform = process
       const w = winner(list);
       if (!w) continue;
       wins.set(k, w);
-      if (w.d === deviceId) continue;
+      if (w.d === deviceId) {
+        const others = p.combineOwn && p.combine ? list.filter((v) => !v.x && v.d !== deviceId) : [];
+        const mark = others.map((v) => `${v.d}:${v.t}`).sort().join(',');
+        if (!others.length || st[k]?.m === mark || !(scanned.has(k) || p.has?.(k))) continue;
+        const value = p.combine(w.v, others.map((v) => v.v));
+        if (canonical(value) === canonical(w.v)) { if (st[k]) st[k].m = mark; continue; }
+        changes.push({ key: k, value, w, m: mark });
+        continue;
+      }
       const prior = st[k];
       if (prior && compare(prior, w) >= 0) continue;
       if (w.x) {
@@ -371,7 +381,7 @@ function createEngine({ dirs, key, deviceId, deviceName = '', platform = process
       for (const c of changes) {
         if (heldSet.has(c.key)) continue;
         const item = after?.get(c.key);
-        st[c.key] = { s: item ? (item.sig ?? sigOf(item.value)) : '', t: c.w.t, d: c.w.d, ...(c.w.x ? { x: 1 } : {}) };
+        st[c.key] = { s: item ? (item.sig ?? sigOf(item.value)) : '', t: c.w.t, d: c.w.d, ...(c.w.x ? { x: 1 } : {}), ...(c.m ? { m: c.m } : {}) };
         if (c.w.x) out.removed++; else out.applied++;
       }
       if (held.length) out.deferred += held.length;

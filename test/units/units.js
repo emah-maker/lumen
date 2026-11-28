@@ -1224,7 +1224,7 @@ async function fuseChecks() {
     <DT><A HREF="javascript:alert(1)">Bookmarklet</A><DT><A HREF='file:///C:/x'>File</A><DT><A HREF=https://bare.example/>Bare</A>
   </DL><p></DL><p>`;
   const got = parseNetscape(chrome);
-  check('bookmarks: import reads nested folders as their innermost name', got.find((b) => b.url === 'https://soup.example/')?.folder === 'Soups' && got.find((b) => b.url === 'https://cake.example/')?.folder === 'Recipes', JSON.stringify(got));
+  check('bookmarks: import keeps nested folders as paths (test/units/bookmark-html-units.js has the browsers own files)', got.find((b) => b.url === 'https://soup.example/')?.folder === 'Recipes/Soups' && got.find((b) => b.url === 'https://cake.example/')?.folder === 'Recipes', JSON.stringify(got));
   check('bookmarks: the browser\'s own bookmarks-bar folder is not kept as a folder', got.find((b) => b.url === 'https://top.example/')?.folder === undefined, JSON.stringify(got));
   check('bookmarks: import keeps only http(s) links', got.length === 4 && !got.some((b) => /^(javascript|file):/.test(b.url)), JSON.stringify(got));
   check('bookmarks: import decodes entities and unquoted addresses', got.some((b) => b.title === 'Cake & tea') && got.some((b) => b.url === 'https://bare.example/'), JSON.stringify(got));

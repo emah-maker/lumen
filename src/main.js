@@ -6081,7 +6081,8 @@ const managers = createManagers({
   openTab: (url, opts) => openTab(url, opts),
   switchTab: (id) => switchTab(id),
   bookmarks: () => bookmarks(),
-  saveBookmarks: (list) => writeSettings({ ...readSettings(), bookmarks: list }),
+  saveBookmarks: (list, layout) => writeSettings({ ...readSettings(), bookmarks: list, ...(layout ? { bookmarkLayout: layout } : {}) }),
+  bookmarkLayout: () => readSettings().bookmarkLayout,
   bookmarksChanged: () => sendTabs(),
   readingList: () => readingList(),
   readingIcon: (host) => readingIcon(host),
@@ -14429,7 +14430,7 @@ function syncService() {
     deviceName: TEST ? 'This computer' : undefined,
     timing: TEST && process.env.LUMEN_SYNC_TEST_MS ? { local: 200, history: 400, watch: 200, poll: 300, first: 100, periodic: 60000 } : undefined,
     makeProvider: (kind) => ({
-      bookmarks: () => P.bookmarks({ read: () => readSettings().bookmarks, write: (list) => writeSettings({ ...readSettings(), bookmarks: list }) }),
+      bookmarks: () => P.bookmarks({ read: () => readSettings().bookmarks, readLayout: () => readSettings().bookmarkLayout, write: (list, layout) => writeSettings({ ...readSettings(), bookmarks: list, ...(layout ? { bookmarkLayout: layout } : {}) }) }),
       settings: () => P.settings({ read: readSettings, set: (k, v) => settingsBackend.set(k, v), writeDirect: (patch) => writeSettings({ ...readSettings(), ...patch }) }),
       widgets: () => P.widgets({ read: readSettings, write: (patch) => writeSettings({ ...readSettings(), ...patch }), refresh: () => { try { refreshNewTabs(); } catch { /* not set up yet */ } } }),
       history: () => P.history({ map: () => history, ready: async () => { await historyReady; return historyLoaded; }, save: saveHistorySoon, bump: () => { historyVersion++; }, isWorthImporting: (u) => importer.isWorthImporting(u) }),
