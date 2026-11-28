@@ -19,9 +19,6 @@ const MANUAL_SUITES = {
   claudecode: 'sends a real message through the user\'s signed-in `claude` CLI (uses their plan)',
   grokgate: 'runs the real signed-in `grok` CLI (uses the user\'s Grok sign-in and costs a few cents)',
   cli: 'downloads and installs the real Anthropic `ant` CLI from its official release',
-  // Settings-open timing (a 150 ms budget from the first screen), machine-load sensitive: the user ruled 2026-10-21 that Settings open speed
-  // does not block a release (settings-open-perf, files-perf and mcp-perf were left out the same way from 0.5.61).
-  'settings-search-speed': 'Settings search within 150 ms of the first screen: a timing budget releases do not wait on; run it on a quiet machine',
 };
 
 module.exports = { MANUAL_SUITES };

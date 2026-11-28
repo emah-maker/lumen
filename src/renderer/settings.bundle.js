@@ -8490,10 +8490,14 @@ const REMEMBER = 'lumen.settings.category';
 const remembered = () => { try { const id = localStorage.getItem(REMEMBER); return categories.has(id) ? id : null; } catch { return null; } };
 const remember = (id) => { try { localStorage.setItem(REMEMBER, id); } catch {} };
 
+
+
 let reshowTimer = 0;
-const reshowSoon = () => { if (!reshowTimer) reshowTimer = setTimeout(() => { reshowTimer = 0; show(); }, 100); };
+let lastShow = 0;
+const reshowSoon = () => { if (!reshowTimer) reshowTimer = setTimeout(() => { reshowTimer = 0; show(); }, Math.max(0, 100 - (performance.now() - lastShow))); };
 let searchedBefore = false;
 function show() {
+lastShow = performance.now();
 const SS = window.settingsSearch;
 const words = SS.parse(query());
 const searching = words.length > 0;
@@ -8834,6 +8838,20 @@ allDone = true;
 document.body.dataset.ready = '1';
 })();
 
+
+
+const buildFor = (words) => {
+if (allDone || !words.length) return;
+const SS = window.settingsSearch;
+const want = new Set();
+for (const [id, slot] of slots) {
+if (!slot.isSub || !slot.link || id.endsWith('~parent')) continue;
+if (!SS.matchesAll(String(slot.link.dataset.search || ''), words)) continue;
+for (const sid of neededBuilds({ cat: slot.cat, sub: id })) if (!started.has(sid)) want.add(sid);
+}
+for (const sid of want) buildOne(sid);
+};
+
 const wanted = guessView();
 const hash = location.hash.slice(1);
 const unknown = hash && !categories.has(hash) && !ALIASES[hash] && !slots.get(hash)?.isSub;
@@ -8844,7 +8862,7 @@ window.addEventListener('resize', fitSoon);
 document.addEventListener('contentvisibilityautostatechange', fitSoon, true);
 document.fonts?.ready.then(fitDescs).catch(() => {});
 
-$('search').addEventListener('input', () => { revealFolded(); show(); if (!allDone) buildAll().then(() => { if (searchedBefore) show(); }); });
+$('search').addEventListener('input', () => { revealFolded(); buildFor(window.settingsSearch.parse(query())); show(); if (!allDone) buildAll().then(() => { if (searchedBefore) show(); }); });
 $('clear-search').addEventListener('click', () => { $('search').value = ''; show(); $('search').focus(); });
 
 document.addEventListener('keydown', (e) => {
