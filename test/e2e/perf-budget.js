@@ -66,7 +66,7 @@ const CEILING = { requireMs: 1000, modules: 341, preloadKB: 40, uiKB: 1000, idle
     const ui = await app.firstWindow();
     await ui.waitForSelector('.tab');
     await new Promise((r) => setTimeout(r, 1500));
-    const modules = await app.evaluate(() => global.__perf.modules());
+    const modules = (await app.evaluate(() => global.__perf.modules())).map((f) => f.replace(/\\/g, '/')); // (separator-agnostic: a Windows path must not slip past the LAZY check below)
     const loaded = LAZY.filter((m) => modules.some((f) => f.includes(m.replace(/^src\//, '')))); // (project modules are listed relative to src/)
     check('heavy modules are not loaded at startup', loaded.length === 0, `loaded: ${loaded.join(', ')}`);
     check(`project and dependency modules loaded at startup <= ${CEILING.modules}`, modules.length <= CEILING.modules, modules.length);
