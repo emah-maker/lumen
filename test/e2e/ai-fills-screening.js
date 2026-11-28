@@ -79,25 +79,13 @@ const FORM = `<!doctype html><title>Career Opportunities: Apply for Mechanical C
         const system = (params.system || []).map((s) => s.text).join('\n');
         const last = params.messages[params.messages.length - 1];
         const results = (Array.isArray(last?.content) ? last.content : []).filter((b) => b.type === 'tool_result');
-        const said = JSON.stringify(last?.content || '');
         fake.requests.push({ system, tools: (params.tools || []).map((t) => t.name) });
         const pick = (re) => (re.exec(system) || [])[1] || '';
         let content;
-        if (results.length) {
-          fake.results = [...(fake.results || []), ...results.map((r) => (typeof r.content === 'string' ? r.content : JSON.stringify(r.content)))];
-          if (/Saved to the user's profile: Available from/.test(fake.results.join('\n')) && !fake.filledStart) {
-            fake.filledStart = true;
-            content = [{ type: 'tool_use', id: 'toolu_f2', name: 'fill_form', input: { fields: [{ label: 'Earliest start date', value: 'January 2027' }] } }];
-          } else if (/Saved to the user's profile: Available from/.test(fake.results.join('\n')) && !fake.triedGuess) {
-            fake.triedGuess = true; // (a demographic answer the user never gave: the tool must refuse it)
-            content = [{ type: 'tool_use', id: 'toolu_g1', name: 'applications', input: { action: 'remember', note: 'What is your race or ethnicity? Asian' } }];
-          } else if (!/Saved to the user's profile: Available from/.test(fake.results.join('\n'))) {
-            fake.asked++; // (after the first fill: what the profile does not answer, asked as the system prompt says)
-            content = [{ type: 'text', text: /ONE short question/.test(system) && /Not saved yet[^\n]*Available from/.test(system) ? 'One thing is missing: your earliest start date?' : 'Please fill in the rest yourself.' }];
-          } else content = [{ type: 'text', text: 'Everything is filled. Review it and tell me when to submit.' }];
-        } else if (/January 2027/.test(said)) {
-          content = [{ type: 'tool_use', id: 'toolu_r1', name: 'applications', input: { action: 'remember', note: 'startDate: January 2027' } }];
-        } else if (!fake.filled) {
+        const saved = () => /Saved to the user's profile: Available from/.test((fake.results || []).join('\n'));
+        if (results.length) fake.results = [...(fake.results || []), ...results.map((r) => (typeof r.content === 'string' ? r.content : JSON.stringify(r.content)))];
+        const answered = /The user answered:[\s\S]*January 2027/.test((fake.results || []).join('\n'));
+        if (!fake.filled) {
           fake.filled = true;
           const fields = [];
           const auth = pick(/Authorized to work here\?: (\w+)/);
@@ -106,16 +94,26 @@ const FORM = `<!doctype html><title>Career Opportunities: Apply for Mechanical C
           if (spon) fields.push({ label: 'Will you now or in the future require sponsorship for employment visa status?', value: spon });
           if (/the user chose to decline them/.test(system)) fields.push({ label: 'Gender', value: "I don't wish to answer" });
           content = [{ type: 'tool_use', id: 'toolu_f1', name: 'fill_form', input: { fields } }];
-        } else {
-          fake.asked++;
-          content = [{ type: 'text', text: /ONE short question/.test(system) && /Not saved yet[^\n]*Available from/.test(system) ? 'One thing is missing: your earliest start date?' : 'Please fill in the rest yourself.' }];
-        }
+        } else if (!fake.askedCard && !answered) {
+          fake.askedCard = true; // (what the profile does not answer, asked as the system prompt says: one ask_user card)
+          content = /call ask_user once/.test(system) && /Not saved yet[^\n]*Available from/.test(system) && fake.requests[fake.requests.length - 1].tools.includes('ask_user')
+            ? [{ type: 'tool_use', id: 'toolu_a1', name: 'ask_user', input: { questions: [{ question: 'When can you start?', header: 'Start date', options: ['January 2027', 'May 2027', 'September 2027'] }] } }]
+            : [{ type: 'text', text: 'Please fill in the rest yourself.' }];
+        } else if (answered && !saved()) {
+          content = [{ type: 'tool_use', id: 'toolu_r1', name: 'applications', input: { action: 'remember', note: 'startDate: January 2027' } }];
+        } else if (saved() && !fake.filledStart) {
+          fake.filledStart = true;
+          content = [{ type: 'tool_use', id: 'toolu_f2', name: 'fill_form', input: { fields: [{ label: 'Earliest start date', value: 'January 2027' }] } }];
+        } else if (saved() && !fake.triedGuess) {
+          fake.triedGuess = true; // (a demographic answer the user never gave: the tool must refuse it)
+          content = [{ type: 'tool_use', id: 'toolu_g1', name: 'applications', input: { action: 'remember', note: 'What is your race or ethnicity? Asian' } }];
+        } else content = [{ type: 'text', text: 'Everything is filled. Review it and tell me when to submit.' }];
         const stop = content[0].type === 'tool_use' ? 'tool_use' : 'end_turn';
         const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: stop, content, usage: { input_tokens: 10, output_tokens: 5 } };
         return { async *[Symbol.asyncIterator]() { if (stop === 'end_turn') yield { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: content[0].text } }; }, finalMessage: async () => message };
       } } } });
       const events = [];
-      await agent.run(typed, (e) => { events.push(e); if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, true), 0); });
+      await agent.run(typed, (e) => { events.push(e); if (e.type === 'approval') setTimeout(() => agent.resolveApproval(e.approvalId, true), 0); if (e.type === 'ask') { fake.cards = [...(fake.cards || []), e.questions]; setTimeout(() => agent.answerAsk(e.askId, [['January 2027']]), 0); } }); // (the user clicks January 2027 on the card)
       const replies = agent.messages.filter((m) => m.role === 'assistant').flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.type === 'text').map((b) => b.text);
       return { replies, events: events.map((e) => ({ type: e.type, action: e.action, text: String(e.text || e.title || '').slice(0, 200) })), fake: { ...fake, requests: fake.requests.map((r) => ({ tools: r.tools, about: (/<about_user>[\s\S]*?<\/about_user>/.exec(r.system) || [''])[0] })) } };
     }, { typed: text, tabId: formTab });
@@ -124,26 +122,22 @@ const FORM = `<!doctype html><title>Career Opportunities: Apply for Mechanical C
       return wc.executeJavaScript("({ url: location.href, auth: document.getElementById('auth')?.value, spon: document.getElementById('spon')?.value, gender: document.getElementById('gender')?.value, start: document.getElementById('start')?.value, submitted: Boolean(window.__submitted) })");
     }, formTab);
 
-    // ---- turn 1: fill from the profile, then one question
+    // ---- one run: fill from the profile, one card for what is missing, the pick saved and filled, a guess refused, nothing submitted
     const r1 = await run('Fill out this application for me.');
     const about = r1.fake.requests[0]?.about || '';
-    check('the model gets the profile and the rules: fill without asking, one question, never submit', /Authorized to work here\?: Yes/.test(about) && /without asking/.test(about) && /ONE short question/.test(about) && /Never submit/.test(about), about.slice(0, 900));
+    check('the model gets the profile and the rules: fill without asking, one ask_user card, never submit', /Authorized to work here\?: Yes/.test(about) && /without asking/.test(about) && /call ask_user once/.test(about) && /Never submit/.test(about), about.slice(0, 900));
     check('…the demographics choice ("decline")', /the user chose to decline them/.test(about), about);
-    check('…and the applications tool (remember)', r1.fake.requests[0]?.tools.includes('applications'), JSON.stringify(r1.fake.requests[0]?.tools));
+    check('…and the applications and ask_user tools', ['applications', 'ask_user'].every((t) => r1.fake.requests[0]?.tools.includes(t)), JSON.stringify(r1.fake.requests[0]?.tools));
     const s1 = await formState();
     check('work authorization and sponsorship filled from the profile, without asking', s1.auth === 'y' && s1.spon === 'n', JSON.stringify(s1));
     check('gender: the form\'s "I don\'t wish to answer", never a pick of its own', s1.gender === 'd', JSON.stringify(s1));
-    check('one question for what is missing', r1.fake.asked === 1 && /earliest start date\?/.test(r1.replies.join('\n')), JSON.stringify(r1.replies));
-
-    // ---- turn 2: the user answers; saved to the profile and filled; a guessed demographic answer refused; nothing submitted
-    const r2 = await run('January 2027');
-    const s2 = await formState();
-    check('the answer is filled in', s2.start === 'January 2027', JSON.stringify(s2));
+    check('one card for what is missing, with options', (r1.fake.cards || []).length === 1 && r1.fake.cards[0].length === 1 && /start/i.test(r1.fake.cards[0][0].question), JSON.stringify(r1.fake.cards));
+    check('the pick is filled in', s1.start === 'January 2027', JSON.stringify(s1));
     const after = await api('projectAbout', job.id);
     check('…and saved to the profile (About you), so the next application does not ask', after?.about?.groups?.find((g) => g.id === 'work')?.fields.find((f) => f.key === 'startDate')?.value === 'January 2027', JSON.stringify(after?.about?.groups?.find((g) => g.id === 'work')));
-    check('a demographic answer the user never gave is refused, not saved', /saved only as the user’s own words/.test((r2.fake.results || []).join('\n')) && !(after?.about?.answers || []).some((a) => /race/i.test(a.question)), JSON.stringify(r2.fake.results));
+    check('a demographic answer the user never gave is refused, not saved', /saved only as the user’s own words/.test((r1.fake.results || []).join('\n')) && !(after?.about?.answers || []).some((a) => /race/i.test(a.question)), JSON.stringify(r1.fake.results));
     check('the next chat\'s profile has the start date (not asked again)', !/Not saved yet/.test((await app.evaluate(() => global.__projectWorkspace.blockFor(global.__chats.id()))) || ''), '');
-    check('never submitted', s2.submitted === false && posted === 0 && !/submit/i.test(JSON.stringify(r2.events.filter((e) => e.type === 'approval'))), JSON.stringify([s2, posted]));
+    check('never submitted', s1.submitted === false && posted === 0 && !/submit/i.test(JSON.stringify(r1.events.filter((e) => e.type === 'approval'))), JSON.stringify([s1, posted]));
   } catch (err) {
     failures++;
     console.log(`FAIL  the suite threw  -> ${err?.stack || err}`);

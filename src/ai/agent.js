@@ -5844,6 +5844,8 @@ ${prompt}` : prompt), historyImages: [] };
     });
     if (!answers) return 'The user has not answered yet. Stop here and end your turn with one short sentence; their answer will come as their next message.';
     emit({ type: 'ask_done', askId, answers });
+    const said = lib.answerText(checked.questions, answers, { message: true });
+    if (scope.chat) { (scope.chat.saidLately ||= []).push(said.slice(0, 4000)); if (scope.chat.saidLately.length > 6) scope.chat.saidLately.shift(); } // [about you] the card's picks are the user's own answer (a profile save checks them)
     return lib.answerText(checked.questions, answers);
   }
 
