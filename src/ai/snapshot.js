@@ -549,6 +549,8 @@ const READ_PAGE_EXTRA = {
   table: { type: 'string' }, // extract tables: one table by number or caption words (named in the tool description)
 };
 // Tools that can also report what changed on the page after they act (see observe).
+// [fewer round trips] Marks an acting tool's input when its caller reports the page itself (observe, batch): agent.js adds no landed-page head.
+const QUIET_LANDING = Symbol('quietLanding');
 const OBSERVE_TOOLS = new Set(['click', 'click_at', 'type_text', 'press_key']);
 
 const SCREENSHOT_EXTRA = {
@@ -840,6 +842,7 @@ async function batch(agent, wc, input, h) {
       }
       // The OK for the batch was for the site it started on; each step is asked about where it runs.
       await agent.allowStep(...tool);
+      tool[1][QUIET_LANDING] = true; // [fewer round trips] no landed-page head per step: it would reset the baseline of the closing diff
       const result = await agent.execute(...tool);
       report.push(`${n} ${String(result).split('\n')[0].slice(0, 160)}`);
     } catch (err) {
@@ -902,4 +905,4 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
   return undefined;
 }
 
-module.exports = { OBSERVE_TOOLS, observe, outline, head, pageHead, extractData, extractTables, formatTables, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };
+module.exports = { QUIET_LANDING, OBSERVE_TOOLS, observe, outline, head, pageHead, extractData, extractTables, formatTables, reads, ReadCache, extendTools, execute, ACTING, NEW_TOOLS, compactOutline, findMatches, registryScript };

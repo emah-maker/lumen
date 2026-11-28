@@ -69,8 +69,6 @@ const phaseTimer = (tool) => {
   const parts = [];
   return (name, print = false) => { const now = Date.now(); parts.push(`${name} ${now - last}`); last = now; if (print) console.log(`[lumen] ${tool} phases ${parts.join(' · ')}`); };
 };
-// [fewer round trips] Marks an acting tool's input when the caller reports the page itself (observe): no landed-page head is added.
-const QUIET_LANDING = Symbol('quietLanding');
 // Another document, not the same one with another #fragment.
 const landedElsewhere = (before, after) => String(before || '').split('#')[0] !== String(after || '').split('#')[0];
 const turnTiming = require('./turn-timing'); // [turn timing] LUMEN_TURN_TIMING=1: send to first token, tool calls and tokens per model request
@@ -7502,7 +7500,7 @@ ${CLI_DESKTOP_RULE}`;
   // [fewer round trips] An action that took the tab to another document (not a #fragment jump): the new page's head comes back with its
   // result, as navigate's does, so the model needs no read_page just to see where it landed. Not under observe (its diff says it).
   async landedHead(wc, urlBefore, input) {
-    if (input?.[QUIET_LANDING] || wc.isDestroyed() || !landedElsewhere(urlBefore, wc.getURL())) return '';
+    if (input?.[snapshot.QUIET_LANDING] || wc.isDestroyed() || !landedElsewhere(urlBefore, wc.getURL())) return '';
     return snapshot.head(this, wc, { runScript, scripts }, { noTitle: false }).catch(() => '');
   }
 
@@ -8248,7 +8246,7 @@ ${CLI_DESKTOP_RULE}`;
     // --- end efficiency hook ---
     if (input?.observe && snapshot.OBSERVE_TOOLS.has(name)) { // act, then report what changed (snapshot.js)
       const { observe, ...rest } = input;
-      return snapshot.observe(this, () => this.runTool(name, { ...rest, [QUIET_LANDING]: true }), { runScript, scripts }); // (observe's own diff says where it landed)
+      return snapshot.observe(this, () => this.runTool(name, { ...rest, [snapshot.QUIET_LANDING]: true }), { runScript, scripts }); // (observe's own diff says where it landed)
     }
     switch (name) {
       case 'read_page': {
