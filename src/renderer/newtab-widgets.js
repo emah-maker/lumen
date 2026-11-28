@@ -2637,8 +2637,13 @@ const asked = new Map();
 // A music card saying "Starting Spotify…" (asked while this page was not in front, so nothing started it: music-card-features.js
 // startingRefreshMs) is asked again every few seconds while the page is shown, until it says something else. Once no card says it (the card
 // moved on, or was removed) a timer still waiting is cancelled: it would only redraw the widgets for nothing.
+// (at most STARTING_TRIES asks per data main sent: the spare new-tab page is never sent any, startingTried)
+const startingAsks = new Map(); // widget id -> { updated, n }
+const startingMs = (w) => MusicCardFeatures.startingRefreshMs(w, startingAsks.get(w.id));
+// main: this spare page has just become a tab (main.js openTab). Its cards may ask again at once.
+window.newtabTaken = () => { startingAsks.clear(); armStarting(); };
 function armStarting() {
-  const soon = document.hidden ? Infinity : Math.min(...lastList.current.map((w) => MusicCardFeatures.startingRefreshMs(w)).filter(Boolean));
+  const soon = document.hidden ? Infinity : Math.min(...lastList.current.map(startingMs).filter(Boolean));
   if (!Number.isFinite(soon)) { clearTimeout(lastList.startingTimer); lastList.startingTimer = 0; return; }
   if (lastList.startingTimer) return;
   lastList.startingTimer = setTimeout(() => { lastList.startingTimer = 0; tick(); }, soon);
@@ -2651,8 +2656,9 @@ function tick() {
   }
   for (const w of lastList.current) {
     // Stocks and Crypto say how often they refresh (a closed market: hourly).
-    const after = MusicCardFeatures.startingRefreshMs(w) || ((w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type]);
-    if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh', { arg: 'auto' }); return; }
+    const quick = startingMs(w);
+    const after = quick || ((w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type]);
+    if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); if (quick) startingAsks.set(w.id, MusicCardFeatures.startingTried(startingAsks.get(w.id), w)); widgetAct(w.id, 'refresh', { arg: 'auto' }); return; }
   }
   const box = document.getElementById('widgets');
   if (!box.querySelector('.w-row.done') && !box.querySelector('.td-add input:focus') && !box.querySelector('.mu-ask input:focus') && !box.querySelector('.mk-trade :focus') && !window.widgetGrid?.busy()) window.dispatchEvent(new HashChangeEvent('hashchange'));

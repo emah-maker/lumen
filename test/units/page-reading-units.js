@@ -197,6 +197,21 @@ const long = (n) => 'lorem ipsum dolor sit amet '.repeat(Math.ceil(n / 27)).slic
   await cache.run({ name: 'read_urls', input: { urls: ['a'], offset: 8000 } }, '', async () => { runs++; return 'two'; });
   check('cache: the next chunk is a real call, not "same as before"', runs === 2);
 
+  // ---- the AI's own tab: navigate / open_tab, then read_page, after x.com/home sent a signed-out tab to its front page
+  {
+    const x = JSON.parse(require('fs').readFileSync(require('path').join(__dirname, '../fixtures/page-reading/x-signed-out-home.json'), 'utf8'));
+    // runScript stand-in: the probe gets the saved probe, the page script gets the saved title and text
+    const run = async (code) => (/scriptCount|islandBytes/.test(code) ? x.probe : { title: x.title, text: x.text, textLen: x.textLen, url: x.url, outline: { headings: [], groups: [] } });
+    const wall = typeof reading.landedWall === 'function' ? await reading.landedWall(x.requested, x.url, run) : '';
+    check('navigate: x.com/home that landed on x.com\'s signed-out front page says it is a sign-in wall in its own answer', /^Page: wall — sign-in/.test(wall), wall);
+    check('navigate: …asking for the front page itself, or a page that stayed put, says nothing (and reads nothing)', await reading.landedWall('https://x.com/', x.url, async () => { throw new Error('read'); }) === '' && await reading.landedWall('https://x.com/home', 'https://x.com/home', async () => { throw new Error('read'); }) === '');
+    const page = { title: x.title, text: x.text, totalTextChars: x.textLen };
+    const full = await reading.fullReadExtras(page, run, { requested: x.requested, landed: x.url });
+    check('read_page full: the same tab read after navigate reports the sign-in wall (it said ok before: no asked-for address)', /^Page: wall — sign-in/.test(full) && await reading.fullReadExtras(page, run) === '', full);
+    const outline = await reading.readOutline(run, { requested: x.requested });
+    check('read_page outline: …and so does the outline', /Page: wall — sign-in/.test(outline), outline.slice(0, 200));
+  }
+
   console.log(`${total - failed}/${total} passed`);
   process.exit(failed ? 1 : 0);
 })().catch((err) => { console.error(err); process.exit(1); });

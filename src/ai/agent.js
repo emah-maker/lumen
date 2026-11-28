@@ -1261,6 +1261,11 @@ const TAB_NAMING_READS = new Set(['read_pdf', 'get_console', 'get_network', 'han
 const LASTING_TOOLS = { click: 'clicked', click_at: 'clicked', drag: 'dragged', type_text: 'typed text', fill_form: 'filled a form', press_key: 'pressed keys', run_script: 'ran a script', batch: 'ran steps', upload_file: 'uploaded a file' };
 const { siteOf } = require('../features/ai-sites');
 const pageReading = require('./page-reading'); // read_urls / read_page: health, structured data, markdown, outline
+// The address navigate / open_tab last asked for in a tab and where it landed (webContents -> { url, landed }): read_page passes it to the
+// health check while the tab is still on that page, so a redirect to a sign-in page (x.com/home -> x.com/, signed out) reads as a wall.
+const askedUrls = new WeakMap();
+function noteAsked(wc, url) { try { askedUrls.set(wc, { url: String(url || ''), landed: wc.getURL() }); } catch { /* gone */ } }
+function askedFor(wc) { const a = askedUrls.get(wc); return a && !wc.isDestroyed() && a.landed === wc.getURL() ? a.url : ''; }
 const pageHealth = require('./page-health'); // read_urls chunk size (clampChars), offset slicing (slicePage)
 const signedIn = require('../features/signed-in-sites'); // [signed-in sites] read_urls as_user
 const tabsAsk = require('../features/tabs-ask');
@@ -8213,7 +8218,7 @@ ${CLI_DESKTOP_RULE}`;
     }
     await this.docRawGuard(name, input); // [document tool] select-all then typing in a Google Doc is the retype that loses pictures and tables
     // --- efficiency hook (snapshot.js) ---
-    const efficient = await snapshot.execute(this, name, input, { runScript, scripts, dedupe: () => this.readDedupe() });
+    const efficient = await snapshot.execute(this, name, input, { runScript, scripts, dedupe: () => this.readDedupe(), askedFor });
     if (efficient !== undefined) return efficient;
     // --- end efficiency hook ---
     if (input?.observe && snapshot.OBSERVE_TOOLS.has(name)) { // act, then report what changed (snapshot.js)
@@ -8249,7 +8254,7 @@ ${text}`);
 ${same}
 </untrusted_page_content>`;
         // Page health (when not ok) and structured data (a shell page, or structured:true) ahead of the text (page-reading.js).
-        const extras = textOffset || elementOffset ? '' : await pageReading.fullReadExtras(page, (code) => runScript(wc, code), { structured: input.structured === true }).catch(() => '');
+        const extras = textOffset || elementOffset ? '' : await pageReading.fullReadExtras(page, (code) => runScript(wc, code), { structured: input.structured === true, requested: askedFor(wc), landed: wc.getURL() }).catch(() => '');
         return scripts.formatFull(page, extras);
       }
       case 'screenshot': {
@@ -8289,7 +8294,10 @@ ${same}
         lap('settle');
         await this.settleRedirects(wc);
         lap('redirects');
+        noteAsked(wc, url);
         let loaded = `${kind === 'hash' ? 'Jumped to the #fragment on the same page (no reload needed)' : kind === 'reload' ? 'Same URL, reloaded' : 'Loaded'} ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
+        const wall = await pageReading.landedWall(url, wc.getURL(), (code) => runScript(wc, code, 5000)).catch(() => ''); // sent to a sign-in page or a front page asking to sign in
+        if (wall) loaded += `\n${wall}`;
         if (input.wait_for) {
           try { await this.runTool('wait_for', { text: String(input.wait_for), seconds: 10 }); } catch (err) { if (this.signalAborted()) throw err; loaded += ` (${err.message})`; }
         }
@@ -8649,7 +8657,10 @@ ${same}
         } finally {
           redirects?.release();
         }
-        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : input.read === false ? '' : await snapshot.head(this, tab.webContents, { runScript, scripts })}`;
+        const asked = this.ownFileUrl(input.url) || navUrl(input.url);
+        noteAsked(tab.webContents, asked);
+        const wall = await pageReading.landedWall(asked, tab.webContents.getURL(), (code) => runScript(tab.webContents, code, 5000)).catch(() => ''); // (as navigate)
+        return `Opened tab ${tab.id}: ${tab.webContents.getURL()}${wall ? `\n${wall}` : ''}${input.read ? await snapshot.outline(this, tab.webContents, { runScript, scripts }) : input.read === false ? '' : await snapshot.head(this, tab.webContents, { runScript, scripts })}`;
       }
       case 'switch_tab': {
         this.foreignTabCheck([input.tab_id]);
