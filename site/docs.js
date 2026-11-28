@@ -18,6 +18,7 @@ const PAGES = {
   'github-signin': { title: 'Sign in with GitHub', file: 'docs/github-signin.md' },
   'mcp-tools': { title: 'MCP tool reference', file: 'docs/mcp-tools.md' },
   settings: { title: 'Settings reference', file: 'docs/settings.md' },
+  humanize: { title: 'Humanize', file: 'docs/humanize.md' },
   'desktop-apps': { title: 'The AI using other apps', file: 'docs/desktop-apps.md' },
   word: { title: 'The AI working in Word', file: 'docs/word.md' },
   'privacy-protections': { title: 'Privacy protections', file: 'docs/privacy-protections.md' },

@@ -12,6 +12,7 @@
     check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
     up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></svg>',
     note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h6.5L13 5v8.5H4zM10.5 2.5V5H13M6 8h5M6 10.5h3"/></svg>',
+    humanize: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5 3 11l7.6-7.6a1.4 1.4 0 0 1 2 2L5 13zM9.5 4.5l2 2"/></svg>',
     down: '<svg viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(180 8 8)"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></g></svg>',
   };
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -154,6 +155,24 @@
     });
     strip.append(b);
   }
+  // [humanize] "Humanize" under a reply (renderer/humanize.js, loaded with the first click, and humanize.css): the reply rewritten so it reads
+  // like a person wrote it, shown in its place with "Show original". Sits before "Add to notes" in the strip.
+  let humanizeLoad = null;
+  function loadHumanize() {
+    if (window.humanizeUI) return Promise.resolve();
+    if (humanizeLoad) return humanizeLoad;
+    document.head.append(el('link', { rel: 'stylesheet', href: 'humanize.css' }));
+    humanizeLoad = new Promise((resolve) => { document.head.append(el('script', { src: 'humanize.js', onload: resolve, onerror: resolve })); });
+    return humanizeLoad;
+  }
+  function humanizeButton(bubble, source) {
+    if (!bubble || !window.assistant?.humanize || !source || !String(source).trim() || bubble.querySelector(':scope > .reply-meta .reply-humanize')) return;
+    let strip = bubble.querySelector(':scope > .reply-meta');
+    if (!strip) { strip = el('div', { className: 'reply-meta' }); bubble.append(strip); }
+    const b = button('reply-thumb reply-humanize', t('humanize.action.title'), ICONS.humanize, () => loadHumanize().then(() => window.humanizeUI?.reply(bubble, String(source), b)));
+    const note = strip.querySelector('.reply-note');
+    if (note) note.before(b); else strip.append(b);
+  }
   function thumbs(bubble, current = null) {
     const box = el('span', { className: 'reply-thumbs' });
     box.setAttribute('role', 'group');
@@ -229,5 +248,5 @@
     copy.click();
   });
 
-  window.chatActions = { noteButton, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
+  window.chatActions = { noteButton, humanizeButton, loadHumanize, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
 })();

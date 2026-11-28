@@ -2718,8 +2718,9 @@ function finishReply(bubble, source, { latest = false } = {}) {
   button.innerHTML = COPY_ICON;
   button.onclick = async () => {
     try {
-      const html = window.renderMarkdown(source);
-      const text = (window.markdownPlainScripts ? window.markdownPlainScripts(source) : source).trim(); // the markdown as written (lists, code, formulas as their LaTeX), as ChatGPT and Claude copy it
+      const shown = bubble.hzSource || source; // [humanize] a humanized reply copies the version on screen (renderer/humanize.js)
+      const html = window.renderMarkdown(shown);
+      const text = (window.markdownPlainScripts ? window.markdownPlainScripts(shown) : shown).trim(); // the markdown as written (lists, code, formulas as their LaTeX), as ChatGPT and Claude copy it
       if (window.ClipboardItem) {
         await navigator.clipboard.write([new ClipboardItem({
           'text/plain': new Blob([text], { type: 'text/plain' }),
@@ -2737,6 +2738,7 @@ function finishReply(bubble, source, { latest = false } = {}) {
   };
   bubble.append(button);
   window.chatActions?.noteButton(bubble, source); // "Add to notes" (renderer/chat-actions.js)
+  window.chatActions?.humanizeButton?.(bubble, source); // [humanize] "Humanize" (renderer/chat-actions.js, humanize.js)
 }
 
 // ---------- permissions: how much the sidebar's AI asks (the bolt in the sidebar head) ----------

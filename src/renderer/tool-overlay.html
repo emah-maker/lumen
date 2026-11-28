@@ -47,6 +47,17 @@
     #qr-wrap { display: flex; justify-content: center; margin: 8px 0; }
     #qr { width: 216px; height: 216px; background: var(--paper); border-radius: 8px; image-rendering: pixelated; box-shadow: 0 0 0 1px var(--border); }
     #qr-text { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; max-height: 3.2em; overflow: hidden; text-align: center; }
+    /* [humanize] the text before and after */
+    .card.wide { width: 560px; }
+    #hz { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 0; }
+    .hz-label { margin: 0 0 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: none; }
+    .hz-text { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--field); white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; user-select: text; font-size: 13px; line-height: 1.5; }
+    #hz-before { max-height: 22vh; color: var(--muted); }
+    #hz-after { max-height: 34vh; box-shadow: inset 0 0 0 1px var(--accent-soft); }
+    #hz[aria-busy="true"] #hz-before { animation: hz-pulse 1.4s ease-in-out infinite; }
+    @keyframes hz-pulse { 50% { opacity: 0.6; } }
+    .sub.error { color: var(--warning); }
+    @media (prefers-reduced-motion: reduce) { #hz[aria-busy="true"] #hz-before { animation: none; } }
     /* area picker */
     #select { cursor: crosshair; }
     #dim-top, #dim-left, #dim-right, #dim-bottom { position: absolute; background: var(--dim); }
@@ -69,6 +80,10 @@
       <p class="sub" id="m-sub"></p>
       <div id="qr-wrap" hidden><canvas id="qr" width="216" height="216" role="img"></canvas></div>
       <div id="qr-text" hidden></div>
+      <div id="hz" hidden>
+        <div><p class="hz-label" id="hz-before-label"></p><p class="hz-text" id="hz-before"></p></div>
+        <div id="hz-after-wrap"><p class="hz-label" id="hz-after-label"></p><p class="hz-text" id="hz-after" tabindex="0"></p></div>
+      </div>
       <p class="warn" id="m-warn" hidden></p>
       <p class="sub" id="m-status" role="status" aria-live="polite" hidden></p>
       <div class="choices" id="choices"></div>
