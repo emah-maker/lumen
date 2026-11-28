@@ -18,7 +18,7 @@ const KEPT = [
   'aiDesktopControl', 'aiFilesInApps', 'aiWordControl', 'aiDesktopTerminals', 'aiDesktopApps', 'aiWordAlways', 'routineWebhooks', 'routineWebhookPort',
   'aiDeviceAccess', 'filesRemember', 'claudeCodeFullAccess', 'ccUserSettings', 'grokBuildFullAccess', 'codexSidebar', 'codexFullAccess',
   'antigravityFullAccess', 'grokTerminal', 'grokWarmup', 'grokKeepConnected', 'codexKeepConnected', 'grokKeepIdleMinutes', 'researchTabs',
-  'groupAiTabs', 'hideAiTabs', 'agentsNoAsk', 'askBeforeActing', 'bypassPermissions', 'aiPreferFractions', 'aiInstructionsOn', 'aiInstructionsAbout',
+  'groupAiTabs', 'hideAiTabs', 'agentsNoAsk', 'askBeforeActing', 'bypassPermissions', 'aiPreferFractions', 'aiNaturalVoice', 'aiInstructionsOn', 'aiInstructionsAbout',
   'aiInstructionsStyle', 'planModeDefault', 'skillsAutoUse', 'skillsFromClaudeCode', 'skillsSuggest', 'aiMemory', 'aiMemoryChatSearch', 'aiHandsOff',
   'sidebarNewChat', 'autoNewChat', 'replySuggestions', 'chatAutocomplete', 'oneChatPerTab', 'chatAutoDeleteDays', 'aiStayOnMyTab', 'closeAiTabs', 'aiTabsTidy', 'aiTabsGrace', 'keepViewedAiTabs', 'automationsKeepTabs', 'dictationProvider', 'dictationAutoSend',
   'translateNever', 'translateConsent', 'lastSeenVersion',

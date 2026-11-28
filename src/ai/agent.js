@@ -947,7 +947,7 @@ function systemFor(settings) {
   const base = onClaude
     ? SYSTEM
     : SYSTEM.replace('You are Claude, the assistant built into a web browser.', onGrokBuild ? 'You are Grok, made by xAI, the assistant built into Lumen, a web browser.' : onAntigravity ? 'You are the AI assistant built into Lumen, a web browser, running in Google Antigravity.' : onCodex ? 'You are the AI assistant built into Lumen, a web browser, running in OpenAI Codex.' : 'You are the AI assistant built into Lumen, a web browser.'); // web_search's own description covers what it returns
-  const style = (settings.adhdMode ? base + ADHD_STYLE : base) + (settings.preferFractions ? FRACTIONS_STYLE : '');
+  const style = (settings.adhdMode ? base + ADHD_STYLE : base) + (settings.preferFractions ? FRACTIONS_STYLE : '') + (settings.naturalVoice ? require('./humanize').VOICE : ''); // [humanize] Settings → AI → natural voice (loaded only when on)
   const withManners = settings.handsOff ? `${style}
 
 ${manners.HANDS_OFF_PROMPT}` : style; // [ai manners] fixed per conversation, like the answer style

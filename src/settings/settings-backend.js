@@ -214,6 +214,7 @@ const DEFAULTS = {
   agentsNoAsk: true, // [mcp] INVERTED in Settings (switch "Ask before agents act in their own window" is on when this is false): true = an outside agent in its own Lumen window acts without approval cards (features/ai-agents.js agentsNoAsk, agent.js autoAllows)
   askBeforeActing: true, // [ai] false: "Auto-allow actions", the sidebar's AI skips the per-site cards (features/permission-mode.js; the bolt menu, main.js autoApprove)
   bypassPermissions: false, // [ai] "Bypass permissions": every approval card is answered allow, with a step saying so (agent.js askApproval; features/permission-mode.js)
+  aiNaturalVoice: false, // [humanize] Settings → AI → Write replies in a natural voice: the humanizer's rules join the AI's system prompt (ai/humanize.js VOICE, agent.js systemFor)
   aiPreferFractions: false, // [ai] Settings → AI → Prefer fractions: the AI writes exact fractions (as stacked LaTeX), not decimals, in math answers (agent.js FRACTIONS_STYLE; renderer/markdown.js stacks a plain 3/4)
   aiInstructionsOn: true, // [ai] Settings → AI → Instructions and memory: the two notes below go into the system prompt (ai/custom-instructions.js)
   aiInstructionsAbout: '', // [ai] "What should Lumen know about you"

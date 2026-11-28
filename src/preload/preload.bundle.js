@@ -623,6 +623,8 @@ contextBridge.exposeInMainWorld('assistant', {
   autocomplete: (prefix) => ipcRenderer.invoke('agent:autocomplete', typeof prefix === 'string' ? prefix.slice(-2000) : ''),
   autocompleteCancel: () => ipcRenderer.send('agent:autocomplete-cancel'),
   replySuggest: (chatId) => ipcRenderer.invoke('agent:reply-suggest', typeof chatId === 'string' || typeof chatId === 'number' ? chatId : null),
+  humanize: (text, kind) => ipcRenderer.invoke('agent:humanize', String(text ?? '').slice(0, 20000), kind === 'paste' ? 'paste' : 'reply'),
+  humanizeCancel: () => ipcRenderer.send('agent:humanize-cancel'),
 
   images: {
     data: (id) => ipcRenderer.invoke('images:data', id),

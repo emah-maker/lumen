@@ -9,6 +9,8 @@
 //   /model     opens the model picker (with a search: /model sonnet).
 //   /btw       <question>: a side question, answered at once beside the running task by one model call with no tools, in a
 //              dismissible card above the composer. Never part of the chat's history (ai/btw.js, agent.js btw).
+//   /humanize  [humanize] [text]: the text rewritten so it reads like a person wrote it, in a card with Copy; with no text, the last reply
+//              is humanized in place (renderer/humanize.js). "humanize this" followed by text does the same.
 //   /shortcuts opens the sheet of chat keyboard shortcuts (chat-extras.js).
 //   /fractions on|off  [prefer fractions] the Settings → AI switch: exact fractions, stacked, instead of decimals (new chats).
 //   /memory    [memory] what the AI has saved about you (ai/memory.js), with a link to Settings → AI → Instructions and memory.
@@ -197,6 +199,41 @@
     btwRun(id, question);
     return { ok: true };
   }
+  // ---------- [humanize] /humanize, and "humanize this" with pasted text (renderer/humanize.js, loaded on first use) ----------
+  function humanizeRun(text) {
+    const actions = window.chatActions;
+    if (!window.assistant?.humanize || !actions?.loadHumanize) return { ok: false, message: tr('humanize.failed', 'Humanize failed: {error}', { error: 'not available here' }) };
+    if (!text) { // the last reply, in place
+      const button = [...document.querySelectorAll('#messages .reply-humanize')].pop();
+      if (!button) return { ok: false, message: tr('humanize.nothing', 'There’s no reply to humanize yet. Paste text after /humanize.') };
+      button.click();
+      return { ok: true };
+    }
+    actions.loadHumanize().then(() => window.humanizeUI?.paste(text, (node) => note(node)));
+    return { ok: true };
+  }
+  slash.register({
+    name: 'humanize',
+    label: tr('slash.humanize', 'Humanize'),
+    description: tr('slash.humanize.description', 'Rewrite the last reply, or text you paste after it, so it reads like a person wrote it.'),
+    hint: tr('slash.humanize.hint', 'Paste the text to humanize (or leave empty for the last reply), then press Enter'),
+    takesInput: true,
+    run({ input }) { return humanizeRun(String(input || '').trim()); },
+  });
+  // "humanize this: <text>" (or the text on the next lines) as a message: the same as /humanize <text>, never sent to the chat.
+  const HUMANIZE_PHRASE = /^\s*humani[sz]e (?:this|the following)\b[ \t]*:?[ \t]*(?:\r?\n)?([\s\S]*\S[\s\S]*)$/i;
+  document.getElementById('composer')?.addEventListener('submit', (e) => {
+    const box = document.getElementById('prompt');
+    if (document.body.classList.contains('agent-active') || !box) return;
+    const m = HUMANIZE_PHRASE.exec(box.value);
+    if (!m || m[1].trim().length < 20 || !window.assistant?.humanize) return; // ("humanize this" alone, or a few words: the AI answers it as a message)
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    box.value = '';
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    humanizeRun(m[1].trim());
+  }, true);
+
   // Esc in an empty composer dismisses the newest card first (the next Esc stops a running reply, as before).
   document.getElementById('prompt')?.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || e.isComposing || !btwCards.size || e.target.value) return;
