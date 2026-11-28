@@ -109,9 +109,9 @@ const BEFORE_0_5_65 = new Set([
       return { fo, writes, sets, file: () => file };
     };
     const ids = (g) => (g ? g.items.map((i) => i.id) : null);
-    // A profile that saw the first batch and the newest lines (Keep automation tabs open, off by default; the AI tab tidy-up pair; the bookmarks bar), so the card's first six
-    // still hold a switch that ships on (autoNewChat) for the checks below.
-    const upd = { lastSeenVersion: '0.5.87', featureOffersSeen: [...SIX, 'automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace', 'bookmarksBar'] };
+    // A profile that saw the first batch and the newest lines (Keep automation tabs open, off by default; the AI tab tidy-up pair; the bookmarks bar; the AI's cursor), so the card's
+    // first six still hold a switch that ships on (autoNewChat) for the checks below.
+    const upd = { lastSeenVersion: '0.5.87', featureOffersSeen: [...SIX, 'automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace', 'bookmarksBar', 'aiCursor'] };
     const waiting = FO.OFFERS.length - upd.featureOffersSeen.length;
 
     let c = make(upd);
@@ -195,7 +195,7 @@ const BEFORE_0_5_65 = new Set([
     c = make({ lastSeenVersion: '0.5.19', featureOffersSeen: ALL_SEEN.filter((k) => k !== 'dictation') }, { voiceReady: true }); c.fo.prepare();
     check('voice input is not offered when it already works (on this device, or a key is set)', c.fo.list() === null, J(c.fo.list()));
     {
-      const fo = FO.createFeatureOffers({ readSettings: () => ({ lastSeenVersion: '0.5.19', featureOffersSeen: ['automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace', 'bookmarksBar'] }), writeSettings: () => {}, setSetting: async () => { throw new Error('nope'); }, defaults: DEFAULTS, test: false });
+      const fo = FO.createFeatureOffers({ readSettings: () => ({ lastSeenVersion: '0.5.19', featureOffersSeen: ['automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace', 'bookmarksBar', 'aiCursor'] }), writeSettings: () => {}, setSetting: async () => { throw new Error('nope'); }, defaults: DEFAULTS, test: false });
       fo.prepare();
       const log = console.error; console.error = () => {};
       const res = await fo.set('autoNewChat', false);

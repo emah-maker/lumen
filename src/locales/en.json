@@ -3471,6 +3471,8 @@
   "offers.extensionsToolbar.pinned": "Only pinned",
   "offers.extensionsToolbar.all": "All",
   "offers.extensionsToolbar.none": "None",
+  "offers.aiCursor": "See the AI’s cursor",
+  "offers.aiCursor.desc": "While the AI works in a tab, its own arrow moves to what it clicks, types into or scrolls, and says what it is doing.",
   "offers.bookmarksBar": "Bookmarks bar",
   "offers.bookmarksBar.desc": "Your bookmarks under the toolbar, as in Chrome. Ctrl+Shift+B switches it.",
   "offers.bookmarksBar.newtab": "New tab page",
