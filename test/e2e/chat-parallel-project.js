@@ -92,7 +92,10 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     check('page: B was saved into the project', await waitFor(() => app.evaluate((_e, a) => { const s = global.__chats.store(); return s.list().some((c) => c.project === a.project && c.id === a.id); }, { project, id: chatB })), 'not in project');
 
     // Opening an existing chat of the project while A runs.
-    await inPage(`document.querySelector('#cp-items .chat-item[data-id="${oldInProject}"] .chat-open')?.click()`);
+    // (a project's chats are listed under the project in the rail, not in the dated list: #cp-items is kept for a chat outside it)
+    const oldRow = `.cp-pj-chat[data-id="${oldInProject}"], #cp-items .chat-item[data-id="${oldInProject}"] .chat-open`;
+    await waitFor(() => inPage(`Boolean(document.querySelector('${oldRow}'))`));
+    await inPage(`document.querySelector('${oldRow}')?.click()`);
     check('page: an existing project chat opens while A runs', await waitFor(async () => /old zoo chat answer/.test(await pageText())), await pageText());
     await send('quick follow-up in the old chat');
     check('page: and can be sent in', await waitFor(async () => /Quick reply done/.test(await pageText())) && (await live()) === 1, await pageText());
@@ -133,8 +136,10 @@ const waitFor = async (fn, ms = 8000) => { const end = Date.now() + ms; let v; w
     check('sidebar: the new chat is answered while E still works', await waitFor(async () => /Quick reply done/.test(await sideText())) && (await live()) === 1, `${await live()} ${await sideText()}`);
     // An existing chat of a project, opened from the sidebar's history list.
     await ui.evaluate(() => document.getElementById('chat-history').click());
-    await waitFor(() => ui.evaluate((id) => Boolean(document.querySelector(`#chat-list .chat-item[data-id="${id}"] .chat-open`)), oldInProject));
-    await ui.evaluate((id) => document.querySelector(`#chat-list .chat-item[data-id="${id}"] .chat-open`).click(), oldInProject);
+    // (listed under its project in the history panel's Projects block, as in the page's rail)
+    const sideRow = (id) => `#chat-list .cp-pj-chat[data-id="${id}"], #chat-list .chat-item[data-id="${id}"] .chat-open`;
+    await waitFor(() => ui.evaluate((sel) => Boolean(document.querySelector(sel)), sideRow(oldInProject)));
+    await ui.evaluate((sel) => document.querySelector(sel).click(), sideRow(oldInProject));
     check('sidebar: an existing project chat opens while E runs', await waitFor(async () => /old zoo chat answer/.test(await sideText())), await sideText());
     await sendSide('quick follow-up from the sidebar');
     check('sidebar: and can be sent in', await waitFor(async () => /Quick reply done/.test(await sideText())) && (await live()) === 1, await sideText());

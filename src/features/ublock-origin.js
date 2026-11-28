@@ -4,7 +4,7 @@
 // It is unpacked where the store's extensions live (userData/Extensions/<id>/<version>_0, manifest.key set), so Lumen's start-up loads it
 // like any installed extension. The store's updater skips it (its update_url is not the store's): checkForUpdate() here looks at the
 // latest release once a day instead.
-// Lumen's Electron (castlabs 45.2.1) runs it only with preload/extensions-mv2-preload.js (its `browser` object, onHeadersReceived, tabs.removeCSS, empty managed storage).
+// Lumen's Electron (castlabs 45.2.1) runs it only with preload/extensions-mv2-preload.js (its `browser` object and the requests' tab ids).
 const fs = require('fs');
 const path = require('path');
 const readCrx = (buf) => require('./crx').readCrx(buf); // (loaded with the first download)

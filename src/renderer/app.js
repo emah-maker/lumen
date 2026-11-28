@@ -3033,10 +3033,11 @@ setTimeout(() => window.assistant?.offers?.get().then((list) => { if (list?.item
 
 // [translate] The address bar's translate button and infobar (translate.js and .css): loaded the first time a tab in front has something to
 // show for them (a page in another language, a translation running), not part of the bundle. From then on the file follows the tabs itself.
-window.browser.onTabs?.((state) => {
+// (called from the frontPage listener below: one more onTabs listener tips the renderer over its 10-listener warning)
+const loadTranslate = (state) => {
   const st = state?.tabs?.find((x) => x.id === state.activeId)?.translate;
   if ((st && st.phase !== 'idle') && !laterLoads['translate.css']) loadLater('translate.css', 'translate.js').then((ok) => ok && window.translateBar?.draw(st));
-});
+};
 
 // [media controls] The toolbar's media button and pop-up (media-hub.js and .css): loaded the first time a tab plays sound, not part of the
 // bundle (the button stays hidden until then). Once loaded the file asks for the list and follows it itself.
@@ -3191,7 +3192,7 @@ window.assistant.onOpenChat?.(async ({ id } = {}) => {
 window.assistant.setup?.onWelcome?.(() => showSidebar(true)); // a fresh install: the sidebar opens on its welcome (chat-core.js)
 // (not over the full-page chat in front: it shows the same card, and opening the sidebar beside it only repeated it)
 let frontPage = null;
-window.browser.onTabs((state) => { frontPage = state.tabs.find((x) => x.id === state.activeId)?.page || null; });
+window.browser.onTabs((state) => { frontPage = state.tabs.find((x) => x.id === state.activeId)?.page || null; loadTranslate(state); });
 chatHost.needSidebar = () => { if (frontPage !== 'chat' && document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
   const button = $('toggle-sidebar');

@@ -12455,10 +12455,11 @@ setTimeout(() => window.assistant?.offers?.get().then((list) => { if (list?.item
 
 
 
-window.browser.onTabs?.((state) => {
+
+const loadTranslate = (state) => {
 const st = state?.tabs?.find((x) => x.id === state.activeId)?.translate;
 if ((st && st.phase !== 'idle') && !laterLoads['translate.css']) loadLater('translate.css', 'translate.js').then((ok) => ok && window.translateBar?.draw(st));
-});
+};
 
 
 
@@ -12613,7 +12614,7 @@ await window.chatList?.openChat?.(id);
 window.assistant.setup?.onWelcome?.(() => showSidebar(true));
 
 let frontPage = null;
-window.browser.onTabs((state) => { frontPage = state.tabs.find((x) => x.id === state.activeId)?.page || null; });
+window.browser.onTabs((state) => { frontPage = state.tabs.find((x) => x.id === state.activeId)?.page || null; loadTranslate(state); });
 chatHost.needSidebar = () => { if (frontPage !== 'chat' && document.body.classList.contains('sidebar-hidden')) showSidebar(true); };
 chatHost.identity = (who, first) => {
 const button = $('toggle-sidebar');
