@@ -5,6 +5,7 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 ## Unreleased
 
 - **The startup-size check reads Windows paths too.** The perf-budget test that keeps heavy modules (the AI SDKs, screenshot, QR code, sync) from loading at startup now converts module paths to forward slashes itself, so it doesn't rely on the paths it is given already using them. On current main it passes: none of those modules loads at startup, and startup loads 341 modules.
+- **Settings search answers at once.** A search typed right after Settings opens used to wait for the pages built after the first screen: "proxy" took about 190 ms to show the Proxy row. Settings now builds first the pages whose rows can match what you typed, and shows new results as soon as a page is built instead of 100 ms later. "proxy" now shows in about 25 ms.
 
 ## 0.5.116 (2026-11-27)
 
