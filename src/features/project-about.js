@@ -17,9 +17,24 @@ const GROUPS = [
 ];
 const LABELS = Object.fromEntries(GROUPS.flatMap((g) => g.fields));
 const KEYS = Object.keys(LABELS);
-// The AI never saves these (they are the user's to type on the page or in Automations): the same questions automations.js answers only from
-// an answer the user saved, and anything secret.
-const SENSITIVE = /gender|\bsex\b|\brace\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|date of birth|birth ?date|\bage\b|social security|\bssn\b|salary|compensation|pay expectation|criminal|convict|pass(word|wd|code|phrase)|one.?time|\botp\b|verification code|card.?(number|num)|cvv|cvc|security code|iban|routing|account number/i;
+// Never saved, whoever says them: secrets and identity numbers (the user types them on the page themselves).
+const SECRET = /social security|\bssn\b|pass(word|wd|code|phrase)|one.?time|\botp\b|verification code|card.?(number|num)|cvv|cvc|security code|iban|routing|account number/i;
+// Questions answered only from an answer the user gave (automations.js answers them only from a saved answer): the AI saves one only as
+// the user's own words, never a guess. Demographic (EEO) questions follow the profile's demographics choice.
+const SENSITIVE = /gender|\bsex\b|\brace\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun|date of birth|birth ?date|\bage\b|salary|compensation|pay expectation|criminal|convict/i;
+const DEMOGRAPHIC = /gender|\bsex\b|\brace\b|ethnic|hispanic|latin[oax]|veteran|disab|sexual orientation|transgender|pronoun/i;
+// For demographic questions: 'saved' (the user's saved answers; ask once for the rest), 'decline' (pick "Decline to self-identify" or the
+// form's own "prefer not to say"), 'ask' (ask the user each time). automations.js follows the same choice.
+const DEMOGRAPHICS = ['saved', 'decline', 'ask'];
+const demographicsOf = (profile) => (DEMOGRAPHICS.includes(profile?.demographics) ? profile.demographics : 'saved');
+const DEMOGRAPHICS_LABEL = { saved: 'use my saved answers', decline: 'choose “Decline to self-identify”', ask: 'ask me' };
+const DEMOGRAPHICS_RULE = {
+  saved: 'Demographic questions (gender, race or ethnicity, veteran, disability): use the saved answer for each; one with no saved answer goes in your one question. Never pick one yourself.',
+  decline: 'Demographic questions (gender, race or ethnicity, veteran, disability): the user chose to decline them. Pick the form’s "Decline to self-identify" / "I don’t wish to answer" / "Prefer not to say" option without asking; a required one with no such option goes in your one question.',
+  ask: 'Demographic questions (gender, race or ethnicity, veteran, disability): the user answers these themselves each time. Leave them and list them in your one question; never pick one yourself or save the answer.',
+};
+// The work boxes a job application asks nearly every time: named when empty, so the AI asks for them together.
+const ASK_FIRST = ['workAuth', 'sponsorship', 'startDate'];
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 const line = (v, max) => String(v ?? '').replace(CONTROL, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 const text = (v, max) => String(v ?? '').replace(CONTROL, '').replace(/\r\n?/g, '\n').trim().slice(0, max);
@@ -40,10 +55,20 @@ function block(profile, { tailored = '', max = 3000 } = {}) {
   const answers = (profile.answers || []).filter((a) => a?.question && a?.answer);
 
   const head = '<about_user>\nWhat the user told Lumen about themselves for this project. Use it instead of asking again; ask only for what is missing. When they tell you a new lasting fact about themselves (a date, a link, an answer they approved), save it with the applications tool, action remember, note "<key>: <value>" for one of the details below (keys: ' + KEYS.join(', ') + ') or "<question>? <answer>" for an answer they approved.';
+  // How a job application gets filled (the fixed prompt's "stop and ask for personal info" is about what is not here).
+  const rules = [
+    'Filling a job application: the user saved these details to have them entered for them, so fill every question they answer (work authorization, sponsorship, start date, a saved answer to a screening question) without asking. Match a select or radio option to the saved answer ("Yes" → "Yes, I am authorized…").',
+    DEMOGRAPHICS_RULE[demographicsOf(profile)],
+    'Anything still missing: fill all you can first, then call ask_user once, one question per remaining item (up to 4 per card; a second card only for the rest), each with likely options from the profile and the form. With no ask_user, ask ONE short question listing every remaining item at once. Never one per turn. When the user answers, save each with remember (a question with no box: "<question>? <answer>", in their words) and fill them. Never guess or make up an answer.',
+    'Never submit or send the application until the user says to.',
+  ].join('\n');
+  const missing = ASK_FIRST.filter((k) => !f[k]).map((k) => LABELS[k]);
   if (!facts.length && !files.length && !highlights && !answers.length) return `${head}
+${rules}
 Nothing is saved yet: the user can fill it in on the project page (About you).
 </about_user>`; // (still said, so the AI saves what it is told)
-  const parts = [head];
+  const parts = [head, rules];
+  if (missing.length) parts.push(`Not saved yet (ask for these together when a form needs them): ${missing.join('; ')}.`);
   if (facts.length) parts.push(facts.join('\n'));
   if (files.length) parts.push(files.join('\n'));
   let used = parts.join('\n\n').length;
@@ -61,6 +86,16 @@ Nothing is saved yet: the user can fill it in on the project page (About you).
   return `${parts.join('\n\n')}\n</about_user>`;
 }
 
+// [about you] Codex and Antigravity read Lumen's system prompt only on a thread's first message (codex.js / antigravity.js promptFor), so
+// a profile filled in or changed since then rides on the next message instead. instructions: the chat's settings.projectInstructions;
+// seen: what the thread was last given (a short hash, kept in the chat's settings); resume: a follow-up on an existing thread.
+// -> { text: the block to put first ('' when the thread has it), seen }
+function refreshFor(instructions, seen, resume) {
+  const m = /<about_user>[\s\S]*?<\/about_user>/.exec(String(instructions || ''));
+  const now = m ? require('crypto').createHash('sha256').update(m[0]).digest('hex').slice(0, 16) : '';
+  return { text: resume && m && seen !== now ? `${m[0]}\n\n` : '', seen: now };
+}
+
 // The AI's save (applications tool, action remember): { field, value } for one of the profile's boxes, or { question, answer } for a saved
 // answer (replacing one with the same question). -> { ok, patch, said } (patch: what to merge into the profile) | { ok: false, error }
 // The tool sends one line, note: "gradDate: May 2028" (a box by its key) or "Why this company? Because…" (a question and its answer).
@@ -68,16 +103,34 @@ function parseNote(note) {
   const s = String(note ?? '').trim();
   const key = /^([A-Za-z]{2,20})\s*[:=]\s*([\s\S]+)$/.exec(s);
   if (key && KEYS.includes(key[1])) return { field: key[1], value: key[2] };
+  if (key && key[1] === 'demographics') return { demographics: key[2].trim() };
   const q = /^([^?]{3,300}\?)\s*:?\s*([\s\S]+)$/.exec(s);
   if (q) return { question: q[1], answer: q[2] };
   const colon = /^([^:]{3,300}):\s+([\s\S]+)$/.exec(s);
   return colon ? { question: colon[1], answer: colon[2] } : {};
 }
+// Whether the user's own recent words hold the answer: a word of it (3+ letters, not a filler word), or for a bare yes or no, a yes or no.
+const FILLER = new Set(['yes', 'not', 'the', 'and', 'have', 'don', 'does', 'are', 'you', 'your', 'with', 'for', 'any', 'that', 'this', 'was', 'will', 'would', 'which', 'one', 'other', 'option', 'identify', 'self']);
+const wordsOf = (t) => String(t ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(' ').filter(Boolean);
+function userSaid(answer, userText) {
+  const said = new Set(wordsOf(userText));
+  if (!said.size) return false;
+  const own = wordsOf(answer).filter((w) => w.length >= 3 && !FILLER.has(w));
+  if (own.length) return own.some((w) => said.has(w) || (w.length >= 4 && [...said].some((u) => u.length >= 4 && (u.startsWith(w) || w.startsWith(u))))); // ("veterans" / "veteran")
+  const yes = /^(yes|y|yeah|yep)$/;
+  return wordsOf(answer).some((w) => yes.test(w)) ? [...said].some((u) => yes.test(u)) : [...said].some((u) => /^(no|nope|not|never|don|didn|doesn|dont)$/.test(u));
+}
 // (The tool sends { field, value }: a field that is not one of the boxes is an application question, its value the answer.)
-function remember(profile, input) {
-  if (input?.note !== undefined && input.field === undefined && input.question === undefined) return remember(profile, parseNote(input.note));
+// userText: what the user wrote in the chat lately (agent.js): a sensitive question's answer is kept only when it is in the user's own words.
+function remember(profile, input, { userText = input?.userText } = {}) {
+  if (input?.note !== undefined && input.field === undefined && input.question === undefined && input.demographics === undefined) return remember(profile, parseNote(input.note), { userText });
+  if (input?.demographics !== undefined) { // the user's choice for demographic questions ("decline those from now on")
+    const d = String(input.demographics).toLowerCase().trim();
+    if (!DEMOGRAPHICS.includes(d)) return { ok: false, error: `demographics is one of: ${DEMOGRAPHICS.join(', ')}.` };
+    return { ok: true, patch: { demographics: d }, said: `Demographic questions: ${DEMOGRAPHICS_LABEL[d]}` };
+  }
   const raw = String(input?.field ?? '').trim();
-  if (raw && !KEYS.includes(raw) && input?.question === undefined && raw.length > 3 && /\s/.test(raw)) return remember(profile, { question: raw, answer: input.value });
+  if (raw && !KEYS.includes(raw) && input?.question === undefined && raw.length > 3 && /\s/.test(raw)) return remember(profile, { question: raw, answer: input.value }, { userText });
   const field = raw;
   if (field) {
     if (!KEYS.includes(field)) return { ok: false, error: `field is one of: ${KEYS.join(', ')}, or the application question itself (its value the answer).` };
@@ -89,7 +142,9 @@ function remember(profile, input) {
   const question = line(input?.question, 300);
   const answer = text(input?.answer, 2000);
   if (!question || !answer) return { ok: false, error: 'remember takes field and value, or question and answer.' };
-  if (SENSITIVE.test(question)) return { ok: false, error: 'That question is the user’s to answer themselves (on the project page or in Automations). Nothing was saved.' };
+  if (SECRET.test(question) || SECRET.test(answer)) return { ok: false, error: 'That is a secret or an ID number: the user types it on the page themselves. Nothing was saved.' };
+  if (DEMOGRAPHIC.test(question) && demographicsOf(profile) === 'ask') return { ok: false, error: 'The user answers demographic questions themselves each time (About you). Nothing was saved.' };
+  if (SENSITIVE.test(question) && !userSaid(answer, userText)) return { ok: false, error: 'A sensitive answer (demographics, date of birth, salary) is saved only as the user’s own words: ask them, then save their answer as they wrote it. Nothing was saved.' }; // (never a guess; the notice shows the user what was kept)
   const norm = (q) => String(q).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   const others = (profile?.answers || []).filter((a) => norm(a.question) !== norm(question));
   return { ok: true, patch: { answers: [...others, { question, answer }] }, said: `Saved answer: ${cut(question, 80)}` };
@@ -108,6 +163,7 @@ function pageChange(profile, change) {
     out.fields = fields;
   }
   if (c.highlights !== undefined) out.highlights = text(c.highlights, 4000);
+  if (c.demographics !== undefined) { if (!DEMOGRAPHICS.includes(c.demographics)) return null; out.demographics = c.demographics; }
   const norm = (q) => String(q).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
   if (c.answer && typeof c.answer === 'object') {
     const q = line(c.answer.question, 300);
@@ -139,6 +195,7 @@ function view(profile) {
     cover: profile?.coverLetterPath ? { name: base(profile.coverLetterPath), path: profile.coverLetterPath } : null,
     resumeDrive: profile?.resumeDrive || null,
     highlights: profile?.highlights || '',
+    demographics: demographicsOf(profile),
     answers: (profile?.answers || []).map((a) => ({ question: a.question, answer: a.answer })),
   };
 }
@@ -162,4 +219,4 @@ function touchesBase(input, base) {
   return [input?.path, input?.doc].filter(Boolean).some((p) => names.has(name(p)) || base.some((b) => isBaseFile({ resumePath: b }, p)));
 }
 
-module.exports = { GROUPS, LABELS, KEYS, block, parseNote, remember, pageChange, view, isBaseFile, touchesBase, driveIdOf };
+module.exports = { GROUPS, LABELS, KEYS, DEMOGRAPHICS, SENSITIVE, DEMOGRAPHIC, SECRET, demographicsOf, userSaid, refreshFor, block, parseNote, remember, pageChange, view, isBaseFile, touchesBase, driveIdOf };

@@ -119,12 +119,14 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   // Approval cards show in the user's window; this answers them (Allow) the way the user would.
   let approving = true;
   let paused = false;
+  let pass = Promise.resolve(); // the approver's pass under way: a pause waits for it (a pass begun before the pause used to click the card that came after it)
   const approver = (async () => {
     while (approving) {
-      if (!paused) for (const p of app.windows()) await p.evaluate(() => { const b = document.querySelector('.approval:not(.resolved):not(.answered) .btn.primary'); if (b) b.click(); }).catch(() => {}); // (the user's window, and the agents' own: an outside agent's card is in its own window)
+      if (!paused) { pass = (async () => { for (const p of app.windows()) await p.evaluate(() => { const b = document.querySelector('.approval:not(.resolved):not(.answered) .btn.primary'); if (b) b.click(); }).catch(() => {}); })(); await pass; } // (the user's window, and the agents' own: an outside agent's card is in its own window)
       await sleep(120);
     }
   })();
+  const pauseApprover = async () => { paused = true; await pass; };
 
   const windows = () => app.evaluate(() => global.__windows.list());
   const agentWins = async () => (await windows()).filter((w) => w.agent);
@@ -164,9 +166,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   await ui.press('#prompt', 'Enter');
   check('the sidebar AI is working in the user\'s tab', await waitFor(() => app.evaluate(() => global.__aiStarted)), 'not started');
   await ui.evaluate(() => window.showSidebar(false)); // closed: an approval card must not pop it open
-  await sleep(700);
   const sidebarHidden = () => ui.evaluate(() => document.body.classList.contains('sidebar-hidden'));
-  check('sidebar closed before the agent starts', await sidebarHidden(), 'open');
+  check('sidebar closed before the agent starts', await waitFor(sidebarHidden), 'open'); // (once its closing slide has ended: a fixed 700 ms wait was too short under load)
 
   // The agent works while the user types in their own field.
   const typed = typeInUserField('hello world');
@@ -277,8 +278,8 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('...and clicks work', /PAGE-A3/.test(A.text(r)) && !(r.result.isError), A.text(r).slice(0, 200));
 
   // ---- 6. Not in the saved session
-  await sleep(3800);
-  const saved = JSON.parse(fs.readFileSync(path.join(profile, 'session.json'), 'utf8')).session || {}; // (the saved session's own file: settings/session-store.js)
+  // (the saved session's own file, settings/session-store.js: written 3 s after the tabs settle, so it is waited for, not slept for: the agent's last steps can settle it later than a fixed wait)
+  const saved = (await waitFor(async () => JSON.parse(fs.readFileSync(path.join(profile, 'session.json'), 'utf8')).session)) || {};
   const savedUrls = JSON.stringify(saved);
   check('the agent\'s window is not in the saved session', !/\/a1|\/a2|\/a3/.test(savedUrls) && /user/.test(savedUrls), savedUrls.slice(0, 300));
 
@@ -289,7 +290,7 @@ const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; 
   check('a second client gets a window of its own', agents.length === 2 && agents.some((w) => w.agent === 'Codex' && w.tabs.length === 1 && /b1/.test(w.tabs[0].url)), JSON.stringify(agents.map((w) => [w.agent, w.tabs.map((t) => t.url)])));
   // Its approval card is quiet: the sidebar stays closed, the AI button gets a badge, nothing takes focus, and it waits for the user.
   await app.evaluate(() => global.__settings.backend.set('agentsNoAsk', false)); // (an agent in its own window acts without asking by default, as in the steps above; this part is about the approval card, so it asks)
-  paused = true;
+  await pauseApprover();
   const pendingClick = B.call('click', { text: 'Press B1' });
   // The card is in the agent's own window; the user's window only gets the badge on the AI button (it opens nothing and takes no focus).
   const codexUi = async () => { for (const p of app.windows()) if (await p.evaluate(() => document.body.classList.contains('agent-window') && /Codex/.test(document.getElementById('agent-window-chip')?.textContent || '')).catch(() => false)) return p; return null; };

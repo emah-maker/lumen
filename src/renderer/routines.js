@@ -1,8 +1,8 @@
 // Routines in the sidebar (features/routines.js and features/background-runner.js are the backend): the
 // Tasks panel's Routines tab (list, enable switch, Run now, starter templates), the editor card, a
 // routine's run history in its task page, the /routine command, and "Save as routine" on a reply.
-// A routine is a background task on a calendar schedule, so it is listed with the tasks too. Loaded after
-// tasks.js (window.lumenTasks) and slash.js, on the main window's page only.
+// A routine is a background task on a calendar schedule, so it is listed with the tasks too. Loaded right
+// after tasks.js (window.lumenTasks) by tasks-loader.js, on the main window's page only; routines-loader.js stands in until then.
 (() => {
   const core = window.lumenTasks;
   if (!core) return;
@@ -340,7 +340,8 @@
   }
 
   // ---- /routine [every weekday at 8am:] what to do
-  window.slashCommands?.register({
+  // (routines-loader.js registers a stand-in at startup that loads this file; this one takes its place in the "/" menu)
+  const slash = {
     name: 'routine',
     label: T('routines.slash.label'),
     description: T('routines.slash.description'),
@@ -353,28 +354,9 @@
       open(parsed ? { prompt: parsed.prompt, schedule: parsed.schedule } : { prompt: text });
       return { ok: true };
     },
-  });
-
-  // ---- "Save as routine" beside Copy on a finished reply: the request that led to it, as a routine.
-  const CLOCK = '<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8.5" r="5.5"/><path d="M8 5.5v3l2 1.5M3 2.5 1.5 4M13 2.5 14.5 4"/></svg>';
-  const requestBefore = (bubble) => {
-    for (let n = bubble.previousElementSibling; n; n = n.previousElementSibling) if (n.classList?.contains('msg') && n.classList.contains('user')) return n.textContent.trim();
-    return '';
   };
-  const finishBase = window.finishReply;
-  if (typeof finishBase === 'function') {
-    window.finishReply = function finishReply(bubble, ...rest) {
-      const result = finishBase.call(this, bubble, ...rest);
-      if (bubble?.querySelector(':scope > .reply-copy') && !bubble.querySelector(':scope > .reply-routine')) {
-        const b = h('button', { type: 'button', className: 'reply-routine', title: T('routines.fromReply') });
-        b.setAttribute('aria-label', T('routines.fromReply'));
-        b.innerHTML = CLOCK;
-        b.onclick = () => { const text = requestBefore(bubble); if (text) open({ prompt: text }); };
-        bubble.append(b);
-      }
-      return result;
-    };
-  }
+  window.slashCommands?.register(slash);
+  // ("Save as routine" on a finished reply is routines-loader.js: replies finish before this file loads; it calls open() below)
 
   // ---- opened from elsewhere (the home page card, Settings): main sends tasks:open { routine: 'new' | 'edit', id, prompt }
   async function fromMain({ routine, id, prompt } = {}) {
@@ -402,7 +384,7 @@
     let seq = 0;
     let dismissedFor = '';
     const hide = () => { seq++; clearTimeout(timer); bar.hidden = true; };
-    composerInput.addEventListener('input', () => {
+    const offer = () => {
       clearTimeout(timer);
       const text = composerInput.value.trim();
       if (!core.state().settings.enabled || text === dismissedFor || !phrase.looksScheduled(text)) { hide(); return; }
@@ -416,9 +398,11 @@
         no.onclick = () => { dismissedFor = text; hide(); composerInput.focus(); };
         bar.hidden = false;
       }, 400);
-    });
+    };
+    composerInput.addEventListener('input', offer);
+    if (composerInput.value.trim()) offer(); // typed before this file loaded (routines-loader.js loads it for such a message)
     composerInput.form?.addEventListener('submit', hide);
   })();
 
-  window.lumenRoutines = { list, history, scheduleText, open, fromMain };
+  window.lumenRoutines = { list, history, scheduleText, open, fromMain, slash };
 })();

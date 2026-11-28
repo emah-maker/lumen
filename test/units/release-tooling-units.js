@@ -463,15 +463,102 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   const root = path.join(__dirname, '..', '..');
   const have = spawnSync('git', ['rev-parse', '-q', '--verify', 'origin/main'], { cwd: root, encoding: 'utf8' }).status === 0;
   if (have) {
-    const dry = (...a) => spawnSync(process.execPath, [path.join(root, 'scripts', 'release', 'release.js'), 'patch', '--dry-run', ...a], { cwd: root, encoding: 'utf8', timeout: 60000 });
+    const offline = { ...process.env, LUMEN_RELEASE_OFFLINE: '1' }; // no gh lookup of an old tag's release PR, no fetch of a missing commit
+    const dry = (...a) => spawnSync(process.execPath, [path.join(root, 'scripts', 'release', 'release.js'), 'patch', '--dry-run', ...a], { cwd: root, encoding: 'utf8', timeout: 60000, env: offline });
     const d = dry();
     const at = (re) => d.stdout.search(re);
     check('dry-run: prints the new plan (preflight before checks, the lanes, the retry policy) and changes nothing', d.status === 0 && at(/preflight: push release/) > 0 && at(/preflight: push release/) < at(/\| checks:/) && /checks lanes:/.test(d.stdout) && /retry up to 5 times/.test(d.stdout) && /nothing was fetched, created, stopped, pushed, dispatched or tagged/.test(d.stdout), d.stdout.slice(-600) + d.stderr);
     const dc = dry('--checks-only', '--serial-checks');
     check('dry-run: --checks-only --serial-checks plans no push and one lane', dc.status === 0 && !/pr: push/.test(dc.stdout) && /one after another/.test(dc.stdout) && /stop here/.test(dc.stdout), dc.stdout.slice(-400));
-    const dr = spawnSync(process.execPath, [path.join(root, 'scripts', 'release', 'release.js'), '--resume', '--dry-run'], { cwd: root, encoding: 'utf8', timeout: 60000 });
+    const dr = spawnSync(process.execPath, [path.join(root, 'scripts', 'release', 'release.js'), '--resume', '--dry-run'], { cwd: root, encoding: 'utf8', timeout: 60000, env: offline });
     check('dry-run: --resume --dry-run runs and says what it would do', dr.status === 0 && /--resume/.test(dr.stdout), dr.stdout.slice(-300) + dr.stderr);
   } else console.log('SKIP  dry-run: no origin/main here');
+}
+
+// ---- main moving during a release (0.5.115 and #1124), and what the next release diffs against (0.5.116 ran 9 of 323 suites)
+{
+  const rg = require('../../scripts/release/release-git');
+  const { changelogSection: notesSection } = require('../../scripts/release/release-notes');
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-release-move-'));
+  const git = (...a) => spawnSync('git', a, { cwd: repo, encoding: 'utf8' });
+  const sha = (rev) => git('rev-parse', rev).stdout.trim();
+  const show = (rev, f) => git('show', `${rev}:${f}`).stdout;
+  const write = (f, text) => { fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true }); fs.writeFileSync(path.join(repo, f), text); };
+  const commit = (msg) => { git('add', '-A'); git('commit', '-qm', msg); return sha('HEAD'); };
+  git('init', '-q', '-b', 'main'); for (const [k, v] of [['user.email', 't@example.test'], ['user.name', 't'], ['commit.gpgsign', 'false'], ['tag.gpgsign', 'false'], ['core.autocrlf', 'false']]) git('config', k, v);
+  const A = '- **Start with less.** Fewer modules at startup. (#1123)';
+  const B = '- **AI cursor.** A Lumen cursor shows where the AI acts. (#1124)';
+  write('package.json', JSON.stringify({ name: 'lumen', version: '0.5.114' }, null, 2) + '\n');
+  write('src/old.js', 'module.exports = 1;\n');
+  write('CHANGELOG.md', cl([A], REL));
+  const base = commit('#1123');
+  // the release branch: the cut and the bump (what the checks ran on and the preflight built)
+  git('checkout', '-qb', 'release-0.5.115');
+  write('CHANGELOG.md', lib.cutChangelog(cl([A], REL), '0.5.115', '2026-11-25'));
+  write('package.json', JSON.stringify({ name: 'lumen', version: '0.5.115' }, null, 2) + '\n');
+  const head = commit('Release 0.5.115');
+  // meanwhile #1124 lands on main: code and a bullet
+  git('checkout', '-q', 'main');
+  write('src/cursor.js', 'module.exports = "cursor";\n');
+  write('CHANGELOG.md', cl([A, B], REL));
+  const main1124 = commit('#1124');
+  git('checkout', '-q', 'release-0.5.115');
+
+  // the bug: a merge that knows nothing of the CHANGELOG (GitHub's squash) merges cleanly and files #1124's bullet under 0.5.115
+  const plain = spawnSync('git', ['merge-tree', '--write-tree', head, main1124], { cwd: repo, encoding: 'utf8' });
+  const plainText = plain.status === 0 ? git('cat-file', '-p', `${plain.stdout.split('\n')[0]}:CHANGELOG.md`).stdout : '';
+  check('release move: a plain text merge files #1124\'s bullet under 0.5.115 (what went wrong in 0.5.115)', plain.status === 0 && lib.changelogSection(plainText, '0.5.115').includes('#1124'), plainText);
+
+  const r = rg.mergeMainInto(repo, { head, main: main1124, version: '0.5.115', message: 'Merge main into the 0.5.115 release' });
+  const merged = r.moved ? show(r.sha, 'CHANGELOG.md') : '';
+  check('release move: main moved, so main is merged into the release branch', r.moved && /^[0-9a-f]{40}$/.test(r.sha), JSON.stringify(r));
+  check('release move: the 0.5.115 section keeps exactly the pre-flighted head\'s bullets (#1123, not #1124)', lib.changelogSection(merged, '0.5.115') === lib.changelogSection(show(head, 'CHANGELOG.md'), '0.5.115') && !lib.changelogSection(merged, '0.5.115').includes('#1124'), merged);
+  const unreleased = lib.parseChangelog(merged).sections.find((x) => /^## Unreleased/.test(x.key));
+  check('release move: #1124\'s bullet stays under Unreleased, and is reported as kept', unreleased && unreleased.body.includes(B) && r.kept.length === 1 && r.kept[0] === B, `${JSON.stringify(unreleased)} ${JSON.stringify(r.kept)}`);
+  check('release move: the merge commit has the head and main as parents and main\'s code', git('rev-list', '--parents', '-n1', r.sha).stdout.trim() === `${r.sha} ${head} ${main1124}` && show(r.sha, 'src/cursor.js').includes('cursor') && show(r.sha, 'package.json').includes('0.5.115'), git('rev-list', '--parents', '-n1', r.sha).stdout);
+  check('release move: building it leaves the worktree and the index alone', sha('HEAD') === head && git('status', '--porcelain').stdout.trim() === '', git('status', '--porcelain').stdout);
+  check('release move: after the merge main is in the branch (nothing more to take in)', rg.contains(repo, r.sha, main1124) && !rg.mergeMainInto(repo, { head: r.sha, main: main1124, version: '0.5.115' }).moved);
+
+  // GitHub's merge commit of that PR into main: main gets the same tree, and the pre-flighted head is in main's history, so it is what gets tagged
+  git('checkout', '-q', 'main'); git('merge', '-q', '--no-ff', '-m', 'Release 0.5.115 (#1126)', r.sha);
+  const mergeSha = sha('HEAD');
+  const tree = (rev) => sha(`${rev}^{tree}`);
+  const t = lib.tagTarget({ head, mergeSha, sameTree: tree(mergeSha) === tree(head), headOnMain: rg.contains(repo, mergeSha, head) });
+  check('release move: the tag goes on the pre-flighted head, which is in main\'s history', t.sha === head && t.onMain, JSON.stringify(t));
+  check('release move: the release notes at that tag list #1123 only, and main\'s CHANGELOG keeps #1124 unreleased', notesSection(show(t.sha, 'CHANGELOG.md'), '0.5.115').includes('#1123') && !notesSection(show(t.sha, 'CHANGELOG.md'), '0.5.115').includes('#1124') && lib.changelogSection(show(mergeSha, 'CHANGELOG.md'), '0.5.115') === lib.changelogSection(show(head, 'CHANGELOG.md'), '0.5.115'), show(mergeSha, 'CHANGELOG.md'));
+  check('release move: an unmoved main squashes to the same tree, and the tag goes on the squash commit', lib.tagTarget({ head, mergeSha: 'f'.repeat(40), sameTree: true, headOnMain: false }).sha === 'f'.repeat(40));
+  check('release move: a squash onto a main that moved in the last seconds still tags the pre-flighted head (off main, said so)', (() => { const x = lib.tagTarget({ head, mergeSha: 'f'.repeat(40), sameTree: false, headOnMain: false }); return x.sha === head && !x.onMain && /off main/.test(x.why); })());
+
+  // another file both sides changed: a person resolves it
+  git('checkout', '-q', '-b', 'side', base); write('src/old.js', 'module.exports = 2;\n'); write('package.json', JSON.stringify({ name: 'lumen', version: '0.5.114', x: 1 }, null, 2) + '\n'); const side = commit('side');
+  git('checkout', '-q', '-b', 'rel2', head); write('src/old.js', 'module.exports = 3;\n'); const head2 = commit('release with a code change');
+  let threw = '';
+  try { rg.mergeMainInto(repo, { head: head2, main: side, version: '0.5.115' }); } catch (err) { threw = err.message; }
+  check('release move: a conflict outside CHANGELOG.md stops with the file named', /src\/old\.js/.test(threw), threw);
+
+  // ---- what the next release diffs against
+  const ref = (tag, target, msg) => { git('tag', '-a', '-f', tag, '-m', msg, target); return tag; };
+  check('release head: the tag message carries Release-Head and reads back', lib.parseReleaseHead(lib.releaseTagMessage('0.5.115', head)) === head && lib.parseReleaseHead('Lumen 0.5.114') === null);
+  // 0.5.115 as it was tagged: on the squash of a main that already had #1124 (a tree no check ran on), no trailer
+  git('checkout', '-q', '-b', 'squashed', main1124); write('CHANGELOG.md', show(head, 'CHANGELOG.md')); write('package.json', show(head, 'package.json')); const squash = commit('Release 0.5.115 (#1126)');
+  write('src/later.js', 'module.exports = "0.5.116 work";\n'); const next = commit('later work');
+  const oldTag = ref('v0.5.115', squash, 'Lumen 0.5.115');
+  const files = (a, b) => git('diff', '--name-only', a, b).stdout.split('\n').filter(Boolean);
+  check('release head: diffing against the old tag misses #1124\'s file (the 0.5.116 selection bug)', !files(oldTag, next).includes('src/cursor.js'), files(oldTag, next).join());
+  let asked = '';
+  const legacy = rg.releaseBase(repo, oldTag, { prHead: (tg) => { asked = tg; return head; } });
+  check('release head: a tag without Release-Head falls back to its release PR\'s head, and the diff then has #1124\'s file', legacy && legacy.rev === head && legacy.how === 'pr' && asked === 'v0.5.115' && files(legacy.rev, next).includes('src/cursor.js') && files(legacy.rev, next).includes('src/later.js'), JSON.stringify(legacy));
+  ref('v0.5.115', squash, lib.releaseTagMessage('0.5.115', head));
+  const viaTrailer = rg.releaseBase(repo, 'v0.5.115', { prHead: () => { throw new Error('not asked'); } });
+  check('release head: a tag with Release-Head is read from the tag, no lookup', viaTrailer && viaTrailer.rev === head && viaTrailer.how === 'trailer', JSON.stringify(viaTrailer));
+  ref('v0.5.115', squash, 'Lumen 0.5.115');
+  check('release head: unknown (no trailer, no release PR) gives null, and the caller runs every suite', rg.releaseBase(repo, 'v0.5.115', { prHead: () => null }) === null && rg.releaseBase(repo, null) === null);
+  let fetched = '';
+  const gone = 'e'.repeat(40);
+  ref('v0.5.115', squash, lib.releaseTagMessage('0.5.115', gone));
+  check('release head: a Release-Head that is not here is fetched, and null when it still is not', rg.releaseBase(repo, 'v0.5.115', { fetch: (s) => { fetched = s; } }) === null && fetched === gone);
+  const relText = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'release', 'release.js'), 'utf8');
+  check('release.js: tags with releaseTagMessage on tagTarget\'s commit, merges main in before a --merge, and selects from releaseBase', /'tag', '-a', tag, '-m', releaseTagMessage\(version, st\.head\), target\.sha/.test(relText) && /mergeMainInto\(wt,/.test(relText) && /st\.sync \? '--merge' : '--squash'/.test(relText) && /releaseBase\(wt, tag,/.test(relText) && !/describe', '--tags', '--abbrev=0', headRev\)\.stdout;\s*\n\s*if \(!tag\) return null;\s*\n\s*const r = git\(wt, 'diff', '--name-only', tag,/.test(relText));
 }
 
 (async () => {
