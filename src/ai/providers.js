@@ -11,7 +11,7 @@ const { isContextError } = require('./fallback'); // one "too long for the model
 const genImages = require('../features/gen-images');
 const effortLib = require('./effort');
 const providerUsage = require('../features/provider-usage');
-const turnTiming = require('./turn-timing'); // [turn timing] LUMEN_TURN_TIMING=1
+const turnTiming = { requestOf: (timer, ...rest) => (timer ? require('./turn-timing').requestOf(timer, ...rest) : { mark() {}, done() {} }) }; // [turn timing] LUMEN_TURN_TIMING=1 (loaded only when on)
 
 const PROVIDERS = {
   openai: {

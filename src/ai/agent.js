@@ -71,7 +71,11 @@ const phaseTimer = (tool) => {
 };
 // Another document, not the same one with another #fragment.
 const landedElsewhere = (before, after) => String(before || '').split('#')[0] !== String(after || '').split('#')[0];
-const turnTiming = require('./turn-timing'); // [turn timing] LUMEN_TURN_TIMING=1: send to first token, tool calls and tokens per model request
+// [turn timing] LUMEN_TURN_TIMING=1: send to first token, tool calls and tokens per model request (ai/turn-timing.js, loaded only when on)
+const turnTiming = {
+  taskTimer: (label) => (process.env.LUMEN_TURN_TIMING === '1' ? require('./turn-timing').taskTimer(label) : null),
+  requestOf: (timer, ...rest) => (timer ? require('./turn-timing').requestOf(timer, ...rest) : { mark() {}, done() {} }),
+};
 const toolTiming = (name, ms, ok) => { if (process.env.LUMEN_TOOL_TIMING === '1') console.log(`[lumen] tool ${name} ${ms} ms${ok ? '' : ' (failed)'}`); };
 const CURSOR_AFTER = new Set(['fill_form', 'drag']); // [agent cursors] calls whose cursor goes where they ended (click, type_text, hover and scroll point it as they act)
 const ACT_MARK = new Set(['click', 'click_at', 'drag', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'go_back', 'go_forward', 'reload', 'hover', 'scroll']); // [tab acting] steps that mark their tab in the strip
