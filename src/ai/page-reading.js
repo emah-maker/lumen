@@ -136,7 +136,8 @@ const readBackground = (wc, timeoutMs = 12000) => runIn(wc, backgroundReadScript
 // A background read -> { title, text, health }: the result text is the health line (when the page is not fine), the
 // chunk of the page asked for (Readability's article as markdown when the page is one and it did not lose most of the
 // text, else the plain visible text), a note for the next chunk, and compact structured data.
-// requested: the address asked for (a redirect from it to a sign-in page is a wall: page-health.js loginRedirect).
+// requested: the address asked for (a redirect from it to a sign-in page, or to a front page that asks to sign in, is a
+// wall: page-health.js loginRedirect / homeBounce).
 function finishRead(raw, { maxChars, offset, requested = '' } = {}) {
   const probe = raw.probe || {};
   const text = String(raw.text || '');
@@ -157,7 +158,7 @@ function finishRead(raw, { maxChars, offset, requested = '' } = {}) {
   }
   // Plain text: a table's cells come out tab-separated; as " | " each row stays readable (`0.08 | 41.51 | ...`).
   if (!article) body = body.split('\n').map((l) => (l.includes('\t') ? l.replace(/\t+/g, ' | ') : l)).join('\n');
-  const verdict = health.classifyPage({ ...probe, title: raw.title, textHead: text.slice(0, 3000), textLen: raw.textLen ?? text.length, loginRedirect: Boolean(requested) && health.loginRedirect(requested, raw.url) });
+  const verdict = health.classifyPage({ ...probe, title: raw.title, textHead: text.slice(0, 3000), textLen: raw.textLen ?? text.length, loginRedirect: Boolean(requested) && health.loginRedirect(requested, raw.url), homeBounce: Boolean(requested) && health.homeBounce(requested, raw.url) });
   const first = !(Number(offset) > 0);
   const shell = verdict.kind === 'js_shell' || verdict.kind === 'data_shell';
   const slice = health.slicePage(body, { maxChars, offset });

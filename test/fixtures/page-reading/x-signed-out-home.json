@@ -1,0 +1,13 @@
+{
+  "_note": "What a signed-out read of https://x.com/home got on 2026-11-27: x.com now sends it to the front page (https://x.com/), not /i/flow/login. Visible text, title and address as the page script sees them.",
+  "requested": "https://x.com/home",
+  "url": "https://x.com/",
+  "title": "X. It’s what’s happening / X",
+  "text": "Happening now.\nContinue with phone\nContinue with Google\nContinue with Apple\nor\nEmail or username\nContinue\n\nBy continuing, you agree to our Terms of Service, Privacy Policy and Cookie Use.\n\nAbout\n·\nGet App\n·\nGrok\n·\nHelp\n·\nTerms\n·\nPrivacy\n·\nCookies\n·\nCareers\n·\nAds & Business\n·\nDevelopers\n·\nNews\n·\nUS TIDA\n·\nAccessibility\n·\n© 2026 X Corp.\nScan to get the app",
+  "textLen": 356,
+  "probe": {
+    "scriptCount": 1,
+    "hasPassword": false,
+    "hasCaptcha": false
+  }
+}

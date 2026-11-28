@@ -24,7 +24,7 @@ const SECRET_FILE = 'sync-secret.bin';
 // Which kinds of data a write of settings.json changed (references compared: a write that carries the same bookmarks, cards and preferences
 // along, like the session being saved every few seconds, changes none of them).
 const KIND_KEYS = {
-  bookmarks: ['bookmarks'],
+  bookmarks: ['bookmarks', 'bookmarkLayout'],
   widgets: ['homeWidgets', 'homeWidgetSizes', 'weatherPlaces'],
   settings: [...providersLib.SETTING_KEYS, ...Object.keys(providersLib.DIRECT_SETTINGS)],
 };

@@ -1,4 +1,4 @@
-/* global VisibleTicker */
+/* global VisibleTicker, MusicCardFeatures */
 // [widgets] The new-tab page's widget cards (features/widgets.js fetches their data in the browser;
 // it arrives in the page's hash). Every value from the network is set with textContent, links must
 // be https, and each field is checked before use. Buttons act by loading this page with
@@ -2296,6 +2296,7 @@ function renderWidgets(list) {
   const stacks = window.newtabStacks;
   const valid = stacks ? stacks.prepare(known, 12) : known.slice(0, 12);
   lastList.current = valid;
+  armStarting();
   const cards = valid.map((w) => {
     // A new size, place, age, turn in a stack or edit-form value is applied to the card as it is (the pencil reads setup when clicked), and
     // a music card read again with its playhead where the card already shows it is kept (features/widget-card-key.js): drawing a card
@@ -2633,14 +2634,22 @@ function settleCard(cardEl) {
 // whose data is old asks to be refreshed (never while the page is hidden). Nothing polls otherwise.
 const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, applemusic: 30e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
 const asked = new Map();
+// A music card saying "Starting Spotify…" (asked while this page was not in front, so nothing started it: music-card-features.js
+// startingRefreshMs) is asked again every few seconds while the page is shown, until it says something else.
+function armStarting() {
+  if (lastList.startingTimer || document.hidden) return;
+  const soon = Math.min(...lastList.current.map((w) => MusicCardFeatures.startingRefreshMs(w)).filter(Boolean));
+  if (Number.isFinite(soon)) lastList.startingTimer = setTimeout(() => { lastList.startingTimer = 0; tick(); }, soon);
+}
 function tick() {
   if (document.hidden) return;
+  armStarting();
   for (const [id, s] of shownWidgets) {
     if (s.el.classList.contains('calendar') || s.el.classList.contains('feed') || s.el.classList.contains('todoist')) shownWidgets.set(id, { key: '', el: s.el });
   }
   for (const w of lastList.current) {
     // Stocks and Crypto say how often they refresh (a closed market: hourly).
-    const after = (w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type];
+    const after = MusicCardFeatures.startingRefreshMs(w) || ((w.type === 'stocks' || w.type === 'crypto') && Number.isFinite(w.data?.refreshMs) ? Math.max(60e3, w.data.refreshMs) : REFRESH_AFTER[w.type]);
     if (after && w.updated && Date.now() - w.updated > after && Date.now() - (asked.get(w.id) || 0) > after) { asked.set(w.id, Date.now()); widgetAct(w.id, 'refresh', { arg: 'auto' }); return; }
   }
   const box = document.getElementById('widgets');

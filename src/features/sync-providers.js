@@ -24,10 +24,38 @@ const secretOnly = (value) => {
 };
 
 // ---------- bookmarks ----------
-// Flat: { url, title, folder? }. The address is the key. The order of the list is not synced: new ones go to the end.
-function bookmarks({ read, write }) {
+// Each bookmark is a record { url, title, folder? } keyed by its address; a folder is a path ("Work/Projects", features/bookmark-bar.js).
+// The bar's layout (settings.bookmarkLayout) rides along as records under keys no address can be, one per folder, so two computers
+// that change different folders both keep their change:
+//   'o:<path>'  the order of one folder's children, ['u:' + url | 'f:' + name] ('o:' is the bar itself)
+//   'e:<path>'  a folder made on the bar, kept while it is empty
+// When two computers reorder the same folder, the newer order wins and what only the other one had (a link it added there) keeps its
+// place after the same neighbour (mergeOrder). An older Lumen skips these records (they have no url).
+const MAX_ORDER = 5000;
+const MAX_FOLDER_PATH = 500;
+const isLayoutKey = (k) => /^[oe]:/.test(k);
+const cleanOrder = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && /^[uf]:/.test(x) && x.length <= 2100))].slice(0, MAX_ORDER) : null);
+
+// The winner's order, with each key only another version has put back after the nearest key before it that the result already has.
+function mergeOrder(win, others = []) {
+  const out = cleanOrder(win) || [];
+  for (const other of others) {
+    const o = cleanOrder(other);
+    if (!o) continue;
+    for (let i = 0; i < o.length; i++) {
+      if (out.includes(o[i])) continue;
+      let at = 0;
+      for (let j = i - 1; j >= 0; j--) { const p = out.indexOf(o[j]); if (p >= 0) { at = p + 1; break; } }
+      out.splice(at, 0, o[i]);
+    }
+  }
+  return out.slice(0, MAX_ORDER);
+}
+
+function bookmarks({ read, write, readLayout }) {
+  const BB = require('./bookmark-bar');
   const clean = (b) => (b && typeof b.url === 'string' && /^https?:\/\//i.test(b.url) && b.url.length <= 2048
-    ? { url: b.url, title: String(b.title ?? '').slice(0, 300), ...(b.folder ? { folder: String(b.folder).slice(0, 120) } : {}) } : null);
+    ? { url: b.url, title: String(b.title ?? '').slice(0, 300), ...(b.folder ? { folder: BB.cleanPath(b.folder).slice(0, MAX_FOLDER_PATH) } : {}) } : null);
   return {
     name: 'bookmarks',
     scan() {
@@ -35,18 +63,49 @@ function bookmarks({ read, write }) {
       const list = read();
       if (!Array.isArray(list)) return out; // never saved: Lumen shows its starter sites, which are not the person's own
       for (const b of list) { const c = clean(b); if (c && !out.has(c.url)) out.set(c.url, { value: c }); }
+      if (readLayout) {
+        const l = BB.cleanLayout(readLayout());
+        for (const [p, keys] of Object.entries(l.order)) { const o = cleanOrder(keys); if (o?.length) out.set(`o:${p}`, { value: o }); }
+        for (const p of l.folders) if (p.length <= MAX_FOLDER_PATH) out.set(`e:${p}`, { value: { folder: p } });
+      }
       return out;
+    },
+    combineOwn: true,
+    combine(win, others) {
+      return Array.isArray(win) ? mergeOrder(win, others) : win;
     },
     apply(changes) {
       const list = (Array.isArray(read()) ? read() : []).map((b) => ({ ...b }));
-      for (const { key, value, deleted } of changes) {
+      const layoutChanges = [];
+      for (const ch of changes) {
+        const { key, value, deleted } = ch;
+        if (isLayoutKey(key)) { layoutChanges.push(ch); continue; }
         const at = list.findIndex((b) => b?.url === key);
         if (deleted) { if (at >= 0) list.splice(at, 1); continue; }
         const c = clean(value);
         if (!c || c.url !== key) continue;
         if (at >= 0) list[at] = c; else list.push(c);
       }
-      write(list);
+      if (!readLayout || !layoutChanges.length) { write(list); return []; }
+      const l = BB.cleanLayout(readLayout());
+      const folders = new Set(l.folders);
+      const order = { ...l.order };
+      const orders = [];
+      for (const { key, value, deleted } of layoutChanges) {
+        const p = BB.cleanPath(key.slice(2));
+        if (key.startsWith('e:')) {
+          if (deleted) folders.delete(p);
+          else if (p && BB.cleanPath(value?.folder) === p) folders.add(p);
+        } else if (deleted) delete order[p];
+        else { const o = cleanOrder(value); if (o) orders.push([p, o]); }
+      }
+      // An order is kept to what is there once everything in this pass is in (a link moved away on the other computer is not listed twice).
+      const layout = { folders: [...folders], order };
+      for (const [p, o] of orders) {
+        const here = new Set(BB.childrenOf(list, { folders: layout.folders, order: {} }, p).map((c) => c.key));
+        order[p] = o.filter((k) => here.has(k));
+      }
+      write(list, layout);
       return [];
     },
   };
@@ -319,4 +378,4 @@ function passwords({ vault, unavailable }) {
   };
 }
 
-module.exports = { bookmarks, settings, widgets, history, chats, projects, projectFiles, passwords, scrub, SETTING_KEYS, DIRECT_SETTINGS, SECRETISH, MAX_CHAT_BYTES };
+module.exports = { bookmarks, mergeOrder, settings, widgets, history, chats, projects, projectFiles, passwords, scrub, SETTING_KEYS, DIRECT_SETTINGS, SECRETISH, MAX_CHAT_BYTES };
