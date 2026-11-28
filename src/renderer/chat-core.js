@@ -462,7 +462,9 @@ $('model').addEventListener('change', async (e) => {
 
 const messages = $('messages');
 // [step labels] The step cards' code (step-labels.js, step-ui.js, step-ui.css) is not part of the start-up bundle: it loads the first time a message is sent or a
-// chat with cards is drawn (the chat page lists it itself). A step that arrives before it has loaded gets a plain row.
+// chat with cards is drawn (the chat page lists it itself). A reply's first step can arrive while it is still loading (a busy computer): that step and
+// everything after it wait for it (holdForStepUI), so the step goes in its card and the words before it are the card's live line, not a loose row and
+// a bubble. Only a load that failed leaves a step a plain row.
 let stepUILoad = null;
 // [ask options] The question card's code (renderer/ask-card.js, its rules in ai/ask-user.js, and ask-card.css): loaded with the first card, not
 // with the window (the UI bundle's budget).
@@ -482,14 +484,28 @@ function askDone(event) {
   if (!box) return;
   if (event.answers) { box.answer?.(event.answers); askCards.delete(event.askId); } else box.ended?.(); // (stopped or no answer in time: still clickable, its pick is the next message)
 }
+let stepUILoading = false;
 function loadStepUI() {
   if (window.stepUI) { window.stepUI.init(messages); return Promise.resolve(); } // click / Enter on a step opens its details
   if (stepUILoad) return stepUILoad;
   const head = document.head;
   head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'step-ui.css' }));
   const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
-  stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('card-items.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)); // ([agents card] with them)
+  stepUILoading = true;
+  stepUILoad = script('step-labels.js').then(() => script('review-track.js')).then(() => script('step-ui.js')).then(() => script('card-items.js')).then(() => script('agents-card.js')).then(() => window.stepUI?.init(messages)).finally(() => { stepUILoading = false; }); // ([agents card] with them)
   return stepUILoad;
+}
+// The events that draw into a card. The first of a run that comes while the card code is still loading holds it and all that follow (turn.held,
+// see onAgentEvent) until the code is in; then they are drawn in the order they came.
+const CARD_EVENTS = new Set(['tool', 'tool_update', 'tool_done', 'thumb', 'desktop_card', 'card_files', 'helper', 'agent', 'skill', 'review']);
+function holdForStepUI(t0, event) {
+  t0.held = [event];
+  stepUILoad.catch(() => {}).then(() => {
+    const held = t0.held || [];
+    t0.held = null;
+    if (turn !== t0) return;
+    for (const ev of held) { try { onAgentEvent(ev); } catch (err) { console.error('[step ui]', err); } }
+  });
 }
 if (window.stepUI) window.stepUI.init(messages);
 function plainStep(event, label) {
@@ -1913,6 +1929,7 @@ function onAgentEvent(event) {
   const late = finishedTurn(event.runId);
   if (late && /^(card_files|thumb|helper|agent|skill|review|tool|tool_update|tool_done)$/.test(event.type) && (!turn || event.runId !== runId || (event.helper === true && late !== turn))) { if (!forOtherChat(event.chatId)) lateCardEvent(late, event); return; }
   if (!turn || event.runId !== runId || forOtherChat(event.chatId)) return;
+  if (stepUILoading && !window.stepUI && CARD_EVENTS.has(event.type)) { holdForStepUI(turn, event); return; } // (the card code is still loading: this step waits for it, see loadStepUI)
   if (event.chatId && !shownChatId) nameChat(event.chatId); // (a chat just started here: its first event names it)
   // A passing status on the working line ("Starting Claude Code…"): gone as soon as the reply shows anything.
   if (event.type === 'auto') { turn.auto = { label: event.label, reason: event.reason }; return; } // [auto model] which model Auto chose for this reply: its label and tooltip (labelReply)

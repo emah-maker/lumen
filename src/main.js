@@ -12114,15 +12114,14 @@ function trackRunDetails(run, msg) {
 const stepThumbs = { createThumbs: (opts) => require('./features/step-thumbs').createThumbs(opts), isNavigation: (name) => require('./features/step-thumbs').isNavigation(name) }; // (loaded on the first browser step)
 const thumbVisibleBy = new Map(); // webContents id -> a card is on screen there
 const thumbsVisible = () => {
-  let known = false;
   let any = false;
   for (const [id, v] of thumbVisibleBy) {
     const wc = webContentsModule.fromId(id);
     if (!wc || wc.isDestroyed()) { thumbVisibleBy.delete(id); continue; }
-    known = true;
     if (v) any = true;
   }
-  return known ? any : true;
+  return any; // (no chat has said a card wants frames: none does. A Browser card never draws its tab, so this used to stream a run's first frames
+  // until the chat's first report came in, later on a busy computer; a Computer or Word card says it is on screen as it appears.)
 };
 if (TEST) {
   global.__tabCapture = require('./features/tab-capture'); // (a test takes captures of any tab, as the AI's tools do)
