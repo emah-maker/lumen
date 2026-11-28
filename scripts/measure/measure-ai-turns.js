@@ -1,10 +1,10 @@
 // Times the sidebar AI's tool calls end to end with a scripted fake model (no network, no key) on local pages, in a hidden window on a
 // throwaway profile. Each scenario is a list of model turns, each turn a list of tool calls; the script prints every call's time
 // (LUMEN_TOOL_TIMING=1: "[lumen] tool navigate 180 ms", and navigate's phases) and each scenario's whole run time.
-//   node scripts/measure/measure-ai-turns.js [--runs=5] [--app=<folder>] [--only=navigate,parallel]
+//   node scripts/measure/measure-ai-turns.js [--runs=5] [--app=<folder>] [--only=navigate]
 // Run it under the e2e lock: node scripts/test/e2e-lock.js run --owner measure -- node scripts/measure/measure-ai-turns.js
 // Pages: /plain/N (a small page), /redirect/N (302 to /plain/N), /jsredirect/N (location.replace at parse), /spa/N (an app shell that
-// draws its text 150 ms after load and pushes a route), /slow/N (answers after 300 ms), /shell/N (little text and an image that takes 400 ms: dom-ready long before load).
+// draws its text 150 ms after load and pushes a route), /slow/N (answers after 300 ms), /heavy/N (text and an image that takes 400 ms: interactive may read it before the image), /shell/N (little text and an image that takes 400 ms: dom-ready long before load).
 require('../../test/helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const http = require('http');
@@ -30,6 +30,7 @@ const server = (label) => new Promise((resolve) => {
     if (kind === 'jsredirect') return html(page('Moving', '<p>Moving…</p>', `<script>location.replace('/plain/${n}r')</script>`));
     if (kind === 'spa') return html(page(`App ${n}`, '<div id="app"></div><script>addEventListener("load", () => setTimeout(() => { history.pushState(null, "", "/spa/' + n + '/home"); document.getElementById("app").innerHTML = "<h1>App home ' + n + '</h1>' + filler.replace(/"/g, '\\"') + '<button>Go</button>"; }, 150));</script>'));
     if (kind === 'img') { setTimeout(() => { res.setHeader('Content-Type', 'image/svg+xml'); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'); }, 400); return; }
+    if (kind === 'heavy') return html(page(`Heavy ${n}`, `<h1>Heavy ${n}</h1>${filler}<img src="/img/h${n}"><button>Go</button>`));
     if (kind === 'shell') return html(page(`Shell ${n}`, `<h1>Shell ${n}</h1><img src="/img/${n}"><button>Go</button>`));
     if (kind === 'slow') { setTimeout(() => html(page(`Slow ${n}`, `<h1>Slow ${n}</h1>${filler}<button>Press</button>`)), 300); return; }
     return html(page(`Plain ${label} ${n}`, `<h1>Plain ${label} ${n}</h1>${filler}<button onclick="document.title='Pressed'">Press</button>`));
@@ -81,7 +82,7 @@ const server = (label) => new Promise((resolve) => {
     const report = (label, xs) => console.log(`${label.padEnd(44)} median ${String(median(xs)).padStart(5)} ms  [${xs.join(', ')}]`);
 
     if (!ONLY.length || ONLY.includes('navigate')) {
-      const cases = { first: [], plain: [], redirect: [], jsredirect: [], spa: [], slow: [], shell: [] };
+      const cases = { first: [], plain: [], redirect: [], jsredirect: [], spa: [], slow: [], shell: [], heavy: [] };
       const phases = [];
       for (let r = 0; r < RUNS; r++) {
         const n = `${r}`;
@@ -93,10 +94,11 @@ const server = (label) => new Promise((resolve) => {
           [{ name: 'navigate', input: { url: `${A.url}/spa/${n}e` } }],
           [{ name: 'navigate', input: { url: `${A.url}/slow/${n}f` } }],
           [{ name: 'navigate', input: { url: `${A.url}/shell/${n}g` } }],
+          [{ name: 'navigate', input: { url: `${A.url}/heavy/${n}h` } }],
         ];
         const out = await runScript(turns, `Open the pages ${r}`);
         const ms = toolMs(out.lines, 'navigate');
-        ['first', 'plain', 'redirect', 'jsredirect', 'spa', 'slow', 'shell'].forEach((k, i) => { if (Number.isFinite(ms[i])) cases[k].push(ms[i]); });
+        ['first', 'plain', 'redirect', 'jsredirect', 'spa', 'slow', 'shell', 'heavy'].forEach((k, i) => { if (Number.isFinite(ms[i])) cases[k].push(ms[i]); });
         phases.push(...out.lines.filter((l) => l.startsWith('navigate phases')));
         // What the AI saw: the redirect, JS redirect and SPA pages must report where they landed and what they show.
         const urls = await app.evaluate(() => global.__agent.browser.listTabs().map((t) => t.url));
@@ -104,28 +106,9 @@ const server = (label) => new Promise((resolve) => {
       }
       for (const [k, xs] of Object.entries(cases)) report(`navigate ${k}`, xs);
       console.log('  phases (first run):');
-      for (const p of phases.slice(0, 7)) console.log(`    ${p}`);
+      for (const p of phases.slice(0, 8)) console.log(`    ${p}`);
     }
 
-    if (!ONLY.length || ONLY.includes('parallel')) {
-      // Two tabs the AI opened, then one model turn that acts in both at once (a click in each, by tab_id).
-      const wall = [];
-      for (let r = 0; r < RUNS; r++) {
-        const ids = await app.evaluate(async (_e, urls) => urls.map((u) => global.__agent.browser.openTab(u, { ai: true, show: false }).id), [`${A.url}/slow/p${r}`, `${B.url}/slow/q${r}`]);
-        await sleep(800);
-        const turns = [[
-          { name: 'navigate', input: { url: `${A.url}/slow/x${r}`, tab_id: ids[0] } },
-          { name: 'navigate', input: { url: `${B.url}/slow/y${r}`, tab_id: ids[1] } },
-          { name: 'click', input: { text: 'Press', tab_id: ids[0] } },
-          { name: 'click', input: { text: 'Press', tab_id: ids[1] } },
-        ]];
-        const out = await runScript(turns, `Work in two tabs ${r}`);
-        wall.push(out.ms);
-        if (r === 0) console.log(`  calls: ${out.lines.filter((l) => l.startsWith('tool ')).join(' | ')}`);
-        await app.evaluate((_e, list) => { for (const id of list) global.__agent.browser.closeTab?.(id); }, ids).catch(() => {});
-      }
-      report('two tabs, 2 navigates + 2 clicks, whole run', wall);
-    }
   } finally {
     await app.close().catch(() => {});
     A.server.close(); B.server.close();
