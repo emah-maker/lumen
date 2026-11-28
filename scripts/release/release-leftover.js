@@ -16,7 +16,9 @@ const STATE_FILE = 'lumen-release-state.json';
 const RELEASE_FILES = new Set(['CHANGELOG.md', 'package.json', 'package-lock.json']);
 const RELEASE_SUBJECT = /^Release \d+\.\d+\.\d+$/;
 
-const samePath = (a, b) => { const n = (p) => path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b); };
+// Real paths: git prints long names and resolved symlinks, while os.tmpdir() can be an 8.3 short name (RUNNER~1) or /var for /private/var.
+const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+const samePath = (a, b) => { const n = (p) => real(p).replace(/\\/g, '/').replace(/\/+$/, ''); return process.platform === 'win32' ? n(a).toLowerCase() === n(b).toLowerCase() : n(a) === n(b); };
 
 // Commits on `ref` that are not on origin/main and that a release run would not have made (not "Release X.Y.Z", not a merge): their subjects,
 // or null when git cannot tell.
