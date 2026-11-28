@@ -403,7 +403,7 @@ function setupAiAgents(deps) {
       const open = [...(typeof grokGateNow?.sessions === 'function' ? grokGateNow.sessions() : []), ...(mcpServer?.sessions ? [...mcpServer.sessions] : [])];
       const listed = open.find((s) => s?.session?.engine === tag)?.session.served;
       if (!listed) return false;
-      const wanted = [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.wordTools?.(chat) || []), ...(deps.desktopTools?.(chat) || []), ...(deps.skillTools?.(chat) || []), ...(deps.mcpServerTools?.(chat) || [])];
+      const wanted = [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.wordTools?.(chat) || []), ...(deps.desktopTools?.(chat) || []), ...(deps.skillTools?.(chat) || []), ...(deps.askTools?.(chat) || []), ...(deps.mcpServerTools?.(chat) || [])];
       return wanted.some((t) => t?.name && !listed.has(t.name));
     } catch { return false; }
   }
@@ -412,7 +412,7 @@ function setupAiAgents(deps) {
     const owner = engineForSession(session);
     // [tools] A kept Codex / Grok Build / Antigravity process lists the tools as it connects, before its turn is active: the chat it was started for (owner.chat).
     const chat = (owner?.activeOf ? owner.activeOf(session.engine) : owner?.active)?.scope?.chat || owner?.chat || null;
-    return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || []), ...(deps.wordTools?.(chat) || []), ...(deps.desktopTools?.(chat) || []), ...(deps.skillTools?.(chat) || []), ...(deps.mcpServerTools?.(chat) || [])];
+    return [...(deps.connectorTools?.(chat) || []), ...(deps.projectTools?.(chat) || []), ...(deps.helperTools?.(owner?.kind, owner) || []), ...(deps.wordTools?.(chat) || []), ...(deps.desktopTools?.(chat) || []), ...(deps.skillTools?.(chat) || []), ...(deps.askTools?.(chat) || []), ...(deps.mcpServerTools?.(chat) || [])]; // ([ask options] ask_user)
   };
   // An engine for one sidebar message of `kind`: { engine, release } (agent.js engineFor). The shared one when no other
   // message holds it, else a side engine made for this message (Antigravity too: each chat runs in a home folder of its

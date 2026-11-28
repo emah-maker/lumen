@@ -92,6 +92,8 @@ const uploadFiles = require('../features/upload-files'); // [uploads] upload_fil
 const handsOff = require('../features/agent-hands-off'); // [agent window] what an outside agent never touches
 const editKeys = require('../features/edit-keys'); // Ctrl/Cmd + X C V Z Y A as native editing commands, and the clipboard snapshot
 const planMode = require('./plan-mode'); // [plan mode] read-only planning, then a plan card the user runs
+let askUserMod = null; // [ask options] ai/ask-user.js, loaded on first use (not at start-up: the module budget)
+const askUser = () => (askUserMod ||= require('./ask-user'));
 const deviceAccess = require('../features/device-access'); // [device access] upload_file paths, list_files, clipboard (Settings → AI)
 // [work folder] the folder the AI works in: a chat's own, else its project's. Loaded on first use, not at startup (test/e2e/perf-budget.js).
 let projectFoldersMod = null;
@@ -760,6 +762,8 @@ const withAppsNote = (tool, kind, mode) => (FILES_IN_APPS_NOTE[kind][mode] ? { .
 const OTHER_SKILL = slimTool(SKILL_TOOL); // [skills]
 const OTHER_REVIEW = slimTool(REVIEW_TOOL); // [review loop]
 const OTHER_PLAN = slimTool(planMode.PLAN_TOOL); // [plan mode]
+let otherAskTool = null;
+const otherAsk = () => (otherAskTool ||= slimTool(askUser().ASK_TOOL)); // [ask options]
 const OTHER_PARALLEL = slimTool(PARALLEL_TASKS_TOOL); // [acting helpers]
 const OTHER_MEMORY = slimTool(MEMORY_TOOL); // [memory]
 const OTHER_PROJECT = slimTool(PROJECT_TOOL); // [project workspace]
@@ -1153,7 +1157,7 @@ const isContextError = fallback.isContextError; // one matcher for every "too lo
 // stubbed prefix is the same on every later request and caches again at once.
 const pagesFor = (messages) => stubOldImages(messages.pageStubUpTo ? stubOldPages(messages, messages.pageStubUpTo) : messages);
 
-function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false, applications = false, preferences = false, filesInApps = 'auto' } = {}) { // preferences: [ai preferences] the preferences tool is offered; // applications: [project templates] the applications tool is offered; project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
+function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { delegate = true, desktop = false, plan = false, memory = false, reading = false, notes = false, acting = false, word = false, project = false, applications = false, preferences = false, filesInApps = 'auto', ask = false } = {}) { // ask: [ask options] ask_user is offered (a run someone can answer); preferences: [ai preferences] the preferences tool is offered; // applications: [project templates] the applications tool is offered; project: [project workspace] project_files is offered; acting: [acting helpers] parallel_tasks is offered; delegate: the helpers setting (the tool is offered); desktop: the desktop tool is offered (switch on, or the chat asks for an app); plan: [plan mode] propose_plan is offered; memory: [memory] the memory tool is offered
   const picked = LEGACY_MODELS[settings.model] || settings.model;
   const model = MODELS[picked] ? picked : DEFAULT_MODEL;
   const cfg = MODELS[model];
@@ -1168,7 +1172,7 @@ function requestFor(settings, messages, budget = CONTEXT_CHARS.anthropic, { dele
     // Explicit breakpoint on system: tools+system (the stable prefix) always cache, independent of
     // whatever the moving tail (page context, tool results) does to the top-level auto-breakpoint.
     system: [{ type: 'text', text: systemFor(settings) + (skillsBlockOf(settings) ? `\n\n${skillsBlockOf(settings)}` : ''), cache_control: { type: 'ephemeral' } }],
-    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], applications ? [APPLICATIONS_TOOL] : [], preferences ? [PREFERENCES_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL, REVIEW_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [])), // [memory] [skills] [acting helpers]
+    tools: cacheLastTool((cfg.basicWebSearch ? BASIC_SEARCH_TOOLS : ALL_TOOLS).concat(delegate ? [DELEGATE_TOOL] : [], desktop ? [withAppsNote(DESKTOP_TOOL, 'desktop', filesInApps)] : [], word ? [withAppsNote(WORD_TOOL, 'word', filesInApps)] : [], [BOARD_TOOL], reading ? [READING_LIST_TOOL] : [], notes ? [NOTES_TOOL] : [], plan ? [planMode.PLAN_TOOL] : [], memory ? [MEMORY_TOOL] : [], project ? [PROJECT_TOOL] : [], applications ? [APPLICATIONS_TOOL] : [], preferences ? [PREFERENCES_TOOL] : [], skillsBlockOf(settings) ? [SKILL_TOOL, REVIEW_TOOL] : [], acting ? [PARALLEL_TASKS_TOOL] : [], ask ? [askUser().ASK_TOOL] : [])), // [memory] [skills] [acting helpers]
     messages: historyFor(fitContext(pagesFor(messages), budget), model),
   };
   if (cfg.fallbacks) params.fallbacks = 'default';
@@ -1193,6 +1197,7 @@ TOOL_SCHEMAS.research_board = BOARD_TOOL.input_schema;
 TOOL_SCHEMAS.reading_list = READING_LIST_TOOL.input_schema; // [reading list]
 TOOL_SCHEMAS.use_skill = SKILL_TOOL.input_schema;
 TOOL_SCHEMAS.review_round = REVIEW_TOOL.input_schema; // [review loop]
+Object.defineProperty(TOOL_SCHEMAS, 'ask_user', { enumerable: true, get: () => askUser().ASK_TOOL.input_schema }); // [ask options] (the module loads on the first check)
 TOOL_SCHEMAS.propose_plan = planMode.PLAN_TOOL.input_schema; // [plan mode] offered only while planning (planning())
 TOOL_SCHEMAS.memory = MEMORY_TOOL.input_schema; // [memory]
 TOOL_SCHEMAS.project_files = PROJECT_TOOL.input_schema; // [project workspace]
@@ -1242,7 +1247,7 @@ function searchCard(name, input, who) {
 // AI off (features/ai-sites.js) refuses them. Tools whose effect on a site can't be taken back by
 // "Undo" (the action log, see recordActions) name what they did there.
 const ID_TOOLS = new Set(['click', 'type_text', 'hover', 'upload_file']); // tools that take an element_id from a read
-const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files', 'applications', 'preferences', 'review_round']);
+const TAB_FREE_TOOLS = new Set(['find_sources', 'research_board', 'delegate', 'use_skill', 'generate_image', 'list_tabs', 'read_tabs', 'open_tab', 'web_search', 'read_urls', 'switch_tab', 'close_tab', 'group_tabs', 'ungroup_tabs', 'wait', 'analyze_posts', 'list_files', 'clipboard', 'verify_changes', 'desktop', 'connector', 'propose_plan', 'memory', 'reading_list', 'notes', 'parallel_tasks', 'word', 'project_files', 'applications', 'preferences', 'review_round', 'ask_user']);
 const DEBUG_TOOLS = new Set(['get_console', 'get_network', 'handle_dialog']); // [page debug] they work even while a dialog blocks the page
 const AI_NAV_TOOLS = new Set(['navigate', 'go_back', 'go_forward', 'reload']); // [page debug] navigations of the AI's own: a beforeunload "leave" is answered yes
 const pageDebugShared = new pageDebug.PageDebug(); // one for the app: Electron keeps a single webRequest listener per event per session
@@ -1822,6 +1827,7 @@ function itemExtras(chatMessages, m, mi) {
   if (meta.agents) out.agents = meta.agents; // [agents card] the reply's subagents
   if (meta.skills) out.skills = meta.skills; // [skills] the skill the reply worked by
   if (meta.review) out.review = meta.review; // [review loop] the reviewer's scores by round
+  if (meta.asks) out.asks = meta.asks; // [ask options] the reply's question cards, drawn again answered
   if (meta.touched) out.touched = meta.touched; // [activity cards] every tab the turn used, first touched first (the card's Tabs list)
   if (meta.thumb) out.thumb = meta.thumb; // [activity cards] the last frame of the tab the AI worked in
   if (meta.auto) out.auto = meta.auto;
@@ -1906,6 +1912,7 @@ class Agent {
     this.messages = [];
     this.approvedHosts = new Set();
     this.pendingApprovals = new Map();
+    this.pendingAsks = new Map(); // [ask options] ask card id -> the waiting ask_user call (answerAsk)
     this.approvalSeq = 0;
     this.redirectGuards = new Map(); // webContents -> its redirect check while a tool runs (guardRedirects)
     this.openAsks = new WeakMap(); // approved-hosts set -> host -> the "wants to open" card showing for it
@@ -2204,7 +2211,7 @@ class Agent {
       if (blocks.some((b) => b.type === 'text' && b.text?.trim()) || blocks.some((b) => b.type === 'generated_image' || b.type === 'ai_file')) { last = i; break; }
     }
     if (last < 0) return;
-    const patch = branches.cleanMeta({ tabs: this.tabsOfReply(messages[last], info), thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, touched: info.touched, written: info.written, cards: info.cards, task: info.task, auto: info.auto, agents: info.agents, skills: info.skills, review: info.review });
+    const patch = branches.cleanMeta({ tabs: this.tabsOfReply(messages[last], info), thinking: info.thinking, thinkingMs: info.thinkingMs, tools: info.tools, thumb: info.thumb, touched: info.touched, written: info.written, cards: info.cards, task: info.task, auto: info.auto, agents: info.agents, skills: info.skills, review: info.review, asks: info.asks });
     if (patch) branches.setMeta(messages[last], patch);
     if ('interim' in info) branches.setMeta(messages[last], { interim: info.interim === true ? true : undefined }); // [quiet run] (false clears it: the run was over after all)
   }
@@ -4397,7 +4404,7 @@ ${prompt}` : prompt), historyImages: [] };
 
   // One Claude turn (streamed). Returns the final message, or null to re-issue the turn.
   async claudeTurn(messages, signal, emit, budget = CONTEXT_CHARS.anthropic, noTools = false) {
-    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), applications: this.applicationsOffered(messages), preferences: this.preferencesOffered(messages), acting: this.actingHelpersOn() && !this.planning() }); // ([acting helpers] never while planning: planCheck refuses it too)
+    const params = requestFor(messages.settings, messages, budget, { delegate: this.helpersOffered(messages), desktop: this.desktopOffered(messages), word: this.wordOffered(messages), filesInApps: this.filesInApps(), plan: this.planning(), memory: this.memoryOffered(messages), reading: this.readingOffered(messages), notes: this.notesOffered(messages), project: this.projectOffered(messages), applications: this.applicationsOffered(messages), preferences: this.preferencesOffered(messages), acting: this.actingHelpersOn() && !this.planning(), ask: this.askOffered() }); // ([ask options] ask_user) ([acting helpers] never while planning: planCheck refuses it too)
     // Settings → AI → AI providers: the user's effort for a model that already takes one (Opus 5.5), over the built-in choice.
     const userEffort = effortLib.anthropicEffort(this.effortFor('anthropic', messages.settings), Boolean(MODELS[params.model]?.effort));
     if (userEffort) params.output_config = { effort: userEffort };
@@ -4450,7 +4457,7 @@ ${prompt}` : prompt), historyImages: [] };
       // byte-identical and the provider's prefix cache keeps hitting; a second, moving trim here
       // rewrote a turn deep in the history on every call.
       messages: (blind ? withoutImages : (m) => m)(historyFor(fitContext(pagesFor(messages), budget), messages.settings.model)),
-      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.applicationsOffered(messages) ? [OTHER_APPLICATIONS] : []), ...(this.preferencesOffered(messages) ? [OTHER_PREFERENCES] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
+      tools: toolsOk ? [...(this.helpersOffered(messages) ? OTHER_TOOLS_DELEGATE : OTHER_TOOLS_BOARD), ...(this.desktopOffered(messages) ? [withAppsNote(OTHER_DESKTOP, 'desktop', this.filesInApps())] : []), ...(this.wordOffered(messages) ? [withAppsNote(OTHER_WORD, 'word', this.filesInApps())] : []), ...(this.planning() ? [OTHER_PLAN] : []), ...(this.memoryOffered(messages) ? [OTHER_MEMORY] : []), ...(this.projectOffered(messages) ? [OTHER_PROJECT] : []), ...(this.applicationsOffered(messages) ? [OTHER_APPLICATIONS] : []), ...(this.preferencesOffered(messages) ? [OTHER_PREFERENCES] : []), ...(this.readingOffered(messages) ? [OTHER_READING] : []), ...(this.notesOffered(messages) ? [OTHER_NOTES] : []), ...(skillsBlockOf(messages.settings) ? [OTHER_SKILL] : []), ...(this.actingHelpersOn() && !this.planning() ? [OTHER_PARALLEL] : []), ...(this.askOffered() ? [otherAsk()] : []), ...(await this.externalToolDefs(emit))] : [], // [mcp client] [desktop apps] [plan mode] [memory] [skills] [acting helpers]
       signal,
       emit,
       noTools,
@@ -5482,6 +5489,7 @@ ${prompt}` : prompt), historyImages: [] };
       if (name === 'read_urls') return require('../renderer/step-labels').readUrlsLabel(input.urls.map(hostOf), input.as_user === true);
       if (name === 'run_script') return 'Running a script on the page';
       if (name === 'propose_plan') return 'Proposing a plan'; // [plan mode]
+      if (name === 'ask_user') return 'Asking you'; // [ask options]
       if (name === 'verify_changes') return 'Checking what the edits changed';
       if (name === 'wait_for') return input.text ? `Waiting for ${quote(input.text)}` : input.network_idle === true && !input.url && !input.gone ? 'Waiting for the page to finish loading' : 'Waiting for the page';
       if (name === 'get_console') return 'Reading the page console';
@@ -5808,6 +5816,47 @@ ${prompt}` : prompt), historyImages: [] };
     return 'The plan is on the user\'s screen as a card with Run plan, Edit and Keep planning. Stop here: at most one short sentence, and do not repeat the steps.';
   }
   // ---- [/plan mode]
+
+  // ---- [ask options] (ai/ask-user.js) ask_user is offered to a run someone can answer: the sidebar's and the chat page's, never a
+  // background task's (nobody watches it; it says what it needs in its result instead).
+  askOffered() { return this.browser.background !== true; }
+
+  // The card goes to the chat ({ type: 'ask' }); the call waits for the user's pick (answerAsk), Stop, or askUser().WAIT_MS. Past the wait
+  // the card stays clickable and its pick is sent as the user's next message (renderer/ask-card.js), so the model is told to stop there.
+  async askUserTool(input) {
+    const lib = askUser();
+    const checked = lib.validateAsk(input);
+    if (checked.error) throw new Error(checked.error);
+    const scope = taskScope.getStore();
+    const emit = scope?.gate?.emit;
+    if (!emit || !this.askOffered()) throw new Error('Nobody can answer a card here. Say what you need in your reply instead.');
+    const signal = scope.gate.signal || scope.signal;
+    const askId = `ask-${Date.now().toString(36)}-${++this.approvalSeq}`;
+    emit({ type: 'ask', askId, questions: checked.questions });
+    const answers = await new Promise((resolve, reject) => {
+      let timer = null;
+      const onAbort = () => { finish(); try { emit({ type: 'ask_done', askId, stopped: true }); } catch { /* a closed view */ } reject(new (sdk().APIUserAbortError)()); };
+      const finish = () => { clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort); this.pendingAsks.delete(askId); };
+      if (signal?.aborted) { onAbort(); return; }
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+      timer = setTimeout(() => { finish(); try { emit({ type: 'ask_done', askId, waiting: true }); } catch { /* a closed view */ } resolve(null); }, Math.max(50, Number(this.askWaitMs) || lib.WAIT_MS));
+      this.pendingAsks.set(askId, { questions: checked.questions, answer: (a) => { finish(); resolve(a); } });
+    });
+    if (!answers) return 'The user has not answered yet. Stop here and end your turn with one short sentence; their answer will come as their next message.';
+    emit({ type: 'ask_done', askId, answers });
+    return lib.answerText(checked.questions, answers);
+  }
+
+  // The user's picks on a card (main.js agent:ask-answer) -> true when a run was waiting for them (else the card sends them as a message).
+  answerAsk(askId, answers) {
+    const pending = this.pendingAsks.get(String(askId));
+    if (!pending) return false;
+    const checked = askUser().checkAnswers(pending.questions, answers);
+    if (!checked) return false;
+    pending.answer(checked);
+    return true;
+  }
+  // ---- [/ask options]
 
   // The user is typing in the field the AI is about to type into (`elementId`; null: whichever field has the page's focus): the AI's
   // typing waits (their keys and ours would mix in one field). A different field in the same tab does not wait (the caret is put back
@@ -7283,6 +7332,9 @@ ${CLI_DESKTOP_RULE}`;
   // [engine parity] Two more extras of a CLI chat's run, as the API chats have them: use_skill when the chat's system prompt lists the user's
   // skills (cliSystemFor), and the tools of the MCP servers the user added (Settings → AI → MCP servers) that are running, where the chat's
   // project allows them. Their calls take the same approval path as an API chat's (allowExternal: a card per call unless always allowed).
+  // [ask options] ask_user, to every sidebar CLI run (Claude Code, Codex, Grok Build, Antigravity) through the run's MCP session (features/ai-agents.js
+  // runTools). Its call waits on the card as an approval card's does (callBegin pauses the engine's watchdog), for at most askUser().WAIT_MS.
+  cliAskToolDefs() { return [otherAsk()]; }
   cliSkillToolDefs(chat) { return skillsBlockOf(chat?.settings) && this.browser.skills ? [OTHER_SKILL, OTHER_REVIEW] : []; } // ([review loop] review_round with it)
   cliExternalToolDefs(chat) {
     try {
@@ -8592,6 +8644,7 @@ ${same}
       }
       case 'propose_plan': return this.proposePlan(input); // [plan mode]
       case 'review_round': return this.reviewRound(input); // [review loop]
+      case 'ask_user': return this.askUserTool(input); // [ask options]
       case 'memory': return this.memoryTool(input); // [memory]
       case 'project_files': return this.projectFilesTool(input); // [project workspace]
       case 'notes': return this.notesTool(input); // [notes]

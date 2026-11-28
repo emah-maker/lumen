@@ -4268,6 +4268,24 @@ const messages = $('messages');
 
 
 let stepUILoad = null;
+
+
+let askCardLoad = null;
+const askCards = new Map();
+function loadAskCard() {
+if (window.askCard) return Promise.resolve();
+if (askCardLoad) return askCardLoad;
+const head = document.head;
+head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'ask-card.css' }));
+const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
+askCardLoad = (window.askUser ? Promise.resolve() : script('../ai/ask-user.js')).then(() => script('ask-card.js'));
+return askCardLoad;
+}
+function askDone(event) {
+const box = askCards.get(event.askId);
+if (!box) return;
+if (event.answers) { box.answer?.(event.answers); askCards.delete(event.askId); } else box.ended?.();
+}
 let stepUILoading = false;
 function loadStepUI() {
 if (window.stepUI) { window.stepUI.init(messages); return Promise.resolve(); }
@@ -5582,6 +5600,7 @@ handle_dialog: () => t('tool.handle_dialog'),
 analyze_posts: () => t('tool.analyze_posts'),
 find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
 propose_plan: () => t('tool.propose_plan'),
+ask_user: () => t('tool.ask_user'),
 research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
 delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
 parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }),
@@ -5686,6 +5705,7 @@ if (turn?.held && event.runId === runId) { turn.held.push(event); return; }
 
 
 if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
+if (event.type === 'ask_done') { askDone(event); return; }
 
 if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
 
@@ -5888,6 +5908,25 @@ turn.text = null;
 turn.textSource = '';
 const card = window.planModeUI?.card(event.plan);
 if (card) appendToTurn(card);
+break;
+}
+case 'ask': {
+endThinking();
+finishReply(turn.text, turn.textSource);
+endStream();
+turn.text = null;
+turn.textSource = '';
+chatHost.needSidebar?.();
+announce(event.questions?.[0]?.question || t('chat.approvalWaiting'));
+const slot = appendToTurn(Object.assign(document.createElement('div'), { className: 'ask-slot' }));
+loadAskCard().then(() => {
+const box = window.askCard?.card({ askId: event.askId, questions: event.questions, live: true });
+if (!box) { slot.remove(); return; }
+slot.replaceWith(box);
+askCards.set(event.askId, box);
+scrollToBottom();
+box.querySelector('.ask-opt')?.focus({ preventScroll: true });
+});
 break;
 }
 case 'approval':
@@ -7082,6 +7121,8 @@ const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) 
 
 function showHistory(items, loaded = false) {
 if (!loaded && !window.stepUI && Array.isArray(items) && items.some((i) => i && i.cards)) { loadStepUI().then(() => showHistory(items, true)); return; }
+if (!window.askCard && Array.isArray(items) && items.some((i) => i && Array.isArray(i.asks))) { loadAskCard().then(() => showHistory(items, true)); return; }
+historyLast = Array.isArray(items) ? items[items.length - 1] : null;
 restoring = true;
 try { renderHistory(items); } finally { restoring = false; }
 scrollToBottom();
@@ -7100,6 +7141,7 @@ while (start > 0 && (items.length - start < count || size < chars)) { start--; s
 while (start > 0 && items[start].role !== 'user') start--;
 return start;
 }
+let historyLast = null;
 function renderHistory(items) {
 if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
 const cut = historySplit(items);
@@ -7211,6 +7253,7 @@ summary.innerHTML = '<span class="step-detail"></span>';
 summary.firstChild.textContent = t(item.steps === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count: item.steps });
 append(summary);
 }
+if (Array.isArray(item.asks) && window.askCard) for (const a of item.asks) { const box = window.askCard.card({ askId: '', questions: a.questions, answers: a.answers || null, live: raw === historyLast || item === historyLast }); if (box) { box.classList.add('restored'); append(box); } }
 
 if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
 bubble.className = 'msg assistant';
@@ -16533,7 +16576,7 @@ messages.append(row);
 
 
 
-const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'project_files', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan']);
+const PLAN_TOOLS = new Set(['read_page', 'find', 'screenshot', 'read_urls', 'read_tabs', 'list_tabs', 'web_search', 'read_pdf', 'get_console', 'get_network', 'video_overview', 'video_frames', 'analyze_posts', 'find_sources', 'research_board', 'project_files', 'delegate', 'wait', 'wait_for', 'batch', 'propose_plan', 'ask_user']);
 const PLAN_DESKTOP_READS = new Set(['list_apps', 'read_app', 'screenshot_app']);
 const PLAN_REFUSAL = 'Plan mode: propose a plan first. While planning you may only read (read_page, find, screenshot, read_urls, read_tabs, list_tabs, web_search and the like); nothing that clicks, types, navigates, opens tabs or runs scripts. When you know enough, call propose_plan with the steps, and the user decides whether to run it.';
 const LIMITS = { title: 120, steps: 20, step: 400, sites: 10 };

@@ -354,6 +354,7 @@ contextBridge.exposeInMainWorld('assistant', {
   thumbsVisible: (visible) => ipcRenderer.send('agent:thumbs-visible', Boolean(visible)), // a Browser card is on screen: its thumbnail may refresh
   onSidebar: on('chat:sidebar'), // fold the sidebar away (the page opened) or bring it back (the page closed)
   approve: (approvalId, ok) => ipcRenderer.send('agent:approve', approvalId, ok),
+  askAnswer: (askId, answers) => ipcRenderer.invoke('agent:ask-answer', askId, answers), // [ask options] a question card's picks -> true when the run took them
   sendUndo: (id) => ipcRenderer.send('agent:send-undo', id), // Gmail send: Undo within the 10 seconds
   sendStop: () => ipcRenderer.send('agent:send-stop'), // Gmail send: Stop "sending without asking in this chat"
   desktopOpen: (id, hint) => ipcRenderer.invoke('desktop:open', id, hint && typeof hint.path === 'string' ? { path: hint.path } : undefined), desktopControl: (what) => ipcRenderer.send('desktop:control', what), // [desktop apps] the Computer card's Open / Resume / Stop

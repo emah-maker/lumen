@@ -1,0 +1,22 @@
+/* [ask options] The AI's question card (renderer/ask-card.js): each question with its answers as chips, an Other box, and Send when the
+   card has more than one question or several picks. Theme tokens and the accent only. Loaded with the first card. */
+.ask-card { display: flex; flex-direction: column; gap: var(--sp-5); padding: var(--sp-5) var(--sp-6); border-radius: var(--r-lg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--hairline); }
+.ask-card .ask-q { display: flex; flex-direction: column; gap: var(--sp-3); margin: 0; padding: 0; border: none; min-width: 0; }
+.ask-card .ask-legend { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-3); padding: 0; font-weight: 600; overflow-wrap: anywhere; }
+.ask-card .ask-header { flex: none; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.ask-card .ask-hint { font-size: 12px; font-weight: 400; color: var(--muted); }
+.ask-card .ask-options { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.ask-card .ask-opt { animation: none; font: inherit; font-size: 0.92em; max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+.ask-card .ask-opt[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft, var(--hover)); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent); }
+.ask-card .ask-opt:disabled { cursor: default; }
+.ask-card .ask-opt:disabled:not([aria-pressed="true"]) { opacity: 0.55; }
+.ask-card .ask-opt-detail { display: block; font-size: 11px; color: var(--muted); }
+.ask-card .ask-other { display: flex; gap: var(--sp-2); align-items: center; min-width: 0; }
+.ask-card .ask-other[hidden] { display: none; }
+.ask-card .ask-other input { flex: 1; min-width: 0; padding: var(--sp-2) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-md, 8px); background: var(--field); color: var(--text); font: inherit; font-size: 0.92em; }
+.ask-card .ask-other input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.ask-card .ask-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+.ask-card .ask-actions[hidden] { display: none; }
+.ask-card .ask-status { font-size: 12px; color: var(--muted); }
+.ask-card .ask-status:empty { display: none; }
+.ask-card.answered .ask-other, .ask-card.answered .ask-actions { display: none; }
