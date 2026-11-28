@@ -1,0 +1,32 @@
+/* What the Tasks panel, the Research board and routines (tasks.css, research.css, routines.css) need from startup, before those load
+   (tasks-loader.js loads them in an idle moment or on first use): the visually-hidden helper, the More menu's two buttons and their
+   badges, the sidebar button's attention dot, and "Save as routine" on a reply (routines-loader.js). */
+
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.tasks-btn { position: relative; }
+.tasks-btn.active { color: var(--accent); background: var(--accent-soft); }
+.task-badge {
+  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 var(--sp-1); border-radius: var(--r-sm);
+  background: var(--accent-deep); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
+}
+.task-badge.waiting { background: var(--warning); }
+#toggle-sidebar.has-task-attention { position: relative; }
+#toggle-sidebar.has-task-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 2px var(--bg); }
+.tasks-btn.has-unseen::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px var(--bg); }
+
+#research-btn { position: relative; }
+#research-btn.active { color: var(--accent); background: var(--accent-soft); }
+.research-badge {
+  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 var(--sp-2); border-radius: var(--r-sm);
+  background: var(--accent-deep); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
+}
+
+.msg.assistant .reply-routine {
+  position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out;
+}
+.msg.assistant:has(> .reply-regen) .reply-routine { right: 46px; opacity: 0.75; }
+.msg.assistant:has(> .reply-regen.labeled) .reply-routine { right: 124px; } /* left of the labeled Regenerate (styles.css) */
+.msg.assistant .reply-routine svg { width: 13px; height: 13px; }
+.msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
+.msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }

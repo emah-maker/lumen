@@ -1,5 +1,5 @@
 /* Routines (renderer/routines.js): the Tasks panel's tabs, the Routines list, the editor's schedule
-   fields, a routine's run history and "Save as routine" on a reply. Builds on tasks.css. */
+   fields and a routine's run history. Builds on tasks.css. ("Save as routine" on a reply is in tasks-loader.css: it shows before this loads) */
 
 .task-tabs { display: flex; gap: var(--sp-1); margin: 0 var(--sp-8) var(--sp-4); padding: var(--sp-1); border-radius: var(--r-lg); background: var(--field); }
 .task-tab {
@@ -44,17 +44,6 @@
 .routine-run summary .task-dot { margin-top: var(--sp-2); }
 .routine-run[open] summary { color: var(--text); }
 .routine-result { margin: var(--sp-2) 0 var(--sp-4) var(--sp-8); font-size: 13px; }
-
-/* "Save as routine": beside Copy (and Regenerate, on the latest reply), shown the same way. */
-.msg.assistant .reply-routine {
-  position: absolute; bottom: -22px; right: 22px; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: var(--r-sm);
-  background: transparent; color: var(--muted); opacity: 0; transition: opacity var(--t-fast) ease-out, background-color var(--t-fast) ease-out;
-}
-.msg.assistant:has(> .reply-regen) .reply-routine { right: 46px; opacity: 0.75; }
-.msg.assistant:has(> .reply-regen.labeled) .reply-routine { right: 124px; } /* left of the labeled Regenerate (styles.css) */
-.msg.assistant .reply-routine svg { width: 13px; height: 13px; }
-.msg.assistant:hover .reply-routine, .msg.assistant .reply-routine:focus-visible { opacity: 1; }
-.msg.assistant .reply-routine:hover { background: var(--hover); color: var(--text); }
 
 /* One-click template cards, quiet hours and the "make this a routine?" offer above the message box. */
 .routine-template-list { list-style: none; margin: 0; padding: 0; flex-basis: 100%; display: flex; flex-direction: column; gap: var(--sp-3); }

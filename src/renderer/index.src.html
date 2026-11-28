@@ -13,9 +13,7 @@
   <link rel="stylesheet" href="side-tabs.css" /><!-- Tab layout: Side -->
   <link rel="stylesheet" href="chats.css" /><!-- chat history list -->
   <link rel="stylesheet" href="slash.css" /><!-- the "/" menu and skill tags -->
-  <link rel="stylesheet" href="tasks.css" /><!-- background tasks panel -->
-  <link rel="stylesheet" href="research.css" /><!-- research board and the Sources list -->
-  <link rel="stylesheet" href="routines.css" /><!-- routines: scheduled tasks -->
+  <link rel="stylesheet" href="tasks-loader.css" /><!-- the tasks and research buttons and badges; tasks.css, research.css and routines.css load later -->
   <link rel="stylesheet" href="chat-actions.css" /><!-- message actions, versions, thumbs -->
   <link rel="stylesheet" href="desktop-card.css" /><!-- the Computer card: the AI working in another app -->
   <link rel="stylesheet" href="tab-ref.css" /><!-- a tab the AI names: a chip -->
@@ -412,8 +410,7 @@
   <script src="chrome-helpers.js"></script>
   <script src="app.js"></script>
   <script src="chats.js"></script>
-  <script src="tasks.js"></script>
-  <script src="research.js"></script><!-- research board: sources, notes, pinned quotes, citations -->
+  <script src="tasks-loader.js"></script><!-- tasks panel and research board: tasks.js, routines.js and research.js load in an idle moment or on first use -->
   <script src="notes-loader.js"></script><!-- quick notes: notes.js and notes.css load on first open -->
   <script src="meeting-loader.js"></script><!-- meeting helper: meeting.js and meeting.css load on first open -->
   <script src="extras.js"></script>
@@ -426,7 +423,7 @@
   <script src="routine-phrase.js"></script>
   <script src="focus-phrase.js"></script>
   <script src="focus.js"></script><!-- focus mode: the toolbar button, /focus and "focus for 90 minutes" -->
-  <script src="routines.js"></script>
+  <script src="routines-loader.js"></script><!-- /routine and "Save as routine" until routines.js loads -->
   <script src="chat-commands.js"></script>
   <script src="chat-autocomplete.js"></script><!-- [autocomplete] Tab to finish the message being typed -->
   <script src="../ai/reply-suggest.js"></script><!-- [reply suggestions] Yes / No and follow-up chips under a reply -->

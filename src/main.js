@@ -342,7 +342,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'chat:ai-tabs', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:ask-answer', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'chat:ai-tabs', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', 'ai-changes:list', 'ai-changes:undo', // [ai preferences] the chat's Changed row and the project page's list // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -2642,6 +2642,11 @@ let chatFullTab = null;
 // What a Lumen page (the new-tab page above all) is painted on before, and wherever, its renderer has not drawn: the page's own background in
 // the current theme, never the default black. Set on the tab views, the window and its content view (the UI's colour), kept up with the theme.
 const pageBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff');
+// [page background] a web page is drawn on white once it commits (a site with no background of its own relied on it, and showed dark text on #1c1c1e
+// in a tab that had started as the New Tab page); Lumen's own pages keep the theme's colour (browser/page-background.js)
+const OWN_PAGES = (pathToFileURL(path.join(__dirname, 'renderer')).href + '/').toLowerCase();
+const ownPage = (url) => url.toLowerCase().startsWith(OWN_PAGES) || isInternal(url);
+const followPageBackground = (view, url) => { const c = require('./browser/page-background').backgroundFor(url, { internal: ownPage, theme: pageBackground }); if (c) { try { view.setBackgroundColor(c); } catch { /* gone */ } } };
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7');
 function paintBackgrounds(rec) {
   try { rec.win.setBackgroundColor(windowBackground()); } catch { /* gone */ }
@@ -3390,6 +3395,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     sendTabsSoon();
     if (tab.favicons.length && !tab.isolated) cacheFavicon(wc.getURL(), tab.favicons);
   });
+  wc.on('did-navigate', (_e, url) => followPageBackground(tab.view, url));
   wc.on('did-navigate', (_e, url) => {
     if (url.startsWith(UNLOADED_URL)) return; // (the placeholder of an unloaded tab keeps the tab's icon)
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
@@ -12074,6 +12080,7 @@ function trackRunDetails(run, msg) {
   const touch = (id) => { if (Number.isInteger(id) && id >= 0 && !d.touched.includes(id) && d.touched.length < 24) d.touched.push(id); }; // [activity cards] the card's Tabs list: every tab the turn used, first touched first
   if (msg.type === 'tool') { try { for (const id of tabMarker.stepTabs(msg.name, msg.input)) touch(id); } catch { /* none */ } } else if (msg.type === 'thumb' || msg.type === 'tool_done') touch(msg.tabId);
   if (msg.type === 'skill' && typeof msg.name === 'string') { const list = (d.skills ||= []); if (!list.some((x) => x.name === msg.name) && list.length < 4) list.push({ name: msg.name, title: String(msg.title || msg.name) }); return; } // [skills] which skill the reply used, kept with it
+  if (msg.type === 'ask' || (msg.type === 'ask_done' && msg.answers)) { d.asks = require('./ai/ask-user').merge(d.asks, msg); return; } // [ask options] the reply's question cards and what was picked (a reopened chat draws them answered)
   if (msg.type === 'review') { d.review = reviewTrackLib.merge(d.review, msg); return; } // [review loop] the score track, kept with the reply (renderer/review-track.js: what the card shows)
   if (msg.type === 'agent' && typeof msg.id === 'string') { // [agents card] each subagent's latest state, kept with the reply (a reopened chat shows the card as it ended)
     const list = (d.agents ||= []);
@@ -12356,7 +12363,7 @@ function stampRun(run, done = null) {
       if (run.tabSnaps) info.tabs = run.tabSnaps;
     } catch { /* none */ }
     if (done) info.interim = !run.error && !run.stopped && runGoesOnAfter(run); // [quiet run] its words were the card's line, not the answer
-    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, agents: d.agents?.length ? d.agents : undefined, skills: d.skills?.length ? d.skills : undefined, review: (d.review && reviewTrackLib.saved(d.review)) || undefined, auto: done.auto || d.auto });
+    if (done) Object.assign(info, { thinking: d.thinking, thinkingMs: d.thinkingMs, tools: d.tools.map(({ id, ...t }) => t), cards: true, task: stepLabelsLib.defaults.taskName(run.text) || undefined, thumb: savedThumb(d.thumb), touched: d.touched.length ? d.touched : undefined, written: d.written.length ? d.written : undefined, agents: d.agents?.length ? d.agents : undefined, skills: d.skills?.length ? d.skills : undefined, review: (d.review && reviewTrackLib.saved(d.review)) || undefined, asks: d.asks?.length ? d.asks : undefined, auto: done.auto || d.auto });
     agent.stampMessages(run.messages, run.startLen, info);
   } catch (err) { console.error('Could not stamp chat messages:', err.message); }
 }
@@ -12434,7 +12441,7 @@ ipcMain.on('agent:ask', (event, text, runId, images = [], tabIds = [], fileRefs 
       if (!run.deleted) agent.stampMessages(run.messages, run.startLen, { interim: true }); // [quiet run] the turn before was not the answer: the run went on (a chat drawn again shows no bubble for it)
       run.helperEnded = false;
       run.startLen = run.messages.length;
-      run.details = { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [], ...(run.details?.agents ? { agents: run.details.agents } : {}), ...(run.details?.skills ? { skills: run.details.skills } : {}), ...(run.details?.review ? { review: run.details.review } : {}) }; // ([agents card] its agents go on: the same card)
+      run.details = { thinking: '', thinkingMs: 0, thinkingSince: 0, tools: [], auto: null, touched: [], written: [], ...(run.details?.agents ? { agents: run.details.agents } : {}), ...(run.details?.skills ? { skills: run.details.skills } : {}), ...(run.details?.review ? { review: run.details.review } : {}), ...(run.details?.asks ? { asks: run.details.asks } : {}) }; // ([agents card] its agents go on: the same card)
       run.thumbs?.stop();
       run.thumbs = null;
       run.thumbTarget = null;
@@ -14700,6 +14707,7 @@ ipcMain.handle('aifiles:open', async (event, id, how, opts) => {
   return { ok: true, tabId: tab?.id ?? null };
 });
 ipcMain.on('agent:approve', (_e, approvalId, ok) => agent.resolveApproval(approvalId, ok));
+ipcMain.handle('agent:ask-answer', (_e, askId, answers) => agent.answerAsk(typeof askId === 'string' ? askId.slice(0, 60) : '', Array.isArray(answers) ? answers.slice(0, 8) : null)); // [ask options] a question card's picks: true when the run was waiting for them (renderer/ask-card.js)
 ipcMain.on('agent:send-undo', (_e, id) => agent.undoSend(Number(id))); // [connectors] "Undo" on a "Sending to … in 10 s" row
 ipcMain.on('agent:send-stop', () => agent.stopSendGrant()); // [connectors] "Stop" on "Sending without asking in this chat"
 // [ai controls] "Undo" under a reply: takes back what that run changed in the tabs.
@@ -14990,6 +14998,7 @@ const aiAgents = setupAiAgents({
   wordTools: (chat) => agent.cliWordToolDefs(chat), // [word] the word tool, to a run whose chat is about a Word document (agent.js cliWordNote)
   helperTools: (kind, engine) => agent.cliHelperToolDefs(kind, engine), // [cli helpers] delegate for Claude Code / Codex / Antigravity chats (agent.js)
   skillTools: (chat) => agent.cliSkillToolDefs(chat), // [engine parity] use_skill, to a run whose chat lists the user's skills
+  askTools: () => agent.cliAskToolDefs(), // [ask options] ask_user, to every sidebar CLI run
   mcpServerTools: (chat) => agent.cliExternalToolDefs(chat), // [engine parity] the tools of the MCP servers the user added, where the chat's project allows them
   validateToolInput,
   isSettingsSender: (event) => syntheticTestEvent(event) || isSettingsSender(event), // Antigravity's install button answers only the settings page

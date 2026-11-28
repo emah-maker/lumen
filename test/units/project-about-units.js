@@ -61,6 +61,21 @@ const profile = auto.normalizeProfile({
   check('a note with no fact: refused', !A.remember(profile, { note: 'hello' }).ok);
   for (const sensitive of ['What is your gender?', 'Are you a veteran?', 'Desired salary', 'Date of birth', 'Password']) check(`never saves "${sensitive}"`, !A.remember(profile, { question: sensitive, answer: 'x' }).ok);
   check('remember with nothing: refused', !A.remember(profile, {}).ok);
+  // a sensitive answer only in the user's own words; secrets never
+  const said = 'Male, white, not a veteran, no disability';
+  check('a demographic answer the user gave is saved', A.remember(profile, { note: 'What is your gender? Male' }, { userText: said }).ok);
+  check('…"I am not a protected veteran" from "not a veteran"', A.remember(profile, { question: 'Are you a protected veteran?', answer: 'I am not a protected veteran' }, { userText: said }).ok);
+  check('…one the user did not say is refused', !A.remember(profile, { note: 'What is your gender? Female' }, { userText: said }).ok);
+  check('…a bare "Yes" with only a "no" from the user is refused', !A.remember(profile, { question: 'Do you have a disability?', answer: 'Yes' }, { userText: 'no' }).ok);
+  check('a password or SSN is never saved, even when the user said it', !A.remember(profile, { question: 'Password', answer: 'hunter2' }, { userText: 'hunter2' }).ok && !A.remember(profile, { question: 'SSN', answer: '123' }, { userText: '123' }).ok);
+  check('with "ask me", demographic answers are not saved', !A.remember({ ...profile, demographics: 'ask' }, { note: 'What is your gender? Male' }, { userText: said }).ok);
+  check('note "demographics: decline" sets the choice; a bad one is refused', A.remember(profile, { note: 'demographics: decline' }).patch?.demographics === 'decline' && !A.remember(profile, { note: 'demographics: maybe' }).ok);
+}
+
+// ---- the demographics choice on the page
+{
+  check('pageChange: the demographics choice', A.pageChange(profile, { demographics: 'ask' })?.demographics === 'ask' && A.pageChange(profile, { demographics: 'x' }) === null);
+  check('view: the choice, "saved" by default', A.view(profile).demographics === 'saved' && A.view({ ...profile, demographics: 'decline' }).demographics === 'decline');
 }
 
 // ---- the page's edits
