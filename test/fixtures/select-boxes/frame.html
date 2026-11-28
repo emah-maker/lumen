@@ -1,0 +1,26 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Embedded form</title>
+<!-- [select boxes] An embedded booking form (test/e2e/select-boxes.js): a native select and a listbox button whose list is a portal in this frame. -->
+<style>body { font: 14px system-ui, sans-serif; } .pop { position: absolute; background: #fff; border: 1px solid #666; list-style: none; margin: 0; padding: 0; } .pop li { padding: 4px 8px; cursor: pointer; }</style>
+<h2>Booking</h2>
+<p><label for="seat">Seat class</label> <select id="seat"><option>Economy</option><option>Premium economy</option><option>Business</option><option>First</option></select></p>
+<p><span id="meal-label">Meal</span> <button type="button" id="meal" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="meal-label meal">No meal</button></p>
+<script>
+  window.__picked = [];
+  document.getElementById('seat').addEventListener('change', (e) => window.__picked.push('seat=' + e.target.value));
+  const meal = document.getElementById('meal');
+  meal.addEventListener('click', () => {
+    const open = document.getElementById('meal-list');
+    if (open) { open.remove(); meal.setAttribute('aria-expanded', 'false'); return; }
+    const ul = document.createElement('ul'); ul.className = 'pop'; ul.id = 'meal-list'; ul.setAttribute('role', 'listbox');
+    const r = meal.getBoundingClientRect(); ul.style.left = r.left + 'px'; ul.style.top = (r.bottom + 2) + 'px';
+    for (const m of ['Vegetarian', 'Vegan', 'Kosher', 'Halal', 'Child meal']) {
+      const li = document.createElement('li'); li.setAttribute('role', 'option'); li.textContent = m;
+      li.addEventListener('click', () => { meal.textContent = m; window.__picked.push('meal=' + m); ul.remove(); meal.setAttribute('aria-expanded', 'false'); meal.removeAttribute('aria-controls'); });
+      ul.appendChild(li);
+    }
+    document.body.appendChild(ul);
+    meal.setAttribute('aria-expanded', 'true'); meal.setAttribute('aria-controls', 'meal-list');
+  });
+</script>

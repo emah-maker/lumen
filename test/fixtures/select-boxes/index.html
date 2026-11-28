@@ -1,0 +1,234 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Select boxes</title>
+<!-- [select boxes] The kinds of dropdown the AI has to pick an option in (test/e2e/select-boxes.js). Each widget behaves like the library it is
+     named after, written here by hand (no network): MUI opens on mousedown into a portal at the end of <body>, React-Select filters as you type,
+     Select2 keeps a hidden native <select> and a search field in its portal, Headless UI's listbox button, a virtualized list, options that load
+     after opening, options that load after typing, a free-text field with suggestions, and native selects off screen, in a scrolled box and in
+     an iframe. window.__picked records every choice the page saw. -->
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 20px; }
+  .row { margin: 14px 0; }
+  label, .lab { display: inline-block; min-width: 140px; }
+  .box { display: inline-block; min-width: 200px; padding: 4px 8px; border: 1px solid #888; border-radius: 4px; cursor: pointer; background: #fff; }
+  .pop { position: absolute; background: #fff; border: 1px solid #666; z-index: 10; min-width: 220px; max-height: 200px; overflow: auto; margin: 0; padding: 0; list-style: none; }
+  .pop [role=option], .pop li { padding: 4px 8px; height: 22px; line-height: 22px; cursor: pointer; }
+  .pop [role=option]:hover { background: #def; }
+  .rs__control { display: inline-flex; min-width: 220px; border: 1px solid #888; border-radius: 4px; padding: 2px 6px; position: relative; }
+  .rs__value { color: #333; }
+  .rs__input { border: 0; outline: 0; width: 120px; }
+  .rs__menu { position: absolute; top: 100%; left: 0; }
+</style>
+<h1>Dropdowns</h1>
+
+<div class="row"><label for="color">Favorite color</label>
+  <select id="color" onchange="pick('color', this.selectedOptions[0].text)"><option value="">Choose…</option><option value="r">Red</option><option value="g">Green</option><option value="b">Blue</option></select></div>
+
+<div class="row"><span class="lab">Shipping box</span>
+  <div id="scrollbox" style="display:inline-block;height:60px;width:300px;overflow:auto;border:1px solid #aaa;vertical-align:top">
+    <div style="height:200px">(scroll down)</div>
+    <label>Shipping speed <select id="speed" onchange="pick('speed', this.value)"><option>Standard</option><option>Express</option><option>Overnight</option></select></label>
+  </div></div>
+
+<!-- Headless UI Listbox: a button with aria-haspopup=listbox; the list is a portal at the end of <body> while open -->
+<div class="row"><span class="lab" id="size-label">Size</span>
+  <button type="button" id="size" class="box" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="size-label size">Pick a size</button></div>
+
+<!-- MUI Select: role=combobox div, opens on mousedown, portal, a virtualized list of 300 places -->
+<div class="row"><span class="lab" id="country-label">Country</span>
+  <div id="country" class="box MuiSelect-select" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="country-label">Select…</div></div>
+
+<!-- React-Select: an input role=combobox inside the control; filters as you type; opens on mousedown on the control -->
+<div class="row"><label for="fruit-input">Fruit</label>
+  <div class="rs__control" id="fruit-control"><span class="rs__value" id="fruit-value"></span>
+    <input id="fruit-input" class="rs__input" role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off"></div></div>
+
+<!-- Select2: the real <select> is hidden; the widget's dropdown (with its own search field) is a portal -->
+<div class="row"><label for="city">City</label>
+  <select id="city" style="display:none" onchange="pick('city', this.selectedOptions[0].text)"><option value=""></option><option value="bos">Boston</option><option value="chi">Chicago</option><option value="den">Denver</option><option value="sea">Seattle</option><option value="sf">San Francisco</option></select>
+  <span class="select2-container"><span class="select2-selection box" id="city-sel" role="combobox" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-labelledby="city-rendered"><span id="city-rendered">Select a city</span></span></span></div>
+
+<!-- Options that load after opening -->
+<div class="row"><span class="lab" id="team-label">Team</span>
+  <div id="team" class="box" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="team-label">Choose a team</div></div>
+
+<!-- Options that load after typing (a server search) -->
+<div class="row"><label for="airport">Airport</label>
+  <input id="airport" role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off" placeholder="Type to search"></div>
+
+<!-- A free-text field with suggestions: any text is a fine answer -->
+<div class="row"><label for="street">Street address</label>
+  <input id="street" role="combobox" aria-autocomplete="list" aria-expanded="false" autocomplete="off"></div>
+
+<div style="height:1500px"></div>
+<div class="row"><label for="year">Year</label>
+  <select id="year" onchange="pick('year', this.value)"><option>2024</option><option>2025</option><option>2026</option><option>2027</option></select></div>
+<iframe id="frame" src="/frame" style="width:600px;height:320px;border:1px solid #888"></iframe>
+
+<script>
+  window.__picked = [];
+  function pick(field, value) { window.__picked.push(field + '=' + value); }
+  const closers = [];
+  function closeAll(except) { for (const c of closers.slice()) if (c !== except) c(); }
+
+  // A popup list at the end of <body> under `anchor`, aria-controls on `owner`. items: strings; virtual: render only the rows in view.
+  function popup(anchor, owner, items, onPick, { virtual = false, id } = {}) {
+    const ul = document.createElement(virtual ? 'div' : 'ul');
+    ul.className = 'pop'; ul.id = id; ul.setAttribute('role', 'listbox');
+    const r = anchor.getBoundingClientRect();
+    ul.style.left = (r.left + scrollX) + 'px'; ul.style.top = (r.bottom + scrollY + 2) + 'px';
+    const row = (text, i) => {
+      const li = document.createElement(virtual ? 'div' : 'li');
+      li.setAttribute('role', 'option'); li.id = id + '-' + i; li.textContent = text;
+      li.addEventListener('click', () => onPick(text));
+      return li;
+    };
+    if (!virtual) items.forEach((t, i) => ul.appendChild(row(t, i)));
+    else {
+      const ROW = 30; const inner = document.createElement('div');
+      inner.style.cssText = 'position:relative;height:' + (items.length * ROW) + 'px';
+      ul.appendChild(inner);
+      const rows = new Map(); // keyed rows, as React keeps them: a row in view stays the same element, the rest are removed
+      const render = () => {
+        const first = Math.max(0, Math.floor(ul.scrollTop / ROW) - 2);
+        const last = Math.min(items.length, first + Math.ceil(200 / ROW) + 4);
+        for (const [i, li] of rows) if (i < first || i >= last) { li.remove(); rows.delete(i); }
+        for (let i = first; i < last; i++) {
+          if (rows.has(i)) continue;
+          const li = row(items[i], i); li.style.cssText = 'position:absolute;left:0;right:0;top:' + (i * ROW) + 'px;height:' + ROW + 'px;line-height:' + ROW + 'px;padding:0 8px';
+          inner.appendChild(li); rows.set(i, li);
+        }
+      };
+      ul.addEventListener('scroll', render);
+      ul.__render = render;
+      setTimeout(render, 0);
+      render();
+    }
+    document.body.appendChild(ul);
+    owner.setAttribute('aria-controls', id);
+    owner.setAttribute('aria-expanded', 'true');
+    const close = () => { ul.remove(); owner.removeAttribute('aria-controls'); owner.setAttribute('aria-expanded', 'false'); closers.splice(closers.indexOf(close), 1); };
+    closers.push(close);
+    return { ul, close };
+  }
+  document.addEventListener('mousedown', (e) => { if (!e.target.closest('.pop, [role=combobox], [aria-haspopup], .rs__control')) closeAll(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAll(); });
+
+  // Headless UI listbox (opens on click)
+  const size = document.getElementById('size');
+  size.addEventListener('click', () => {
+    if (size.getAttribute('aria-expanded') === 'true') return closeAll();
+    closeAll();
+    const p = popup(size, size, ['Extra small', 'Small', 'Medium', 'Large', 'Extra large'], (t) => { size.textContent = t; pick('size', t); p.close(); }, { id: 'size-list' });
+  });
+
+  // MUI select: mousedown opens (a plain click event alone does nothing), virtualized
+  const places = [];
+  for (let i = 1; i <= 300; i++) places.push('Place ' + String(i).padStart(3, '0'));
+  places.splice(250, 0, 'Uruguay River');
+  places.splice(280, 0, 'Uruguay');
+  places.splice(10, 0, 'Canada');
+  const country = document.getElementById('country');
+  country.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (country.getAttribute('aria-expanded') === 'true') return closeAll();
+    closeAll();
+    const p = popup(country, country, places, (t) => { country.textContent = t; pick('country', t); p.close(); }, { virtual: true, id: 'country-list' });
+  });
+
+  // React-Select: mousedown on the control opens; typing filters; picking sets the value and clears the input
+  const fruits = ['Apple', 'Apricot', 'Banana', 'Blueberry', 'Cherry', 'Grape', 'Mango', 'Orange', 'Peach', 'Pear', 'Pineapple', 'Strawberry'];
+  const fruitInput = document.getElementById('fruit-input'), fruitControl = document.getElementById('fruit-control'), fruitValue = document.getElementById('fruit-value');
+  let fruitMenu = null;
+  const openFruit = () => {
+    if (fruitMenu) fruitMenu.remove();
+    const q = fruitInput.value.trim().toLowerCase();
+    const list = fruits.filter((f) => f.toLowerCase().includes(q));
+    fruitMenu = document.createElement('div');
+    fruitMenu.className = 'pop rs__menu'; fruitMenu.id = 'fruit-menu'; fruitMenu.setAttribute('role', 'listbox');
+    if (!list.length) fruitMenu.innerHTML = '<div class="rs__no-options">No options</div>';
+    for (const f of list) {
+      const o = document.createElement('div'); o.setAttribute('role', 'option'); o.textContent = f;
+      o.addEventListener('mousedown', (e) => e.preventDefault());
+      o.addEventListener('click', () => { fruitValue.textContent = f; fruitInput.value = ''; pick('fruit', f); closeFruit(); });
+      fruitMenu.appendChild(o);
+    }
+    fruitControl.appendChild(fruitMenu);
+    fruitInput.setAttribute('aria-expanded', 'true'); fruitInput.setAttribute('aria-controls', 'fruit-menu');
+  };
+  const closeFruit = () => { if (fruitMenu) fruitMenu.remove(); fruitMenu = null; fruitInput.value = ''; fruitInput.setAttribute('aria-expanded', 'false'); fruitInput.removeAttribute('aria-controls'); };
+  closers.push(() => { if (fruitMenu) closeFruit(); });
+  fruitControl.addEventListener('mousedown', (e) => { if (e.target.closest('.rs__menu')) return; if (e.target !== fruitInput) e.preventDefault(); fruitInput.focus(); if (!fruitMenu) openFruit(); });
+  fruitInput.addEventListener('input', openFruit);
+  fruitInput.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== fruitInput) closeFruit(); }, 150));
+
+  // Select2: the dropdown has its own search field (focused); a pick sets the hidden <select> and fires change on it
+  const citySel = document.getElementById('city-sel'), city = document.getElementById('city'), cityRendered = document.getElementById('city-rendered');
+  citySel.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    if (citySel.getAttribute('aria-expanded') === 'true') return closeAll();
+    closeAll();
+    const wrap = document.createElement('span');
+    wrap.className = 'select2-dropdown pop'; wrap.style.maxHeight = 'none'; wrap.style.overflow = 'visible';
+    const r = citySel.getBoundingClientRect();
+    wrap.style.left = (r.left + scrollX) + 'px'; wrap.style.top = (r.bottom + scrollY + 2) + 'px';
+    wrap.innerHTML = '<span class="select2-search"><input class="select2-search__field" type="search" autocomplete="off"></span><ul class="select2-results__options" role="listbox" id="city-results"></ul>';
+    document.body.appendChild(wrap);
+    const input = wrap.querySelector('input'), ul = wrap.querySelector('ul');
+    const draw = () => {
+      ul.textContent = '';
+      for (const o of [...city.options].filter((o) => o.value && o.text.toLowerCase().includes(input.value.toLowerCase()))) {
+        const li = document.createElement('li'); li.className = 'select2-results__option'; li.setAttribute('role', 'option'); li.textContent = o.text;
+        li.addEventListener('mouseup', () => { city.value = o.value; cityRendered.textContent = o.text; city.dispatchEvent(new Event('change', { bubbles: true })); close(); });
+        ul.appendChild(li);
+      }
+      if (!ul.children.length) ul.innerHTML = '<li class="select2-results__message">No results found</li>';
+    };
+    input.addEventListener('input', draw);
+    draw();
+    citySel.setAttribute('aria-expanded', 'true'); citySel.setAttribute('aria-owns', 'city-results');
+    const close = () => { wrap.remove(); citySel.setAttribute('aria-expanded', 'false'); citySel.removeAttribute('aria-owns'); closers.splice(closers.indexOf(close), 1); };
+    closers.push(close);
+    input.focus();
+  });
+
+  // Options that load 800 ms after opening ("Loading…" first)
+  const team = document.getElementById('team');
+  team.addEventListener('click', () => {
+    if (team.getAttribute('aria-expanded') === 'true') return closeAll();
+    closeAll();
+    const p = popup(team, team, [], () => {}, { id: 'team-list' });
+    p.ul.setAttribute('aria-busy', 'true');
+    p.ul.innerHTML = '<li class="loading">Loading…</li>';
+    setTimeout(() => {
+      if (!p.ul.isConnected) return;
+      p.ul.removeAttribute('aria-busy'); p.ul.textContent = '';
+      ['Red Sox', 'Yankees', 'Cubs', 'Dodgers', 'Mariners'].forEach((t, i) => { const li = document.createElement('li'); li.setAttribute('role', 'option'); li.id = 'team-' + i; li.textContent = t; li.addEventListener('click', () => { team.textContent = t; pick('team', t); p.close(); }); p.ul.appendChild(li); });
+    }, 800);
+  });
+
+  // Options that load 500 ms after typing, matching what was typed
+  const airports = ['Boston Logan (BOS)', 'Chicago O’Hare (ORD)', 'Denver (DEN)', 'Seattle-Tacoma (SEA)', 'San Francisco (SFO)', 'Los Angeles (LAX)'];
+  const airport = document.getElementById('airport');
+  let airportTimer = null, airportPop = null;
+  airport.addEventListener('input', () => {
+    clearTimeout(airportTimer);
+    if (airportPop) { airportPop.close(); airportPop = null; }
+    const q = airport.value.trim().toLowerCase();
+    if (!q) return;
+    airportTimer = setTimeout(() => {
+      const hits = airports.filter((a) => a.toLowerCase().includes(q));
+      airportPop = popup(airport, airport, hits, (t) => { airport.value = t; pick('airport', t); airportPop.close(); airportPop = null; }, { id: 'airport-list' });
+      airportPop.ul.querySelectorAll('li').forEach((li) => li.addEventListener('mousedown', (e) => e.preventDefault()));
+    }, 500);
+  });
+
+  // Free text with suggestions
+  const street = document.getElementById('street');
+  let streetPop = null;
+  street.addEventListener('input', () => {
+    if (streetPop) { streetPop.close(); streetPop = null; }
+    if (street.value.trim().length < 2) return;
+    streetPop = popup(street, street, ['1 Elm Street', '22 Oak Avenue', '300 Pine Road'], (t) => { street.value = t; streetPop.close(); streetPop = null; }, { id: 'street-list' });
+  });
+</script>

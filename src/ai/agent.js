@@ -6,6 +6,7 @@ const officeDocs = require('./office-docs'); // Google Docs / Sheets / Slides te
 const lazy = (load) => { let mod; return new Proxy({}, { get: (_t, key) => (mod ||= load())[key] }); }; // loaded on first use (startup budget, test/e2e/perf-budget.js)
 const docTool = lazy(() => require('./document-tool')); // [document tool] move sections, styles, replace, markdown in Google Docs; verify and undo
 const docEdit = lazy(() => require('./doc-edit'));
+const selectBoxes = lazy(() => require('./select-boxes')); // [select boxes] choosing a dropdown's option by its text (fill_form, click)
 const sendLib = lazy(() => require('../features/gmail-send')); // [connectors] Gmail sending's rules (typed permission, undo window, limits); loaded when a send is asked for
 const projectCtx = lazy(() => require('./project-context')); // [project workspace] the project_files tool's rules (a project's files and pinned pages); loaded when a project chat uses them
 const canvasPages = lazy(() => require('../features/connectors/canvas-pages')); // [connectors] Canvas read from its normal pages (the addresses, the course ids, the sign-in check)
@@ -217,7 +218,7 @@ const TOOLS = [
   },
   {
     name: 'click',
-    description: 'Click by [id] or visible text; observe:true returns what changed.',
+    description: 'Click by [id] or visible text (a dropdown option too); observe:true returns what changed.',
     input_schema: {
       type: 'object',
       properties: {
@@ -228,7 +229,7 @@ const TOOLS = [
   },
   {
     name: 'fill_form',
-    description: 'Fill fields [{label,value}] (checkbox "true"/"false"); submit:true only if the user approved.',
+    description: 'Fill fields [{label,value}] (checkbox "true"/"false"; dropdown: the option text); submit:true only if the user approved.',
     input_schema: {
       type: 'object',
       properties: {
@@ -8230,9 +8231,21 @@ ${same}
       }
       case 'click': {
         const wc = this.requireTab();
-        const id = input.element_id ?? await this.resolveTarget(wc, input.text, 'click');
+        let id = input.element_id;
+        if (id == null) {
+          try { id = await this.resolveTarget(wc, input.text, 'click'); } catch (err) {
+            // [select boxes] text no element has: a native <option>, or an option further down the open dropdown list
+            const picked = await selectBoxes.clickOption(this, wc, String(input.text ?? ''), runScript).catch((e) => { if (this.signalAborted()) throw e; return null; });
+            if (picked) return picked;
+            throw err;
+          }
+        }
         const target = await this.locateElement(wc, id);
         if (!target) throw new Error(`No element with id ${id}: the page changed since ids were read. Call read_page mode:"compact" (or find) for fresh ids, or click by visible text.`);
+        if (target.tag === 'select') { // [select boxes] a <select>'s list is a system popup the AI can't see: its options instead
+          const note = await selectBoxes.nativeClickNote(this, wc, id).catch(() => null);
+          if (note) { this.pointAt(wc, id, 'click'); return note; }
+        }
         this.pointAt(wc, id, 'click'); // [agent cursors]
         const urlBefore = wc.getURL();
         const zoom = wc.getZoomFactor(); // page coordinates are CSS pixels; input events are view pixels
@@ -8262,6 +8275,8 @@ ${same}
           try {
             const id = await this.resolveTarget(wc, label, 'field', false);
             lastId = id;
+            const picked = await selectBoxes.choose(this, wc, id, value, quote(label)); // [select boxes] a dropdown: its option by text
+            if (picked) { report.push(`${label}: ${picked}`); continue; }
             const state = await this.elementRun(wc, id, scripts.toggleState);
             if (state && ['checkbox', 'switch'].includes(state.type)) {
               const want = /^(true|yes|on|checked|1)$/i.test(value.trim());
@@ -8394,7 +8409,10 @@ ${same}
           if (st === 'unfocusable') throw new Error(`Element ${input.element_id} cannot take text input.`);
           if (st === 'setvalue') {
             const set = await this.elementRun(wc, input.element_id, (id) => scripts.setValue(id, input.text));
-            if (set === null) throw new Error(`Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
+            if (set === null) {
+              const options = await this.elementRun(wc, input.element_id, selectBoxes.nativeOptions).catch(() => null); // [select boxes] name what there is
+              throw new Error(options ? `Element ${input.element_id} has no option matching "${input.text}". Its options: ${selectBoxes.optionList(options)}.` : `Could not set element ${input.element_id} to "${input.text}". Check the option name or value format.`);
+            }
             return { set };
           }
           // Typed through the page's own focus (CDP insertText on the focused frame): no window or view takes the OS focus.
@@ -8523,6 +8541,8 @@ ${same}
         const pdf = await pdfInput.scrollPdf(wc, input.page > 0 ? { page: Math.floor(input.page) } : { screens: input.direction === 'up' ? -screens : screens }); // the viewer's own scroll (null: not a PDF tab)
         if (pdf) return JSON.stringify(pdf);
         this.pointAt(wc, null, 'scroll'); // [agent cursors]
+        const list = await runScript(wc, selectBoxes.scrollOpenList(input.direction === 'up' ? -screens : screens)).catch(() => null); // [select boxes] an open dropdown list scrolls, not the page
+        if (list) return JSON.stringify(list);
         const result = await runScript(wc, scripts.scroll(input.direction === 'up' ? -screens : screens)); // (resolves once the scroll position is stable)
         return JSON.stringify(result);
       }
