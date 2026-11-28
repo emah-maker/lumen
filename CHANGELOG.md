@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.115 (2026-11-27)
+
 - **uBlock Origin blocks ads again.** With uBlock Origin chosen as the ad blocker, its blocking reaches pages in tabs again: Lumen fills in which tab each request comes from, which this Electron build still leaves out.
 - **Lumen starts with less.** The translate bar, the media controls and the profile button load the first time they have something to show, and the AI sign-ins, shared-file list, Slack setup, link menu, macro runner and What’s New load on first use, so a new window parses about 20 KB less and starts 8 fewer modules. The startup check that heavy modules stay unloaded now also catches Lumen’s own files (it had been matching only libraries).
 - **See the AI's cursor on the page.** While the AI works in a tab, a blue **Lumen** arrow moves to what it clicks, types into or scrolls and says what it is doing ("Lumen · Clicking"); a click shows a ripple, and the field it types into is outlined for a moment. Helpers keep their own colored cursors. The arrow never takes your clicks, fades a few seconds after the AI stops, and is left out of the AI's own page reads and screenshots. Turn it off in Settings → AI → **Show the AI's cursor**.
