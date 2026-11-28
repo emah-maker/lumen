@@ -426,7 +426,7 @@ function create(deps) {
 
   // The web links' listener follows the settings: on with routineWebhooks, on routineWebhookPort. Another program on
   // the port: it says so (Settings shows it) and listens nowhere.
-  const hookPort = () => webhooks().cleanPort(deps.readSettings().routineWebhookPort) || webhooks().DEFAULT_PORT;
+  const hookPort = () => routines.cleanWebhookPort(deps.readSettings().routineWebhookPort) || routines.WEBHOOK_PORT; // (the listener's module loads only when it listens)
   const hooksOn = () => deps.readSettings().routineWebhooks === true;
   function webhookState() { return { on: hooksOn(), port: hookPort(), listening: hook.listening, error: hook.error }; }
   function syncWebhooks() {
