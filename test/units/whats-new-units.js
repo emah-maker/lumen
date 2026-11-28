@@ -20,6 +20,9 @@ module.exports = async function whatsNewUnits(check) {
   check('whats-new: a prerelease comes before its release', W.compareVersions('0.4.0-beta.1', '0.4.0') === -1 && W.compareVersions('0.4.0', '0.4.0-beta.1') === 1 && W.compareVersions('0.4.0-beta.1', '0.3.9') === 1, '');
   check('whats-new: cleanVersion keeps x.y.z and refuses anything else', W.cleanVersion('0.3.2') === '0.3.2' && W.cleanVersion(' 1.0.0 ') === '1.0.0'
     && [null, undefined, 3, '', 'v0.3.2', '0.3', '0.3.2; rm -rf', '<b>1.0.0</b>', `1.0.0-${'x'.repeat(60)}`].every((v) => W.cleanVersion(v) === null), '');
+  // Settings checks the saved version with its own copy (so whats-new.js doesn't load at startup): the same answers.
+  const versions = ['0.3.2', ' 1.0.0 ', '0.4.0-beta.1', null, undefined, 3, '', 'v0.3.2', '0.3', '0.3.2; rm -rf', '<b>1.0.0</b>', `1.0.0-${'x'.repeat(60)}`, '1.2.3-', '1.2.3-a_b'];
+  check('whats-new: Settings checks a saved version exactly as What\'s new does', versions.every((v) => SB.cleanVersion(v) === W.cleanVersion(v)), '');
 
   // ---- parsing
   const sample = [
