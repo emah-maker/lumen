@@ -35,7 +35,7 @@ const screenContext = require('./screen-context'); // [screen context] a screens
 const chatImages = require('../features/chat-images'); // images a message carries: what is left out, and models that can't see them
 const { DEFAULT_WAIT, MODES: WAIT_MODES, normalizeWait, loadDone, sameDocument, PROBE_SCRIPT } = require('./load-wait'); // navigate/read_urls `wait`
 const { ReaderPool, ResultCache } = require('./read-speed'); // warm reader views, cross-run read_urls cache
-const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
+const { RepeatDetector, RunBudget, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, withNote, cacheLastTool, runToolUses, toolLane, isSimpleQuestion, isPictureQuestion, stubOldImages, ToolCallCache, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS } = require('./loop-guard');
 const steerLib = lazy(() => require('./steer')); // [mid-run messages] what the user types while a reply runs reaches it at its next step
 const sentMidRun = (text) => (String(text || '').includes('<sent_while_working>') ? steerLib.unwrap(text) : null); // (steer.js loads only for a chat that has one)
 const handoff = lazy(() => require('./handoff')); // [no handoff] the give-up detector: a reply that hands the work back gets one more try
@@ -60,6 +60,14 @@ let actingLib = null; // [acting helpers] parallel_tasks: helpers that act side 
 const actingHelpers = () => (actingLib ||= require('./acting-helpers'));
 const agentTags = () => require('../features/agent-tags'); // [agent cursors] which helper or sub-agent a call is from
 // [step time] LUMEN_TOOL_TIMING=1 prints one line per tool call (name, ms, ok) to the console: how a run's time splits between its tools.
+// [step time] With LUMEN_TOOL_TIMING=1 a tool's phases print too: lap(name) ends a phase, lap(name, true) also prints the line
+// ("[lumen] navigate phases tab 0 · before 0 · load 180 · …"). Without it, lap does nothing.
+const phaseTimer = (tool) => {
+  if (process.env.LUMEN_TOOL_TIMING !== '1') return () => {};
+  let last = Date.now();
+  const parts = [];
+  return (name, print = false) => { const now = Date.now(); parts.push(`${name} ${now - last}`); last = now; if (print) console.log(`[lumen] ${tool} phases ${parts.join(' · ')}`); };
+};
 const toolTiming = (name, ms, ok) => { if (process.env.LUMEN_TOOL_TIMING === '1') console.log(`[lumen] tool ${name} ${ms} ms${ok ? '' : ' (failed)'}`); };
 const CURSOR_AFTER = new Set(['fill_form', 'drag']); // [agent cursors] calls whose cursor goes where they ended (click, type_text, hover and scroll point it as they act)
 const ACT_MARK = new Set(['click', 'click_at', 'drag', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'go_back', 'go_forward', 'reload', 'hover', 'scroll']); // [tab acting] steps that mark their tab in the strip
@@ -1549,12 +1557,13 @@ function bypassLabel(host, { action = 'interact', who = null, title = null, quer
 // with no text yet keeps waiting for the load; "networkidle" also waits for the late fetches. Never longer than capMs.
 // Never throws: a failed load just ends the wait (the caller reads whatever page or error page is there).
 // `netIdle()` (optional): true/false from the tab's request tracker (page-debug.js), undefined when it has none.
-async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000, { netIdle } = {}) {
+// `started`: the load of `url` is already under way in `wc` (the AI's new tab opened at it): it is only waited for, not started again.
+async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000, { netIdle, started = false } = {}) {
   const t0 = Date.now();
   let loaded = false;
   // Same-document targets never fire did-finish-load: a #fragment-only change completes at did-navigate-in-page (Chromium
   // scrolls to the anchor itself); the identical URL is a real reload. Returns 'hash' | 'reload' | undefined for the caller's note.
-  const same = sameDocument(wc.getURL(), url);
+  const same = started ? null : sameDocument(wc.getURL(), url);
   if (same === 'hash') {
     const moved = new Promise((resolve) => { wc.once('did-navigate-in-page', resolve); wc.once('destroyed', resolve); });
     wc.loadURL(url).catch(() => {});
@@ -1566,22 +1575,43 @@ async function loadPage(wc, url, mode = DEFAULT_WAIT, capMs = 15000, { netIdle }
     await Promise.race([new Promise((resolve) => { wc.once('did-stop-loading', resolve); wc.once('destroyed', resolve); }), sleep(capMs)]);
     return 'reload';
   }
-  const full = wc.loadURL(url).catch(() => {}).then(() => { loaded = true; }); // loadURL resolves at did-finish-load, or on failure
+  // The page being left can still fire events while the new one is on its way (an app's pushState, its late dom-ready): only the new
+  // page's count, so dom-ready and in-page moves end the wait once it has committed (did-navigate, the main frame's new document).
+  // A load that was started earlier may have committed already (it has an address), or even finished (it is no longer loading).
+  let committed = started && Boolean(wc.getURL()) && wc.getURL() !== 'about:blank';
+  const onCommit = () => { committed = true; };
+  wc.on('did-navigate', onCommit);
+  const listeners = [];
+  const listen = (event, fn) => { wc.on(event, fn); listeners.push([event, fn]); };
+  const full = (started
+    ? new Promise((resolve) => { // what loadURL's promise resolves at: did-finish-load, or the load failing (main frame)
+      if (!wc.isLoading()) return resolve();
+      listen('did-finish-load', resolve);
+      listen('did-fail-load', (_e, _code, _desc, _u, isMain) => { if (isMain !== false) resolve(); });
+      listen('destroyed', resolve);
+    })
+    : wc.loadURL(url).catch(() => {})).then(() => { loaded = true; }); // loadURL resolves at did-finish-load, or on failure
   // A pushState/replaceState route (or a redirect landing on a fragment) ends the wait at did-navigate-in-page too, not at the cap.
-  const inPage = new Promise((resolve) => wc.once('did-navigate-in-page', (_e, _u, isMain) => { if (isMain !== false) { loaded = true; resolve(); } }));
-  if (mode === 'load') return void await Promise.race([full, inPage, sleep(capMs)]);
-  let ready;
-  const domReady = new Promise((resolve) => { ready = resolve; wc.once('dom-ready', ready); wc.once('destroyed', ready); });
-  await Promise.race([full, inPage, domReady, sleep(capMs)]);
-  if (!wc.isDestroyed()) { wc.removeListener('dom-ready', ready); wc.removeListener('destroyed', ready); }
-  for (;;) {
-    if (wc.isDestroyed() || (loaded && mode !== 'networkidle')) return;
-    const elapsed = Date.now() - t0;
-    const probe = await runScript(wc, PROBE_SCRIPT, 2000).catch(() => null);
-    if (loaded && !probe) return; // nothing to measure (a failed load)
-    if (probe && loadDone(mode, { ...probe, loading: wc.isLoading(), netIdle: netIdle?.() }, elapsed, capMs)) return;
-    if (elapsed >= capMs) return;
-    await sleep(150);
+  const inPage = new Promise((resolve) => listen('did-navigate-in-page', (_e, _u, isMain) => { if (isMain !== false && committed) { loaded = true; resolve(); } }));
+  // After dom-ready: probe the page until it is ready by its wait mode (or loaded, or the cap).
+  const probeUntilDone = async () => {
+    for (;;) {
+      if (wc.isDestroyed() || (loaded && mode !== 'networkidle')) return;
+      const elapsed = Date.now() - t0;
+      const probe = await runScript(wc, PROBE_SCRIPT, 2000).catch(() => null);
+      if (loaded && !probe) return; // nothing to measure (a failed load)
+      if (probe && loadDone(mode, { ...probe, loading: wc.isLoading(), netIdle: netIdle?.() }, elapsed, capMs)) return;
+      if (elapsed >= capMs) return;
+      await sleep(150);
+    }
+  };
+  try {
+    if (mode === 'load') return void await Promise.race([full, inPage, sleep(capMs)]);
+    const domReady = new Promise((resolve) => { listen('dom-ready', () => { if (committed) resolve(); }); listen('destroyed', resolve); });
+    await Promise.race([full, inPage, domReady, sleep(capMs)]);
+    return void await probeUntilDone();
+  } finally {
+    if (!wc.isDestroyed()) { wc.removeListener('did-navigate', onCommit); for (const [event, fn] of listeners) wc.removeListener(event, fn); }
   }
 }
 
@@ -4569,6 +4599,7 @@ ${prompt}` : prompt), historyImages: [] };
           if (problem) throw Object.assign(new Error(problem), { invalid: true });
           await this.ensureAllowed(use.name, emit, signal, { input: use.input, who });
         },
+        laneOf: toolLane, // [parallel tabs] calls naming different tabs run together; calls on one tab, or on the task's, keep their order
         exec: (use) => abortable(calls.run(use, this.taskTabUrl(), () => this.execute(use.name, use.input)), signal),
         halts: (o) => Boolean(signal.aborted || (o && o.ok === false && toolError(o.error) === TAB_CLOSED)),
         onOutcome: (use, o) => {
@@ -7491,7 +7522,10 @@ ${CLI_DESKTOP_RULE}`;
   // [agents out of sight] navigate in the user's chat: it loads in a tab the AI opened (a fresh background one, then reused by the
   // chat's later steps), never in the user's own tab, unless the request is about the current page. Only the sidebar chat comes here:
   // outside agents, tasks and helpers have windows (or no window) of their own and are never moved.
-  async ownNavigationTab() {
+  // `url` (a web address navigate is about to load): a new tab opens straight at it (no new-tab page loaded first and waited for, and
+  // it gets the warm renderer), and scope.navStarted tells navigate that this load has begun (takeNavStarted). The redirect guard
+  // still sees it: executeGuardedCore attaches it as soon as this returns, before any event of the load can arrive.
+  async ownNavigationTab(url = null) {
     const scope = taskScope.getStore();
     if (!scope?.chat || scope.mcp || scope.helper || scope.userRun) return;
     const current = this.taskTab();
@@ -7501,9 +7535,20 @@ ${CLI_DESKTOP_RULE}`;
     const target = agentsQuiet.navTarget({ aboutPage: scope.aboutPage === true, onAiTab: Boolean(this.browser.isAiTab?.(current.id)), ownTabAlive: ownAlive, outside: typeof this.browser.openTab !== 'function' || this.browser.background === true });
     if (target === 'own') { this.pinTab(own.id); return; }
     if (target !== 'new') return;
-    const tab = this.browser.openTab(undefined, { ai: true, show: false }); // behind the user's tab, marked as the AI's
+    const at = typeof url === 'string' && /^https?:\/\//i.test(url) ? url : undefined;
+    const tab = this.browser.openTab(at, { ai: true, show: false }); // behind the user's tab, marked as the AI's
     scope.chat.aiNavTabId = tab.id;
     this.pinTab(tab.id);
+    scope.navStarted = at ? { tabId: tab.id, url: at } : null;
+  }
+
+  // Did ownNavigationTab just open tab `wc` at `url` (so navigate only waits for that load)? Once: the next navigate loads as usual.
+  takeNavStarted(wc, url) {
+    const scope = taskScope.getStore();
+    const s = scope?.navStarted;
+    if (!s) return false;
+    scope.navStarted = null;
+    try { return s.url === url && this.browser.tabById?.(s.tabId)?.webContents === wc && !wc.isDestroyed(); } catch { return false; }
   }
 
   // [full-page chat] Is the run in the lumen://chat page (not the sidebar)? Set by main from where the message came from.
@@ -8060,7 +8105,7 @@ ${CLI_DESKTOP_RULE}`;
     if (scope && (name === 'read_page' || name === 'find' || name === 'batch' || name === 'fill_form')) scope.idsFresh = true;
     // navigate loads in a tab of the chat's own ([agents out of sight]): move there first, so the redirect guard watches the tab that
     // actually loads the page, not the user's tab it is about to leave.
-    if (name === 'navigate') { try { await this.ownNavigationTab(); } catch {} }
+    if (name === 'navigate') { try { await this.ownNavigationTab(navUrl(input.url)); } catch {} }
     let wc = null;
     try { wc = taskScope.getStore()?.gate ? this.taskTab()?.webContents : null; } catch {}
     const guard = this.guardRedirects(wc, { clientSide: name === 'navigate' || name === 'run_script' });
@@ -8154,25 +8199,33 @@ ${same}
         ];
       }
       case 'navigate': {
+        const lap = phaseTimer('navigate');
         await this.ownNavigationTab();
+        lap('tab');
         const wc = this.requireTab();
         const url = navUrl(input.url);
-        if (wc.isLoading()) await waitForLoad(wc);
+        const started = this.takeNavStarted(wc, url); // the AI's new tab opened at this address: its load is under way
+        if (!started && wc.isLoading()) await waitForLoad(wc);
+        lap('before');
         const wait = normalizeWait(input.wait);
         // Redirects reject with ERR_ABORTED; the load still happens. Returns by `wait` (load-wait.js); networkidle asks the tab's own
         // request tracker when it has one (executeDebugged started it), the same one wait_for network_idle uses.
         const tracker = pageDebugShared.captureOf(wc)?.tracker;
-        const kind = await loadPage(wc, url, wait, 15000, { netIdle: tracker ? () => tracker.idle(Date.now()) : undefined });
+        const kind = await loadPage(wc, url, wait, 15000, { netIdle: tracker ? () => tracker.idle(Date.now()) : undefined, started });
+        lap('load');
         // Returned early (the page shows text, images and trackers still loading): only the DOM settling is waited for, not the rest of the load.
         if (wait === 'interactive' && wc.isLoading()) await quietWait(wc);
         else await settleAfterAction(wc); // loadURL resolved at load: only a redirect still loading, or the DOM settling, is waited for
+        lap('settle');
         await this.settleRedirects(wc);
+        lap('redirects');
         let loaded = `${kind === 'hash' ? 'Jumped to the #fragment on the same page (no reload needed)' : kind === 'reload' ? 'Same URL, reloaded' : 'Loaded'} ${wc.getURL()} — "${wc.getTitle()}"${captchaNote(wc.getURL())}`;
         if (input.wait_for) {
           try { await this.runTool('wait_for', { text: String(input.wait_for), seconds: 10 }); } catch (err) { if (this.signalAborted()) throw err; loaded += ` (${err.message})`; }
         }
         if (input.read) loaded += await snapshot.outline(this, wc, { runScript, scripts }, { noTitle: true });
         else if (input.read !== false) loaded += await snapshot.head(this, wc, { runScript, scripts }, { noTitle: true });
+        lap('read', true);
         return loaded;
       }
       case 'click': {
