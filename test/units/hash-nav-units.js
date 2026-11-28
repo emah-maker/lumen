@@ -41,9 +41,19 @@ const mockWc = (url, onLoad) => {
   kind = await loadPage(wc, 'https://a.com/q', 'load', 15000);
   check('normal navigation: loadURL, resolves at load', kind === undefined && wc.calls[0][0] === 'loadURL' && Date.now() - t < 1000);
   t = Date.now();
-  wc = mockWc('https://a.com/p', (w, u) => setTimeout(() => { w.emit('did-navigate-in-page', {}, 'https://a.com/q/2', true); }, 20)); // SPA route: loadURL never resolves
+  // SPA route: loadURL never resolves. The new page commits (did-navigate) before its own script can push a route, as in Chromium.
+  wc = mockWc('https://a.com/p', (w, u) => setTimeout(() => { w.url = u; w.emit('did-navigate', {}, u); w.emit('did-navigate-in-page', {}, 'https://a.com/q/2', true); }, 20));
   await loadPage(wc, 'https://a.com/q', 'load', 15000);
   check('pushState-style in-page event ends a normal wait early', Date.now() - t < 1000, `${Date.now() - t}ms`);
+  // The page being left pushes a route while the new one is still on its way (an app's timer): that does not end the wait;
+  // the new page's load does.
+  t = Date.now();
+  wc = mockWc('https://a.com/app', (w, u, resolve) => {
+    setTimeout(() => w.emit('did-navigate-in-page', {}, 'https://a.com/app/home', true), 20);
+    setTimeout(() => { w.url = u; w.emit('did-navigate', {}, u); w.emit('did-finish-load'); resolve(); }, 250);
+  });
+  await loadPage(wc, 'https://a.com/slow', 'load', 15000);
+  check('an in-page event from the page being left does not end the wait (only the new page counts)', Date.now() - t >= 200 && Date.now() - t < 1000, `${Date.now() - t}ms`);
 
   console.log(failures ? `\n${failures} FAILED` : '\nall passed');
   process.exit(failures ? 1 : 0);
