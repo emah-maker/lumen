@@ -2,7 +2,8 @@
 // citation copy; "Add this page" for the tab in front. Also turns a ```sources block in an AI answer (/research ends with one)
 // into a list with the same chips. The data lives in main (ai/research-board.js, saved with the chat); this file only draws it
 // and sends the user's clicks back (window.assistant.research). Everything is built with textContent, never innerHTML from data.
-// Loaded after tasks.js (same page).
+// Loaded by tasks-loader.js in an idle moment after start, or on first use (the button, a research change, a ```sources block); it
+// stands in until then.
 
 (() => {
   const api = window.assistant?.research;
@@ -203,6 +204,6 @@
       drawList(box);
     }
   }
-  window.researchUi = { decorate, refresh };
+  window.researchUi = { decorate, refresh, open: openPanel }; // (takes the place of tasks-loader.js's stand-in)
   refresh();
 })();
