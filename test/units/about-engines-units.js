@@ -19,7 +19,8 @@ const instructions = `<project_instructions>\nCo-op search.\n</project_instructi
   // ---- the block itself: fill without asking, one question for the rest, the demographics choice, never submit
   {
     check('block: filling the saved details is approved (no asking)', /fill every question they answer/.test(about) && /without asking/.test(about), about);
-    check('block: the rest in ONE question, then saved with remember', /ONE short question listing every remaining item/.test(about) && /save each with remember/.test(about), about);
+    check('block: the rest on one ask_user card (options from the profile), then saved with remember', /call ask_user once, one question per remaining item \(up to 4 per card/.test(about) && /likely options/.test(about) && /save each with remember/.test(about), about);
+    check('block: with no ask_user (a background task), still ONE question for everything, never one per turn', /With no ask_user, ask ONE short question listing every remaining item/.test(about) && /Never one per turn/.test(about), about);
     check('block: never submits without the user', /Never submit or send the application until the user says to/.test(about));
     check('block: names the work boxes not saved yet', /Not saved yet[^\n]*Available from/.test(about) && !/Not saved yet[^\n]*Authorized to work/.test(about), about);
     check('block: default demographics choice is the saved answers, never a pick of its own', /use the saved answer for each/.test(about) && /Never pick one yourself/.test(about));
@@ -94,6 +95,14 @@ const instructions = `<project_instructions>\nCo-op search.\n</project_instructi
     check('…one the user never said: refused (never a guess)', !guess.ok && !prof.answers.some((a) => /race/.test(a.question)), J(guess));
     const secret = await viaScope('Social security number? 123-45-6789');
     check('…a secret: refused', !secret.ok, J(secret));
+    // an answer picked on an ask_user card is the user's own answer too
+    const emitted = [];
+    const cardScope = { chat: messages, gate: { emit: (e) => { emitted.push(e); if (e.type === 'ask') setTimeout(() => agent.answerAsk(e.askId, [['Hispanic or Latino']]), 0); } } };
+    agent.browser.background = false;
+    await agent.inScope(cardScope, () => agent.askUserTool({ questions: [{ question: 'Are you Hispanic or Latino?', options: ['Hispanic or Latino', 'Not Hispanic or Latino'] }] }));
+    check('an ask_user pick joins the user\'s own recent words', (messages.saidLately || []).some((t) => /Hispanic or Latino/.test(t)), J(messages.saidLately));
+    const fromCard = await viaScope('Are you Hispanic or Latino? Hispanic or Latino');
+    check('…so a demographic answer picked on the card is saved', fromCard.ok && prof.answers.some((a) => /Hispanic/.test(a.question)), J(fromCard));
     const choice = await viaScope('demographics: decline');
     check('remember the demographics choice', choice.ok && prof.demographics === 'decline', J(choice));
   }

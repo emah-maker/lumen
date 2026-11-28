@@ -59,7 +59,7 @@ function block(profile, { tailored = '', max = 3000 } = {}) {
   const rules = [
     'Filling a job application: the user saved these details to have them entered for them, so fill every question they answer (work authorization, sponsorship, start date, a saved answer to a screening question) without asking. Match a select or radio option to the saved answer ("Yes" → "Yes, I am authorized…").',
     DEMOGRAPHICS_RULE[demographicsOf(profile)],
-    'Anything still missing: fill all you can first, then ask ONE short question listing every remaining item at once (never one per turn). When the user answers, save each with remember (a question with no box: "<question>? <answer>", in their words) and fill them. Never guess or make up an answer.',
+    'Anything still missing: fill all you can first, then call ask_user once, one question per remaining item (up to 4 per card; a second card only for the rest), each with likely options from the profile and the form. With no ask_user, ask ONE short question listing every remaining item at once. Never one per turn. When the user answers, save each with remember (a question with no box: "<question>? <answer>", in their words) and fill them. Never guess or make up an answer.',
     'Never submit or send the application until the user says to.',
   ].join('\n');
   const missing = ASK_FIRST.filter((k) => !f[k]).map((k) => LABELS[k]);
