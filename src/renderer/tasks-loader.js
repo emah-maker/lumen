@@ -18,7 +18,15 @@
     const ready = () => Boolean(window.lumenTasks);
     const then = (fn) => loadTasks().then((ok) => ok && window.lumenTasks && fn(window.lumenTasks));
     byId('tasks-btn').onclick = () => then((core) => core.openPanel()); // (tasks.js sets its own onclick when it loads)
-    byId('send-bg').onclick = () => then((core) => core.openCreate({ prompt: byId('prompt').value.trim(), fromComposer: true }));
+    const sendBg = byId('send-bg');
+    const box = byId('prompt');
+    sendBg.onclick = () => then((core) => core.openCreate({ prompt: box.value.trim(), fromComposer: true }));
+    // Until tasks.js is in, the button follows the box the way it will (on with something typed, off with images attached), and the
+    // first thing typed loads it.
+    const syncBg = () => { if (!ready()) sendBg.disabled = !box.value.trim() || (window.chatAttachments?.count() || 0) > 0; };
+    box.addEventListener('input', syncBg);
+    document.addEventListener('lumen:attachments', syncBg);
+    box.addEventListener('input', () => loadTasks(), { once: true });
     // /background <request> and /watch <address> <what>: tasks.js's to handle; before it is loaded they are held back from the chat and
     // sent again once it is. (this listener stays the only one, so it keeps running ahead of slash.js's)
     const composer = byId('composer');
