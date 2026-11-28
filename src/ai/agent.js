@@ -7610,6 +7610,14 @@ ${CLI_DESKTOP_RULE}`;
     const target = frame && await frames.run(wc, frame, scripts.locate(at.k));
     if (!target) return null;
     frame = (await frames.find(wc, at.n, opts)) || frame; // placed again: scrolling the element into view can move its frame
+    // [select boxes] the frame itself below or above the window (an embedded form far down the page): a mouse click there reaches
+    // nothing, so the page scrolls to bring the element to the middle, and the frame is placed again
+    const vy = frame.y + target.y, vx = frame.x + target.x;
+    const view = await runScript(wc, '({ w: innerWidth, h: innerHeight })', 2000).catch(() => null);
+    if (view && (vy < 0 || vy > view.h || vx < 0 || vx > view.w)) {
+      await runScript(wc, `scrollBy(${Math.round(vx < 0 || vx > view.w ? vx - view.w / 2 : 0)}, ${Math.round(vy < 0 || vy > view.h ? vy - view.h / 2 : 0)})`, 2000).catch(() => {});
+      frame = (await frames.find(wc, at.n, opts)) || frame;
+    }
     const inside = target.x >= 0 && target.y >= 0 && target.x <= frame.w && target.y <= frame.h;
     return { ...target, x: Math.round(frame.x + target.x), y: Math.round(frame.y + target.y), covered: target.covered || !inside, frame };
   }
