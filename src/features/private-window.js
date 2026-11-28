@@ -20,6 +20,9 @@ const { pathToFileURL } = require('url');
 
 const UI_HTML = path.join(__dirname, '..', 'renderer', 'private.html');
 const NEWTAB_HTML = path.join(__dirname, '..', 'renderer', 'private-newtab.html');
+const PAGE_BACKGROUND = require('../browser/page-background');
+const OWN_PAGES = (pathToFileURL(path.join(__dirname, '..', 'renderer')).href + '/').toLowerCase(); // (this window's own pages keep its colour)
+const PRIVATE_BG = '#1d1530';
 const TOP = 78; // tab strip + toolbar height in renderer/private.css
 const PROMPTABLE = new Set(['media', 'geolocation', 'notifications', 'clipboard-read']); // permission.<name> in locales/en.json
 // As main.js (browser/site-permissions.js): protected video plays, screen sharing's own picker is the consent, wake lock
@@ -268,6 +271,8 @@ function createPrivateWindows(deps) {
     const wc = tab.view.webContents;
     const update = () => sendStateSoon(rec);
     for (const ev of ['did-start-loading', 'did-stop-loading', 'page-title-updated', 'did-navigate-in-page', 'audio-state-changed']) wc.on(ev, update);
+    // a web page is drawn on white, as in Chrome: the window's purple stays for its own pages (browser/page-background.js)
+    wc.on('did-navigate', (_e, url) => { const bg = PAGE_BACKGROUND.backgroundFor(url, { internal: (u) => u.toLowerCase().startsWith(OWN_PAGES), theme: () => PRIVATE_BG }); if (bg) { try { tab.view.setBackgroundColor(bg); } catch { /* gone */ } } });
     wc.on('did-navigate', (_e, url) => {
       if (!isWebUrl(url)) tab.favicon = null; // the new-tab and error pages have no icon
       else { try { if (new URL(url).host !== tab.faviconHost) tab.favicon = null; tab.faviconHost = new URL(url).host; } catch {} }
@@ -414,7 +419,7 @@ function createPrivateWindows(deps) {
   function openTab(rec, url, { background = false, webContents = null, index = null } = {}) {
     if (!alive(rec)) return null;
     const view = webContents ? new WebContentsView({ webContents }) : new WebContentsView({ webPreferences: { session: rec.ses, sandbox: true, contextIsolation: true, nodeIntegration: false, ...(deps.tabWebPreferences?.() || {}), disableBlinkFeatures: 'AutomationControlled' } });
-    view.setBackgroundColor('#1d1530'); // no white flash before the first paint
+    view.setBackgroundColor(PRIVATE_BG); // no white flash before the first paint
     const tab = { id: nextId++, view, favicon: null };
     if (Number.isInteger(index)) rec.tabs.splice(Math.max(0, Math.min(index, rec.tabs.length)), 0, tab);
     else rec.tabs.push(tab);
