@@ -91,6 +91,9 @@ const FORM = `<!doctype html><title>Career Opportunities: Apply for Mechanical C
           } else if (/Saved to the user's profile: Available from/.test(fake.results.join('\n')) && !fake.triedGuess) {
             fake.triedGuess = true; // (a demographic answer the user never gave: the tool must refuse it)
             content = [{ type: 'tool_use', id: 'toolu_g1', name: 'applications', input: { action: 'remember', note: 'What is your race or ethnicity? Asian' } }];
+          } else if (!/Saved to the user's profile: Available from/.test(fake.results.join('\n'))) {
+            fake.asked++; // (after the first fill: what the profile does not answer, asked as the system prompt says)
+            content = [{ type: 'text', text: /ONE short question/.test(system) && /Not saved yet[^\n]*Available from/.test(system) ? 'One thing is missing: your earliest start date?' : 'Please fill in the rest yourself.' }];
           } else content = [{ type: 'text', text: 'Everything is filled. Review it and tell me when to submit.' }];
         } else if (/January 2027/.test(said)) {
           content = [{ type: 'tool_use', id: 'toolu_r1', name: 'applications', input: { action: 'remember', note: 'startDate: January 2027' } }];
