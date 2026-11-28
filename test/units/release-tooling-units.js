@@ -204,7 +204,7 @@ const sc = require('../../scripts/release/ship-common');
 const rr = (status, stderr = '') => ({ status, stdout: '', stderr });
 check('retry: transient errors are recognised (GraphQL, 502/503/504, timeouts)', [rr(1, 'GraphQL: Something went wrong while executing your query'), rr(1, 'HTTP 502: Bad Gateway'), rr(1, 'HTTP 503'), rr(1, 'HTTP 504 gateway timeout'), rr(1, 'dial tcp: i/o timeout'), rr(1, 'read ECONNRESET')].every(sc.isTransient) && !sc.isTransient(rr(1, 'Pull request is not mergeable')) && !sc.isTransient(rr(0)));
 const relSrc = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'release', 'release.js'), 'utf8');
-check('preflight: the Electron preflight runs only while the checks are still to run', /preflight\(main, opts, wt, !st \|\| !done\(st, 'checks'\)\)/.test(relSrc) && /if \(!withElectron\)/.test(relSrc));
+check('preflight: the Electron preflight runs only while the checks are still to run', /preflight\(main, opts, wt, !st \|\| !done\(st, 'checks'\), `release-\$\{version\}`\)/.test(relSrc) && /if \(!withElectron\)/.test(relSrc));
 check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghRetry\(wt, \['pr', 'create'/.test(relSrc) && /ghRetry\(wt, \['pr', 'merge'/.test(relSrc) && /ghJsonRetry\(wt, \['release', 'view'/.test(relSrc));
 
 // ---- a version burned by a failed build: its notes fold into the next release
@@ -561,6 +561,165 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   check('release.js: tags with releaseTagMessage on tagTarget\'s commit, merges main in before a --merge, and selects from releaseBase', /'tag', '-a', tag, '-m', releaseTagMessage\(version, st\.head\), target\.sha/.test(relText) && /mergeMainInto\(wt,/.test(relText) && /st\.sync \? '--merge' : '--squash'/.test(relText) && /releaseBase\(wt, tag,/.test(relText) && !/describe', '--tags', '--abbrev=0', headRev\)\.stdout;\s*\n\s*if \(!tag\) return null;\s*\n\s*const r = git\(wt, 'diff', '--name-only', tag,/.test(relText));
 }
 
+// ---- the preflight waits for another session's run under the e2e lock (release-machine.js), and a fresh run cleans up a stopped one's leftovers
+// (release-leftover.js). A temp lock dir (LUMEN_E2E_LOCK_DIR) and a temp repo with a bare origin; no Electron, no network, no gh.
+async function machineAndLeftoverTests() {
+  const { spawn } = require('child_process');
+  const saved = { dir: process.env.LUMEN_E2E_LOCK_DIR, held: process.env.LUMEN_E2E_LOCK_HELD, res: process.env.LUMEN_E2E_RESERVED };
+  const lockBase = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-release-lock-'));
+  process.env.LUMEN_E2E_LOCK_DIR = path.join(lockBase, 'lock');
+  delete process.env.LUMEN_E2E_LOCK_HELD; delete process.env.LUMEN_E2E_RESERVED;
+  const e2eLock = require('../../scripts/test/e2e-lock');
+  const { holdMachine, freeMachine } = require('../../scripts/release/release-machine');
+  const lineFrom = (p) => new Promise((r) => p.stdout.once('data', (d) => r(String(d).trim())));
+  const child = path.join(__dirname, '..', 'helpers', '_e2e-lock-child.js');
+  try {
+    // another session's run holds the lock: the release waits (saying so), then takes it, with the machine reserved meanwhile
+    const holder = spawn(process.execPath, [child, 'hold', 'test-all'], { stdio: ['pipe', 'pipe', 'inherit'], env: process.env });
+    await lineFrom(holder);
+    const said = [];
+    let got = null;
+    const p = holdMachine({ owner: 'release-9.9.9', waitMs: 30000, pollMs: 50, log: (m) => said.push(m) }).then((r) => { got = r; });
+    await new Promise((r) => setTimeout(r, 400));
+    const res = e2eLock.readReservation();
+    check('machine: the release waits for a run holding the e2e lock instead of stopping, with "waiting for <owner> to finish…"', !got && said.some((m) => /^waiting for test-all \(pid \d+\) to finish…/.test(m)), said.join(' | '));
+    check('machine: while it waits, the machine is already reserved for it (npm test cannot slip back in between its suites)', res && res.name === 'release-9.9.9' && res.pid === process.pid, JSON.stringify(res));
+    holder.stdin.write('release\n');
+    await p;
+    check('machine: once the holder releases, the release holds the lock (exact owner) and says it waited', got && got.waited === true && e2eLock.holds() && e2eLock.readOwner().name === 'release-9.9.9' && e2eLock.readOwner().exact, JSON.stringify(e2eLock.readOwner()));
+    let other = false;
+    try { await e2eLock.acquire({ owner: 'x', waitMs: 10, pollMs: 5, onWait: null }); other = e2eLock.readOwner().name === 'x'; } catch { /* (it is ours: acquire returns at once) */ }
+    check('machine: taking the lock again inside the release (the checks stage) returns at once, no deadlock', !other && e2eLock.holds());
+    freeMachine();
+    check('machine: freeMachine releases the lock and the reservation', !fs.existsSync(process.env.LUMEN_E2E_LOCK_DIR) && !fs.existsSync(e2eLock.reservationFile()) && !e2eLock.holds());
+    holder.stdin.write('exit\n');
+    // a free machine: no waiting, no progress line
+    const quiet = [];
+    const q = await holdMachine({ owner: 'release-9.9.10', waitMs: 2000, pollMs: 50, log: (m) => quiet.push(m) });
+    check('machine: with nothing in the way it takes the machine at once, silently', q.waited === false && quiet.length === 0 && e2eLock.holds());
+    freeMachine();
+    // another release's reservation: waited for too, then a timeout is a Stop naming it
+    const rel = spawn(process.execPath, [child, 'reserve', 'release-1.0.0'], { stdio: ['pipe', 'pipe', 'inherit'], env: process.env });
+    await lineFrom(rel);
+    const said2 = [];
+    let stop = null;
+    try { await holdMachine({ owner: 'release-9.9.11', waitMs: 300, pollMs: 50, log: (m) => said2.push(m) }); } catch (err) { stop = err; }
+    check('machine: another release\'s reservation is waited for, and the wait times out with a Stop that names it', stop instanceof sc.Stop && /release-1\.0\.0/.test(stop.message) && said2.some((m) => /waiting for release-1\.0\.0 \(pid \d+\) to finish…/.test(m)), `${stop && stop.message} | ${said2.join(' | ')}`);
+    check('machine: a timed-out wait leaves no lock and no reservation of its own', !e2eLock.holds() && e2eLock.readReservation().name === 'release-1.0.0');
+    rel.stdin.write('exit\n');
+    await new Promise((r) => rel.once('exit', r));
+    // --share-machine: no reservation
+    await holdMachine({ owner: 'release-9.9.12', holdLock: false, waitMs: 2000, pollMs: 50 });
+    check('machine: --share-machine waits for the lock but reserves nothing', e2eLock.holds() && !fs.existsSync(e2eLock.reservationFile()));
+    freeMachine();
+  } catch (err) { check('machine: the lock tests ran', false, err.stack); }
+  finally {
+    freeMachine();
+    for (const [k, v] of [['LUMEN_E2E_LOCK_DIR', saved.dir], ['LUMEN_E2E_LOCK_HELD', saved.held], ['LUMEN_E2E_RESERVED', saved.res]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+
+  // ---- leftovers of a stopped release (release-leftover.js)
+  const { cleanLeftover } = require('../../scripts/release/release-leftover');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-leftover-'));
+  const G = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
+  const origin = path.join(tmp, 'origin.git');
+  const main = path.join(tmp, 'main');
+  G(tmp, 'init', '-q', '--bare', origin);
+  G(tmp, 'init', '-q', '-b', 'main', main);
+  for (const [k, v] of [['user.name', 'T'], ['user.email', 't@example.com'], ['commit.gpgsign', 'false']]) G(main, 'config', k, v);
+  fs.writeFileSync(path.join(main, 'package.json'), '{"version":"1.0.0"}\n');
+  fs.writeFileSync(path.join(main, 'CHANGELOG.md'), '# Changelog\n');
+  fs.writeFileSync(path.join(main, '.gitignore'), '.claude/\n');
+  G(main, 'add', '-A'); G(main, 'commit', '-qm', 'init');
+  G(main, 'remote', 'add', 'origin', origin); G(main, 'push', '-q', '-u', 'origin', 'main'); G(main, 'fetch', '-q', 'origin');
+  const wtOf = (v) => path.join(main, '.claude', 'worktrees', `release-${v}`);
+  const remoteHas = (b) => Boolean(G(main, 'ls-remote', '--heads', 'origin', b));
+  const localHas = (b) => spawnSync('git', ['rev-parse', '-q', '--verify', `refs/heads/${b}`], { cwd: main }).status === 0;
+  // a stopped run: worktree on release-<v> with the "Release <v>" commit, pushed for the build preflight
+  const leftover = (v, { push = true } = {}) => {
+    const wt = wtOf(v);
+    G(main, 'worktree', 'add', '-q', wt, '-b', `release-${v}`, 'origin/main');
+    fs.writeFileSync(path.join(wt, 'package.json'), `{"version":"${v}"}\n`);
+    G(wt, 'commit', '-qam', `Release ${v}`);
+    if (push) G(wt, 'push', '-q', '-u', 'origin', `release-${v}`);
+    return wt;
+  };
+  const noPrs = { prs: async () => [] };
+  const stopOf = async (fn) => { try { await fn(); return null; } catch (err) { return err; } };
+  try {
+    check('leftover: nothing left behind: nothing to do', (await cleanLeftover(main, '1.0.1', { remote: noPrs })).length === 0);
+
+    // the case from today: worktree (with the node_modules junction) + local branch + origin branch, no tag, no PR
+    const wt = leftover('1.0.2');
+    const shared = path.join(tmp, 'shared-node_modules'); fs.mkdirSync(shared); fs.writeFileSync(path.join(shared, 'keep.txt'), 'x');
+    fs.symlinkSync(shared, path.join(wt, 'node_modules'), 'junction');
+    fs.writeFileSync(path.join(wt, 'CHANGELOG.md'), '# Changelog\n\n## 1.0.2\n'); // the release's own uncommitted edit
+    const logs = [];
+    const removed = await cleanLeftover(main, '1.0.2', { remote: noPrs, log: (m) => logs.push(m) });
+    check('leftover: a stopped run\'s worktree, local branch and origin branch are all removed', !fs.existsSync(wt) && !localHas('release-1.0.2') && !remoteHas('release-1.0.2') && removed.length === 4, `${removed.join(' | ')}`);
+    check('leftover: the node_modules junction is unlinked first and what it points at survives', fs.existsSync(path.join(shared, 'keep.txt')) && /junction only/.test(removed[0]));
+    check('leftover: each removal is logged', logs.length === 3 && logs.some((m) => /origin\/release-1\.0\.2/.test(m)), logs.join(' | '));
+
+    // an empty folder (the worktree was half removed) plus the origin branch only
+    leftover('1.0.3');
+    G(main, 'worktree', 'remove', '--force', wtOf('1.0.3')); G(main, 'branch', '-D', 'release-1.0.3');
+    fs.mkdirSync(wtOf('1.0.3'), { recursive: true });
+    const r3 = await cleanLeftover(main, '1.0.3', { remote: noPrs });
+    check('leftover: an empty leftover folder and a branch left only on origin are removed', !fs.existsSync(wtOf('1.0.3')) && !remoteHas('release-1.0.3') && r3.length === 2, r3.join(' | '));
+
+    // a published (or burned) tag: nothing is touched
+    const wt4 = leftover('1.0.4');
+    G(main, 'tag', '-a', 'v1.0.4', '-m', 'v1.0.4', 'release-1.0.4'); G(main, 'push', '-q', 'origin', 'v1.0.4');
+    const s4 = await stopOf(() => cleanLeftover(main, '1.0.4', { remote: noPrs }));
+    check('leftover: a version whose tag is on origin is never cleaned up (its branch stays)', s4 instanceof sc.Stop && /tag v1\.0\.4 already exists/.test(s4.message) && fs.existsSync(wt4) && remoteHas('release-1.0.4') && localHas('release-1.0.4'), s4 && s4.message);
+
+    // an open or merged PR from the branch: --resume territory
+    const wt5 = leftover('1.0.5');
+    const s5 = await stopOf(() => cleanLeftover(main, '1.0.5', { remote: { prs: async () => [{ number: 7, state: 'OPEN' }] } }));
+    check('leftover: a branch with an open PR stops the run and nothing is removed', s5 instanceof sc.Stop && /PR #7 \(open\)/.test(s5.message) && fs.existsSync(wt5) && remoteHas('release-1.0.5') && localHas('release-1.0.5'), s5 && s5.message);
+    const s5b = await stopOf(() => cleanLeftover(main, '1.0.5', { remote: { prs: async () => [{ number: 8, state: 'MERGED' }] } }));
+    check('leftover: ...and so does a merged one', s5b instanceof sc.Stop && /PR #8 \(merged\)/.test(s5b.message) && fs.existsSync(wt5));
+    check('leftover: a closed (unmerged) PR does not block the cleanup', (await cleanLeftover(main, '1.0.5', { remote: { prs: async () => [{ number: 9, state: 'CLOSED' }] } })).length === 3 && !fs.existsSync(wt5));
+
+    // work of its own in the worktree: files beyond the release's, or commits beyond "Release X.Y.Z"
+    const wt6 = leftover('1.0.6');
+    fs.writeFileSync(path.join(wt6, 'fix.js'), '// a hand fix\n');
+    const s6 = await stopOf(() => cleanLeftover(main, '1.0.6', { remote: noPrs }));
+    check('leftover: a worktree with files of its own (a hand fix) stops the run and is kept', s6 instanceof sc.Stop && /changes of its own \(fix\.js\)/.test(s6.message) && fs.existsSync(path.join(wt6, 'fix.js')) && remoteHas('release-1.0.6'), s6 && s6.message);
+    G(wt6, 'add', 'fix.js'); G(wt6, 'commit', '-qm', 'Fix the flaky suite');
+    const s6b = await stopOf(() => cleanLeftover(main, '1.0.6', { remote: noPrs }));
+    check('leftover: a worktree with a commit of its own stops the run and is kept', s6b instanceof sc.Stop && /commits of its own \(Fix the flaky suite\)/.test(s6b.message) && fs.existsSync(wt6), s6b && s6b.message);
+    G(wt6, 'reset', '-q', '--hard', 'HEAD~1');
+    G(wt6, 'push', '-q', '-f', 'origin', 'HEAD:refs/heads/release-1.0.6');
+    G(main, 'push', '-q', 'origin', `${G(wt6, 'commit-tree', '-p', 'HEAD', '-m', 'Hand fix pushed', 'HEAD^{tree}')}:refs/heads/release-1.0.6`, '-f');
+    const s6c = await stopOf(() => cleanLeftover(main, '1.0.6', { remote: noPrs }));
+    check('leftover: an origin branch with a commit of its own stops the run, and nothing local is removed first', s6c instanceof sc.Stop && /origin\/release-1\.0\.6 has commits of its own \(Hand fix pushed\)/.test(s6c.message) && fs.existsSync(wt6) && localHas('release-1.0.6'), s6c && s6c.message);
+
+    // a release still running, or a state file of another version
+    const wt7 = leftover('1.0.7', { push: false });
+    const live = spawn(process.execPath, ['-e', 'setTimeout(()=>{},60000)'], { stdio: 'ignore' });
+    const stateAt = path.join(G(wt7, 'rev-parse', '--absolute-git-dir'), 'lumen-release-state.json');
+    fs.writeFileSync(stateAt, JSON.stringify({ version: '1.0.7', pid: live.pid, stage: 'install' }));
+    const s7 = await stopOf(() => cleanLeftover(main, '1.0.7', { remote: noPrs }));
+    check('leftover: a worktree whose release pid is still alive is a running release, never removed', s7 instanceof sc.Stop && /still running/.test(s7.message) && fs.existsSync(wt7), s7 && s7.message);
+    live.kill();
+    fs.writeFileSync(stateAt, JSON.stringify({ version: '1.0.9', pid: 999999, stage: 'install' }));
+    const s7b = await stopOf(() => cleanLeftover(main, '1.0.7', { remote: noPrs }));
+    check('leftover: a worktree whose state names another version is not touched', s7b instanceof sc.Stop && /release of 1\.0\.9/.test(s7b.message) && fs.existsSync(wt7));
+    fs.writeFileSync(stateAt, JSON.stringify({ version: '1.0.7', pid: 999999, stage: 'checks' }));
+    check('leftover: a stopped run (its pid gone) of the same version is removed; with no origin branch nothing is pushed', (await cleanLeftover(main, '1.0.7', { remote: noPrs })).length === 2 && !fs.existsSync(wt7) && !localHas('release-1.0.7'));
+
+    // a folder that is not a worktree and holds files
+    fs.mkdirSync(wtOf('1.0.8'), { recursive: true }); fs.writeFileSync(path.join(wtOf('1.0.8'), 'notes.txt'), 'x');
+    const s8 = await stopOf(() => cleanLeftover(main, '1.0.8', { remote: noPrs }));
+    check('leftover: a non-empty folder that is not a git worktree is left for a human', s8 instanceof sc.Stop && /not a git worktree and is not empty \(notes\.txt\)/.test(s8.message) && fs.existsSync(path.join(wtOf('1.0.8'), 'notes.txt')));
+  } catch (err) { check('leftover: the cleanup tests ran', false, err.stack); }
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* the temp cleanup gets it */ }
+
+  check('release.js: the preflight waits through holdMachine (no "a test or a release may be using it" stop) and frees the machine after the checks', /await holdMachine\(\{ owner, holdLock: opts\.holdLock/.test(relSrc) && /freeMachine\(\);/.test(relSrc) && !/a test or a release may be using it/.test(relSrc) && /no run holds the e2e lock/.test(relSrc));
+  check('release.js: a fresh run cleans up a stopped run of the same version (after the tag check), instead of stopping on an existing worktree', /await cleanLeftover\(main, version,/.test(relSrc) && relSrc.indexOf("'ls-remote', '--tags', 'origin', `v${version}`") < relSrc.indexOf('await cleanLeftover(main, version,') && !/exists: use --resume, or remove that worktree/.test(relSrc));
+}
+
 (async () => {
   const naps = [];
   const o = (extra) => ({ nap: async (ms) => { naps.push(ms); }, ...extra });
@@ -616,6 +775,7 @@ check('retry: pr create, merge and publish go through ghRetry/ghJsonRetry', /ghR
   const land = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'release', 'land.js'), 'utf8');
   check('net-retry: land.js fetches, pushes, views the PR and merges through the retry helpers, with the merged-already recheck', /gitRetry\(main, \['fetch'/.test(land) && /gitRetry\(wt, \['push'/.test(land) && /ghJsonRetry\(main, \['pr', 'view'/.test(land) && /ghRetry\(wt, \['pr', 'merge'/.test(land) && /recheck: merged/.test(land) && !/\bghJson\(/.test(land) && !/must\(git\([a-z]+, 'fetch'/.test(land) && !/must\(git\(wt, 'push'/.test(land));
   check('net-retry: release.js fetches, pushes the branch and the tag, lists remote tags and dispatches through the retry helpers', /gitRetry\(main, \['fetch'/.test(relSrc) && /gitRetry\(wt, \['push', '-q', '-u'/.test(relSrc) && /gitRetry\(wt, \['push', '-q', 'origin', tag\]/.test(relSrc) && /gitRetry\(main, \['ls-remote'/.test(relSrc) && /ghRetry\(wt, \['workflow', 'run'/.test(relSrc) && !/must\(git\((main|wt), '(fetch|push)'/.test(relSrc));
+  await machineAndLeftoverTests();
   console.log(failures ? `\n${failures} failed` : '\nall passed');
   process.exit(failures ? 1 : 0);
 })();
