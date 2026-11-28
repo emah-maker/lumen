@@ -26,7 +26,7 @@ function computer(name, { timing, watchMode } = {}) {
   c.vault = createVault({ file: c.vaultFile, cipher: { available: () => true, encrypt: (t) => keychain.encrypt(t), decrypt: (b) => keychain.decrypt(b) } });
   c.chats = createChatStore({ dir: path.join(userData, 'chats'), encrypt: enc, decrypt: dec, onChange: () => c.service?.touch('chats') });
   const providers = {
-    bookmarks: () => P.bookmarks({ read: () => c.settings.bookmarks, write: (list) => { c.settings = { ...c.settings, bookmarks: list }; } }),
+    bookmarks: () => P.bookmarks({ read: () => c.settings.bookmarks, readLayout: () => c.settings.bookmarkLayout, write: (list, layout) => { c.settings = { ...c.settings, bookmarks: list, ...(layout ? { bookmarkLayout: layout } : {}) }; } }),
     settings: () => P.settings({ read, set: async (k, v) => { if (!(k in DEFAULTS)) throw new Error('unknown'); c.settings = { ...c.settings, [k]: v }; }, writeDirect: (patch) => { c.settings = { ...c.settings, ...patch }; } }),
     widgets: () => P.widgets({ read, write: (patch) => { c.settings = { ...c.settings, ...patch }; }, refresh: () => { c.refreshed = (c.refreshed || 0) + 1; } }),
     history: () => P.history({ map: () => c.history, ready: async () => c.historyLoaded, save: () => { c.historySaves++; }, bump: () => {}, isWorthImporting: (u) => !/token=/.test(u) }),

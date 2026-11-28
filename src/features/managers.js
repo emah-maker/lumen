@@ -7,8 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
-const toNetscape = (...a) => require('./bookmark-html').toNetscape(...a); // (bookmark import/export, loaded on first use)
-const parseNetscape = (...a) => require('./bookmark-html').parseNetscape(...a);
+const bookmarkHtml = () => require('./bookmark-html'); // (bookmark import/export, loaded on first use)
 const chatPage = require('./chat-page'); // lumen://chat opens and is switched to like these pages, with its own preload
 
 const BOOKMARKS_URL = pathToFileURL(path.join(__dirname, '..', 'renderer', 'bookmarks.html')).href;
@@ -26,9 +25,9 @@ const pageOf = (url) => {
 };
 
 const MAX_TITLE = 500;
-const MAX_FOLDER = 100;
+const MAX_FOLDER = 500; // a path: 'Work/Projects/2026'
 const cleanTitle = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE);
-const cleanFolder = (f) => String(f ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_FOLDER);
+const cleanFolder = (f) => String(f ?? '').split('/').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean).join('/').slice(0, MAX_FOLDER);
 const webUrl = (u) => {
   try {
     const parsed = new URL(String(u).trim());
@@ -38,7 +37,7 @@ const webUrl = (u) => {
   }
 };
 
-// deps: { ipcMain, dialog, win, tabs, alive, openTab, switchTab, bookmarks, saveBookmarks,
+// deps: { ipcMain, dialog, win, tabs, alive, openTab, switchTab, bookmarks, saveBookmarks(list, layout?), bookmarkLayout() (settings.bookmarkLayout),
 //         bookmarksChanged, downloads, hostOf, readingList (the store, made on first use), readingIcon(host) }
 function createManagers(deps) {
   // The file pickers, replaceable by tests (test/e2e/managers.js): native dialogs can't be clicked there.
@@ -60,8 +59,8 @@ function createManagers(deps) {
 
   // ---- bookmarks ----
   const list = () => deps.bookmarks().map((b) => ({ url: b.url, title: b.title || '', folder: b.folder || '' }));
-  function save(next) {
-    deps.saveBookmarks(next.map((b) => ({ url: b.url, title: b.title, ...(b.folder ? { folder: b.folder } : {}) })));
+  function save(next, layout) {
+    deps.saveBookmarks(next.map((b) => ({ url: b.url, title: b.title, ...(b.folder ? { folder: b.folder } : {}) })), layout);
     deps.bookmarksChanged();
     pushBookmarks();
   }
@@ -105,22 +104,28 @@ function createManagers(deps) {
     save(all);
     return { ok: true };
   }
-  // Adds bookmarks from a Netscape file, skipping addresses already bookmarked.
+  // Adds bookmarks from a Netscape file, skipping addresses already bookmarked. Folders inside folders, the file's order and its
+  // empty folders come along (bookmark-html.js mergeImport, into settings.bookmarkLayout).
+  const stored = () => list().map((b) => ({ url: b.url, title: b.title, ...(b.folder ? { folder: b.folder } : {}) }));
   function importHtml(html) {
-    const all = list();
-    const known = new Set(all.map((b) => b.url));
-    let added = 0;
-    for (const b of parseNetscape(html)) {
+    const lib = bookmarkHtml();
+    const parsed = lib.parseNetscapeTree(html);
+    const urls = new Map();
+    const items = [];
+    for (const b of parsed.list) {
       const href = webUrl(b.url);
-      if (!href || known.has(href)) continue;
-      known.add(href);
-      all.push({ url: href, title: cleanTitle(b.title) || deps.hostOf(href) || href, folder: cleanFolder(b.folder) });
-      added++;
+      if (!href || urls.has(b.url)) continue;
+      urls.set(b.url, href);
+      const folder = cleanFolder(b.folder);
+      items.push({ url: href, title: cleanTitle(b.title) || deps.hostOf(href) || href, ...(folder ? { folder } : {}) });
     }
-    if (added) save(all);
-    return added;
+    const order = {};
+    for (const [p, keys] of Object.entries(parsed.order)) order[p] = keys.map((k) => (k.startsWith('u:') ? (urls.has(k.slice(2)) ? `u:${urls.get(k.slice(2))}` : null) : k)).filter(Boolean);
+    const merged = lib.mergeImport(stored(), deps.bookmarkLayout?.(), { list: items, folders: parsed.folders, order });
+    if (merged.added || merged.emptyAdded) save(merged.list, deps.bookmarkLayout ? merged.layout : undefined);
+    return merged.added;
   }
-  const exportHtml = () => toNetscape(list());
+  const exportHtml = () => bookmarkHtml().toNetscape(stored(), deps.bookmarkLayout?.());
 
   function pushBookmarks() {
     for (const t of deps.tabs()) if (t.managerPage === 'bookmarks' && deps.alive(t)) t.view.webContents.send('bookmarks:changed');
