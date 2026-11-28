@@ -155,15 +155,37 @@ function cacheLastTool(tools) {
 const PARALLEL_READS = new Set(['find_sources', 'delegate', 'read_page', 'find', 'read_urls', 'read_tabs', 'web_search', 'read_pdf', 'screenshot', 'list_tabs', 'analyze_posts', 'get_console', 'get_network']);
 const isParallelRead = (use) => PARALLEL_READS.has(use.name) && !(use.name === 'read_page' && use.input && use.input.since_last);
 
+// [parallel tabs] The tab a call explicitly names when working there touches nothing else (runToolUses' lane): tools whose own tab_id
+// picks the tab they look at or answer in. Calls that move the task to another tab (switch_tab), close or regroup tabs (Undo compares
+// the tab list before and after each one), or name no tab_id work in the task's tab and keep their order (null).
+const LANE_TOOLS = new Set(['screenshot', 'get_console', 'get_network', 'read_pdf', 'video_overview', 'video_frames', 'handle_dialog']);
+function toolLane(use) {
+  const id = use && use.input ? use.input.tab_id : undefined;
+  return LANE_TOOLS.has(use && use.name) && Number.isInteger(id) ? id : null;
+}
+
+// [parallel tabs] May calls a and b (in that order, in one turn) run at the same time? Each is { read, lane }: `read` from isParallel,
+// `lane` the tab it explicitly names (laneOf), or null for "the task's tab / no particular tab". Two reads always may. An action with no
+// lane may never (it works in the task's tab, which any other call may read or act in). A read with no lane waits for every action
+// (it reads the task's tab, which may be the one named). Otherwise (both name a tab) they may when the tabs differ: calls on one tab keep
+// their order.
+function mayOverlap(a, b) {
+  if (a.read && b.read) return true;
+  if (a.lane == null || b.lane == null) return false;
+  return a.lane !== b.lane;
+}
+
 // Runs a turn's tool calls. Every call is gated (`gate`, may throw) one at a time, in order, before
-// it runs; a run of consecutive parallel-safe calls is gated first and then executed together, and
-// anything else waits for the calls before it. `exec` runs an approved call. Returns one outcome
+// it runs; a run of consecutive calls that may overlap (mayOverlap: reads, and calls that name different tabs) is gated first and
+// then executed together, and anything else waits for the calls before it. `exec` runs an approved call. Returns one outcome
 // per call, in call order: { ok, value } | { ok: false, error, gated } | { skipped: true }.
-// `halts(outcome)` (e.g. the user stopped, the tab closed) skips every call after that outcome.
+// `halts(outcome)` (e.g. the user stopped, the tab closed) skips every call after that outcome's group.
+// `laneOf(use)`: the tab a call explicitly names (only when acting there leaves every other tab alone), else null.
 // `onOutcome` fires as each call finishes (for live progress). An outcome that ran carries `ms`: how long `exec` took (not the gate,
 // so not the time an approval card waited for the user).
-async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halts = () => false, onOutcome = () => {} }) {
+async function runToolUses(uses, { isParallel = isParallelRead, laneOf = () => null, gate, exec, halts = () => false, onOutcome = () => {} }) {
   const outcomes = new Array(uses.length);
+  const kinds = uses.map((use) => ({ read: Boolean(isParallel(use)), lane: laneOf(use) ?? null }));
   let group = [];
   let halted = false;
   const settle = (i, outcome) => { outcomes[i] = outcome; onOutcome(uses[i], outcome, i); };
@@ -174,8 +196,7 @@ async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halt
     if (indexes.some((i) => halts(outcomes[i]))) halted = true;
   };
   for (let i = 0; i < uses.length; i++) {
-    const parallel = isParallel(uses[i]);
-    if (!parallel || halted) await flush();
+    if (halted || group.some((j) => !mayOverlap(kinds[j], kinds[i]))) await flush();
     if (halted) { settle(i, { skipped: true }); continue; }
     try {
       await gate(uses[i], i);
@@ -185,7 +206,6 @@ async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halt
       continue;
     }
     group.push(i);
-    if (!parallel) await flush();
   }
   await flush();
   return outcomes;
@@ -303,4 +323,4 @@ function isPictureQuestion(text, imageCount = 0) {
   return imageCount > 0 && t.length <= 240 && !NEEDS_BROWSER_PICTURE.test(t);
 }
 
-module.exports = { isPictureQuestion, stubOldImages, OLD_IMAGE_NOTE, RunBudget, SAFETY_CEILING, STEP_CHOICES, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, turnLimitHit, isSimpleQuestion, RepeatDetector, ToolCallCache, CACHEABLE, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, runToolUses };
+module.exports = { isPictureQuestion, stubOldImages, OLD_IMAGE_NOTE, RunBudget, SAFETY_CEILING, STEP_CHOICES, stepLimit, WRAP_UP, LIMIT_NOTICE, STALL_NOTICE, turnLimitHit, isSimpleQuestion, RepeatDetector, ToolCallCache, CACHEABLE, stubOldPages, advancePageStub, CONTEXT_TRIGGER_TOKENS, withNote, trimToolResults, cacheLastTool, BENIGN, PARALLEL_READS, isParallelRead, LANE_TOOLS, toolLane, mayOverlap, runToolUses };
