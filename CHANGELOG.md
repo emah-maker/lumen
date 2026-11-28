@@ -4,6 +4,8 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+## 0.5.118 (2026-11-28)
+
 - **The ready-made new tab no longer reloads itself every 3 seconds.** Lumen keeps a new-tab page ready in the background so Ctrl+T opens at once. With a Spotify or Apple Music card on it, that hidden page asked for the card's "Starting…" state again every 3 seconds, and each ask reloaded the whole page, for as long as it waited. Now the waiting page stays put, a card asks at most 10 times quickly, and the page starts asking again when it becomes your tab. Checked live, signed out: the cards leave "Starting…" within about 3 seconds, and a player that can't load says so instead of hanging. Tests: `test/units/music-card-features-units.js`.
 - **The AI notices when a page sent it to sign in.** After the AI opens or reads a page that redirected to a sign-in screen (x.com/home goes to x.com's front page when you're signed out), it now says the page is a sign-in wall instead of reading the front page as the answer. Before, only reading several addresses at once caught this. Tests: `test/units/page-reading-units.js`.
 
