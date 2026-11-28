@@ -464,6 +464,24 @@ const messages = $('messages');
 // [step labels] The step cards' code (step-labels.js, step-ui.js, step-ui.css) is not part of the start-up bundle: it loads the first time a message is sent or a
 // chat with cards is drawn (the chat page lists it itself). A step that arrives before it has loaded gets a plain row.
 let stepUILoad = null;
+// [ask options] The question card's code (renderer/ask-card.js, its rules in ai/ask-user.js, and ask-card.css): loaded with the first card, not
+// with the window (the UI bundle's budget).
+let askCardLoad = null;
+const askCards = new Map(); // ask id -> its card on screen (ask_done marks it answered)
+function loadAskCard() {
+  if (window.askCard) return Promise.resolve();
+  if (askCardLoad) return askCardLoad;
+  const head = document.head;
+  head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'ask-card.css' }));
+  const script = (src) => new Promise((resolve) => { head.append(Object.assign(document.createElement('script'), { src, onload: resolve, onerror: resolve })); });
+  askCardLoad = (window.askUser ? Promise.resolve() : script('../ai/ask-user.js')).then(() => script('ask-card.js'));
+  return askCardLoad;
+}
+function askDone(event) {
+  const box = askCards.get(event.askId);
+  if (!box) return;
+  if (event.answers) { box.answer?.(event.answers); askCards.delete(event.askId); } else box.ended?.(); // (stopped or no answer in time: still clickable, its pick is the next message)
+}
 function loadStepUI() {
   if (window.stepUI) { window.stepUI.init(messages); return Promise.resolve(); } // click / Enter on a step opens its details
   if (stepUILoad) return stepUILoad;
@@ -1764,6 +1782,7 @@ const TOOL_LABELS = {
   analyze_posts: () => t('tool.analyze_posts'),
   find_sources: (i) => t(i.related ? 'tool.find_sources.related' : 'tool.find_sources', { query: i.query ?? '' }),
   propose_plan: () => t('tool.propose_plan'), // [plan mode]
+  ask_user: () => t('tool.ask_user'), // [ask options]
   research_board: (i) => t(`tool.research_board.${['add', 'quote', 'star', 'remove', 'list', 'cite'].includes(i.action) ? i.action : 'list'}`),
   delegate: (i) => t('tool.delegate', { count: Array.isArray(i.tasks) ? i.tasks.length : 0 }),
   parallel_tasks: (i) => t('tool.parallelTasks', { count: Array.isArray(i.tasks) ? Math.min(i.tasks.length, 3) : 0 }), // [acting helpers]
@@ -1868,6 +1887,7 @@ function onAgentEvent(event) {
   // An approval card answered or cancelled from an older run (after Stop or New chat) still has to
   // clear, or the toolbar's "waiting for approval" badge stayed on.
   if (event.type === 'approval_done') { resolveApproval(event.approvalId, event.ok, event.names); return; }
+  if (event.type === 'ask_done') { askDone(event); return; } // [ask options]
   // [ai manners] Always: main closed the tabs the AI opened after the run (the turn is over by then): say so, with Undo.
   if (event.type === 'ai_tabs_closed') { if (!turn && event.runId === aiTabsRunId) window.showAiTabsClosed?.(append, event); return; }
   // [skills] After a run ended (opt-in, Settings → Skills): "Save how I did this as a skill?" or "Update the skill?" (skills.js)
@@ -2069,6 +2089,25 @@ function onAgentEvent(event) {
       turn.textSource = '';
       const card = window.planModeUI?.card(event.plan);
       if (card) appendToTurn(card);
+      break;
+    }
+    case 'ask': { // [ask options] ask_user: a card of clickable answers; the run waits for the pick (renderer/ask-card.js)
+      endThinking();
+      finishReply(turn.text, turn.textSource);
+      endStream();
+      turn.text = null; // (words after the answer are a reply of their own, under the card)
+      turn.textSource = '';
+      chatHost.needSidebar?.();
+      announce(event.questions?.[0]?.question || t('chat.approvalWaiting'));
+      const slot = appendToTurn(Object.assign(document.createElement('div'), { className: 'ask-slot' }));
+      loadAskCard().then(() => {
+        const box = window.askCard?.card({ askId: event.askId, questions: event.questions, live: true });
+        if (!box) { slot.remove(); return; }
+        slot.replaceWith(box);
+        askCards.set(event.askId, box);
+        scrollToBottom();
+        box.querySelector('.ask-opt')?.focus({ preventScroll: true });
+      });
       break;
     }
     case 'approval':
@@ -3263,6 +3302,8 @@ const restoredFiles = (files) => (Array.isArray(files) ? files : []).filter((f) 
 // Also used by renderer/chats.js to show a chat picked from the history list.
 function showHistory(items, loaded = false) {
   if (!loaded && !window.stepUI && Array.isArray(items) && items.some((i) => i && i.cards)) { loadStepUI().then(() => showHistory(items, true)); return; } // (a chat with cards waits for their code)
+  if (!window.askCard && Array.isArray(items) && items.some((i) => i && Array.isArray(i.asks))) { loadAskCard().then(() => showHistory(items, true)); return; } // [ask options] ...and one with question cards for theirs
+  historyLast = Array.isArray(items) ? items[items.length - 1] : null;
   restoring = true;
   try { renderHistory(items); } finally { restoring = false; }
   scrollToBottom(); // (the "jump to latest" button follows where the view ended)
@@ -3281,6 +3322,7 @@ function historySplit(items, { chars, items: count } = FIRST_DRAW) {
   while (start > 0 && items[start].role !== 'user') start--;
   return start;
 }
+let historyLast = null; // [ask options] the chat's last saved entry: an unanswered question card there can still be answered (as the next message)
 function renderHistory(items) {
   if (!Array.isArray(items) || !items.length || messages.querySelector('.msg')) return;
   const cut = historySplit(items);
@@ -3392,6 +3434,7 @@ function drawItems(items, userEntries, replyEntries) {
         summary.firstChild.textContent = t(item.steps === 1 ? 'chat.usedActions.one' : 'chat.usedActions.other', { count: item.steps });
         append(summary);
       }
+      if (Array.isArray(item.asks) && window.askCard) for (const a of item.asks) { const box = window.askCard.card({ askId: '', questions: a.questions, answers: a.answers || null, live: raw === historyLast || item === historyLast }); if (box) { box.classList.add('restored'); append(box); } } // [ask options] its question cards, answered (or, on the chat's last reply, still open)
       // [quiet run] A turn that ended while its run went on: what it said was the card's line then, so no bubble now (unless it asked something).
       if (item.interim && !window.runQuiet?.asks(item.text) && !item.generated?.length && !item.outFiles?.length) continue;
       bubble.className = 'msg assistant';
