@@ -1,18 +1,6 @@
 /* The sidebar's Tasks panel and the "Run in the background?" card (renderer/tasks.js). Uses the chat
    list's panel base (chats.css) and the theme variables, so light and dark follow the rest of the UI. */
 
-.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-
-.tasks-btn { position: relative; }
-.tasks-btn.active { color: var(--accent); background: var(--accent-soft); }
-.task-badge {
-  position: absolute; top: 1px; right: 0; min-width: 14px; height: 14px; padding: 0 var(--sp-1); border-radius: var(--r-sm);
-  background: var(--accent-deep); color: var(--on-accent); font-size: 9px; font-weight: 600; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums;
-}
-.task-badge.waiting { background: var(--warning); }
-#toggle-sidebar.has-task-attention { position: relative; }
-#toggle-sidebar.has-task-attention::after { content: ""; position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 2px var(--bg); }
-
 .task-panel { z-index: var(--z-panel-over); } /* over the chat list if both were ever open */
 .task-head { gap: var(--sp-2); }
 .task-head h2 { flex: 1; min-width: 0; margin: 0 var(--sp-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -101,7 +89,6 @@
 
 
 /* Progress, "needs you" and results. */
-.tasks-btn.has-unseen::after { content: ""; position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 2px var(--bg); }
 .task-live { margin: 0; font-size: 11px; color: var(--accent-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 p.task-live { white-space: normal; overflow-wrap: anywhere; margin: var(--sp-1) 0 var(--sp-3); }
 .task-new { flex: none; align-self: center; padding: var(--sp-px) var(--sp-3); border-radius: var(--r-md); font-size: 10px; font-weight: 600; background: var(--accent-soft); color: var(--accent-text); }
