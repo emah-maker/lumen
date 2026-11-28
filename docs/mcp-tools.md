@@ -99,7 +99,7 @@ Click by [id] from read_page/find, or by visible text. observe:true (also on cli
 
 ### `fill_form`
 
-Fill several fields by label/placeholder (text, select, date, checkbox "true"/"false", radio option label). submit:true only if the user approved submitting.
+Fill several fields by label/placeholder (text, select by its option text, date, checkbox "true"/"false", radio option label) in one call. submit:true submits the form (a search or a filter form needs no OK; anything else only if the user approved submitting), and the answer then shows the page it lands on.
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
@@ -396,13 +396,14 @@ Search the active tab for text: returns matching controls as [id] refs and short
 
 ### `batch`
 
-Run several actions on the active tab in one call; stops at the first failure or when the page moves to another site. Returns what changed, so no follow-up read_page is needed. Steps: {do:"type",ref,text,enter?} {do:"click",ref\|text} {do:"select",ref,text} {do:"press",key,modifiers?} {do:"wait_for",text|url|gone|network_idle} {do:"scroll",direction} {do:"hover",ref}. Confirmation rules still apply.
+Run several actions on the active tab in one call; stops at the first failure or when the page moves to another site. Returns what changed, so no follow-up read_page is needed. Steps: {do:"type",ref\|label,text,enter?} {do:"click",ref\|text} {do:"select",ref\|label,text} {do:"press",key,modifiers?} {do:"wait_for",text|url|gone|network_idle} {do:"scroll",direction} {do:"hover",ref}. A `type` or `select` step can name its field by `label` (found the way `fill_form` finds it) instead of a `ref`, so a batch needs no `read_page` first; `enter: true` on a type step presses Enter, which submits a search. Confirmation rules still apply.
 
 | Parameter | Type | Required |
 |---|---|---|
 | `steps` | object[] | yes |
 | `steps[].do` | `type`, `click`, `select`, `press`, `wait_for`, `scroll`, `hover` | yes |
 | `steps[].ref` | integer |  |
+| `steps[].label` | string |  |
 | `steps[].text` | string |  |
 | `steps[].enter` | boolean |  |
 | `steps[].key` | string |  |

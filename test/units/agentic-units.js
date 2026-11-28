@@ -500,7 +500,45 @@ async function engineRuns() {
   fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 12, retryDelay: 250 });
 }
 
+// The element registry is kept between calls while the page did not change (snapshot.js REGISTRY_FRESH / REGISTRY_ARM), run in a sandbox
+// with a stand-in page: a readPage whose walk counts how often it ran, and a MutationObserver the test fires by hand.
+function registryReuse() {
+  const vm = require('vm');
+  const snap = require('../../src/ai/snapshot');
+  const fakeScripts = { readPage: () => '(() => { const accessibleName = () => "x"; window.walks = (window.walks || 0) + 1; const registry = [{ el: {} }, { el: {} }]; window.__claudeEls = registry; return { text: "t" }; })()' };
+  const observers = [];
+  const pageNode = { nodeType: 1, id: '', hasAttribute: () => false };
+  const ring = { nodeType: 1, id: '', hasAttribute: (a) => a === 'data-lumen-ui' }; // Lumen's click ring (page-scripts.js locate)
+  const cursors = { nodeType: 1, id: '__lumen-agent-cursors', hasAttribute: () => false };
+  class MutationObserver { constructor(cb) { this.cb = cb; this.on = false; observers.push(this); } observe() { this.on = true; } disconnect() { this.on = false; } takeRecords() { return []; } fire(records = [{ target: pageNode, addedNodes: [], removedNodes: [] }]) { if (this.on) this.cb(records); } }
+  const win = { innerWidth: 800, innerHeight: 600 };
+  const ctx = vm.createContext({ window: win, MutationObserver, Symbol, Object, document: { documentElement: {} }, location: { href: 'https://a.test/' } });
+  Object.defineProperty(ctx, 'innerWidth', { get: () => win.innerWidth });
+  Object.defineProperty(ctx, 'innerHeight', { get: () => win.innerHeight });
+  const run = (o) => vm.runInContext(snap.registryScript(fakeScripts, o), ctx);
+  const a = run({ reuse: true });
+  const b = run({ reuse: true });
+  check('registry: built once, then reused while the page is unchanged (same ids, no walk)', !a.reused && b.reused === true && b.totalElements === 2 && win.walks === 1, JSON.stringify([a, b, win.walks]));
+  observers.forEach((o) => o.fire([{ target: pageNode, addedNodes: [ring], removedNodes: [] }, { target: ring, addedNodes: [], removedNodes: [] }, { target: pageNode, addedNodes: [cursors], removedNodes: [] }]));
+  const b2 = run({ reuse: true });
+  check('registry: Lumen\'s own marks (the click ring, the AI cursors) coming and going are not a change', b2.reused === true && win.walks === 1, JSON.stringify([b2, win.walks]));
+  observers.forEach((o) => o.fire());
+  const c = run({ reuse: true });
+  check('registry: any change to the page means a fresh walk', !c.reused && win.walks === 2, JSON.stringify([c, win.walks]));
+  win.innerWidth = 500;
+  const d = run({ reuse: true });
+  check('registry: a resized window means a fresh walk', !d.reused && win.walks === 3);
+  ctx.location.href = 'https://a.test/#two';
+  const e = run({ reuse: true });
+  check('registry: another address means a fresh walk', !e.reused && win.walks === 4);
+  const f = run({});
+  check('registry: a forced build always walks (a miss in a kept registry: resolveTarget)', !f.reused && win.walks === 5);
+  const g = run({ reuse: true });
+  check('registry: ...and arms the check again', g.reused === true && win.walks === 5);
+}
+
 async function snapshotRuns() {
+  registryReuse();
   const snap = require('../../src/ai/snapshot');
   let lines = ['# Shop', '[1] button "Add"'];
   let url = 'https://a.test/';
@@ -540,12 +578,26 @@ async function snapshotRuns() {
   await snap.execute(agent4, 'read_page', { mode: 'compact' }, h(false));
   const n0 = scriptsSeen.length;
   const out4 = await snap.execute(agent4, 'batch', { steps: [{ do: 'click', ref: 1 }] }, h(false));
-  check('batch: a fresh read of the same page is reused as the baseline (no extra read)', scriptsSeen.length - n0 === 2 && /Changes since your last read \(\+1 \/ -0/.test(out4), `${scriptsSeen.length - n0} scripts: ${out4}`);
+  check('batch: a fresh read of the same page is reused as the baseline (no extra read; the closing diff builds the registry and outline in one round trip)', scriptsSeen.length - n0 === 1 && /Changes since your last read \(\+1 \/ -0/.test(out4), `${scriptsSeen.length - n0} scripts: ${out4}`);
   await snap.execute(agent4, 'read_page', { mode: 'compact' }, h(false));
   await snap.execute(agent4, 'click', { element_id: 1 }, h(false)); // an acting tool since the read
   const n1 = scriptsSeen.length;
   await snap.execute(agent4, 'batch', { steps: [{ do: 'click', ref: 1 }] }, h(false));
-  check('batch: an acting tool since the last read means a new baseline', scriptsSeen.length - n1 === 4, String(scriptsSeen.length - n1));
+  check('batch: an acting tool since the last read means a new baseline (one round trip each)', scriptsSeen.length - n1 === 2, String(scriptsSeen.length - n1));
+
+  // batch: type and select name a field by its label (found as fill_form finds it) instead of a ref; neither is an error.
+  {
+    const calls = [];
+    const looked = [];
+    const agent5 = { ...agent, requireTab: () => wc4, resolveTarget: async (_wc, label, mode) => { looked.push([label, mode]); return { Email: 7, Size: 9 }[label] ?? Promise.reject(new Error(`Nothing on the page matches "${label}".`)); }, execute: async (name, input) => { calls.push([name, input]); return 'ok'; } };
+    const out5 = await snap.execute(agent5, 'batch', { steps: [{ do: 'type', label: 'Email', text: 'a@b.c' }, { do: 'select', label: 'Size', text: 'Large' }, { do: 'click', text: 'Send' }] }, h(false));
+    check('batch: type / select by label resolve to the field, in order, then click by text', JSON.stringify(calls.map(([n, i]) => [n, i.element_id ?? i.text, i.text])) === JSON.stringify([['type_text', 7, 'a@b.c'], ['type_text', 9, 'Large'], ['click', 'Send', 'Send']]) && looked.every(([, m]) => m === 'field') && !/FAILED/.test(out5), JSON.stringify(calls) + out5);
+    calls.length = 0;
+    const out6 = await snap.execute(agent5, 'batch', { steps: [{ do: 'type', label: 'Phone', text: '1' }, { do: 'click', text: 'Send' }] }, h(false));
+    check('batch: a label that matches nothing fails that step and stops the batch', calls.length === 0 && /1\. FAILED: Nothing on the page matches "Phone"/.test(out6) && /Stopped at step 1 of 2/.test(out6), out6);
+    const out7 = await snap.execute(agent5, 'batch', { steps: [{ do: 'type', text: 'x' }] }, h(false));
+    check('batch: type with neither ref nor label says what it needs', /"type" needs ref or label/.test(out7), out7);
+  }
 
   // ReadCache: cleared when the model loses its earlier reads, and keyed by session.
   const rc = new snap.ReadCache();
@@ -572,7 +624,7 @@ async function snapshotRuns() {
   try { new Function(`return ${reg}`); } catch { parses = false; }
   check('registry script: parses, stores window.__claudeEls with labels, skips body.innerText and the element list', parses && reg.includes('window.__claudeEls = registry;') && reg.includes('entry.label = accessibleName') && !reg.includes('document.body.innerText') && !reg.includes('elementRange') && reg.length < scripts.readPage(0, 0).length, reg.slice(-200));
   check('registry script: compact and find use it (no full readPage)', scriptsSeen.every((s) => s !== scripts.readPage(0, 0)), '');
-  check('registry script: falls back to the full read if readPage changes shape', snap.registryScript({ readPage: () => '(() => 1)()' }) === '(() => 1)()', '');
+  check('registry script: falls back to the full read if readPage changes shape', (() => { const s = snap.registryScript({ readPage: () => '(() => 1)()' }); return s.includes('const out = (() => 1)();') && !s.includes('entry.label = accessibleName') && (() => { try { new Function(`return ${s}`); return true; } catch { return false; } })(); })(), '');
 }
 
 // Grok Build, without grok: setup written once per content change, status event at spawn, thinking not held.
@@ -847,6 +899,28 @@ async function settleBody(clock) {
   await clock.run(settleAfterAction(spa));
   check('settle: a same-document navigation (pushState) is not waited on as a load', Date.now() - t < 400, `${Date.now() - t} ms`);
 
+  // [fewer waits] An action that changed nothing (no mutation by STILL_MS, no request since it began) is done then; a request means the usual wait.
+  const stillWc = () => { const wc = new EventEmitter(); wc.isDestroyed = () => false; wc.isLoading = () => false; wc.scripts = []; wc.executeJavaScriptInIsolatedWorld = (_w, [{ code }]) => { wc.scripts.push(code); return new Promise((resolve) => (/stillMs: [1-9]/.test(code) ? setTimeout(() => resolve('still'), 60) : setTimeout(() => resolve('quiet'), 100))); }; return wc; };
+  let sw = stillWc();
+  t = Date.now();
+  await clock.run(settleAfterAction(sw, 8000, { since: t, fetching: () => false }));
+  const stillMs = Date.now() - t;
+  check('settle: unchanged page, no request: done at ~60 ms (not a 100 ms quiet spell)', stillMs >= 55 && stillMs < 100 && sw.scripts.length === 1, `${stillMs} ms, ${sw.scripts.length} scripts`);
+  sw = stillWc();
+  t = Date.now();
+  let asked = null;
+  await clock.run(settleAfterAction(sw, 8000, { since: t, fetching: (from) => { asked = from; return true; } }));
+  const fetchMs = Date.now() - t;
+  check('settle: unchanged page but a request since the action: the usual quiet spell follows', fetchMs >= 160 && sw.scripts.length === 2 && asked === t, `${fetchMs} ms, ${sw.scripts.length} scripts`);
+  sw = stillWc();
+  t = Date.now();
+  await clock.run(settleAfterAction(sw, 8000, { since: t, fetching: () => { throw new Error('no tracker'); } }));
+  check('settle: a check that fails counts as a request (the usual wait)', Date.now() - t >= 160, `${Date.now() - t} ms`);
+  sw = stillWc();
+  t = Date.now();
+  await clock.run(settleAfterAction(sw));
+  check('settle: without the time of an action (navigate, submit) never the short wait', Date.now() - t >= 100 && !/stillMs: [1-9]/.test(sw.scripts[0]), `${Date.now() - t} ms`);
+
   // The in-page DOM wait itself (run against a fake MutationObserver): a constantly mutating page resolves at ~650 ms.
   const vm = require('vm');
   const { DOM_QUIET } = require('../../src/ai/agent');
@@ -867,6 +941,25 @@ async function settleBody(clock) {
     vm.runInNewContext(DOM_QUIET, { document: { documentElement: {} }, MutationObserver: Obs, setTimeout, clearTimeout, setInterval, clearInterval }).then((why) => resolve({ why, ms: Date.now() - start }));
   })));
   check('settle: a burst of mutations that then pauses still resolves quiet', bursty.why === 'quiet' && bursty.ms < 640, JSON.stringify(bursty));
+  const { domQuiet } = require('../../src/ai/agent');
+  const stillRun = (mutateAt, markers = [], records = []) => new Promise((resolve) => {
+    let fire = null;
+    class Obs { constructor(cb) { fire = cb; } observe() { if (mutateAt != null) this.t = setTimeout(() => fire(records), mutateAt); } disconnect() { clearTimeout(this.t); } }
+    const start = Date.now();
+    vm.runInNewContext(`(${domQuiet.toString()})({ quietMs: 100, capMs: 650, extendMs: 200, stillMs: 60 })`, { document: { documentElement: {}, querySelectorAll: () => markers }, MutationObserver: Obs, setTimeout, clearTimeout, setInterval, clearInterval, WeakSet, globalThis: {} }).then((why) => resolve({ why, ms: Date.now() - start }));
+  });
+  const s0 = await clock.run(stillRun(null));
+  check('dom quiet: no change at all is "still" at stillMs', s0.why === 'still' && s0.ms >= 55 && s0.ms < 100, JSON.stringify(s0));
+  const s1 = await clock.run(stillRun(20));
+  check('dom quiet: a change before stillMs means the full quiet spell after it', s1.why === 'quiet' && s1.ms >= 115, JSON.stringify(s1));
+  const spinner = { getAttribute: () => null, getClientRects: () => [1] };
+  const s2 = await clock.run(stillRun(null, [spinner]));
+  check('dom quiet: a loading marker on screen is never "still"', s2.why !== 'still' && s2.ms >= 100, JSON.stringify(s2));
+  const ringNode = { nodeType: 1, id: '', hasAttribute: (a) => a === 'data-lumen-ui' };
+  const s3 = await clock.run(stillRun(20, [], [{ target: { nodeType: 1, id: '', hasAttribute: () => false }, addedNodes: [ringNode], removedNodes: [] }, { target: ringNode, addedNodes: [], removedNodes: [] }]));
+  check('dom quiet: Lumen\'s own click ring appearing and fading is not a change ("still")', s3.why === 'still' && s3.ms < 100, JSON.stringify(s3));
+  const s4 = await clock.run(stillRun(20, [], [{ target: ringNode, addedNodes: [], removedNodes: [] }, { target: { nodeType: 1, id: 'list', hasAttribute: () => false }, addedNodes: [], removedNodes: [] }]));
+  check('dom quiet: ...but a page change in the same batch still counts', s4.why === 'quiet' && s4.ms >= 115, JSON.stringify(s4));
 }
 
 // Lumen's MCP tool entry (features/ai-agents.js mcpCallTool) driven through a sidebar Claude Code run, with fakes.

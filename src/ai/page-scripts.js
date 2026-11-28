@@ -229,6 +229,7 @@ function locate(id) {
       y += f.top + chain[i].clientTop;
     }
     const ring = document.createElement('div');
+    ring.setAttribute('data-lumen-ui', ''); // (Lumen's own: the settle wait and the registry check ignore it, agent.js domQuiet)
     ring.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;width:28px;height:28px;margin:-14px 0 0 -14px;' +
       'border:2px solid #0a84ff;border-radius:50%;box-shadow:0 0 0 4px rgba(10,132,255,.28);' + (matchMedia('(prefers-reduced-motion: reduce)').matches ? '' : 'transition:opacity .5s .3s;') +
       'left:' + x + 'px;top:' + y + 'px';
@@ -501,8 +502,8 @@ function clickProbeArm() {
   return `(() => {
     const key = Symbol.for('lumen.clickProbe');
     if (window[key]) window[key].off();
-    const rec = { hit: false };
-    const on = () => { rec.hit = true; };
+    const rec = { hit: false, wake: null };
+    const on = () => { rec.hit = true; if (rec.wake) rec.wake(); };
     const types = ['mousedown', 'mouseup', 'click', 'pointerdown'];
     for (const t of types) window.addEventListener(t, on, true);
     rec.off = () => { for (const t of types) window.removeEventListener(t, on, true); };
@@ -518,6 +519,22 @@ function clickProbeRead(done = false) {
     const hit = rec.hit;
     if (${done ? 'true' : 'hit'}) { rec.off(); delete window[key]; }
     return hit;
+  })()`;
+}
+
+// The same read, waited for in the page: resolves true as soon as the click's first mouse event arrives (at once if it came already), false
+// after timeoutMs with none; either way the listeners are removed. One round trip instead of polling clickProbeRead from the main process.
+function clickProbeWait(timeoutMs = 400) {
+  return `(() => {
+    const key = Symbol.for('lumen.clickProbe');
+    const rec = window[key];
+    if (!rec) return true; // (a navigation cleared it: the click happened)
+    const done = (hit) => { rec.off(); if (window[key] === rec) delete window[key]; return hit; };
+    if (rec.hit) return done(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { rec.wake = null; resolve(done(rec.hit)); }, ${Math.max(0, Math.round(Number(timeoutMs) || 0))});
+      rec.wake = () => { clearTimeout(timer); rec.wake = null; resolve(done(true)); };
+    });
   })()`;
 }
 
@@ -890,4 +907,4 @@ const glance = `(() => {
   return { title: document.title, focus };
 })()`;
 
-module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, agentCursor, cursorsHidden, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup, domPress, fileHookInstall, fileHookRead, fileHookInput, fileHookRemove, dropProbeArm, dropProbeRead, dropProbeDisarm, dropFilesReset, dropTargets, dropFilesAdd, dropFilesSend };
+module.exports = { glance, PAGE_TEXT, HELPERS, readPage, formatFull, locate, agentCursor, cursorsHidden, domClick, domHover, domClickAt, clickProbeArm, clickProbeRead, clickProbeWait, focusSave, focusRestore, userInField, focusForTyping, setValue, scroll, labelOf, findTarget, findToggle, toggleState, submitForm, textProbe, uploadProbe, uploadReport, uploadCleanup, domPress, fileHookInstall, fileHookRead, fileHookInput, fileHookRemove, dropProbeArm, dropProbeRead, dropProbeDisarm, dropFilesReset, dropTargets, dropFilesAdd, dropFilesSend };

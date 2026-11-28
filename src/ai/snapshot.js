@@ -576,7 +576,7 @@ const NEW_TOOLS = [
   },
   {
     name: 'batch',
-    description: 'Several actions, stopping at a failure: type{ref,text,enter?} click{ref|text} select{ref,text} press{key,modifiers?} wait_for{text|url|gone|network_idle} scroll{direction} hover{ref}.',
+    description: 'In order; stops at a failure: type{ref|label,text,enter?} click{ref|text} select{ref|label,text} press{key,modifiers?} wait_for{text|url|gone|network_idle} scroll{direction} hover{ref}.',
     input_schema: {
       type: 'object',
       properties: {
@@ -587,6 +587,7 @@ const NEW_TOOLS = [
             properties: {
               do: { type: 'string', enum: ['type', 'click', 'select', 'press', 'wait_for', 'scroll', 'hover'] },
               ref: { type: 'integer' },
+              label: { type: 'string' }, // type / select: the field by its label, as fill_form finds it (instead of ref)
               text: { type: 'string' },
               url: { type: 'string' },
               gone: { type: 'string' },
@@ -645,31 +646,55 @@ const annotate = require('./annotate'); // shotScaleOf: what a screenshot's pixe
 const REGISTRY_MARK = 'window.__claudeEls = registry;';
 const registryCache = new Map(); // readPage options -> { src, script }
 // opts: readPage's ({ frames: false } in a page whose embedded frames frames.js reads, and in each frame).
-function registryScript(scripts, opts = {}) {
+// opts.reuse: keep the registry the last build left when the page provably did not change since (REGISTRY_FRESH): no walk, same ids.
+function registryScript(scripts, { reuse = false, ...opts } = {}) {
   const src = scripts.readPage(0, 0, opts);
   const key = JSON.stringify(opts);
-  if (registryCache.get(key)?.src === src) return registryCache.get(key).script;
-  const at = src.indexOf(REGISTRY_MARK);
-  const script = at < 0 || !src.includes('accessibleName') ? src
-    : `${src.slice(0, at)}${REGISTRY_MARK}
+  if (registryCache.get(key)?.src !== src) {
+    const at = src.indexOf(REGISTRY_MARK);
+    const script = at < 0 || !src.includes('accessibleName') ? src
+      : `${src.slice(0, at)}${REGISTRY_MARK}
     registry.forEach((entry) => { entry.label = accessibleName(entry.el).slice(0, 80); });
     return { totalElements: registry.length };
   })()`;
-  registryCache.set(key, { src, script });
-  return script;
+    registryCache.set(key, { src, script, built: `(() => { const out = ${script}; ${REGISTRY_ARM}; return out; })()`, reused: `(() => { ${REGISTRY_FRESH} const out = ${script}; ${REGISTRY_ARM}; return out; })()` });
+  }
+  return registryCache.get(key)[reuse ? 'reused' : 'built'];
 }
+// [fewer round trips] Was the page left alone since the registry was built? A MutationObserver armed right after each build marks it
+// dirty at the first change (any node, attribute or text) and stops listening, so it costs nothing on a busy page. The registry is
+// reused only while it is clean, at the same address and window size (a resize can show or hide elements). The agent cursor lives in
+// its own shadow root, which the observer does not see. A click or type that finds nothing in a reused registry rebuilds it
+// (agent.js resolveTarget), so a change the observer can't see (a :hover menu) costs one more walk, never a wrong miss.
+const REGISTRY_KEY = "Symbol.for('lumen.registryClean')";
+const REGISTRY_FRESH = `{ const rec = window[${REGISTRY_KEY}]; if (rec && rec.obs && window.__claudeEls && !rec.dirty && !rec.obs.takeRecords().some((r) => !rec.theirs || rec.theirs(r)) &&rec.href === location.href && rec.w === innerWidth && rec.h === innerHeight) return { totalElements: window.__claudeEls.length, reused: true }; }`;
+const REGISTRY_ARM = `try {
+      const rec = window[${REGISTRY_KEY}] || (window[${REGISTRY_KEY}] = { obs: null, dirty: true });
+      // (Lumen's own marks, the click ring and the AI's cursors, are not the page changing)
+      const ours = (n) => Boolean(n && n.nodeType === 1 && (n.id === '__lumen-agent-cursors' || n.hasAttribute('data-lumen-ui')));
+      const theirs = (r) => { const nodes = [...(r.addedNodes || []), ...(r.removedNodes || [])]; return !ours(r.target) && !(nodes.length && nodes.every(ours)); };
+      rec.theirs = theirs;
+      if (!rec.obs) rec.obs = new MutationObserver((records) => { if (Array.isArray(records) && records.length && !records.some(theirs)) return; rec.dirty = true; rec.obs.disconnect(); });
+      rec.obs.disconnect();
+      Object.assign(rec, { dirty: false, href: location.href, w: innerWidth, h: innerHeight });
+      rec.obs.observe(document.documentElement || document, { subtree: true, childList: true, attributes: true, characterData: true });
+    } catch {}`;
+
+// A page script that first builds the element registry (registryScript) and then runs `then` (an expression), in one round trip.
+// The registry is reused when the page did not change since it was built (REGISTRY_FRESH).
+const withRegistry = (scripts, opts, then) => `(() => { ${registryScript(scripts, { ...opts, reuse: true })}; return ${then}; })()`;
 
 // dedupe: a read the model asked for itself (read_page), in the sidebar's own chat (h.dedupe): an
 // identical read soon after the last one gets the short "unchanged" line (ReadCache).
 async function compact(agent, wc, input, h, { dedupe = false } = {}) {
   const inFrames = frames.available(wc); // embedded frames are outlined each in its own frame (below)
-  await h.runScript(wc, registryScript(h.scripts, { frames: !inFrames })); // builds the element registry the refs point into
-  const result = await h.runScript(wc, serialize(compactOutline, {
+  // The element registry the refs point into, built in the same round trip as the outline.
+  const result = await h.runScript(wc, withRegistry(h.scripts, { frames: !inFrames }, serialize(compactOutline, {
     maxChars: Math.min(Math.max(Number(input.max_chars) || DEFAULT_OUTLINE_CHARS, 1000), 20000),
     blockChars: 280,
     startLine: input.start_line || 0,
     hrefs: Boolean(input.hrefs),
-  }), 15000);
+  })), 15000);
   if (inFrames && !input.start_line) result.lines.push(...await frameOutlines(agent, wc, input, h));
   const url = wc.getURL();
   const snaps = reads.snaps();
@@ -830,9 +855,15 @@ async function batch(agent, wc, input, h) {
     const n = `${i + 1}.`;
     try {
       let tool;
+      // type / select name their field by ref or by label (found the way fill_form finds it, in the tab as it is now)
+      const field = async () => {
+        if (step.ref != null) return step.ref;
+        if (typeof step.label === 'string' && step.label.trim()) return agent.resolveTarget(agent.requireTab(), step.label, 'field');
+        throw new Error(`"${step.do}" needs ref or label.`);
+      };
       switch (step.do) {
-        case 'type': tool = ['type_text', { element_id: step.ref, text: step.text ?? '', press_enter: Boolean(step.enter) }]; break;
-        case 'select': tool = ['type_text', { element_id: step.ref, text: step.text ?? '' }]; break;
+        case 'type': tool = ['type_text', { element_id: await field(), text: step.text ?? '', press_enter: Boolean(step.enter) }]; break;
+        case 'select': tool = ['type_text', { element_id: await field(), text: step.text ?? '' }]; break;
         case 'click': tool = ['click', step.ref ? { element_id: step.ref } : { text: step.text }]; break;
         case 'press': tool = ['press_key', { key: step.key, ...(step.modifiers ? { modifiers: step.modifiers } : {}) }]; break;
         case 'wait_for': tool = ['wait_for', { ...(step.text !== undefined ? { text: step.text } : {}), ...(step.url !== undefined ? { url: step.url } : {}), ...(step.gone !== undefined ? { gone: step.gone } : {}), ...(step.network_idle === true ? { network_idle: true } : {}), seconds: 10 }]; break;
@@ -888,8 +919,7 @@ ${json.length > 20000 ? `${json.slice(0, 20000)}
     const wc = agent.requireTab();
     const inFrames = frames.available(wc);
     const max = Math.min(Math.max(Number(input.max) || 8, 1), 20);
-    await h.runScript(wc, registryScript(h.scripts, { frames: !inFrames })); // the refs it returns point into this registry
-    const r = await h.runScript(wc, serialize(findMatches, { query: String(input.query || ''), max }));
+    const r = await h.runScript(wc, withRegistry(h.scripts, { frames: !inFrames }, serialize(findMatches, { query: String(input.query || ''), max }))); // the refs it returns point into this registry, built in the same round trip
     if (inFrames && r.matches.length < max) { // and in the embedded frames, each in its own registry
       const { frames: list } = await frames.list(wc, { allow: (url) => !agent.browser.aiOff?.(url) });
       const registry = registryScript(h.scripts, { frames: false });
