@@ -4,6 +4,10 @@ Notable changes to Lumen. Versions follow the tags on GitHub; downloads are on [
 
 ## Unreleased
 
+- **The startup-size check reads Windows paths too.** The perf-budget test that keeps heavy modules (the AI SDKs, screenshot, QR code, sync) from loading at startup now converts module paths to forward slashes itself, so it doesn't rely on the paths it is given already using them. On current main it passes: none of those modules loads at startup, and startup loads 341 modules.
+
+## 0.5.116 (2026-11-27)
+
 - **See the AI's cursor on the page.** While the AI works in a tab, a blue **Lumen** arrow moves to what it clicks, types into or scrolls and says what it is doing ("Lumen · Clicking"); a click shows a ripple, and the field it types into is outlined for a moment. Helpers keep their own colored cursors. The arrow never takes your clicks, fades a few seconds after the AI stops, and is left out of the AI's own page reads and screenshots. Turn it off in Settings → AI → **Show the AI's cursor**.
 - **The tab the AI is working in is marked.** While a step acts in a tab (a click, typing, a page load), the tab's icon has a breathing ring in your accent color, and a folded tab group shows it on its label.
 - **AI clicks are about twice as fast.** Each click waited 400 ms in case it started a download. It now waits that long only after a click that starts a page load, and 100 ms otherwise (enough for a file the page makes itself). On a simple page a click went from about 600 ms to about 240 ms. A download that starts later still reaches the AI with its next step.
