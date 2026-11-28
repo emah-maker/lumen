@@ -317,6 +317,26 @@ function foldBurned(text, versions) {
   return { text: fromLf(serializeChangelog(parsed), nl), folded };
 }
 
+// ------------------------------------------------------------------------------------------- what a release tag records and points at
+
+// The annotated tag's message: the title, then a "Release-Head:" trailer naming the commit the release checks ran on and the build preflight built,
+// which the next release's default suite choice diffs against (the tag's own tree may differ: see tagTarget).
+const releaseTagMessage = (version, head) => `Lumen ${version}\n\nRelease-Head: ${head}\n`;
+// The Release-Head sha in a tag message, or null (tags made before the trailer existed).
+function parseReleaseHead(message) {
+  const m = /^Release-Head:\s*([0-9a-f]{40})\s*$/m.exec(String(message || ''));
+  return m ? m[1] : null;
+}
+
+// Which commit the tag goes on, so that the tagged tree is the one checked and pre-flighted (and release.yml publishes those artifacts):
+// the merge commit when it has the head's tree (a squash of an unmoved main), else the head itself (main moved: the PR was merged with a merge
+// commit, so the head is in main's history). onMain says whether that commit is in main's history.
+// { head, mergeSha, sameTree, headOnMain } -> { sha, onMain, why }
+function tagTarget({ head, mergeSha, sameTree, headOnMain }) {
+  if (mergeSha && sameTree) return { sha: mergeSha, onMain: true, why: 'the merge commit has the pre-flighted tree' };
+  return { sha: head, onMain: Boolean(headOnMain), why: headOnMain ? 'main moved during the release: the pre-flighted head, which the merge commit keeps in the history of main' : 'the merge commit differs from the pre-flighted head and does not contain it: the head is tagged anyway (off main) so the artifacts and notes match the checks' };
+}
+
 // ----------------------------------------------------------------------------------------------- when the PR's CI can be skipped
 
 const RELEASE_FILES = ['CHANGELOG.md', 'package.json', 'package-lock.json'];
@@ -667,7 +687,7 @@ function releasePlan({ version, date, opts, counts = {} }) {
 
 module.exports = {
   mergeBlocker, lockDecision,
-  sectionVersion, findBurned, foldBurned,
+  sectionVersion, findBurned, foldBurned, releaseTagMessage, parseReleaseHead, tagTarget,
   RELEASE_FILES, ciSkipVerdict,
   pickPreflightRun, runVerdict, buildManifest, artifactsReusable, verifyChecksums,
   PERF_SENSITIVE, isPerfSensitive, planLanes, unitJobs, electronJobs, sharedResources, SHARED_RESOURCE_PATTERNS, KNOWN_EXCLUSIVE, CORE_SUITES, selectSuites, diffTokens, splitDiff, srcImporters, namesModule,

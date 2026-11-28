@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Cuts a release: a release worktree from origin/main, the CHANGELOG cut and version bump, every check run hidden, and (only on a
-// clean pass) the "Release X.Y.Z" PR, CI, squash-merge, annotated tag on the merge commit, and the release.yml build.
+// clean pass) the "Release X.Y.Z" PR, CI, squash-merge (a merge commit when main moved meanwhile: see the merge stage), the annotated tag on the
+// commit with the pre-flighted tree, and the release.yml build.
 //   node scripts/release/release.js <X.Y.Z | patch | minor | major> [options]
 //   --dry-run        print the plan and the derived suite list; changes nothing (no fetch, worktree, process kill, push, dispatch or tag)
 //   --checks-only    stop after the checks: nothing is pushed
@@ -16,7 +17,7 @@
 //   --serial-checks  run the checks one after another (default: the pure-node lane alongside the Electron lane)
 //   --electron-jobs <n>  run n ordinary Electron suites at once (default min(3, cores/4, RAM/10 GB); 1 = one at a time). Suites that bind a
 //                    fixed port or share the clipboard or the machine's windows/processes run alone, perf-sensitive ones last and alone
-//   --full           run every Electron suite (default: the core set plus the suites related to the files changed since the last release tag)
+//   --full           run every Electron suite (default: the core set plus the suites related to the files changed since what the last release built)
 //   --fresh-install  npm ci in the worktree instead of reusing the main checkout's node_modules
 // Never run it while another Lumen test or release is using Electron: it refuses when a release worktree is mid-run.
 // Stages and gotchas: docs/releasing.md.
@@ -27,9 +28,10 @@ const { spawn, spawnSync } = require('child_process');
 const e2eLock = require('../test/e2e-lock');
 const {
   cutChangelog, changelogSection, readSuites, suiteFile, bumpVersion, deriveChecks, procsUnder,
-  findBurned, foldBurned, compareVersions, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, electronJobs, sharedResources, selectSuites, splitDiff, srcImporters, releasePlan, stageDone, stagesLeft,
+  findBurned, foldBurned, compareVersions, releaseTagMessage, tagTarget, ciSkipVerdict, pickPreflightRun, runVerdict, nodeModulesMatch, planLanes, unitJobs, electronJobs, sharedResources, selectSuites, splitDiff, srcImporters, releasePlan, stageDone, stagesLeft,
 } = require('./release-lib');
 const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, gitRetry, NET_TRIES, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState } = require('./ship-common');
+const { mergeMainInto, releaseBase, contains } = require('./release-git');
 
 const CO_AUTHOR = process.env.LUMEN_CO_AUTHOR || 'Claude Opus 5.5 <noreply@anthropic.com>';
 const STATE_FILE = 'lumen-release-state.json';
@@ -54,19 +56,34 @@ function planChecks(readFile, listTestFiles) {
   return { stages, derived, sources, shared };
 }
 
-// The default suite choice (see selectSuites): the files changed since the last release tag, up to the commit before the release commit,
-// with what selectSuites narrows by: each changed src file's diff, who requires whom under src/, and every src file's text (all at headRev).
-// null when there is no tag to compare with (then everything runs).
+// The head of the merged "Release X.Y.Z" PR for a tag made before tags carried Release-Head (that head is what its checks ran on and its preflight
+// built), or null.
+function releasePrHead(wt, tag) {
+  const title = `Release ${tag.replace(/^v/, '')}`;
+  const r = gh(wt, 'pr', 'list', '--state', 'merged', '--search', `"${title}" in:title`, '--json', 'title,headRefOid', '--limit', '10');
+  if (r.status !== 0) return null;
+  try { const pr = JSON.parse(r.stdout).find((p) => p.title === title); return pr ? pr.headRefOid : null; } catch { return null; }
+}
+
+// The default suite choice (see selectSuites): the files changed since what the last release checked and built (the Release-Head in its tag,
+// see releaseBase in release-git.js), up to `headRev`, with what selectSuites narrows by: each changed src file's diff, who requires whom under src/,
+// and every src file's text (all at headRev). Not the tag's tree: when main moved during that release, the tag held code no release checked.
+// null when there is no tag to compare with; { tag, unknown: true } when what it built cannot be found (then everything runs).
 function changedSinceTag(wt, tagGuess, headRev) {
   const tag = tagGuess || git(wt, 'describe', '--tags', '--abbrev=0', headRev).stdout;
   if (!tag) return null;
-  const r = git(wt, 'diff', '--name-only', tag, headRev);
-  if (r.status !== 0) return null;
+  const offline = process.env.LUMEN_RELEASE_OFFLINE === '1'; // the units' dry runs: no gh, no fetch
+  const base = releaseBase(wt, tag, offline ? {} : { prHead: (t) => releasePrHead(wt, t), fetch: (sha) => git(wt, 'fetch', '-q', 'origin', sha) });
+  if (!base) return { tag, unknown: true };
+  const r = git(wt, 'diff', '--name-only', base.rev, headRev);
+  if (r.status !== 0) return { tag, unknown: true };
   const files = r.stdout.split('\n').filter(Boolean);
-  const d = spawnSync('git', ['diff', '-U0', tag, headRev, '--', 'src'], { cwd: wt, encoding: 'utf8', maxBuffer: 1 << 30, windowsHide: true });
+  const d = spawnSync('git', ['diff', '-U0', base.rev, headRev, '--', 'src'], { cwd: wt, encoding: 'utf8', maxBuffer: 1 << 30, windowsHide: true });
   const diffs = d.status === 0 ? splitDiff(d.stdout) : {};
-  return { tag, files, diffs, ...srcAt(wt, headRev) };
+  return { tag, base: base.rev, how: base.how, files, diffs, ...srcAt(wt, headRev) };
 }
+const sinceText = (ch) => `${ch.tag} (${ch.how === 'pr' ? 'its release PR head' : 'the head it built'}, ${ch.base.slice(0, 8)})`;
+const unknownText = (ch) => `what ${ch.tag} built is unknown (no Release-Head in the tag, no release PR found)`;
 
 // { srcTexts: { path: text } for the .js, .css and .html files under src/ at `rev` (not vendor/, not the generated bundles), importers }.
 function srcAt(wt, rev) {
@@ -164,12 +181,12 @@ async function runChecks(wt, st, opts) {
   let only = opts.only || (opts.full ? null : st.only) || null;
   if (!only && !opts.full && !st.full) {
     const ch = changedSinceTag(wt, st.baseTag, 'HEAD~1');
-    const pick = ch ? pickSuites(ch, derived, sources) : null;
+    const pick = ch && !ch.unknown ? pickSuites(ch, derived, sources) : null;
     if (pick && !pick.full) {
       only = pick.names;
-      st.selection = { tag: ch.tag, changed: ch.files.length, reasons: pick.reasons };
-      say('checks', `default selection: ${pick.names.length} of ${derived.electron.length} Electron suites (the core set and what the ${ch.files.length} files changed since ${ch.tag} relate to; --full runs all)`);
-    } else say('checks', ch ? `running every Electron suite: a build, dependency or workflow file changed since ${ch.tag}` : 'running every Electron suite: no release tag to compare with');
+      st.selection = { tag: ch.tag, base: ch.base, changed: ch.files.length, reasons: pick.reasons };
+      say('checks', `default selection: ${pick.names.length} of ${derived.electron.length} Electron suites (the core set and what the ${ch.files.length} files changed since ${sinceText(ch)} relate to; --full runs all)`);
+    } else say('checks', !ch ? 'running every Electron suite: no release tag to compare with' : ch.unknown ? `running every Electron suite: ${unknownText(ch)}` : `running every Electron suite: a build, dependency or workflow file changed since ${sinceText(ch)}`);
   }
   if (only) { st.only = only; saveState(wt, st); stages = stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)); const unknown = only.filter((n) => !derived.electron.includes(n)); if (unknown.length) say('checks', `--only names suites test-all.js does not list (skipped): ${unknown.join(', ')}`); }
   if (derived.missing.length) say('checks', `named in test-all.js but not in test/units/ or test/e2e/ (skipped): ${derived.missing.join(', ')}`);
@@ -347,7 +364,8 @@ async function prepare(wt, version, st) {
 
 function releaseBody(wt, version, st) {
   const tag = st.baseTag || git(wt, 'describe', '--tags', '--abbrev=0', 'origin/main').stdout;
-  const subjects = tag ? git(wt, 'log', '--no-merges', '--format=%s', `${tag}..origin/main`).stdout.split('\n').filter((s) => s && !/^Release \d/.test(s)) : [];
+  const since = (st.selection && st.selection.base) || tag; // what the last release built (its tag may hold more)
+  const subjects = since ? git(wt, 'log', '--no-merges', '--format=%s', `${since}..origin/main`).stdout.split('\n').filter((s) => s && !/^Release \d/.test(s)) : [];
   const lines = [`Release ${version}: version bump, and Unreleased becomes the ${version} section.`, ''];
   if (st.folded && st.folded.length) lines.push(`${st.folded.join(', ')} was tagged but never published (its build failed after the tag), so its notes are folded into ${version}.`, '');
   if (subjects.length) lines.push(`Included since ${tag}:`, ...subjects.map((s) => `- ${s}`), '');
@@ -399,26 +417,26 @@ async function cancelPreflight(wt, st) {
 }
 
 // Can the CI wait on the release PR be skipped? See ciSkipVerdict (release-lib.js): only when the commit is mechanically the release and its base passed CI.
-async function decideCiSkip(wt, st, version, opts) {
+async function decideCiSkip(wt, st, version, opts, head = st.head) {
   if (opts.noSkipCi) return { skip: false, reasons: ['--no-skip-ci'] };
-  const base = must(git(wt, 'merge-base', 'origin/main', st.head), 'git merge-base');
-  const files = must(git(wt, 'diff', '--name-only', base, st.head), 'git diff').split('\n').filter(Boolean);
+  const base = must(git(wt, 'merge-base', 'origin/main', head), 'git merge-base');
+  const files = must(git(wt, 'diff', '--name-only', base, head), 'git diff').split('\n').filter(Boolean);
   const show = (rev, f) => { const r = git(wt, 'show', `${rev}:${f}`); return r.status === 0 ? r.out : null; };
   const texts = (rev) => ({ changelog: show(rev, 'CHANGELOG.md'), package: show(rev, 'package.json'), lock: show(rev, 'package-lock.json') });
   const runs = await ghJsonRetry(wt, ['run', 'list', '--workflow', 'ci.yml', '--commit', base, '--json', 'status,conclusion'], { tries: NET_TRIES, log: (m) => say('ci', m) });
   const baseCi = runs.some((r) => r.status === 'completed' && r.conclusion === 'success') ? 'success' : (runs[0] ? runs[0].conclusion || runs[0].status : '');
-  const v = ciSkipVerdict({ files, version, base: texts(base), head: texts(st.head), baseCi });
+  const v = ciSkipVerdict({ files, version, base: texts(base), head: texts(head), baseCi });
   st.ciBase = base;
   return v;
 }
 
 // The gate before the merge: CI on the PR (unless verified skippable) and the build preflight, polled together.
-async function waitGates(wt, st, version, opts) {
-  const verdict = await decideCiSkip(wt, st, version, opts);
+async function waitGates(wt, st, version, opts, head = st.head) {
+  const verdict = await decideCiSkip(wt, st, version, opts, head);
   st.skipCi = verdict.skip;
   saveState(wt, st);
   if (verdict.skip) say('ci', `not waiting for the PR's CI: ${verdict.reasons.join('; ')}`);
-  else say('ci', `waiting for CI on ${st.head.slice(0, 8)}${opts.noSkipCi ? '' : ` (cannot skip: ${verdict.reasons.join('; ')})`}`);
+  else say('ci', `waiting for CI on ${head.slice(0, 8)}${opts.noSkipCi ? '' : ` (cannot skip: ${verdict.reasons.join('; ')})`}`);
   const t0 = Date.now();
   let last = '';
   let blind = 0;
@@ -430,9 +448,9 @@ async function waitGates(wt, st, version, opts) {
     let line = '';
     try {
       if (!verdict.skip) {
-        const s = await ciState(wt, st.head, { log: (m) => say('ci', m) });
-        if (s.state === 'failed') throw new Stop(`CI failed on ${st.head.slice(0, 8)}: ${s.bad.workflowName} (${s.bad.conclusion}) ${s.bad.url}`);
-        if (s.state === 'none' && Date.now() - t0 > 10 * 60000) throw new Stop(`no CI run appeared for ${st.head.slice(0, 8)} after 10 min`);
+        const s = await ciState(wt, head, { log: (m) => say('ci', m) });
+        if (s.state === 'failed') throw new Stop(`CI failed on ${head.slice(0, 8)}: ${s.bad.workflowName} (${s.bad.conclusion}) ${s.bad.url}`);
+        if (s.state === 'none' && Date.now() - t0 > 10 * 60000) throw new Stop(`no CI run appeared for ${head.slice(0, 8)} after 10 min`);
         ciOk = s.state === 'success';
         line += ciOk ? 'CI passed' : s.state === 'none' ? 'CI not started' : 'CI running';
       }
@@ -487,27 +505,66 @@ async function ship(wt, st, version, opts) {
     say('ci', 'gates passed');
   }
   if (!done(st, 'merge')) {
+    // Main may have moved while the checks ran (a PR merged). A squash onto it would put code no check ran on into the tagged tree, and GitHub's
+    // own CHANGELOG merge filed the new PR's bullets under the release (0.5.115 took #1124's). Instead the branch takes main in (mergeMainInto:
+    // the version section stays the pre-flighted head's, the new bullets stay under Unreleased), CI runs on that, and the PR is merged with a merge
+    // commit, so the pre-flighted head stays in main's history and is what gets tagged.
+    let prHead = (st.sync && st.sync.sha) || st.head;
+    for (let syncs = 0; ;) {
+      must(await gitRetry(wt, ['fetch', '-q', 'origin'], { log: log('merge') }), 'git fetch');
+      // A merge of main pushed by hand (after the Stop below): take it, once its version section is still the pre-flighted head's.
+      const pushed = git(wt, 'rev-parse', '-q', '--verify', `refs/remotes/origin/${st.branch}`).stdout;
+      if (pushed && pushed !== prHead && contains(wt, pushed, prHead)) {
+        const sectionOf = (rev) => changelogSection(git(wt, 'show', `${rev}:CHANGELOG.md`).out, version);
+        if (sectionOf(pushed) !== sectionOf(st.head)) throw new Stop(`${st.branch} on origin (${pushed.slice(0, 8)}) changes the ${version} section of CHANGELOG.md; it must stay the pre-flighted head's`);
+        prHead = pushed;
+        st.sync = { sha: pushed, main: null, kept: [], gated: false, byHand: true }; saveState(wt, st);
+        say('merge', `${st.branch} on origin moved to ${pushed.slice(0, 8)} (a merge of main by hand): merging that`);
+      }
+      if (contains(wt, prHead, 'origin/main')) {
+        if (!st.sync || st.sync.gated) break;
+        await waitGates(wt, st, version, opts, prHead); // CI on the merge of main (kept across --resume), then main is looked at again
+        st.sync.gated = true; saveState(wt, st);
+        continue;
+      }
+      if (++syncs > 3) throw new Stop(`main keeps moving (merged into ${st.branch} 3 times); --resume tries again`);
+      const main = must(git(wt, 'rev-parse', 'origin/main'), 'git rev-parse');
+      let s;
+      try { s = mergeMainInto(wt, { head: prHead, main, version, message: `Merge main into the ${version} release\n\nPRs merged while the release ran stay under Unreleased: ${version} ships the pre-flighted head ${st.head.slice(0, 8)}.\n\nCo-Authored-By: ${CO_AUTHOR}` }); } catch (err) {
+        throw new Stop(`main moved during the release, and ${err.message}. Merge origin/main into ${st.branch} by hand (the ${version} section unchanged, new bullets under Unreleased), push, then --resume.`);
+      }
+      must(await gitRetry(wt, ['push', '-q', '--force-with-lease', 'origin', `${s.sha}:refs/heads/${st.branch}`], { recheck: REMOTE_HEAD(wt, st.branch, s.sha), log: log('merge') }), 'git push');
+      if (git(wt, 'merge', '-q', '--ff-only', s.sha).status !== 0) say('merge', `(the worktree stays at ${prHead.slice(0, 8)}; the branch on origin is ${s.sha.slice(0, 8)})`);
+      prHead = s.sha;
+      st.sync = { sha: s.sha, main, kept: s.kept, gated: false }; saveState(wt, st);
+      say('merge', `main moved during the release: merged it into ${st.branch} as ${s.sha.slice(0, 8)}; ${s.kept.length} new bullet(s) stay under Unreleased${s.kept.length ? `:\n    ${s.kept.map((l) => l.slice(0, 100)).join('\n    ')}` : ''}`);
+    }
     // A transient error may hit after GitHub merged: before each retry, an already-merged PR counts as success.
     const merged = () => { const j = gh(wt, 'pr', 'view', String(st.pr), '--json', 'state'); try { return j.status === 0 && JSON.parse(j.stdout).state === 'MERGED' ? { status: 0, stdout: '' } : null; } catch { return null; } };
-    must(await ghRetry(wt, ['pr', 'merge', String(st.pr), '--squash', '--match-head-commit', st.head], { tries: NET_TRIES, recheck: merged, log: (m) => say('merge', m) }), 'gh pr merge');
+    must(await ghRetry(wt, ['pr', 'merge', String(st.pr), st.sync ? '--merge' : '--squash', '--match-head-commit', prHead], { tries: NET_TRIES, recheck: merged, log: (m) => say('merge', m) }), 'gh pr merge');
     must(await gitRetry(wt, ['fetch', '-q', 'origin'], { log: log('merge') }), 'git fetch');
     st.mergeSha = (await ghJsonRetry(wt, ['pr', 'view', String(st.pr), '--json', 'mergeCommit'], { tries: NET_TRIES, log: (m) => say('merge', m) })).mergeCommit.oid;
     st.stage = 'merge'; saveState(wt, st);
-    say('merge', `squash-merged as ${st.mergeSha.slice(0, 8)}`);
+    say('merge', `${st.sync ? 'merged (merge commit)' : 'squash-merged'} as ${st.mergeSha.slice(0, 8)}`);
+    // Main moving again in the seconds before the merge is left to GitHub's merge: say so when it changed the CHANGELOG section.
+    const sectionAt = (rev) => { const r = git(wt, 'show', `${rev}:CHANGELOG.md`); return r.status === 0 ? changelogSection(r.out, version) : null; };
+    if (sectionAt(st.mergeSha) !== sectionAt(st.head)) say('merge', `WARNING: main moved again just before the merge and the ${version} section on main differs from the pre-flighted head's; the tag and its notes use the head's. Move any extra bullets on main back under Unreleased.`);
   }
-  // The tag run publishes the preflight's artifacts only when it is the same tree (a squash of an unmoved main is); say which to expect.
+  // The tag goes on a commit with the pre-flighted tree (see tagTarget), so the tag run publishes the preflight's artifacts and the notes are its CHANGELOG.
   const treeOf = (rev) => git(wt, 'rev-parse', `${rev}^{tree}`).stdout;
-  st.reuse = Boolean(st.preflight && st.preflight.runId && st.mergeSha && treeOf(st.mergeSha) && treeOf(st.mergeSha) === treeOf(st.head));
-  say('merge', st.reuse ? 'the merge commit has the same tree as the pre-flighted head: the tag will publish those artifacts' : st.preflight ? 'main moved (the tree differs): the tag run builds again' : 'no build preflight: the tag run builds');
+  const target = tagTarget({ head: st.head, mergeSha: st.mergeSha, sameTree: Boolean(st.mergeSha && treeOf(st.mergeSha) && treeOf(st.mergeSha) === treeOf(st.head)), headOnMain: Boolean(st.mergeSha) && contains(wt, st.mergeSha, st.head) });
+  st.tagSha = target.sha;
+  st.reuse = Boolean(st.preflight && st.preflight.runId);
+  say('merge', `the tag goes on ${target.sha.slice(0, 8)}: ${target.why}; ${st.reuse ? 'the tag run will publish the pre-flighted artifacts' : 'no build preflight: the tag run builds that tree'}`);
   if (!done(st, 'tag')) {
     const tag = `v${version}`;
     const have = git(wt, 'rev-parse', '-q', '--verify', `refs/tags/${tag}^{commit}`);
-    if (have.status !== 0) must(git(wt, 'tag', '-a', tag, '-m', `Lumen ${version}`, st.mergeSha), 'git tag');
-    else if (have.stdout !== st.mergeSha) throw new Stop(`local tag ${tag} points at ${have.stdout.slice(0, 8)}, not the merge commit ${st.mergeSha.slice(0, 8)}`);
+    if (have.status !== 0) must(git(wt, 'tag', '-a', tag, '-m', releaseTagMessage(version, st.head), target.sha), 'git tag');
+    else if (have.stdout !== target.sha) throw new Stop(`local tag ${tag} points at ${have.stdout.slice(0, 8)}, not ${target.sha.slice(0, 8)}`);
     const onRemote = () => { const r = git(wt, 'ls-remote', '--tags', 'origin', tag); return r.status === 0 && r.stdout ? { status: 0, stdout: '' } : null; };
     must(await gitRetry(wt, ['push', '-q', 'origin', tag], { recheck: onRemote, log: log('tag') }), 'git push tag');
     st.stage = 'tag'; saveState(wt, st);
-    say('tag', `${tag} (annotated) on the merge commit, pushed`);
+    say('tag', `${tag} (annotated, Release-Head ${st.head.slice(0, 8)}) on ${target.sha.slice(0, 8)}, pushed`);
   }
   if (!done(st, 'publish')) {
     const tag = `v${version}`;
@@ -547,9 +604,9 @@ function dryRun(main, spec, opts) {
   let why = null;
   if (!only && !opts.full) {
     const ch = changedSinceTag(main, null, 'origin/main');
-    const pick = ch ? pickSuites(ch, derived, sources) : null;
-    if (pick && !pick.full) { only = pick.names; why = pick.reasons; selectionNote = `the core set plus suites related to the ${ch.files.length} files changed since ${ch.tag}: ${pick.names.length} of ${derived.electron.length} Electron suites (--full runs all)`; }
-    else selectionNote = ch ? `every Electron suite (a build, dependency or workflow file changed since ${ch.tag})` : 'every Electron suite (no release tag to compare with)';
+    const pick = ch && !ch.unknown ? pickSuites(ch, derived, sources) : null;
+    if (pick && !pick.full) { only = pick.names; why = pick.reasons; selectionNote = `the core set plus suites related to the ${ch.files.length} files changed since ${sinceText(ch)}: ${pick.names.length} of ${derived.electron.length} Electron suites (--full runs all)`; }
+    else selectionNote = !ch ? 'every Electron suite (no release tag to compare with)' : ch.unknown ? `every Electron suite (${unknownText(ch)})` : `every Electron suite (a build, dependency or workflow file changed since ${sinceText(ch)})`;
   } else if (only) selectionNote = `--only: ${only.length} named Electron suites`;
   const kept = only ? stages.filter((x) => x.kind === 'plain' || x.name === 'perf-budget' || only.includes(x.name)) : stages;
   const ej = opts.serialChecks ? 1 : pickElectronJobs(opts);
