@@ -11,6 +11,7 @@ const { isContextError } = require('./fallback'); // one "too long for the model
 const genImages = require('../features/gen-images');
 const effortLib = require('./effort');
 const providerUsage = require('../features/provider-usage');
+const turnTiming = { requestOf: (timer, ...rest) => (timer ? require('./turn-timing').requestOf(timer, ...rest) : { mark() {}, done() {} }) }; // [turn timing] LUMEN_TURN_TIMING=1 (loaded only when on)
 
 const PROVIDERS = {
   openai: {
@@ -284,11 +285,31 @@ async function streamTurn(args) {
     return streamTurnOnce({ ...args, tools: [] });
   }
 }
-async function streamTurnOnce({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null, effort = '' }) {
-  const request = (client || clientFor(provider, apiKey)).chat.completions.create(
-    { model, messages: toChatMessages(system, messages, { provider, model }), ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider), ...effortLib.chatParams(provider, model, effort) },
-    { signal },
-  );
+// [prompt cache] What helps each provider reuse the chat's cached prefix (system prompt, tools, earlier turns) on the next request:
+// OpenAI caches a repeated prefix by itself, and prompt_cache_key sends one chat's requests to the same cache; xAI does the same
+// with its x-grok-conv-id header; a Claude model through OpenRouter caches only at a cache_control mark, so the system message
+// (with the tools before it, the part every request repeats) gets one. Gemini caches a repeated prefix without being asked.
+// chatKey: the chat's id (hashed: nothing about the chat leaves); none, no key or header.
+function cacheHints(provider, model, chatKey) {
+  const key = chatKey == null || chatKey === '' ? null : `lumen-${require('crypto').createHash('sha256').update(String(chatKey)).digest('hex').slice(0, 24)}`;
+  return {
+    body: provider === 'openai' && key ? { prompt_cache_key: key } : {},
+    headers: provider === 'xai' && key ? { 'x-grok-conv-id': key } : null,
+    markSystem: provider === 'openrouter' && /^anthropic\//.test(String(model)),
+  };
+}
+function markedSystem(chat) {
+  const [first, ...rest] = chat;
+  if (first?.role !== 'system' || typeof first.content !== 'string') return chat;
+  return [{ role: 'system', content: [{ type: 'text', text: first.content, cache_control: { type: 'ephemeral' } }] }, ...rest];
+}
+
+async function streamTurnOnce({ provider, model, apiKey, system, messages, tools, signal, emit, noTools = false, client = null, effort = '', timer = null, chatKey = null }) {
+  const hints = cacheHints(provider, model, chatKey);
+  const chat = toChatMessages(system, messages, { provider, model });
+  const body = { model, messages: hints.markSystem ? markedSystem(chat) : chat, ...hints.body, ...(provider === 'openrouter' && openRouterInfo(model)?.imageOut ? { modalities: ['image', 'text'] } : {}), ...(tools.length ? { tools: toolSchema(tools, provider), ...(noTools ? { tool_choice: 'none' } : {}) } : {}), stream: true, ...usageOptions(provider), ...effortLib.chatParams(provider, model, effort) };
+  const clock = turnTiming.requestOf(timer, provider, model, timer ? { chars: JSON.stringify(body).length } : undefined); // [turn timing]
+  const request = (client || clientFor(provider, apiKey)).chat.completions.create(body, { signal, ...(hints.headers ? { headers: hints.headers } : {}) });
   // The response's rate-limit headers come with the same request (no extra call): x-ratelimit-* for OpenAI, xAI and OpenRouter.
   let rate = null;
   let stream;
@@ -303,11 +324,14 @@ async function streamTurnOnce({ provider, model, apiKey, system, messages, tools
   let usage = null;
   const pictures = []; // pictures the model made (OpenRouter image models: delta.images), shown in the chat by agent.js
   for await (const chunk of stream) {
+    clock.mark('byte');
     if (chunk.usage) usage = chunk.usage; // the last chunk, when the provider sends token counts
     const choice = chunk.choices?.[0];
     if (!choice) continue;
     const delta = choice.delta || {};
     if (delta.images) pictures.push(...genImages.extractImages({ choices: [{ delta }] }));
+    if (delta.content || delta.reasoning_content || delta.reasoning) clock.mark('token');
+    if (delta.tool_calls?.length) clock.mark('tool');
     if (delta.content) {
       if (!text) emit({ type: 'text_block' });
       text += delta.content;
@@ -324,6 +348,7 @@ async function streamTurnOnce({ provider, model, apiKey, system, messages, tools
     }
     if (choice.finish_reason) finish = choice.finish_reason;
   }
+  clock.done(usage);
   const content = [];
   if (text) content.push({ type: 'text', text });
   for (const call of calls.filter(Boolean)) {
@@ -504,4 +529,4 @@ function openRouterName(model) {
   return bare.replace(/\s*\(free\)\s*$/i, '').trim() || bare;
 }
 
-module.exports = { setLocalSource, imageUrl, clientFor, canGenerateImages, canEditImages, isPolicyError, openRouterImageModel, generateImage, imageModelFor, IMAGE_MODELS, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };
+module.exports = { cacheHints, markedSystem, setLocalSource, imageUrl, clientFor, canGenerateImages, canEditImages, isPolicyError, openRouterImageModel, generateImage, imageModelFor, IMAGE_MODELS, PROVIDERS, openRouterName, openRouterInfo, splitModel, listModels, checkKey, streamTurn, completeJSON, describeProviderError, toChatMessages, openRouterCatalog, parseOpenRouterModels, curatedOpenRouter, canUseTools, resetCatalog: () => { catalog = null; } };

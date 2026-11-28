@@ -69,6 +69,13 @@ const phaseTimer = (tool) => {
   const parts = [];
   return (name, print = false) => { const now = Date.now(); parts.push(`${name} ${now - last}`); last = now; if (print) console.log(`[lumen] ${tool} phases ${parts.join(' · ')}`); };
 };
+// Another document, not the same one with another #fragment.
+const landedElsewhere = (before, after) => String(before || '').split('#')[0] !== String(after || '').split('#')[0];
+// [turn timing] LUMEN_TURN_TIMING=1: send to first token, tool calls and tokens per model request (ai/turn-timing.js, loaded only when on)
+const turnTiming = {
+  taskTimer: (label) => (process.env.LUMEN_TURN_TIMING === '1' ? require('./turn-timing').taskTimer(label) : null),
+  requestOf: (timer, ...rest) => (timer ? require('./turn-timing').requestOf(timer, ...rest) : { mark() {}, done() {} }),
+};
 const toolTiming = (name, ms, ok) => { if (process.env.LUMEN_TOOL_TIMING === '1') console.log(`[lumen] tool ${name} ${ms} ms${ok ? '' : ' (failed)'}`); };
 const CURSOR_AFTER = new Set(['fill_form', 'drag']); // [agent cursors] calls whose cursor goes where they ended (click, type_text, hover and scroll point it as they act)
 const ACT_MARK = new Set(['click', 'click_at', 'drag', 'type_text', 'press_key', 'fill_form', 'upload_file', 'navigate', 'go_back', 'go_forward', 'reload', 'hover', 'scroll']); // [tab acting] steps that mark their tab in the strip
@@ -2622,9 +2629,17 @@ class Agent {
     const scope = taskScope.getStore();
     const leases = new Map();
     if (scope) scope.engineLeases = leases;
+    // [turn timing] LUMEN_TURN_TIMING=1: model requests, tool time and tokens per task (ai/turn-timing.js); off, nothing is wrapped.
+    const timer = turnTiming.taskTimer(String(args[0]?.settings?.model || 'model'));
+    if (timer) {
+      const emit = args[5];
+      args[5] = (event) => { timer.event(event); return emit(event); };
+      if (scope) scope.turnTimer = timer;
+    }
     try {
       return await this.runTaskOnce(...args);
     } finally {
+      if (timer) { try { timer.finish(); } catch { /* a log line never fails a task */ } if (scope?.turnTimer === timer) delete scope.turnTimer; }
       if (scope?.engineLeases === leases) delete scope.engineLeases;
       for (const lease of leases.values()) { try { lease?.release?.(); } catch { /* already freed */ } }
     }
@@ -4417,17 +4432,20 @@ ${prompt}` : prompt), historyImages: [] };
     const extra = await this.externalToolDefs(emit); // [mcp client]
     if (extra.length) params.tools = cacheLastTool([...params.tools, ...extra]);
     if (noTools) params.tool_choice = { type: 'none' }; // the wrap-up turn: answer in text
+    const timer = taskScope.getStore()?.turnTimer; // [turn timing]
+    const clock = turnTiming.requestOf(timer, 'anthropic', params.model, timer ? { chars: JSON.stringify(params).length } : undefined);
     const stream = this.getClient().beta.messages.stream(params, { signal });
     for await (const event of stream) {
+      clock.mark('byte');
       if (event.type === 'content_block_delta') {
-        if (event.delta.type === 'text_delta') emit({ type: 'text', text: event.delta.text });
-        else if (event.delta.type === 'thinking_delta') emit({ type: 'thinking', text: event.delta.thinking });
+        if (event.delta.type === 'text_delta') { clock.mark('token'); emit({ type: 'text', text: event.delta.text }); } else if (event.delta.type === 'thinking_delta') { clock.mark('token'); emit({ type: 'thinking', text: event.delta.thinking }); }
       } else if (event.type === 'content_block_start' && event.content_block.type === 'text') {
         emit({ type: 'text_block' });
-      }
+      } else if (event.type === 'content_block_start' && event.content_block.type === 'tool_use') clock.mark('tool');
     }
     const final = await stream.finalMessage();
     const u = final?.usage;
+    clock.done(u);
     // The response's anthropic-ratelimit-* headers came with the same request (the stream's connection is already resolved: no call).
     let rate = null;
     if (typeof stream.withResponse === 'function') { try { rate = providerUsage.parseRateLimitHeaders('anthropic', (await stream.withResponse()).response?.headers); } catch { rate = null; } }
@@ -4467,6 +4485,8 @@ ${prompt}` : prompt), historyImages: [] };
       signal,
       emit,
       noTools,
+      timer: taskScope.getStore()?.turnTimer, // [turn timing]
+      chatKey: taskScope.getStore()?.chatId ?? null, // [prompt cache] one chat's requests share the provider's prefix cache
     });
     if (provider !== 'local') this.reportApi(provider, { model: turn.model, usage: turn.usage, rate: turn.rate }, emit); // (a model on this computer has no limits or cost to count)
     return turn;
@@ -7481,6 +7501,13 @@ ${CLI_DESKTOP_RULE}`;
   }
   // What a click leaves behind, for its result: the focused element and the title, so the model need not screenshot to know it worked.
   glance(wc) { return runScript(wc, scripts.glance, 1500).catch(() => null); }
+  // [fewer round trips] An action that took the tab to another document (not a #fragment jump): the new page's head comes back with its
+  // result, as navigate's does, so the model needs no read_page just to see where it landed. Not under observe (its diff says it).
+  async landedHead(wc, urlBefore, input) {
+    if (input?.[snapshot.QUIET_LANDING] || wc.isDestroyed() || !landedElsewhere(urlBefore, wc.getURL())) return '';
+    return snapshot.head(this, wc, { runScript, scripts }, { noTitle: false }).catch(() => '');
+  }
+
   async afterClick(wc, before, urlBefore, seen = null) {
     const now = await this.glance(wc);
     const focus = seen?.focus || now?.focus;
@@ -8223,7 +8250,7 @@ ${CLI_DESKTOP_RULE}`;
     // --- end efficiency hook ---
     if (input?.observe && snapshot.OBSERVE_TOOLS.has(name)) { // act, then report what changed (snapshot.js)
       const { observe, ...rest } = input;
-      return snapshot.observe(this, () => this.runTool(name, rest), { runScript, scripts });
+      return snapshot.observe(this, () => this.runTool(name, { ...rest, [snapshot.QUIET_LANDING]: true }), { runScript, scripts }); // (observe's own diff says where it landed)
     }
     switch (name) {
       case 'read_page': {
@@ -8339,7 +8366,7 @@ ${same}
         });
         await settleAfterAction(wc);
         const moved = wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : '';
-        return `Clicked element ${id} (${target.tag} ${quote(target.label || '')}).${moved}`;
+        return `Clicked element ${id} (${target.tag} ${quote(target.label || '')}).${moved}${await this.landedHead(wc, urlBefore, input)}`;
       }
       case 'fill_form': {
         this.noteAiTyped(); // [close guard] what the AI types into its own tab is not the user's unsaved work
@@ -8386,7 +8413,7 @@ ${same}
           const submitted = await this.elementRun(wc, lastId, scripts.submitForm, { missing: false });
           if (!submitted) this.pressKey(wc, 'Enter');
           await settleAfterAction(wc);
-          report.push(`Submitted.${wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : ''}`);
+          report.push(`Submitted.${wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.` : ''}${await this.landedHead(wc, urlBefore, input)}`);
         }
         return report.join('\n');
       }
@@ -8476,6 +8503,7 @@ ${same}
       case 'type_text': {
         this.noteAiTyped(); // [close guard] what the AI types into its own tab is not the user's unsaved work
         const wc = this.requireTab();
+        const urlBefore = wc.getURL();
         await this.waitForUserTyping(wc, input.element_id); // [ai manners] the user is typing in this field: wait for a pause
         this.pointAt(wc, input.element_id, 'type'); // [agent cursors]
         const inFrame = Boolean(frames.decodeId(input.element_id));
@@ -8507,7 +8535,7 @@ ${same}
         if (status && status.set !== undefined) return `Set element ${input.element_id} to "${status.set}".`;
         if (input.press_enter) {
           await settleAfterAction(wc);
-          return `Typed into element ${input.element_id} and pressed Enter. Page is ${wc.getURL()}.${captchaNote(wc.getURL())}`;
+          return `Typed into element ${input.element_id} and pressed Enter. Page is ${wc.getURL()}.${captchaNote(wc.getURL())}${await this.landedHead(wc, urlBefore, input)}`;
         }
         return `Typed into element ${input.element_id}.`;
       }
@@ -8526,10 +8554,11 @@ ${same}
         // (Not the macOS edit commands pressKey runs itself: those act on the focused frame already.)
         const macCommand = process.platform === 'darwin' && [...input.key].length === 1 && (modifiers.includes('control') || modifiers.includes('meta'));
         const inFrame = !macCommand && await this.focusInFrame(wc);
+        const urlBefore = wc.getURL();
         if (inFrame) await manners.agentInputAsync(wc, () => frames.pressKey(wc, input.key, modifiers));
         else this.pressKey(wc, input.key, modifiers);
         await settleAfterAction(wc);
-        return `Pressed ${[...modifiers, input.key].join('+')}.`;
+        return `Pressed ${[...modifiers, input.key].join('+')}.${wc.getURL() !== urlBefore ? ` Page is now ${wc.getURL()}.${captchaNote(wc.getURL())}` : ''}${await this.landedHead(wc, urlBefore, input)}`;
       }
       case 'click_at': {
         const wc = this.requireTab();
@@ -8556,7 +8585,7 @@ ${same}
           seen = await this.glance(wc);
         });
         await settleAfterAction(wc);
-        return `Clicked at (${input.x}, ${input.y}).${await this.afterClick(wc, before, urlBefore, seen)}`;
+        return `Clicked at (${input.x}, ${input.y}).${await this.afterClick(wc, before, urlBefore, seen)}${await this.landedHead(wc, urlBefore, input)}`;
       }
       case 'hover': {
         const wc = this.requireTab();

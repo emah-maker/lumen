@@ -33,6 +33,8 @@ const server = (label) => new Promise((resolve) => {
     if (kind === 'img') { setTimeout(() => { res.setHeader('Content-Type', 'image/svg+xml'); res.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'); }, 400); return; }
     if (kind === 'heavy') return html(page(`Heavy ${n}`, `<h1>Heavy ${n}</h1>${filler}<img src="/img/h${n}"><button>Go</button>`));
     if (kind === 'shell') return html(page(`Shell ${n}`, `<h1>Shell ${n}</h1><img src="/img/${n}"><button>Go</button>`));
+    if (kind === 'form') return html(page(`Search ${n}`, `<h1>Search ${n}</h1>${filler}<form action="/results/${n}"><label>Search <input name="q"></label><button>Go</button></form>`));
+    if (kind === 'results') return html(page(`Results ${n}`, `<h1>Results for ${n}</h1>${filler}<ul><li><a href="/plain/${n}item">First result</a></li><li>Second result</li></ul><button onclick="document.title='Pressed'">Press</button>`));
     if (kind === 'slow') { setTimeout(() => html(page(`Slow ${n}`, `<h1>Slow ${n}</h1>${filler}<button>Press</button>`)), 300); return; }
     return html(page(`Plain ${label} ${n}`, `<h1>Plain ${label} ${n}</h1>${filler}<button onclick="document.title='Pressed'">Press</button>`));
   });
@@ -45,7 +47,7 @@ const server = (label) => new Promise((resolve) => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-ai-turns-'));
   const app = await electron.launch({
     args: [APP],
-    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1', LUMEN_TOOL_TIMING: '1' },
+    env: { ...process.env, CLAUDE_BROWSER_TEST: '1', CLAUDE_BROWSER_PROFILE: profile, ANTHROPIC_API_KEY: 'sk-ant-test', LUMEN_TEST_BACKGROUND: '1', LUMEN_TOOL_TIMING: '1', LUMEN_TURN_TIMING: '1' },
     colorScheme: null,
   });
   const lines = [];
@@ -56,13 +58,17 @@ const server = (label) => new Promise((resolve) => {
     // The fake model: global.__fake.turns is the script (an array of turns, each an array of { name, input }); each model call answers
     // with the next turn's calls, and with "Done." once the script is over. A turn's calls are told apart by their ids.
     await app.evaluate(() => {
-      const fake = global.__fake = { turns: [], at: 0, done: 0 };
-      global.__agent.getClient = () => ({ beta: { messages: { stream: () => {
+      const fake = global.__fake = { turns: [], at: 0, done: 0, log: [] };
+      global.__agent.getClient = () => ({ beta: { messages: { stream: (params) => {
+        const last = params.messages.at(-1);
+        const results = Array.isArray(last?.content) ? last.content.filter((b) => b.type === 'tool_result').map((b) => (typeof b.content === 'string' ? b.content : JSON.stringify(b.content))) : [];
+        const rec = { at: Date.now(), chars: JSON.stringify(params).length, results, end: 0 };
+        fake.log.push(rec);
         const turn = fake.turns[fake.at++];
         const content = turn ? turn.map((c, i) => ({ type: 'tool_use', id: `t${fake.at}-${i}-${Date.now()}`, name: c.name, input: c.input })) : [{ type: 'text', text: 'Done.' }];
         if (!turn) fake.done++;
-        const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: turn ? 'tool_use' : 'end_turn', content, usage: { input_tokens: 50, output_tokens: 10 } };
-        return { async *[Symbol.asyncIterator]() { for (const [index, b] of content.entries()) if (b.type === 'text') yield { type: 'content_block_delta', index, delta: { type: 'text_delta', text: b.text } }; }, finalMessage: async () => message };
+        const message = { role: 'assistant', model: 'claude-opus-5', stop_reason: turn ? 'tool_use' : 'end_turn', content, usage: { input_tokens: Math.round(rec.chars / 4), output_tokens: 10 } };
+        return { async *[Symbol.asyncIterator]() { yield { type: 'message_start' }; for (const [index, b] of content.entries()) { yield { type: 'content_block_start', index, content_block: b.type === 'text' ? { type: 'text', text: '' } : { type: 'tool_use', id: b.id, name: b.name, input: {} } }; if (b.type === 'text') yield { type: 'content_block_delta', index, delta: { type: 'text_delta', text: b.text } }; } }, finalMessage: async () => { rec.end = Date.now(); return message; } };
       } } } });
     });
     await ui.evaluate(() => document.getElementById('toggle-sidebar').click());
@@ -108,6 +114,40 @@ const server = (label) => new Promise((resolve) => {
       for (const [k, xs] of Object.entries(cases)) report(`navigate ${k}`, xs);
       console.log('  phases (first run):');
       for (const p of phases.slice(0, 8)) console.log(`    ${p}`);
+    }
+
+    // A scripted multi-step task (search, open a result, press a button): what Lumen adds between model calls (the gap from one
+    // response's end to the next request, less the tools' own time), the tools' time, and the size of each request and tool result.
+    // --style=reads: a read_page after each step that lands on a new page (what a model did when click/submit said only the URL).
+    if (!ONLY.length || ONLY.includes('task')) {
+      const reads = args.includes('--style=reads');
+      const runs = [];
+      for (let r = 0; r < RUNS; r++) {
+        const n = `t${r}`;
+        const turns = [
+          [{ name: 'navigate', input: { url: `${A.url}/form/${n}` } }],
+          [{ name: 'fill_form', input: { fields: [{ label: 'Search', value: 'lamps' }], submit: true } }],
+          ...(reads ? [[{ name: 'read_page', input: { mode: 'compact' } }]] : []),
+          [{ name: 'click', input: { text: 'First result' } }],
+          ...(reads ? [[{ name: 'read_page', input: { mode: 'compact' } }]] : []),
+          [{ name: 'click', input: { text: 'Press' } }],
+        ];
+        await app.evaluate(() => { global.__fake.log = []; });
+        const out = await runScript(turns, `Find lamps ${r}`);
+        const log = await app.evaluate(() => global.__fake.log);
+        const tools = out.lines.map((l) => /^tool \S+ (\d+) ms/.exec(l)).filter(Boolean).map((m) => Number(m[1]));
+        const gaps = log.slice(1).map((rec, i) => rec.at - log[i].end - (tools[i] || 0));
+        runs.push({ ms: out.ms, requests: log.length, chars: log.reduce((a, x) => a + x.chars, 0), tools: tools.reduce((a, b) => a + b, 0), lumen: gaps.reduce((a, b) => a + b, 0), log, lines: out.lines });
+      }
+      const first = runs[0];
+      console.log(`task (${reads ? 'with a read after each landing' : 'as scripted'}): ${first.requests} model requests`);
+      report('  task wall time (fake model)', runs.map((x) => x.ms));
+      report('  tools, summed', runs.map((x) => x.tools));
+      report('  Lumen between model calls, summed', runs.map((x) => x.lumen));
+      console.log(`  request sizes (run 1): ${first.log.map((x) => x.chars).join(', ')} chars; total ${first.chars} (~${Math.round(first.chars / 4)} tokens)`);
+      console.log('  tool results (run 1):');
+      for (const rec of first.log.slice(1)) for (const t of rec.results) console.log(`    ${t.length} chars: ${t.replace(/\s+/g, ' ').slice(0, 150)}`);
+      for (const l of first.lines.filter((x) => /^(turn|task) /.test(x))) console.log(`  ${l}`);
     }
 
   } finally {
