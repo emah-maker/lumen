@@ -841,8 +841,8 @@ async function batch(agent, wc, input, h) {
         default: throw new Error(`Unknown step "${step.do}".`);
       }
       // The OK for the batch was for the site it started on; each step is asked about where it runs.
-      await agent.allowStep(...tool);
       tool[1][QUIET_LANDING] = true; // [fewer round trips] no landed-page head per step: it would reset the baseline of the closing diff
+      await agent.allowStep(...tool);
       const result = await agent.execute(...tool);
       report.push(`${n} ${String(result).split('\n')[0].slice(0, 160)}`);
     } catch (err) {
