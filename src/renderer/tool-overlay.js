@@ -1,4 +1,4 @@
-// The tool overlay's page: the screenshot chooser, the area picker, toasts and the QR card. It only
+// The tool overlay's page: the screenshot chooser, the area picker, toasts, the QR card and the Humanize card. It only
 // draws what the main process sends and reports the user's choice back (features/tool-overlay.js).
 const $ = (id) => document.getElementById(id);
 const screens = { modal: $('modal'), select: $('select'), toast: $('toast') };
@@ -35,6 +35,9 @@ function fillModal(payload) {
   $('m-buttons').replaceChildren();
   $('qr-wrap').hidden = true;
   $('qr-text').hidden = true;
+  $('hz').hidden = true;
+  $('card').classList.remove('wide');
+  $('m-sub').classList.remove('error');
 }
 
 function showChooser(payload) {
@@ -78,6 +81,29 @@ function showQr(payload) {
   for (const b of payload.buttons || []) $('m-buttons').append(button(b.label, b.primary ? 'primary' : '', () => send(b.id === 'close' ? 'close' : 'button', { id: b.id })));
   showScreen('modal');
   ($('m-buttons').querySelector('.primary') || $('m-buttons').lastElementChild)?.focus();
+}
+
+// [humanize] The text before and after (features/humanize-page.js). Drawn again whole on each update (working, done, failed).
+function showHumanize(payload) {
+  const keep = document.activeElement?.dataset?.id;
+  fillModal(payload);
+  $('card').classList.add('wide');
+  $('hz').hidden = false;
+  $('hz-before-label').textContent = payload.beforeLabel || '';
+  $('hz-before').textContent = payload.before || '';
+  $('hz-after-label').textContent = payload.afterLabel || '';
+  $('hz-after').textContent = payload.after || '';
+  $('hz-after-wrap').hidden = !payload.after;
+  $('hz').setAttribute('aria-busy', payload.busy ? 'true' : 'false');
+  $('m-sub').classList.toggle('error', Boolean(payload.error));
+  for (const b of payload.buttons || []) {
+    const btn = button(b.label, b.primary ? 'primary' : '', () => send(b.id === 'close' ? 'close' : 'button', { id: b.id }));
+    btn.dataset.id = b.id;
+    $('m-buttons').append(btn);
+  }
+  showScreen('modal');
+  const again = keep && $('m-buttons').querySelector(`[data-id="${keep}"]`);
+  (again || $('m-buttons').querySelector('.primary') || $('m-buttons').lastElementChild)?.focus();
 }
 
 // Tab and Shift+Tab stay inside the card; Escape closes.
@@ -167,6 +193,7 @@ window.toolHost.onShow(({ id, mode, payload }) => {
   toastHeld = false;
   if (mode === 'chooser') showChooser(payload);
   else if (mode === 'qr') showQr(payload);
+  else if (mode === 'humanize') showHumanize(payload);
   else if (mode === 'toast') showToast(payload);
   else if (mode === 'select') {
     $('hint').textContent = payload.hint || '';
@@ -178,6 +205,7 @@ window.toolHost.onShow(({ id, mode, payload }) => {
 
 window.toolHost.onUpdate((data) => {
   if (!current || data.id !== current.id) return;
+  if (data.payload && current.mode === 'humanize') { showHumanize(data.payload); return; }
   if (data.status !== undefined) { $('m-status').textContent = data.status; $('m-status').hidden = !data.status; }
   if (data.title !== undefined) $('t-title').textContent = data.title;
   if (data.sub !== undefined) { $('t-sub').textContent = data.sub; $('t-sub').hidden = !data.sub; }
@@ -186,6 +214,6 @@ window.toolHost.onUpdate((data) => {
 document.addEventListener('keydown', (e) => {
   if (!current) return;
   if (e.key === 'Escape') { e.preventDefault(); send('close'); return; }
-  if (e.key === 'Tab' && (current.mode === 'chooser' || current.mode === 'qr')) trapFocus(e);
+  if (e.key === 'Tab' && (current.mode === 'chooser' || current.mode === 'qr' || current.mode === 'humanize')) trapFocus(e);
   if (current.mode === 'select' && e.key === 'Enter') e.preventDefault();
 });

@@ -6520,8 +6520,9 @@ button.setAttribute('aria-label', t('chat.copy'));
 button.innerHTML = COPY_ICON;
 button.onclick = async () => {
 try {
-const html = window.renderMarkdown(source);
-const text = (window.markdownPlainScripts ? window.markdownPlainScripts(source) : source).trim();
+const shown = bubble.hzSource || source;
+const html = window.renderMarkdown(shown);
+const text = (window.markdownPlainScripts ? window.markdownPlainScripts(shown) : shown).trim();
 if (window.ClipboardItem) {
 await navigator.clipboard.write([new ClipboardItem({
 'text/plain': new Blob([text], { type: 'text/plain' }),
@@ -6539,6 +6540,7 @@ button.title = t('chat.copyFailed');
 };
 bubble.append(button);
 window.chatActions?.noteButton(bubble, source);
+window.chatActions?.humanizeButton?.(bubble, source);
 }
 
 
@@ -7708,6 +7710,7 @@ copy: '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="
 check: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg>',
 up: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></svg>',
 note: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h6.5L13 5v8.5H4zM10.5 2.5V5H13M6 8h5M6 10.5h3"/></svg>',
+humanize: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5 3 11l7.6-7.6a1.4 1.4 0 0 1 2 2L5 13zM9.5 4.5l2 2"/></svg>',
 down: '<svg viewBox="0 0 16 16" aria-hidden="true"><g transform="rotate(180 8 8)"><path d="M5.5 7.5v5.5h-2a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1h2Zm0 0 2.2-4.4a1.3 1.3 0 0 1 2.4.9L9.7 6.5h2.8a1.3 1.3 0 0 1 1.3 1.6l-.9 3.8a2 2 0 0 1-1.9 1.5H5.5"/></g></svg>',
 };
 const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
@@ -7850,6 +7853,24 @@ setTimeout(() => { b.title = t('notes.add'); b.setAttribute('aria-label', b.titl
 });
 strip.append(b);
 }
+
+
+let humanizeLoad = null;
+function loadHumanize() {
+if (window.humanizeUI) return Promise.resolve();
+if (humanizeLoad) return humanizeLoad;
+document.head.append(el('link', { rel: 'stylesheet', href: 'humanize.css' }));
+humanizeLoad = new Promise((resolve) => { document.head.append(el('script', { src: 'humanize.js', onload: resolve, onerror: resolve })); });
+return humanizeLoad;
+}
+function humanizeButton(bubble, source) {
+if (!bubble || !window.assistant?.humanize || !source || !String(source).trim() || bubble.querySelector(':scope > .reply-meta .reply-humanize')) return;
+let strip = bubble.querySelector(':scope > .reply-meta');
+if (!strip) { strip = el('div', { className: 'reply-meta' }); bubble.append(strip); }
+const b = button('reply-thumb reply-humanize', t('humanize.action.title'), ICONS.humanize, () => loadHumanize().then(() => window.humanizeUI?.reply(bubble, String(source), b)));
+const note = strip.querySelector('.reply-note');
+if (note) note.before(b); else strip.append(b);
+}
 function thumbs(bubble, current = null) {
 const box = el('span', { className: 'reply-thumbs' });
 box.setAttribute('role', 'group');
@@ -7925,7 +7946,7 @@ e.preventDefault();
 copy.click();
 });
 
-window.chatActions = { noteButton, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
+window.chatActions = { noteButton, humanizeButton, loadHumanize, userRow, replyMeta, details, clampLong, finalReplyOf, versionSwitch, timeLabel, ordinalOf };
 })();
 ;
 // ---- tabs-ask-core.js
@@ -14856,6 +14877,8 @@ if (box && phrase) box.addEventListener('input', () => { if (!window.lumenRoutin
 
 
 
+
+
 (() => {
 const slash = window.slashCommands;
 const newChat = document.getElementById('new-chat');
@@ -15039,6 +15062,41 @@ tray.scrollTop = tray.scrollHeight;
 btwRun(id, question);
 return { ok: true };
 }
+
+function humanizeRun(text) {
+const actions = window.chatActions;
+if (!window.assistant?.humanize || !actions?.loadHumanize) return { ok: false, message: tr('humanize.failed', 'Humanize failed: {error}', { error: 'not available here' }) };
+if (!text) {
+const button = [...document.querySelectorAll('#messages .reply-humanize')].pop();
+if (!button) return { ok: false, message: tr('humanize.nothing', 'There’s no reply to humanize yet. Paste text after /humanize.') };
+button.click();
+return { ok: true };
+}
+actions.loadHumanize().then(() => window.humanizeUI?.paste(text, (node) => note(node)));
+return { ok: true };
+}
+slash.register({
+name: 'humanize',
+label: tr('slash.humanize', 'Humanize'),
+description: tr('slash.humanize.description', 'Rewrite the last reply, or text you paste after it, so it reads like a person wrote it.'),
+hint: tr('slash.humanize.hint', 'Paste the text to humanize (or leave empty for the last reply), then press Enter'),
+takesInput: true,
+run({ input }) { return humanizeRun(String(input || '').trim()); },
+});
+
+const HUMANIZE_PHRASE = /^\s*humani[sz]e (?:this|the following)\b[ \t]*:?[ \t]*(?:\r?\n)?([\s\S]*\S[\s\S]*)$/i;
+document.getElementById('composer')?.addEventListener('submit', (e) => {
+const box = document.getElementById('prompt');
+if (document.body.classList.contains('agent-active') || !box) return;
+const m = HUMANIZE_PHRASE.exec(box.value);
+if (!m || m[1].trim().length < 20 || !window.assistant?.humanize) return;
+e.preventDefault();
+e.stopImmediatePropagation();
+box.value = '';
+box.dispatchEvent(new Event('input', { bubbles: true }));
+humanizeRun(m[1].trim());
+}, true);
+
 
 document.getElementById('prompt')?.addEventListener('keydown', (e) => {
 if (e.key !== 'Escape' || e.isComposing || !btwCards.size || e.target.value) return;

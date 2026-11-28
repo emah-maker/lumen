@@ -342,7 +342,7 @@ const UI_ONLY_IPC = new Set([
   'app-menu', 'prepare-settings', 'page-info:open', 'actions:overflow', 'ext:pins-sync', 'ext:pins-order', 'suggest:query', 'suggest:show', 'suggest:hide', 'suggest:remove', 'address:touched',
   'settings-page:open', 'prefs:ui',
   'focus:state', 'focus:start', 'focus:menu', // [focus] the toolbar's focus button (features/focus.js)
-  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:approve', 'agent:ask-answer', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'chat:ai-tabs', 'agent:show-target', 'tabs:ask-list',
+  'agent:thumbs-visible', 'agent:open-preview', 'chips:info', 'chips:watch', 'chips:open', 'agent:ask', 'agent:stop', 'agent:steer', 'agent:unsteer', 'agent:prewarm', 'agent:reset', 'agent:rewind', 'agent:rewind-user', 'agent:version', 'agent:feedback', 'agent:screen-drop', 'agent:btw', 'agent:btw-cancel', 'agent:autocomplete', 'agent:autocomplete-cancel', 'agent:reply-suggest', 'agent:humanize', 'agent:humanize-cancel', 'agent:approve', 'agent:ask-answer', 'agent:send-undo', 'agent:send-stop', 'agents:focus-pending', 'agent:auto-allow', 'agent:permission-mode', 'agent:undo', 'agent:undo-edits', 'agent:annotate', 'agent:ai-tabs-close', 'agent:ai-tabs-undo', 'chat:ai-tabs', 'agent:show-target', 'tabs:ask-list',
   'uploads:stash', 'uploads:discard', 'uploads:thumb', 'agent:upload-choose', // files attached to a message, and the "Choose file…" card (features/upload-files.js)
   'chat:sidebar-state', 'sidebar:set', 'chat:resync', 'chat:sidebar-target', // the sidebar asking which chat its window's front tab shows
   'memory:list', 'memory:undo', 'memory:forget', 'ai-changes:list', 'ai-changes:undo', // [ai preferences] the chat's Changed row and the project page's list // [memory] the chat's "Remembered" row and /memory (ai/memory.js)
@@ -939,6 +939,19 @@ function pageToolCtx(wc = activeTab()?.webContents) {
 const takeScreenshot = (wc) => { const ctx = pageToolCtx(wc); if (ctx) screenshotTool.open(ctx).catch(() => {}); };
 const showQrCode = (wc, text, kind) => { const ctx = pageToolCtx(wc); if (ctx) qrTool.open(ctx, text ?? ctx.wc.getURL(), kind).catch(() => {}); };
 if (TEST) global.__screenshot = { tool: screenshotTool, qr: qrTool, overlay: toolOverlay, ctx: pageToolCtx };
+// [humanize] Runs the user's humanizer skill on text, on the user's own AI (features/humanize-page.js, ai/humanize.js): the page's right-click "Humanize",
+// the "Humanize" action under a reply and /humanize (agent:humanize). Loaded on first use.
+const humanizeRt = lazy(() => require('./features/humanize-page').create({
+  agent, cliJson, providers, t, overlay: toolOverlay, userData: () => app.getPath('userData'),
+  skill: () => skillsFeature.humanizer(), openSkills: () => openSettingsPage('skills'), // the user's own humanizer skill (features/skills.js)
+  copy: async (text) => clipboard.writeText(text),
+  win: (wc) => pageToolCtx(wc)?.win || null,
+  restoreFocus: (wc) => { if (!wc.isDestroyed()) wc.focus(); },
+  aiOff: (url) => aiSites.isOff(pdfViewer.pdfUrlOf(url) || url),
+  modelName: (id) => aiFallback.nameOf(id, modelOptions()),
+  subagentModel: () => readSettings().aiSubagentModel,
+}));
+if (TEST) global.__humanize = humanizeRt;
 
 // Certificate errors and mixed content (features/site-security.js). Going past a bad certificate is
 // only ever the user's answer in Lumen's own dialog, never a page's or the AI's.
@@ -6415,12 +6428,14 @@ function showContextMenu(wc, p) {
   if (p.isEditable) {
     if (passwordsRt) items.push(...passwordsRt.contextMenuItems(tabByContents(wc), p)); // [passwords] Fill <username>, on a site with saved logins
     items.push({ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }, { type: 'separator' });
+    if (selection && !isolatedOf(wc)) items.push({ label: t('menu.humanize'), click: () => humanizeRt.fromMenu(wc, p).catch(() => {}) }, { type: 'separator' }); // [humanize] the rewrite replaces the selection, with Undo
   } else if (selection) {
     const short = selection.length > 30 ? `${selection.slice(0, 29)}…` : selection;
     items.push(
       { role: 'copy' },
       { label: t('menu.searchFor', { engine: engineFor(readSettings().searchEngine).label, text: short }), click: () => openTab(searchUrlFor(readSettings().searchEngine, selection)) },
       { label: t('menu.askAboutSelection'), click: () => ui()?.send('ask-selection', selection) },
+      ...(isolatedOf(wc) ? [] : [{ label: t('menu.humanize'), click: () => humanizeRt.fromMenu(wc, p).catch(() => {}) }]), // [humanize] a card with the rewrite and Copy
       { label: t('menu.addToNotes'), click: () => addSelectionToNotes(wc, selection) },
       { label: t('menu.qrSelection'), enabled: selection.length <= 500, click: () => showQrCode(wc, selection, 'text') },
       ...skillMenuItems(selection),
@@ -12753,6 +12768,19 @@ ipcMain.handle('agent:reply-suggest', async (event, forChat) => {
     if (replySuggestRuns.get(event.sender.id) === ctrl) replySuggestRuns.delete(event.sender.id);
   }
 });
+// [humanize] A reply of the chat, or text pasted after /humanize, rewritten on the chat's own AI (features/humanize-page.js). One request per view:
+// a newer one stops the one before. -> { ok, text, name, missing, removed, unchanged, error? }
+ipcMain.handle('agent:humanize', async (event, text, kind) => {
+  if (typeof text !== 'string') return { ok: false, error: 'empty' };
+  const { messages } = readForSender(event, () => ({ messages: agent.messages, id: chatId }));
+  try {
+    const r = await humanizeRt.rewrite(text, { kind: kind === 'paste' ? 'paste' : 'reply', key: `view:${event.sender.id}`, messages });
+    return { ok: r.ok, text: r.text || '', name: r.name || '', missing: r.missing || [], unchanged: Boolean(r.unchanged), error: r.error, max: r.max };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err).slice(0, 200) };
+  }
+});
+ipcMain.on('agent:humanize-cancel', (event) => { if (humanizeRt[LOADED]) humanizeRt.cancel(`view:${event.sender.id}`); });
 // New chat; `temporary`: one that is never saved (chats:temporary).
 function startNewChat(event, { temporary = false } = {}) {
   syncToSender(event);
