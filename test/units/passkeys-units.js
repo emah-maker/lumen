@@ -89,6 +89,13 @@ const okGet = (rpId) => ({ hr: 0, result: { credentialId: credId, authenticatorD
     const dead = wcOf(); dead.isDestroyed = () => true;
     check('mode: hide for a destroyed page', setup().mode(dead).mode === 'hide', '');
     const throwing = { load() { throw new Error('boom'); } };
+    let loads = 0;
+    const own = createPasskeys({ ipcMain: { on() {}, handle() {} }, loadNative: () => { loads++; return fakeNative(); }, context: () => ({ ok: true }) });
+    const ownMode = own._modeFor(wcOf(), { url: 'file:///C:/lumen/src/renderer/newtab.html' }).mode;
+    check('mode: a file: page (the new tab, the toolbar) is hidden without loading the native side', ownMode === 'hide' && loads === 0, `${ownMode} ${loads}`);
+    const blankMode = own._modeFor(wcOf(), { url: 'about:blank', origin: 'null' }).mode;
+    check('mode: a page with no origin (a blank warm-up page) is hidden without loading it either', blankMode === 'hide' && loads === 0, `${blankMode} ${loads}`);
+    check('mode: a web page after them still gets the native side', own._modeFor(wcOf(), { url: 'https://login.example.com/', origin: 'https://login.example.com' }).mode === 'native' && loads === 1, String(loads));
     check('mode: hide when the loader throws', createPasskeys({ ipcMain: { on() {}, handle() {} }, loadNative: () => throwing.load(), context: () => ({ ok: true }) })._modeFor(wcOf()).mode === 'hide', '');
   }
 

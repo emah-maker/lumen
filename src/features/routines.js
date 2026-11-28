@@ -419,7 +419,13 @@ function parseScheduleText(text) {
   return null;
 }
 
+// The routines' web links listen on this port unless Settings names another (1024-65535). Here, not in routine-webhooks.js, so Settings and
+// the routines' state can check it without loading the listener's module at startup.
+const WEBHOOK_PORT = 47821;
+const cleanWebhookPort = (v) => { const n = Math.round(Number(v)); return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : null; };
+
 module.exports = {
+  WEBHOOK_PORT, cleanWebhookPort,
   REPEATS, EVENT_REPEATS, WEEKDAYS, ALL_DAYS, LIMITS, LATE_MS, MAX_SLEEP_MS, OFFLINE_RETRY_MS, NOTHING, QUIET_RULE, QUIET_EMAIL_RULE, isNothingToReport, parseMailDate, unreadItems, emailDiff, emailCheckAt, newInbox, cleanInput,
   cleanQuiet, quietEnd, TEMPLATES, parseCron, normalizeRoutineSchedule, validateNew, nextOccurrence, upcoming,
   webUrl, newRoutineState, sanitizeRoutine, addHistory, dueAt, plan, sleepFor, parseClock, parseScheduleText,

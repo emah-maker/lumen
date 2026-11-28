@@ -7,9 +7,9 @@
 // Nothing runs before the first tab has loaded: afterLook() is called only once Lumen's look at the CLIs
 // (which waits for that tab) is done, so boot is never slowed.
 // deps: { enabled(): setting on and Grok Build in use, engine(): the GrokBuildEngine, found(): installed,
-//   powerMonitor?: emitter ('resume') } (tests fake these)
-function createGrokWarmup({ enabled, engine, found = () => true, powerMonitor = null }) {
-  let loaded = false; // the first tab has loaded and the CLIs were looked for: before that nothing is warmed
+//   powerMonitor?: emitter ('resume'), loaded?: made after the look already (ai-agents.js makes it on first need) } (tests fake these)
+function createGrokWarmup({ enabled, engine, found = () => true, powerMonitor = null, loaded: lookedAlready = false }) {
+  let loaded = lookedAlready; // the first tab has loaded and the CLIs were looked for: before that nothing is warmed
   let busy = null;
   let warmedAt = 0;
   const stats = { warmed: 0, skipped: 0 };

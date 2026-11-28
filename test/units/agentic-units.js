@@ -751,6 +751,9 @@ async function grokWarmupRuns() {
   resume.emit('resume');
   await sleep(30);
   check('warm-up: no re-warm after resume once turned off (takes effect at once)', w.stats.warmed === before + 1, JSON.stringify(w.stats));
+  // ai-agents.js makes the warm-up on first need, after the look: made with loaded: true it warms at once, as afterLook would have let it.
+  const late = createGrokWarmup({ enabled: () => true, engine: () => eng, found: () => true, loaded: true });
+  check('warm-up: made after the look (loaded: true), the first poke prepares', await late.warm({ fresh: true }) === true && late.stats.warmed === 1 && spawns === 2, JSON.stringify(late.stats));
   if (oldHome === undefined) delete process.env.GROK_HOME; else process.env.GROK_HOME = oldHome;
 }
 

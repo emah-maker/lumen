@@ -6,9 +6,10 @@
 //   --dry-run        print the plan and the derived suite list; changes nothing (no fetch, worktree, process kill, push, dispatch or tag)
 //   --checks-only    stop after the checks: nothing is pushed
 //   --resume         continue the release from the last finished stage (kept in the worktree's git dir)
-//   --hold-lock      (default) hold the machine-wide Electron lock (scripts/test/e2e-lock.js) while Electron suites run
+//   --hold-lock      (default) reserve the machine and hold the machine-wide Electron lock (scripts/test/e2e-lock.js) from the preflight to the end of the checks
 //   --share-machine  lock per Electron suite instead (retry included), releasing between suites so a parallel agent can run then
-//   --kill-stale     stop electron processes left under this repo's worktrees (by PID, only those) before the checks
+//   --kill-stale     stop electron processes left under this repo's worktrees that no e2e lock accounts for (by PID, only those) before the checks
+//   --lock-wait <minutes> (default 240)   how long the preflight waits for another session's run under the e2e lock (or another release's reservation)
 //   --only a,b,c     a targeted release: the pure-node stages and perf-budget always run, plus the named Electron suites
 //   --suite-timeout <minutes> (default 15)   --ci-timeout <minutes> (default 40)   --assets <n> (default 13)
 //   --no-preflight   do not dispatch release.yml on the release branch before the PR (the build then happens only at the tag)
@@ -19,7 +20,8 @@
 //                    fixed port or share the clipboard or the machine's windows/processes run alone, perf-sensitive ones last and alone
 //   --full           run every Electron suite (default: the core set plus the suites related to the files changed since what the last release built)
 //   --fresh-install  npm ci in the worktree instead of reusing the main checkout's node_modules
-// Never run it while another Lumen test or release is using Electron: it refuses when a release worktree is mid-run.
+// Another session's Electron run under the e2e lock is waited for; it refuses only when another release is mid-run, or Electron no lock accounts for runs.
+// A fresh run (not --resume) removes what a stopped run of the same, unpublished version left (worktree, branches: release-leftover.js).
 // Stages and gotchas: docs/releasing.md.
 const fs = require('fs');
 const os = require('os');
@@ -32,6 +34,8 @@ const {
 } = require('./release-lib');
 const { Stop, sleep, say, run, must, git, gh, ghRetry, ghJsonRetry, gitRetry, NET_TRIES, mainCheckout, worktreesDir, listWorktrees, listElectron, killTree, alive, ciState } = require('./ship-common');
 const { mergeMainInto, releaseBase, contains } = require('./release-git');
+const { holdMachine, freeMachine } = require('./release-machine');
+const { cleanLeftover } = require('./release-leftover');
 
 const CO_AUTHOR = process.env.LUMEN_CO_AUTHOR || 'Claude Opus 5.5 <noreply@anthropic.com>';
 const STATE_FILE = 'lumen-release-state.json';
@@ -127,17 +131,30 @@ const done = stageDone;
 
 // ----------------------------------------------------------------------------------------------------------------- preflight
 
-async function preflight(main, opts, mine, withElectron = true) {
+// Another session's Electron run under the e2e lock is waited for (with a progress line), not a reason to stop; with --hold-lock the release
+// then reserves the machine and holds the lock until its checks end (release-machine.js). Only Electron under the repo that no lock accounts
+// for (a stray app, a test run outside the lock) stops the run, or is stopped by PID with --kill-stale.
+async function preflight(main, opts, mine, withElectron = true, owner = 'release') {
   const others = releaseWorktrees(main).filter((w) => w.dir !== mine && w.state.stage !== 'publish' && w.state.pid && alive(w.state.pid) && w.state.pid !== process.pid);
   if (others.length) throw new Stop(`another release is running (${others.map((w) => `${w.branch}, pid ${w.state.pid}`).join('; ')})`);
   if (!withElectron) { say('preflight', 'the checks are done: skipping the Electron preflight (other agents may be running tests; only the checks need a quiet machine)'); return; }
-  const all = listElectron();
-  const stale = procsUnder(all, [main]);
+  const b = e2eLock.blocker();
+  if (b && e2eLock.pidAlive(b.pid)) say('preflight', `the e2e lock is ${b.release ? 'reserved' : 'held'} by ${b.name} (pid ${b.pid}): waiting for it (up to ${opts.lockWaitMinutes} min, --lock-wait)`);
+  const { waited } = await holdMachine({ owner, holdLock: opts.holdLock, waitMs: opts.lockWaitMinutes * 60000, log: (m) => say('preflight', m) });
+  say('preflight', opts.holdLock ? 'the machine is the release\'s: other Electron runs wait (the e2e lock and the release reservation are held until the checks end)' : 'the e2e lock is free (--share-machine: it is taken again per Electron suite)');
+  try { await strayElectron(main, opts, waited); } finally { if (!opts.holdLock) e2eLock.release(); }
+}
+
+async function strayElectron(main, opts, waited) {
+  let all = listElectron();
+  let stale = procsUnder(all, [main]);
+  // The run just waited for may take a few seconds to close its windows after it released the lock.
+  for (let i = 0; waited && stale.length && i < 10; i++) { await sleep(3000); all = listElectron(); stale = procsUnder(all, [main]); }
   if (all.length > stale.length) say('preflight', `${all.length - stale.length} electron process(es) outside this repo (an installed Lumen?) are left alone`);
   if (!stale.length) { say('preflight', 'no electron processes under the repo or its worktrees'); return; }
   const short = (p) => `pid ${p.pid} ${path.relative(main, p.exe || '') || p.exe}`;
   say('preflight', `${stale.length} electron process(es) under the repo's worktrees:\n    ${stale.map(short).join('\n    ')}`);
-  if (!opts.killStale) throw new Stop('electron is running under the repo (a test or a release may be using it). Close it, or rerun with --kill-stale to stop exactly those PIDs');
+  if (!opts.killStale) throw new Stop('electron is running under the repo while no run holds the e2e lock (a stray app, or a test started outside scripts/test/e2e-lock.js). Close it, or rerun with --kill-stale to stop exactly those PIDs');
   for (const p of stale) killTree(p.pid);
   await sleep(2000);
   const left = procsUnder(listElectron(), [main]);
@@ -207,17 +224,19 @@ async function runChecks(wt, st, opts) {
   const alone = Object.keys(shared).filter((n) => stages.some((x) => x.name === n));
   say('checks', `${stages.length} stages (${nElectron} Electron suites, ${ej} at a time${ej > 1 ? `, ${alone.length} that share a port, the clipboard or the machine alone` : ''}; perf-sensitive ones last and alone; units ${jobs} at a time; ${parallel ? 'pure-node lane alongside the Electron lane' : 'one after another'}); logs in ${st.logs}`);
 
-  // The machine-wide Electron lock (docs/releasing.md): taken when the first Electron suite is about to start and held to the end of the checks by
-  // default, or taken per suite with --share-machine. The pure-node lane never needs it, so it starts (and may finish) while the lock is awaited.
+  // The machine-wide Electron lock (docs/releasing.md): by default the preflight already took it and reserved the machine, and both are held to
+  // the end of the checks, so no other run starts between stages (the pure-node lane included: its timings feel the load too). With
+  // --share-machine it is taken per Electron suite instead. Taking it here again when it is held returns at once.
+  const lockOpts = { owner, exact: true, waitMs: opts.lockWaitMinutes * 60000, onWait: (i) => say('checks', i.line) };
   let lockP = null;
-  const ensureLock = () => { if (!lockP) { say('checks', 'taking the machine-wide Electron lock'); lockP = e2eLock.acquire({ owner }); } return lockP; };
+  const ensureLock = () => { if (!lockP) { if (!e2eLock.holds()) say('checks', 'taking the machine-wide Electron lock'); lockP = e2eLock.acquire(lockOpts); } return lockP; };
 
   // One attempt at a stage. The Electron lock is taken here per suite (--share-machine) or already held (default).
   async function attempt(stage, logFile) {
     const isElectron = stage.kind === 'electron';
     const perSuite = isElectron && !opts.holdLock;
     if (isElectron && opts.holdLock) await ensureLock();
-    if (perSuite) { say('checks', `waiting for the Electron lock for ${stage.name}`); await e2eLock.acquire({ owner }); }
+    if (perSuite) { say('checks', `waiting for the Electron lock for ${stage.name}`); await e2eLock.acquire(lockOpts); }
     try { return await runStage(wt, stage, logFile, timeoutMs); } finally { if (perSuite) e2eLock.release(); }
   }
   // Electron processes a failed suite left behind are stopped (by PID, only ones under this worktree) once no other Electron suite is running:
@@ -276,7 +295,11 @@ async function runChecks(wt, st, opts) {
       if (retries.length) sweep();
       for (const x of retries) await retryOne(x);
     }
-  } finally { if (lockP) { try { await lockP; e2eLock.release(); } catch { /* never taken */ } } }
+  } finally {
+    if (lockP) { try { await lockP; } catch { /* never taken */ } }
+    freeMachine(); // the lock and the reservation: other sessions' runs may start again
+    say('checks', 'released the e2e lock and the release reservation');
+  }
   say('checks', `all stages ran in ${Math.round((Date.now() - t0) / 1000)}s`);
   const all = stages.map((s) => ({ name: s.name, ...st.checks[s.name] }));
   const failed = all.filter((x) => x.status === 'fail');
@@ -612,10 +635,12 @@ function dryRun(main, spec, opts) {
   const ej = opts.serialChecks ? 1 : pickElectronJobs(opts);
   const phases = planLanes(kept, { serial: opts.serialChecks, electronJobs: ej, exclusive: (n) => Boolean(shared[n]) });
   say('plan', `origin/main (as last fetched) is ${current}; releasing ${version} (${spec}), worktree ${wt}`);
-  if (!opts.resume && fs.existsSync(wt)) say('plan', `would STOP: ${wt} already exists (a release of ${version} is in progress or unfinished: use --resume, or remove that worktree)`);
+  if (!opts.resume && fs.existsSync(wt)) say('plan', `${wt} already exists: a fresh run checks it belongs to an unpublished, stopped run of ${version} and removes it with its branches (release-leftover.js), else STOPs (use --resume to continue it instead)`);
   if (opts.resume) say('plan', resumable.length ? `--resume would continue ${resumable[resumable.length - 1].branch} after stage "${resumable[resumable.length - 1].state.stage}" (stages left: ${stagesLeft(resumable[resumable.length - 1].state, opts).join(', ') || 'none'}; the build preflight is checked again before the PR, never trusted blindly)` : '--resume found no unfinished release; it would stop');
   const stale = procsUnder(listElectron(), [main]);
-  say('plan', `0. preflight: ${stale.length ? `${stale.length} electron process(es) under the repo: ${stale.map((p) => p.pid).join(', ')} (${opts.killStale ? 'would be stopped by PID' : 'would STOP the run; --kill-stale stops them'})` : 'no electron under the repo'}; refuse if another release is mid-run`);
+  const b = e2eLock.blocker();
+  const lockNote = b && e2eLock.pidAlive(b.pid) ? `the e2e lock is ${b.release ? 'reserved' : 'held'} by ${b.name} (pid ${b.pid}): would wait for it (up to ${opts.lockWaitMinutes} min), then check again` : 'the e2e lock is free';
+  say('plan', `0. preflight: refuse if another release is mid-run; ${lockNote}; ${opts.holdLock ? 'reserve the machine and hold the e2e lock until the checks end' : '--share-machine: no reservation, the lock per Electron suite'}; then electron under the repo that no lock accounts for: ${stale.length ? `${stale.length} now: ${stale.map((p) => p.pid).join(', ')} (${opts.killStale ? 'would be stopped by PID' : 'would STOP the run unless they belong to the run waited for; --kill-stale stops them'})` : 'none now'}`);
   const plan = releasePlan({ version, date: localDate(), opts, counts: { stages: kept.length, electronJobs: ej } });
   let n = 0;
   for (const s of plan) say('plan', s.parallel ? `   | ${s.id}: ${s.text}` : `${++n}. ${s.id}: ${s.text}`);
@@ -635,7 +660,7 @@ function dryRun(main, spec, opts) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, holdLock: true, suiteMinutes: 15, ciMinutes: 40, preflightMinutes: 45, assets: 13, only: null, noPreflight: false, noSkipCi: false, serialChecks: false, freshInstall: false, electronJobs: 0, full: false };
+  const opts = { dryRun: false, checksOnly: false, resume: false, killStale: false, holdLock: true, suiteMinutes: 15, ciMinutes: 40, preflightMinutes: 45, assets: 13, only: null, noPreflight: false, noSkipCi: false, serialChecks: false, freshInstall: false, electronJobs: 0, full: false, lockWaitMinutes: 240 };
   let spec = null;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -651,6 +676,7 @@ async function main() {
     else if (a === '--fresh-install') opts.freshInstall = true;
     else if (a === '--full') opts.full = true;
     else if (a === '--electron-jobs') { opts.electronJobs = Math.floor(Number(args[++i])); if (!(opts.electronJobs >= 1 && opts.electronJobs <= 8)) { console.error('--electron-jobs takes a number from 1 to 8'); process.exit(2); } }
+    else if (a === '--lock-wait') opts.lockWaitMinutes = Number(args[++i]) || 240;
     else if (a === '--suite-timeout') opts.suiteMinutes = Number(args[++i]) || 15;
     else if (a === '--ci-timeout') opts.ciMinutes = Number(args[++i]) || 40;
     else if (a === '--preflight-timeout') opts.preflightMinutes = Number(args[++i]) || 45;
@@ -659,7 +685,7 @@ async function main() {
     else if (!a.startsWith('-') && !spec) spec = a;
     else { console.error(`unknown argument: ${a}`); process.exit(2); }
   }
-  if (!spec && !opts.resume) { console.error('usage: node scripts/release/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--hold-lock|--share-machine] [--only suite,suite] [--no-preflight] [--no-skip-ci] [--serial-checks] [--electron-jobs n] [--full] [--fresh-install]'); process.exit(2); }
+  if (!spec && !opts.resume) { console.error('usage: node scripts/release/release.js <X.Y.Z|patch|minor|major> [--dry-run] [--checks-only] [--resume] [--kill-stale] [--lock-wait min] [--hold-lock|--share-machine] [--only suite,suite] [--no-preflight] [--no-skip-ci] [--serial-checks] [--electron-jobs n] [--full] [--fresh-install]'); process.exit(2); }
   const main = mainCheckout(process.cwd());
   if (opts.dryRun) return dryRun(main, spec || 'patch', opts);
 
@@ -677,15 +703,17 @@ async function main() {
     version = bumpVersion(current, spec);
   }
   wt = wt || path.join(worktreesDir(main), `release-${version}`);
-  await preflight(main, opts, wt, !st || !done(st, 'checks'));
+  await preflight(main, opts, wt, !st || !done(st, 'checks'), `release-${version}`);
 
   if (!st) {
     must(await gitRetry(main, ['fetch', '-q', '--tags', 'origin'], { log: (m) => say('worktree', m) }), 'git fetch');
     const current = JSON.parse(must(git(main, 'show', 'origin/main:package.json'), 'git show')).version;
     version = bumpVersion(current, spec);
     wt = path.join(worktreesDir(main), `release-${version}`);
-    if (fs.existsSync(wt)) throw new Stop(`${wt} exists: use --resume, or remove that worktree`);
     if (must(await gitRetry(main, ['ls-remote', '--tags', 'origin', `v${version}`], { log: (m) => say('worktree', m) }), 'git ls-remote')) throw new Stop(`tag v${version} already exists on origin`);
+    // A stopped earlier run of this version (not resumed) leaves its worktree and branches; they are checked and removed (release-leftover.js).
+    const removed = await cleanLeftover(main, version, { log: (m) => say('worktree', m) });
+    if (removed.length) say('worktree', `cleaned up a stopped run of ${version}: ${removed.join('; ')}`);
     must(git(main, 'worktree', 'add', '-q', wt, '-b', `release-${version}`, 'origin/main'), 'git worktree add');
     st = { version, branch: `release-${version}`, stage: 'none', pid: process.pid, started: new Date().toISOString(), logs: path.join(os.tmpdir(), `lumen-release-${version}-${Date.now()}`) };
     saveState(wt, st);

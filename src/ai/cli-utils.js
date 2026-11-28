@@ -225,10 +225,18 @@ function lookup(name) {
 
 // Stop a CLI child (and whatever it spawned under it, e.g. an MCP bridge) started with detached:true
 // (POSIX) — taskkill /T on Windows since detached there doesn't give a killable process group.
-function killTree(child) {
+// A taskkill that could not start, or that started and failed (on a busy machine it can fail as it starts, and it exits non-zero
+// without an 'error' event), still stops the child itself: the process used to live on until Lumen quit, and past it.
+// (`run` and `platform`: tests.)
+function killTree(child, { run = spawn, platform = process.platform } = {}) {
   if (!child || child.exitCode !== null || child.killed) return;
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => child.kill());
+  if (platform === 'win32') {
+    const stillRunning = () => child.exitCode === null && child.signalCode == null;
+    const fallBack = () => { if (stillRunning()) { try { child.kill(); } catch { /* gone */ } } };
+    let tk;
+    try { tk = run('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { fallBack(); return; }
+    tk.on('error', fallBack);
+    tk.on('exit', (code) => { if (code !== 0) fallBack(); });
   } else {
     try { process.kill(-child.pid, 'SIGTERM'); } catch { child.kill('SIGTERM'); }
   }

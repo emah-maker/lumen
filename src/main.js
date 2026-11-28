@@ -148,8 +148,8 @@ const notifyTarget = require('./features/notify-target'); // which tab a clicked
 const tabChatsLib = require('./features/tab-chats'); // [chat per tab] which chat each tab shows, the cap on chats working at once
 const manners = require('./features/ai-manners'); // [ai manners] tabs the AI opened, hands-off mode, the user's focus
 const { createWidgets } = require('./features/widgets'); // [widgets] cards on the new-tab page
-const SW = require('./features/spotify-web'); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
-const AMW = require('./features/apple-music-web'); // [widgets] the Apple Music widget: music.apple.com in a view over the card (same view code, features/web-player.js)
+const SW = lazy(() => require('./features/spotify-web')); // [widgets] the Spotify widget's Web player: open.spotify.com in a view over the card
+const AMW = lazy(() => require('./features/apple-music-web')); // [widgets] the Apple Music widget: music.apple.com in a view over the card (same view code, features/web-player.js)
 
 const NEW_TAB_URL = pathToFileURL(path.join(__dirname, 'renderer', 'newtab.html')).href;
 const isNewTab = (url) => url.startsWith(NEW_TAB_URL);
@@ -1385,7 +1385,7 @@ const deviceChooser = require('./features/device-chooser').createDeviceChooser({
   dialogs,
   t,
   webContentsFromFrame: (frame) => webContentsModule.fromFrame(frame),
-  ordinary: (wc) => !(spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) || agentContents.has(wc) || dialogs.isOwnView(wc) || manners.isAiTab(tabByContents(wc))),
+  ordinary: (wc) => !(musicOwns(wc) || agentContents.has(wc) || dialogs.isOwnView(wc) || manners.isAiTab(tabByContents(wc))),
 });
 
 // [dictation] The sidebar's window and the chat page may record audio for voice input (ai/dictation.js ownPageMic).
@@ -1409,7 +1409,7 @@ function setupPermissions(ses = session.defaultSession) {
     if (screenRec?.allowsPermission(wc, permission, details)) return callbackAsked(true); // [screen recording] the recorder window while a recording starts (the microphone only if switched on)
     if (ownPageMic(wc, permission, details)) return callbackAsked(true); // [dictation] the chat box's voice input in Lumen's own sidebar and chat page; web pages still ask
     const callback = (ok) => { if (ok && (permission === 'media' || permission === 'display-capture')) mediaPages.add(wc); callbackAsked(ok); };
-    if (spotifyWeb.owns(wc) || appleMusicWeb.owns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] the music cards: protected media only, never a prompt
+    if (musicOwns(wc)) return callback(SW.permissionAllowed(permission)); // [widgets] the music cards: protected media only, never a prompt
     // [agent window] its pages are asked nothing and may not take the screen, the pointer or another app
     if (agentContents.has(wc) && (permission === 'openExternal' || permission === 'fullscreen' || permission === 'pointerLock' || permission === 'display-capture' || PROMPTABLE[permission])) return callback(false);
     if (SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked())) return callback(true);
@@ -1445,7 +1445,7 @@ function setupPermissions(ses = session.defaultSession) {
     screenRec?.allowsPermission(wc, permission, details) ? true : // [screen recording]
     wc && ownPageMic(wc, permission, { mediaTypes: [details?.mediaType], requestingUrl: details?.requestingUrl, isMainFrame: details?.isMainFrame }) ? true : // [dictation] Lumen's own chat boxes (audio only)
     DEVICE_PERMISSIONS.TYPES.includes(permission) ? deviceChooser.check(wc, permission, origin, details) : // [devices] hid, usb, serial
-    spotifyWeb.owns(wc) || appleMusicWeb.owns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
+    musicOwns(wc) ? SW.permissionAllowed(permission) : SITE_PERMISSIONS.alwaysAllowed(permission, thirdPartyBlocked()) || SITE_PERMISSIONS.allowedNow(permissionDecisions, SITE_PERMISSIONS.checkOrigin(origin, details), permission, details));
   SITE_PERMISSIONS.register(ses, { decisions: permissionDecisions, isBlocked: (permission) => settingsBackend.permissionDefault(permission) === 'block' });
   if (first) SITE_PERMISSIONS.installIpc(ipcMain);
   ses.setDisplayMediaRequestHandler(pickScreenToShare);
@@ -2836,10 +2836,13 @@ function layoutBody() {
   sizeSpares();
   sizeHiddenNewTabsSoon();
   sendSplitLayout(sp);
-  spotifyWeb.clip(newTabArea()); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
-  appleMusicWeb.clip(newTabArea());
-  spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
-  appleMusicWeb.sync(); // [widgets] and so does the Apple Music card's
+  const m = musicIf(); // [widgets] (nothing to place before a music card or its engine exists)
+  if (m) {
+    m.spotifyWeb.clip(newTabArea()); // [widgets] a music card's view never reaches over the sidebar, even for the moment before the page says where its card is now
+    m.appleMusicWeb.clip(newTabArea());
+    m.spotifyWeb.sync(); // [widgets] the Spotify card's view follows the new-tab page (or hides, still playing)
+    m.appleMusicWeb.sync(); // [widgets] and so does the Apple Music card's
+  }
   raiseOverlays();
 }
 const { overlaysToRaise } = require('./features/overlay-order');
@@ -2851,7 +2854,7 @@ function raiseOverlays() {
   // (a music player's view shown in a window of its own, the sign-in window, is not this window's: re-adding it here would pull it out of that window and
   // lay it over the browser's toolbar)
   const here = (v) => !v || win.contentView.children.includes(v);
-  const order = [here(spotifyWeb.view()) ? spotifyWeb.view() : null, here(appleMusicWeb.view()) ? appleMusicWeb.view() : null, suggestView, downloadsView, toolOverlay[LOADED] ? toolOverlay.viewFor(win) : null].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
+  const order = [here(musicMade?.spotifyWeb.view()) ? musicMade?.spotifyWeb.view() : null, here(musicMade?.appleMusicWeb.view()) ? musicMade?.appleMusicWeb.view() : null, suggestView, downloadsView, toolOverlay[LOADED] ? toolOverlay.viewFor(win) : null].filter((v) => v && !v.webContents.isDestroyed() && v.getVisible());
   // Only when one is under a tab (or they are out of order): then all are re-added in order, so two never swap.
   for (const v of overlaysToRaise(win.contentView.children, tabs.filter((t) => t.view).map((t) => t.view), order)) win.contentView.addChildView(v);
   dialogs.raise();
@@ -11089,21 +11092,21 @@ const widgets = createWidgets({
   githubInUse: () => { try { return connectorsSvc().usesShared('github'); } catch { return false; } },
   onTodoistChange: () => { try { connectorsSvc().syncShared('todoist'); } catch { setTimeout(() => { try { connectorsSvc().syncShared('todoist'); } catch { /* the connector looks again at the next change */ } }, 1500).unref?.(); } },
   todoistInUse: () => { try { return connectorsSvc().usesShared('todoist'); } catch { return false; } },
-  spotifyWebSignedIn: () => spotifyWeb.isSignedIn(),
+  spotifyWebSignedIn: () => (musicIf() ? musicMade.spotifyWeb.isSignedIn() : null), // (asked for every card's look: no music card, nothing to load)
   // The Gmail widget's default mode: read the inbox's Atom feed with the Google sign-in already in Lumen's normal session.
   googleMail: {
     fetch: (url) => (TEST && global.__googleMailFake ? global.__googleMailFake(url) : googleMailFeed(url)),
     openSignIn: (url) => { if (!/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error('Refusing to open that address.'); openTab(url); },
   },
-  spotifyWebStatus: () => spotifyWeb.status(),
-  spotifyWebReload: () => spotifyWeb.reload(),
+  spotifyWebStatus: () => (musicIf() ? musicMade.spotifyWeb.status() : null),
+  spotifyWebReload: () => music().spotifyWeb.reload(),
   // The Status mode: the Apple Music engine (features/apple-music-engine.js). Tests may stand in a fake for any of its calls.
-  appleMusic: engineFacade(() => appleMusicEngine, () => global.__appleMusicFake),
-  spotifyEngine: engineFacade(() => spotifyEngine, () => global.__spotifyEngineFake),
-  spotifyEngineSignedIn: () => spotifyEngine.signedIn(),
-  appleMusicWebSignedIn: () => appleMusicEngine.signedIn(),
-  appleMusicWebStatus: () => appleMusicWeb.status(),
-  appleMusicWebReload: () => appleMusicWeb.reload(),
+  appleMusic: engineFacade(() => music().appleMusicEngine, () => global.__appleMusicFake),
+  spotifyEngine: engineFacade(() => music().spotifyEngine, () => global.__spotifyEngineFake),
+  spotifyEngineSignedIn: () => music().spotifyEngine.signedIn(),
+  appleMusicWebSignedIn: () => (musicIf() ? musicMade.appleMusicEngine.signedIn() : null),
+  appleMusicWebStatus: () => (musicIf() ? musicMade.appleMusicWeb.status() : null),
+  appleMusicWebReload: () => music().appleMusicWeb.reload(),
   routines: () => bgTasks.routineView(), // the Routines card (features/routines-card.js shapes it)
   routineAct: (req) => bgTasks.routineAct(req), // its New routine and result buttons: open the sidebar's editor / the routine's result page
   aiStatus: () => (TEST && global.__aiStatusFacts ? global.__aiStatusFacts() : aiStatusFacts()), // (tests may stand in the facts) // the AI status card: facts Lumen already holds, no secrets (features/aistatus-view.js)
@@ -11112,7 +11115,7 @@ const widgets = createWidgets({
     clearTimeout(widgetRefreshTimer);
     widgetRefreshTimer = setTimeout(() => {
       refreshNewTabs();
-      spotifyWeb.sync(); appleMusicWeb.sync(); // a web card added, removed or switched to another mode: its view is placed, hidden or dropped now (the page only pushes a slot while it has one)
+      { const m = musicIf(); if (m) { m.spotifyWeb.sync(); m.appleMusicWeb.sync(); } } // a web card added, removed or switched to another mode: its view is placed, hidden or dropped now (the page only pushes a slot while it has one)
       for (const t of tabs.filter((x) => x.settings && alive(x))) t.view.webContents.send('widgets:changed'); // Settings shows it too (a sign-in Google ended)
     }, 60);
   },
@@ -11216,11 +11219,15 @@ const musicWebDeps = (hasWidget, testUrl, drmProbe, keepAlive, onAuth) => ({
   testUrl: () => (TEST && testUrl()) || '', // tests serve a stand-in for the site; nothing else can
   drmProbe: (wc) => (TEST && drmProbe() ? drmProbe()(wc) : wc.executeJavaScript(SW.DRM_PROBE)),
 });
-const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'), () => global.__spotifyWebUrl, () => global.__spotifyDrmProbe, () => true, () => spotifyEngine.authChanged())); // (the engine keeps the page, hidden, with no web card)
-const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic' && w.mode === 'web'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe, () => true)); // (the engine keeps the page, hidden, with no web card)
-if (TEST) { global.__spotifyWeb = spotifyWeb; global.__appleMusicWeb = appleMusicWeb; }
 // Tests only: the stand-in for the Spotify site can be named at launch, so the card's view never starts on the real site while the test sets it later.
 if (TEST && process.env.LUMEN_TEST_SPOTIFY_WEB_URL) global.__spotifyWebUrl = process.env.LUMEN_TEST_SPOTIFY_WEB_URL;
+// [widgets] The music cards' players and engines (spotify-web, apple-music-web, web-player, the two engines, music-engine, the bridges,
+// apple-music-native/-view): modules no first window needs. They are made with the first music card (musicIf: a layout or a card's
+// look finds one) or the first engine call, never at startup; before that no view exists, so no page is a music page (musicOwns).
+let musicMade = null;
+const hasMusicCard = () => widgets.list().some((w) => w.type === 'spotify' || w.type === 'applemusic');
+const musicIf = () => musicMade || (hasMusicCard() ? music() : null);
+const musicOwns = (wc) => Boolean(musicMade && (musicMade.spotifyWeb.owns(wc) || musicMade.appleMusicWeb.owns(wc)));
 // [widgets] The Apple Music engine (features/apple-music-engine.js): MusicKit in the hidden music.apple.com view above, plus the desktop
 // Apple Music app as a fallback source (features/apple-music-native.js: a PowerShell helper on Windows, osascript on macOS; both only
 // while a card is being read, and ended at quit). Album pictures are made small here (they travel in the new-tab page's address).
@@ -11230,11 +11237,6 @@ const resizeArt = (bytes, height = 160, quality = 82) => {
   if (img.isEmpty()) return null;
   return (img.getSize().height > height ? img.resize({ height, quality: 'good' }) : img).toJPEG(quality);
 };
-const appleMusicNative = require('./features/apple-music-native').createNowPlaying({
-  any: TEST && process.env.LUMEN_TEST_APPLE_MUSIC_ANY === '1', // tests only: any media app instead of Apple's
-  resizeArt,
-  onChange: () => widgets.engineChanged(),
-});
 // The engines' sign-in / player windows. LUMEN_TEST_BACKGROUND (tests only): off screen, see-through, never focused, like every other test window.
 function engineWindow(opts) {
   if (!TEST_BACKGROUND) return new BrowserWindow(opts);
@@ -11242,40 +11244,54 @@ function engineWindow(opts) {
   w.setOpacity(0); w.setIgnoreMouseEvents(true); w.setPosition(-5000, -5000); w.showInactive();
   return w;
 }
-const appleMusicEngine = require('./features/apple-music-engine').createEngine({
-  player: appleMusicWeb,
-  native: appleMusicNative,
-  resizeArt,
-  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on mzstatic.com)
-  BrowserWindow: engineWindow,
-  hasCard: () => widgets.list().some((w) => w.type === 'applemusic'),
-  respondMs: () => (TEST && global.__respondMs) || 0,
-  onChange: () => widgets.engineChanged(),
-});
-if (TEST) global.__appleMusicEngine = appleMusicEngine;
-// [widgets] The Spotify engine (features/spotify-engine.js): Spotify's own web player in the hidden open.spotify.com view above.
-const spotifyEngine = require('./features/spotify-engine').createEngine({
-  player: spotifyWeb,
-  resizeArt,
-  // Spotify's picture host answers WebP whatever is asked for, which nativeImage cannot read: the engine's own page (a Chromium that can) draws it small and gives back a JPEG.
-  decodeArt: async (bytes) => {
-    const wc = spotifyWeb.webContents();
-    if (!wc || bytes.length > 400e3) return '';
-    try {
-      const out = await wc.executeJavaScript(`(async (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); const bmp = await createImageBitmap(new Blob([u], { type: 'image/webp' })); const h = Math.min(120, bmp.height); const w = Math.max(1, Math.round(bmp.width * h / bmp.height)); const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(bmp, 0, 0, w, h); return c.toDataURL('image/jpeg', 0.8); })(${JSON.stringify(Buffer.from(bytes).toString('base64'))})`);
-      return typeof out === 'string' && out.length < 60000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(out) ? out : '';
-    } catch { return ''; }
-  },
-  fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/jpeg, image/png;q=0.9' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (JPEG or PNG: Spotify's picture host otherwise sometimes answers WebP, which the picture resizer cannot read, so the picture was dropped; the engine only asks for https addresses on scdn.co)
-  BrowserWindow: engineWindow,
-  hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
-  playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
-  respondMs: () => (TEST && global.__respondMs) || 0,
-  onChange: () => widgets.engineChanged(),
-});
-if (TEST) global.__spotifyEngine = spotifyEngine;
+function music() {
+  if (musicMade) return musicMade;
+  const spotifyWeb = SW.createSpotifyWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'web'), () => global.__spotifyWebUrl, () => global.__spotifyDrmProbe, () => true, () => spotifyEngine.authChanged())); // (the engine keeps the page, hidden, with no web card)
+  const appleMusicWeb = AMW.createAppleMusicWeb(musicWebDeps(() => widgets.list().some((w) => w.type === 'applemusic' && w.mode === 'web'), () => global.__appleMusicWebUrl, () => global.__appleMusicDrmProbe, () => true)); // (the engine keeps the page, hidden, with no web card)
+  // [widgets] The Apple Music engine (features/apple-music-engine.js): see resizeArt above.
+  const appleMusicNative = require('./features/apple-music-native').createNowPlaying({
+    any: TEST && process.env.LUMEN_TEST_APPLE_MUSIC_ANY === '1', // tests only: any media app instead of Apple's
+    resizeArt,
+    onChange: () => widgets.engineChanged(),
+  });
+  const appleMusicEngine = require('./features/apple-music-engine').createEngine({
+    player: appleMusicWeb,
+    native: appleMusicNative,
+    resizeArt,
+    fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/*' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (the engine only asks for https addresses on mzstatic.com)
+    BrowserWindow: engineWindow,
+    hasCard: () => widgets.list().some((w) => w.type === 'applemusic'),
+    respondMs: () => (TEST && global.__respondMs) || 0,
+    onChange: () => widgets.engineChanged(),
+  });
+  // [widgets] The Spotify engine (features/spotify-engine.js): Spotify's own web player in the hidden open.spotify.com view above.
+  const spotifyEngine = require('./features/spotify-engine').createEngine({
+    player: spotifyWeb,
+    resizeArt,
+    // Spotify's picture host answers WebP whatever is asked for, which nativeImage cannot read: the engine's own page (a Chromium that can) draws it small and gives back a JPEG.
+    decodeArt: async (bytes) => {
+      const wc = spotifyWeb.webContents();
+      if (!wc || bytes.length > 400e3) return '';
+      try {
+        const out = await wc.executeJavaScript(`(async (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); const bmp = await createImageBitmap(new Blob([u], { type: 'image/webp' })); const h = Math.min(120, bmp.height); const w = Math.max(1, Math.round(bmp.width * h / bmp.height)); const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(bmp, 0, 0, w, h); return c.toDataURL('image/jpeg', 0.8); })(${JSON.stringify(Buffer.from(bytes).toString('base64'))})`);
+        return typeof out === 'string' && out.length < 60000 && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(out) ? out : '';
+      } catch { return ''; }
+    },
+    fetchBytes: async (url) => { const res = await net.fetch(url, { headers: { Accept: 'image/jpeg, image/png;q=0.9' } }); return res.ok ? Buffer.from(await res.arrayBuffer()) : null; }, // (JPEG or PNG: Spotify's picture host otherwise sometimes answers WebP, which the picture resizer cannot read, so the picture was dropped; the engine only asks for https addresses on scdn.co)
+    BrowserWindow: engineWindow,
+    hasCard: () => widgets.list().some((w) => w.type === 'spotify' && w.mode === 'status'),
+    playerMissingMs: () => (TEST && global.__playerMissingMs) || 0,
+    respondMs: () => (TEST && global.__respondMs) || 0,
+    onChange: () => widgets.engineChanged(),
+  });
+  musicMade = { spotifyWeb, appleMusicWeb, appleMusicNative, appleMusicEngine, spotifyEngine };
+  return musicMade;
+}
+if (TEST) for (const [name, key] of [['__spotifyWeb', 'spotifyWeb'], ['__appleMusicWeb', 'appleMusicWeb'], ['__appleMusicEngine', 'appleMusicEngine'], ['__spotifyEngine', 'spotifyEngine']]) Object.defineProperty(global, name, { configurable: true, get: () => music()[key] });
 // The engines' bridges: only a hidden view's own page (the service's real address, or in tests a stand-in) may fetch its script or send state.
 const engineSender = (event) => {
+  if (!musicMade) return null; // (no player page yet: no sender can be one)
+  const { appleMusicWeb, appleMusicEngine, spotifyWeb, spotifyEngine } = musicMade;
   for (const [web, engine, bridge, isPage, stand] of [[appleMusicWeb, appleMusicEngine, require('./features/apple-music-bridge'), AMW.isEnginePage, () => global.__appleMusicWebUrl], [spotifyWeb, spotifyEngine, require('./features/spotify-bridge'), SW.isEnginePage, () => global.__spotifyWebUrl]]) {
     const wc = web.webContents();
     if (!wc || event.sender !== wc || event.senderFrame !== wc.mainFrame) continue;
@@ -11287,7 +11303,7 @@ const engineSender = (event) => {
 };
 ipcMain.on('musicengine:bridge-source', (event) => { event.returnValue = engineSender(event)?.bridge.BRIDGE_SOURCE || ''; });
 ipcMain.on('musicengine:msg', (event, raw) => { const from = engineSender(event); if (!from) return; from.engine.onMessage(raw); from.web.emitState(raw); }); // (the engine first; then anyone listening on the player's onState)
-app.on('before-quit', () => { spotifyEngine.destroy(); spotifyWeb.destroy(); appleMusicEngine.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); }); // (closing the engine's page stops its music)
+app.on('before-quit', () => { if (!musicMade) return; const { spotifyEngine, spotifyWeb, appleMusicEngine, appleMusicWeb, appleMusicNative } = musicMade; spotifyEngine.destroy(); spotifyWeb.destroy(); appleMusicEngine.destroy(); appleMusicWeb.destroy(); appleMusicNative.destroy(); }); // (closing the engine's page stops its music)
 
 // ---------- passkeys (features/passkeys.js): WebAuthn through Windows' own API, checked here per request ----------
 // Which pages may ask, and to which window Windows Security belongs: the tab in front of a focused, visible window,
@@ -11328,7 +11344,9 @@ const passkeys = require('./features/passkeys').createPasskeys({
   },
 });
 passkeys.attach();
-if (process.platform === 'win32') app.whenReady().then(() => setTimeout(() => passkeys.warm(), 1500));
+// (Windows: the native side, koffi and webauthn-windows.js, loads a few seconds after the first tab, not with the first window: a web page
+// that asks before then loads it itself, synchronously, in modeFor; the warm only has Windows Hello's answer ready for the first one after.)
+if (process.platform === 'win32') firstTabLoaded.then(() => setTimeout(() => passkeys.warm(), 4000).unref?.());
 if (TEST) global.__passkeys = { info: () => passkeys.info(), busy: () => passkeys.busy(), context: (id) => { const wc = require('electron').webContents.fromId(id); return wc ? passkeyContext(wc) : null; }, openBackground: (url) => openTab(url, { background: true })?.webContents?.id ?? null };
 
 // [a11y mode] Accessibility another program switched on (a password manager's desktop app, Phone Link) is cut down to Lumen's own controls unless a

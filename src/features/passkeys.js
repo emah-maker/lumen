@@ -57,8 +57,12 @@ function createPasskeys(deps) {
   const usable = () => enabled() && Boolean(nativeApi());
 
   // ---- per frame: which mode (sync, once per document)
-  function modeFor(wc) {
+  // A document with no web origin (Lumen's own file: pages, the new tab and the toolbar; a blank warm-up page, origin "null") can't
+  // pass any request, so it is hidden without loading the native side: koffi then loads with the first web page, not the first window.
+  const noWebOrigin = (frame) => Boolean(frame) && (frame.origin === 'null' || /^file:/i.test(String(frame.origin || frame.url || '')));
+  function modeFor(wc, frame = null) {
     try {
+      if (noWebOrigin(frame)) return { mode: 'hide' };
       if (!wc || wc.isDestroyed() || !usable() || !candidate(wc)) return { mode: 'hide' };
       return { mode: 'native', caps: caps() };
     } catch { return { mode: 'hide' }; }
@@ -182,7 +186,7 @@ function createPasskeys(deps) {
   }
 
   function attach() {
-    ipcMain.on('webauthn:mode', (event) => { event.returnValue = modeFor(event.sender); });
+    ipcMain.on('webauthn:mode', (event) => { event.returnValue = modeFor(event.sender, event.senderFrame); });
     ipcMain.handle('webauthn:request', (event, msg) => request(event, msg));
     ipcMain.on('webauthn:cancel', (event, id) => cancel(event, id));
   }

@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const http = require('http');
 
 const HOST = '127.0.0.1';
-const DEFAULT_PORT = 47821;
+const { WEBHOOK_PORT: DEFAULT_PORT, cleanWebhookPort: cleanPort } = require('./routines'); // (the port rule lives with the routines: Settings checks it at startup)
 const MAX_BODY = 4096;
 const RATE_MS = 60000; // one run a minute per routine
 const BODY_TIMEOUT_MS = 10000;
@@ -77,7 +77,6 @@ function createLimiter(ms = RATE_MS) {
 // Is the Host header this listener's own address? (127.0.0.1:<port> or localhost:<port>, any case.)
 const hostAllowed = (host, port) => [`127.0.0.1:${port}`, `localhost:${port}`].includes(String(host || '').trim().toLowerCase());
 
-const cleanPort = (v) => { const n = Math.round(Number(v)); return Number.isInteger(n) && n >= 1024 && n <= 65535 ? n : null; };
 const runUrl = (port, id) => `http://${HOST}:${port}/routines/${id}/run`;
 // The command shown in the editor (with the key it just made): copied, it starts the routine from a terminal.
 const curlCommand = (port, id, key) => `curl -X POST -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" -d '{"text":""}' ${runUrl(port, id)}`;

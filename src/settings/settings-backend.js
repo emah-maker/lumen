@@ -267,7 +267,7 @@ const RANGES = { hour: 3600e3, day: 86400e3, week: 7 * 86400e3, month: 28 * 8640
 
 const translate = require('../features/translate');
 const WS = require('../features/widget-system'); // the clock's steps and the search bar's width range
-const SLACK = require('../features/slack-view'); // [widgets] the prefilled "create app" link
+const slackView = () => require('../features/slack-view'); // [widgets] the prefilled "create app" link (loaded with the first Slack setup step)
 const CS = require('../features/clock-styles'); // [look] the clock's styles and the greeting's fonts
 const TS = require('../features/tab-sleep'); // [tabs] the sleep settings' choices
 const KEY_PROVIDERS = ['anthropic', 'openai', 'xai', 'gemini', 'openrouter']; // [key switches] the API keys Settings lists (keysOff)
@@ -282,6 +282,9 @@ const cleanPins = (v) => {
 };
 const webUrl = (u) => /^https?:\/\/[^\s]+$/i.test(String(u || '').trim());
 const langTag = (l) => /^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i.test(String(l));
+// The saved version every start checks, with whats-new.js's rule (cleanVersion; a unit test holds them equal), so that module loads only
+// when there are notes to show, not at startup (perf-budget's module count).
+const cleanVersion = (v) => (typeof v === 'string' && /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.test(v.trim()) && v.trim().length <= 40 ? v.trim() : null);
 
 // Coerce a value for `key` to something valid, or throw.
 // [newtab tiles] { favorites: [url], frequent: [host] }: bounded, deduped, strings only (the page sends these back as the user removes tiles).
@@ -312,7 +315,7 @@ function validate(key, value) {
     case 'minimumFontSize': return pick(Number(value), [0, 6, 9, 12, 16, 20, 24], null);
     case 'screenReaderSupport': return pick(value, require('../features/a11y-mode').MODES, null);
     case 'maxSteps': return pick(Number(value), [0, ...require('../ai/loop-guard').STEP_CHOICES], null); // (0: unlimited)
-    case 'routineWebhookPort': return require('../features/routine-webhooks').cleanPort(value);
+    case 'routineWebhookPort': return require('../features/routines').cleanWebhookPort(value); // (routines.js, not the listener's module)
     case 'aiSubagents': return value === true ? 'on' : value === false ? 'off' : pick(value, ['auto', 'on', 'off'], null); // (true / false: saved before Auto existed)
     case 'aiSubagentModel': return pick(value, ['auto', 'same'], null);
     case 'aiFilesInApps': return pick(value, ['app', 'auto', 'file'], null);
@@ -383,7 +386,7 @@ function validate(key, value) {
     case 'homeWidgetSizes': return cleanSizes(value);
     case 'newTabHiddenTiles': return cleanHiddenTiles(value);
     case 'weatherLocation': return pick(value, ['unset', 'granted', 'denied'], null);
-    case 'lastSeenVersion': return value === '' ? '' : require('../features/whats-new').cleanVersion(value);
+    case 'lastSeenVersion': return value === '' ? '' : cleanVersion(value);
     case 'connectorAlways': return require('../features/connectors/always').cleanList(value);
     case 'featureOffersSeen': return Array.isArray(value) ? value.filter((k) => typeof k === 'string').slice(0, 200) : null;
     case 'secureDns': return require('../browser/secure-dns').cleanChoice(value);
@@ -1342,7 +1345,7 @@ function create(deps) {
     const slackTokenSeen = (token) => { slackSetup.close(); deps.widgets.slackAuto('token', token); };
     const slackOwner = () => { try { return require('os').userInfo().username; } catch { return ''; } };
     handle('prefs:slack-create-app', (opts) => {
-      const url = SLACK.manifestUrl({ name: slackOwner() });
+      const url = slackView().manifestUrl({ name: slackOwner() });
       if (opts && opts.browser === true) shell.openExternal(url).catch(() => {}); // for a sign-in the setup window can't do (SSO): the default browser
       else slackSetup.open(url, { followToTokenPage: true });
       slackSetup.watchClipboard(slackTokenSeen);
@@ -1510,4 +1513,4 @@ function create(deps) {
   };
 }
 
-module.exports = { graphics, create, validate, cleanHiddenTiles, migrateMaxChatRuns, dropMeetingHelper, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_ALIASES, SECTION_SUBPAGES, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };
+module.exports = { graphics, create, validate, cleanVersion, cleanHiddenTiles, migrateMaxChatRuns, dropMeetingHelper, ACCENTS, NEW_TAB_BACKGROUNDS, NEW_TAB_EFFECTS, SETTINGS_URL, HTTPS_ONLY_URL, SECTIONS, SECTION_ALIASES, SECTION_SUBPAGES, SECTION_LINKS, isSettingsUrl, urlFor, displayUrl, parseSettingsInput, acceptLanguage, DEFAULTS };

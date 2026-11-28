@@ -69,7 +69,7 @@ const CEILING = { requireMs: 1000, modules: 341, preloadKB: 40, uiKB: 1000, idle
     const modules = (await app.evaluate(() => global.__perf.modules())).map((f) => f.replace(/\\/g, '/')); // (separator-agnostic: a Windows path must not slip past the LAZY check below)
     const loaded = LAZY.filter((m) => modules.some((f) => f.includes(m.replace(/^src\//, '')))); // (project modules are listed relative to src/)
     check('heavy modules are not loaded at startup', loaded.length === 0, `loaded: ${loaded.join(', ')}`);
-    check(`project and dependency modules loaded at startup <= ${CEILING.modules}`, modules.length <= CEILING.modules, modules.length);
+    check(`project and dependency modules loaded at startup <= ${CEILING.modules} (${modules.length})`, modules.length <= CEILING.modules, modules.length); // (the count in the line: the headroom shows on every run)
     const requireMs = await app.evaluate(() => global.__perf.requireTotalMs());
     check(`main.js requires take <= ${CEILING.requireMs} ms`, requireMs <= CEILING.requireMs, `${requireMs} ms`);
     const preloadKB = fs.statSync(path.join(root, 'src', 'preload', 'preload.bundle.js')).size / 1024;

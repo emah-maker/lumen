@@ -198,7 +198,7 @@ function setupAiAgents(deps) {
   // (Also Grok Build's setup when its warm-up is on and it is the chosen model: this is what lets the setting
   // take effect without a restart. Cheap when repeated.)
   // (And, with Keep Grok Build connected on, the chat's own Grok Build process: warmGrokChat.)
-  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { grokWarmup?.warm(); } catch {} try { warmGrokChat(); } catch {} try { warmCodexChat(); } catch {} });
+  ipcMain.on('agent:prewarm', (_e, text) => { try { agent.prewarm(text); } catch {} try { pokeGrokWarmup(); } catch {} try { warmGrokChat(); } catch {} try { warmCodexChat(); } catch {} });
   // Every Claude Code engine: the sidebar's, each chat's own, the background and side ones.
   const ccEngines = () => [claudeCode, codex, ...warmChats.engines(), ...bgEngines, ...sideEngines].filter((e) => e && typeof e.purgeDirs === 'function');
   app.on?.('will-quit', () => {
@@ -263,12 +263,13 @@ function setupAiAgents(deps) {
   // and Lumen has looked for the CLIs. Only for someone who uses Grok Build (connected it, or picked it), and
   // read live, so the toggle needs no restart.
   const grokInUse = () => grokSidebar() || String(readSettings().model || '').startsWith('grokbuild:');
-  const grokWarmup = require('./grok-warmup').createGrokWarmup({
-    enabled: () => readSettings().grokWarmup !== false && grokInUse(),
-    engine: grokBuildEngine,
-    found: () => grokBuildFound,
-    powerMonitor: { on: (ev, cb) => { try { require('electron').powerMonitor.on(ev, cb); } catch { /* not ready / tests */ } } },
-  });
+  // Made on first need (the look is done and Grok Build is in use, or it was made already), so the module isn't loaded at startup for
+  // everyone else (perf-budget's module count); made after the look, it starts as if afterLook() had run.
+  const grokWarmupOn = () => readSettings().grokWarmup !== false && grokInUse();
+  let grokWarmupMade = null;
+  let grokLooked = false;
+  const grokWarmup = () => (grokWarmupMade ||= require('./grok-warmup').createGrokWarmup({ enabled: grokWarmupOn, engine: grokBuildEngine, found: () => grokBuildFound, loaded: true }));
+  const pokeGrokWarmup = (opts) => (grokLooked && (grokWarmupMade || grokWarmupOn()) ? grokWarmup().warm(opts) : Promise.resolve(false));
 
   // ---------- Antigravity engine (created on first use) ----------
   // Runs agy with Lumen's own home folder, whose .gemini/ names only the `lumen` MCP server and the permission rules for this
@@ -955,8 +956,8 @@ function setupAiAgents(deps) {
       const look = () => {
         // (Grok Build is looked for even while it's off in the sidebar: the setup card offers it once it's found.)
         Promise.allSettled([refreshClaudeCodeStatus(false), refreshGrokBuildStatus(false), refreshAntigravityStatus(false), codexConnect.status(false).then(() => refreshCodexStatus(false))])
-          .then(() => { detecting = false; modelsChanged(); grokWarmup.afterLook(); try { warmGrokChat(); } catch {} try { warmCodexChat(); } catch {} });
-        grokWarmup.watchResume();
+          .then(() => { detecting = false; modelsChanged(); grokLooked = true; pokeGrokWarmup(); try { warmGrokChat(); } catch {} try { warmCodexChat(); } catch {} });
+        try { require('electron').powerMonitor.on('resume', () => { try { pokeGrokWarmup({ fresh: true }); } catch { /* a warm-up never reports */ } }); } catch { /* not ready / tests */ } // (whenever the machine wakes, after the look)
       };
       if (after) after.then(() => setTimeout(look, 300)); else setTimeout(look, 2500);
     },
