@@ -20,7 +20,8 @@ const { pathToFileURL } = require('url');
 
 const UI_HTML = path.join(__dirname, '..', 'renderer', 'private.html');
 const NEWTAB_HTML = path.join(__dirname, '..', 'renderer', 'private-newtab.html');
-const PAGE_BACKGROUND = require('../browser/page-background');
+let pageBackgroundMod = null; // [page background] browser/page-background.js, loaded with the first web page in a private window (not at start-up: the module budget)
+const PAGE_BACKGROUND = { backgroundFor: (...a) => (pageBackgroundMod ||= require('../browser/page-background')).backgroundFor(...a) };
 const OWN_PAGES = (pathToFileURL(path.join(__dirname, '..', 'renderer')).href + '/').toLowerCase(); // (this window's own pages keep its colour)
 const PRIVATE_BG = '#1d1530';
 const TOP = 78; // tab strip + toolbar height in renderer/private.css

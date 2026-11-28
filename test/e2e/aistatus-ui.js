@@ -173,7 +173,7 @@ const check = (name, ok, detail) => { if (!ok) failures++; console.log(`${ok ? '
     await setCells(12, 8);
     const text = await inTab("document.querySelector('.w-card.aistatus .w-body').innerText");
     check('large: each AI’s state is written out (not only a colour)', /Claude Code[\s\S]*Limit reached/.test(text) && /Signed out/.test(text) && /Not installed/.test(text) && /Connected/.test(text), text);
-    check('large: the model in use, the full-access state and a limit’s reset time', /Using Sonnet/.test(text) && /Full access on/.test(text) && /Resets \d{1,2}:\d{2}/.test(text), text);
+    check('large: the model in use, the full-access state and a limit’s reset time', /Using Sonnet/.test(text) && /Full access on/.test(text) && /Resets (?:[A-Z][a-z]{2} )?\d{1,2}:\d{2}/.test(text), text); // (a reset past midnight names its day: "Resets Sat 2:34 AM")
     // Every connected AI has its rows: an API provider's tokens and tight rate limit, Antigravity's quota reset, the effort chosen (provider-usage.js numbers, fake here).
     await setFacts({ ...MANY, engines: { ...MANY.engines, antigravity: { installed: true, signedIn: 'unknown', enabled: true } }, agyLimit: { resetsAt: NOW + 110 * 3600e3 }, today: { ...MANY.today, openai: { turns: 2, costUSD: 0, tokens: 4200 }, gemini: { turns: 1, costUSD: 0.01, tokens: 90 } }, rate: { openai: { percent: 91, label: 'Requests per minute', resetsAt: NOW + 3e4 } }, effort: { openai: 'low', claudecode: 'high' } });
     await waitFor("/Effort: low/.test(document.querySelector('.w-card.aistatus .w-body').innerText)", 60);

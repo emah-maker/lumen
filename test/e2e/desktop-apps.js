@@ -98,6 +98,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('the helper reports both the password box and the "Card PIN" box (never IsPassword) as {pw:true} with nothing else, and neither value is anywhere in the tree', direct.pwNodes === 2 && direct.keys.every((k) => k === 'pw') && !direct.json, JSON.stringify(direct));
 
     // screenshot and the card thumbnail
+    // (this suite drives the tools with no chat drawing the Computer card, so it says what an on-screen card says through the preload: frames
+    // are only taken while a card is on screen, main.js thumbsVisible, which no longer assumes one before any chat has reported, #1141)
+    await ui.evaluate(() => window.assistant?.thumbsVisible?.(true));
     const shot = await run('screenshot_app', { id: `w${hwnd}` });
     check('screenshot_app returns a picture of the window', shot.ok && /\[image \d{3,}\]/.test(shot.v), shot.v);
     await sleep(1800);
