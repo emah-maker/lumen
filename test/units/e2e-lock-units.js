@@ -1,6 +1,7 @@
 // The machine-wide Electron lock (scripts/test/e2e-lock.js). Plain Node, no Electron: a temp lock dir through LUMEN_E2E_LOCK_DIR.
 // Covers acquire/release, a second acquirer waiting, a stale lock (old and a dead owner pid) taken over, a live owner never robbed
-// even when old, and `run --` releasing after a failing command.
+// even when old, `run --` releasing after a failing command, the progress line while waiting, an exact owner (stale once its pid dies),
+// and the release reservation: it blocks other acquirers but not the release or its children, and goes on exit or once its pid is dead.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -13,11 +14,13 @@ const base = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-e2e-lock-test-'));
 const LOCK = path.join(base, 'lock');
 process.env.LUMEN_E2E_LOCK_DIR = LOCK;
 delete process.env.LUMEN_E2E_LOCK_HELD;
+delete process.env.LUMEN_E2E_RESERVED; // (run from a release's checks, this process would otherwise count as the release's child)
 const lock = require('../../scripts/test/e2e-lock');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const old = () => { const t = new Date(Date.now() - 3 * 3600000); fs.utimesSync(LOCK, t, t); };
 const plant = (pid) => { fs.mkdirSync(LOCK); fs.writeFileSync(path.join(LOCK, 'owner'), `${pid} someone ${Math.floor(Date.now() / 1000)}\n`); };
 const clear = () => fs.rmSync(LOCK, { recursive: true, force: true });
+const lineFrom = (p) => new Promise((r) => p.stdout.once('data', (d) => r(String(d).trim())));
 const deadPid = () => { const r = spawnSync(process.execPath, ['-e', '0']); return r.pid; };
 
 (async () => {
@@ -88,6 +91,84 @@ const deadPid = () => { const r = spawnSync(process.execPath, ['-e', '0']); retu
   check('run -- releases after a passing command too', r2.status === 0 && !fs.existsSync(LOCK), `${r2.status} ${r2.stderr}`);
   const r3 = spawnSync(process.execPath, [cli, 'run'], { env, encoding: 'utf8' });
   check('run without a command is a usage error and takes no lock', r3.status === 2 && !fs.existsSync(LOCK));
+
+  // ---- an exact owner (release.js: its pid is the holder) is stale the moment that pid dies, however young the lock
+  fs.mkdirSync(LOCK); fs.writeFileSync(path.join(LOCK, 'owner'), `${deadPid()} release-9.9.9 ${Math.floor(Date.now() / 1000)} exact\n`);
+  check('isStale: a young lock whose exact owner pid is dead is stale', lock.isStale(20 * 60000) && lock.readOwner().exact === true);
+  await lock.acquire({ owner: 'unit-exact', waitMs: 2000, pollMs: 50, onWait: null });
+  check('...and is taken over at once', lock.readOwner().name === 'unit-exact' && lock.readOwner().exact === false);
+  lock.release();
+  await lock.acquire({ owner: 'unit-exact2', exact: true, waitMs: 2000, pollMs: 50 });
+  check('acquire({ exact: true }) writes the exact marker in the owner file', /^\d+ unit-exact2 \d+ exact\n$/.test(fs.readFileSync(path.join(LOCK, 'owner'), 'utf8')) && lock.holds());
+  lock.release();
+
+  // ---- the progress line: onWait runs on the first failed try, names who holds the lock, then only every progressMs
+  const holder2 = spawn(process.execPath, [path.join(__dirname, '..', 'helpers', '_e2e-lock-child.js'), 'hold', 'suite-run'], { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, LUMEN_E2E_LOCK_DIR: LOCK } });
+  await lineFrom(holder2);
+  const seen = [];
+  const w2 = lock.acquire({ owner: 'unit-wait', waitMs: 30000, pollMs: 50, progressMs: 60000, onWait: (i) => seen.push(i) });
+  await sleep(500);
+  check('waiting for a held lock reports "waiting for <owner> (pid) to finish…" once, not on every poll', seen.length === 1 && seen[0].name === 'suite-run' && seen[0].pid === holder2.pid && seen[0].release === false && /^waiting for suite-run \(pid \d+\) to finish…/.test(seen[0].line), JSON.stringify(seen));
+  holder2.stdin.write('release\n');
+  await w2;
+  check('...and takes the lock once its holder releases it', lock.readOwner().name === 'unit-wait');
+  lock.release();
+  holder2.stdin.write('exit\n');
+  const errs = [];
+  const origErr = console.error; console.error = (m) => errs.push(String(m));
+  plant(process.pid); // held by hand: the default reporter writes the line on stderr
+  try { await lock.acquire({ owner: 'unit-default', waitMs: 150, pollMs: 50 }); } catch { /* expected */ }
+  console.error = origErr;
+  check('without onWait, a waiter says so on stderr ("[e2e-lock] waiting for someone ...")', errs.length === 1 && /^\[e2e-lock\] waiting for someone \(pid \d+\) to finish…/.test(errs[0]), errs.join(' | '));
+  clear();
+
+  // ---- the release reservation
+  const RES = lock.reservationFile();
+  check('the reservation file sits beside the lock dir (<lock dir>-release)', RES === `${LOCK}-release`);
+  const reserver = spawn(process.execPath, [path.join(__dirname, '..', 'helpers', '_e2e-lock-child.js'), 'reserve', 'release-1.2.3'], { stdio: ['pipe', 'pipe', 'inherit'], env: { ...process.env, LUMEN_E2E_LOCK_DIR: LOCK } });
+  const ask = async (cmd) => { const p = lineFrom(reserver); reserver.stdin.write(`${cmd}\n`); return p; };
+  const first = await lineFrom(reserver);
+  const res = lock.readReservation();
+  check('reserve() writes "<pid> <name> <epoch>" to the reservation file and returns true', first === 'true' && res && res.pid === reserver.pid && res.name === 'release-1.2.3', `${first} ${JSON.stringify(res)}`);
+  const other = lock.reserve('release-2.0.0');
+  check('a second release cannot reserve while the first one\'s pid lives: reserve() returns the holder', other && other.pid === reserver.pid && other.name === 'release-1.2.3', JSON.stringify(other));
+  const blockedSeen = [];
+  let blocked = false;
+  try { await lock.acquire({ owner: 'other-session', waitMs: 300, pollMs: 50, onWait: (i) => blockedSeen.push(i) }); } catch (e) { blocked = /still reserved/.test(e.message) && /release-1\.2\.3/.test(e.message); }
+  check('the reservation blocks other acquirers even with the lock itself free (they wait, then time out naming it)', blocked && !fs.existsSync(LOCK));
+  check('...and their progress line says a release is in its checks', blockedSeen.length >= 1 && blockedSeen[0].release === true && /waiting for release-1\.2\.3 \(pid \d+\) to finish… \(a release is in its checks/.test(blockedSeen[0].line), JSON.stringify(blockedSeen));
+  let syncBlocked = false;
+  try { lock.acquireSync({ owner: 'other-sync', waitMs: 200, pollMs: 50, onWait: null }); } catch { syncBlocked = true; }
+  check('acquireSync (npm test, per suite) honours the reservation too', syncBlocked && !fs.existsSync(LOCK));
+  check('the reserving release itself may take the lock (no deadlock)', (await ask('self')) === 'self-ok');
+  check('a child process of the release (LUMEN_E2E_RESERVED) may take the lock: its suites run', (await ask('child')) === 'child-ok');
+  let gotAfter = false;
+  const queued = lock.acquire({ owner: 'queued-session', waitMs: 30000, pollMs: 50, onWait: null }).then(() => { gotAfter = true; });
+  await sleep(300);
+  check('a waiter queued behind the reservation is still waiting while it lasts', !gotAfter);
+  check('unreserve() removes the reservation file', (await ask('free')) === 'freed' && !fs.existsSync(RES));
+  await queued;
+  check('...and the queued waiter then takes the lock', gotAfter && lock.readOwner().name === 'queued-session');
+  lock.release();
+  reserver.stdin.write('exit\n');
+  await new Promise((r) => reserver.once('exit', r));
+
+  // a release that exits (a Stop, an error) without unreserving: the exit handler removes the file
+  const quitter = spawnSync(process.execPath, [path.join(__dirname, '..', 'helpers', '_e2e-lock-child.js'), 'reserve-and-quit', 'release-quit'], { encoding: 'utf8', env: { ...process.env, LUMEN_E2E_LOCK_DIR: LOCK } });
+  check('a release process that exits while holding the reservation removes it on exit', quitter.status === 3 && !fs.existsSync(RES), `${quitter.status} ${quitter.stderr}`);
+  // a crashed release (killed hard): the file stays, but its dead pid makes the next reader remove it
+  fs.writeFileSync(RES, `${deadPid()} release-crashed ${Math.floor(Date.now() / 1000)}\n`);
+  check('a reservation whose pid is dead counts for nothing and is removed by the next reader', lock.readReservation() === null && !fs.existsSync(RES));
+  fs.writeFileSync(RES, `${deadPid()} release-crashed ${Math.floor(Date.now() / 1000)}\n`);
+  await lock.acquire({ owner: 'after-crash', waitMs: 2000, pollMs: 50, onWait: null });
+  check('an acquirer is not blocked by a crashed release\'s reservation, and cleans it up', lock.readOwner().name === 'after-crash' && !fs.existsSync(RES));
+  lock.release();
+  fs.writeFileSync(RES, `${process.pid} release-ancient ${Math.floor(Date.now() / 1000) - 13 * 3600}\n`);
+  check('a reservation older than 12 h is ignored even when its pid is alive (a reused pid), and removed', lock.readReservation() === null && !fs.existsSync(RES));
+  fs.writeFileSync(RES, `${deadPid()} release-crashed ${Math.floor(Date.now() / 1000)}\n`);
+  check('reserve() takes over a dead release\'s reservation', lock.reserve('release-next') === true && lock.readReservation().name === 'release-next' && process.env.LUMEN_E2E_RESERVED === String(process.pid));
+  lock.unreserve();
+  check('unreserve() removes the file and the env mark', !fs.existsSync(RES) && !process.env.LUMEN_E2E_RESERVED);
 
   const counts = () => ['exit', 'SIGINT', 'SIGTERM'].map((e) => process.listenerCount(e)).join(',');
   const before = counts();
