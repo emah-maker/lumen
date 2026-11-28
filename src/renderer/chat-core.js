@@ -761,7 +761,7 @@ const runPill = (() => {
   }
   // The chat stops following the bottom first: a step that lands before the smooth scroll's first frame would otherwise jump the chat back
   // down past the card (scrollToBottom while still `stuck`), and the pill stayed with the card out of view.
-  main.onclick = () => { if (!card) return; stuck = false; jump.hidden = false; card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
+  main.onclick = () => { if (!card) return; stuck = false; jump.hidden = false; holdReading(1500); card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
   stop.onclick = () => stopReply();
   return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
 })();
@@ -771,7 +771,13 @@ for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventList
 // unload, memory pressure), the sidebar or the window resized. The browser's own scroll anchoring does most of this, but it can pick
 // another anchor and land hundreds of pixels off (test/e2e/chat-draft-survives.js); this puts the reader's own message back. Only while
 // scrolled up (following the bottom is `stuck`), never during a jump's smooth scroll or a whole chat being drawn (`restoring`).
-const reading = { el: null, offset: 0 };
+const reading = { el: null, offset: 0, holdUntil: 0 };
+// (held while the reader scrolls (wheel, touch, a drag, keys) or the app moves the view on purpose (the run pill's scrollIntoView): a resize
+// then must not pull the view back to where it was; the scroll events that follow note the new place. The browser's own anchoring fires
+// scroll events too, so a scroll event alone is no reason to hold.)
+const holdReading = (ms) => { reading.holdUntil = Math.max(reading.holdUntil, performance.now() + ms); };
+for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => holdReading(400), { passive: true });
+messages.addEventListener('keydown', () => holdReading(400));
 const viewTop = () => messages.getBoundingClientRect().top;
 const firstShown = () => { // (the first message whose bottom is below the view's top, by binary search: no layout walk over every message)
   const kids = messages.children;
@@ -791,7 +797,7 @@ const noteReading = () => {
 };
 const keepReading = () => {
   const el = reading.el;
-  if (!el || stuck || restoring || !el.isConnected || Date.now() - jumping < 700 || document.hidden) return;
+  if (!el || stuck || restoring || !el.isConnected || Date.now() - jumping < 700 || document.hidden || performance.now() < reading.holdUntil) return;
   const drift = el.getBoundingClientRect().top - viewTop() - reading.offset;
   if (Math.abs(drift) > 1) messages.scrollTop += drift;
 };

@@ -4563,7 +4563,7 @@ mo.observe(card.statusText, { childList: true, characterData: true, subtree: tru
 }
 
 
-main.onclick = () => { if (!card) return; stuck = false; jump.hidden = false; card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
+main.onclick = () => { if (!card) return; stuck = false; jump.hidden = false; holdReading(1500); card.el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches || document.documentElement.classList.contains('pref-reduce-motion') ? 'auto' : 'smooth' }); };
 stop.onclick = () => stopReply();
 return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
 })();
@@ -4573,7 +4573,13 @@ for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventList
 
 
 
-const reading = { el: null, offset: 0 };
+const reading = { el: null, offset: 0, holdUntil: 0 };
+
+
+
+const holdReading = (ms) => { reading.holdUntil = Math.max(reading.holdUntil, performance.now() + ms); };
+for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => holdReading(400), { passive: true });
+messages.addEventListener('keydown', () => holdReading(400));
 const viewTop = () => messages.getBoundingClientRect().top;
 const firstShown = () => {
 const kids = messages.children;
@@ -4593,7 +4599,7 @@ if (reading.el) reading.offset = reading.el.getBoundingClientRect().top - viewTo
 };
 const keepReading = () => {
 const el = reading.el;
-if (!el || stuck || restoring || !el.isConnected || Date.now() - jumping < 700 || document.hidden) return;
+if (!el || stuck || restoring || !el.isConnected || Date.now() - jumping < 700 || document.hidden || performance.now() < reading.holdUntil) return;
 const drift = el.getBoundingClientRect().top - viewTop() - reading.offset;
 if (Math.abs(drift) > 1) messages.scrollTop += drift;
 };

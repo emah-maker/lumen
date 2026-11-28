@@ -2646,7 +2646,8 @@ const pageBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ff
 // in a tab that had started as the New Tab page); Lumen's own pages keep the theme's colour (browser/page-background.js)
 const OWN_PAGES = (pathToFileURL(path.join(__dirname, 'renderer')).href + '/').toLowerCase();
 const ownPage = (url) => url.toLowerCase().startsWith(OWN_PAGES) || isInternal(url);
-const followPageBackground = (view, url) => { const c = require('./browser/page-background').backgroundFor(url, { internal: ownPage, theme: pageBackground }); if (c) { try { view.setBackgroundColor(c); } catch { /* gone */ } } };
+const followPageBackground = (view, url) => { const c = ownPage(url) ? pageBackground() : require('./browser/page-background').backgroundFor(url, { internal: ownPage, theme: pageBackground }); // (Lumen's own page, the New Tab page at start-up: the theme's colour, without loading the module)
+  if (c) { try { view.setBackgroundColor(c); } catch { /* gone */ } } };
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7');
 function paintBackgrounds(rec) {
   try { rec.win.setBackgroundColor(windowBackground()); } catch { /* gone */ }
