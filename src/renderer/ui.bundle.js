@@ -4568,10 +4568,44 @@ stop.onclick = () => stopReply();
 return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
 })();
 for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => { pendingView = null; pendingOpen = null; }, { passive: true });
+
+
+
+
+
+const reading = { el: null, offset: 0 };
+const viewTop = () => messages.getBoundingClientRect().top;
+const firstShown = () => {
+const kids = messages.children;
+const top = viewTop() + 40;
+let lo = 0, hi = kids.length - 1, found = null;
+while (lo <= hi) {
+const mid = (lo + hi) >> 1;
+if (kids[mid].getBoundingClientRect().bottom > top) { found = kids[mid]; hi = mid - 1; } else lo = mid + 1;
+}
+return found;
+};
+const noteReading = () => {
+if (stuck || !messages.isConnected) { reading.el = null; return; }
+const el = firstShown();
+reading.el = el && el.id !== 'empty' ? el : null;
+if (reading.el) reading.offset = reading.el.getBoundingClientRect().top - viewTop();
+};
+const keepReading = () => {
+const el = reading.el;
+if (!el || stuck || restoring || !el.isConnected || Date.now() - jumping < 700 || document.hidden) return;
+const drift = el.getBoundingClientRect().top - viewTop() - reading.offset;
+if (Math.abs(drift) > 1) messages.scrollTop += drift;
+};
+const sizeWatch = new ResizeObserver(keepReading);
+for (const el of messages.children) sizeWatch.observe(el);
+new MutationObserver((list) => { for (const m of list) for (const n of m.addedNodes) if (n.nodeType === 1) sizeWatch.observe(n); }).observe(messages, { childList: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) requestAnimationFrame(keepReading); });
 messages.addEventListener('scroll', () => {
 if (Date.now() - jumping < 700) { stuck = true; return; }
 stuck = atBottom();
 jump.hidden = stuck || !messages.querySelector('.msg');
+noteReading();
 }, { passive: true });
 let lazyItems = null;
 let historyTarget = null;

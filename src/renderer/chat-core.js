@@ -766,10 +766,44 @@ const runPill = (() => {
   return { sync() { watch(running && turn?.cards?.length ? turn.cards[turn.cards.length - 1] : null); } };
 })();
 for (const type of ['wheel', 'touchstart', 'pointerdown']) messages.addEventListener(type, () => { pendingView = null; pendingOpen = null; }, { passive: true }); // (the reader took over: the position kept is no longer wanted)
+// [reading position] Scrolled up to read, the message at the top of the view stays exactly where it is, whatever happens around it: a
+// message far off screen trading its stand-in height (content-visibility) for its real one, the page hidden and shown again (a tab switch,
+// unload, memory pressure), the sidebar or the window resized. The browser's own scroll anchoring does most of this, but it can pick
+// another anchor and land hundreds of pixels off (test/e2e/chat-draft-survives.js); this puts the reader's own message back. Only while
+// scrolled up (following the bottom is `stuck`), never during a jump's smooth scroll or a whole chat being drawn (`restoring`).
+const reading = { el: null, offset: 0 };
+const viewTop = () => messages.getBoundingClientRect().top;
+const firstShown = () => { // (the first message whose bottom is below the view's top, by binary search: no layout walk over every message)
+  const kids = messages.children;
+  const top = viewTop() + 40;
+  let lo = 0, hi = kids.length - 1, found = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (kids[mid].getBoundingClientRect().bottom > top) { found = kids[mid]; hi = mid - 1; } else lo = mid + 1;
+  }
+  return found;
+};
+const noteReading = () => {
+  if (stuck || !messages.isConnected) { reading.el = null; return; }
+  const el = firstShown();
+  reading.el = el && el.id !== 'empty' ? el : null;
+  if (reading.el) reading.offset = reading.el.getBoundingClientRect().top - viewTop();
+};
+const keepReading = () => {
+  const el = reading.el;
+  if (!el || stuck || restoring || !el.isConnected || Date.now() - jumping < 700 || document.hidden) return;
+  const drift = el.getBoundingClientRect().top - viewTop() - reading.offset;
+  if (Math.abs(drift) > 1) messages.scrollTop += drift;
+};
+const sizeWatch = new ResizeObserver(keepReading);
+for (const el of messages.children) sizeWatch.observe(el);
+new MutationObserver((list) => { for (const m of list) for (const n of m.addedNodes) if (n.nodeType === 1) sizeWatch.observe(n); }).observe(messages, { childList: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) requestAnimationFrame(keepReading); });
 messages.addEventListener('scroll', () => {
   if (Date.now() - jumping < 700) { stuck = true; return; } // (a smooth jump's own scrolling)
   stuck = atBottom();
   jump.hidden = stuck || !messages.querySelector('.msg');
+  noteReading();
 }, { passive: true });
 let lazyItems = null; // a chat handed over while the sidebar was hidden, drawn when it is shown (applySync)
 let historyTarget = null; // while an older slice is built: where append() puts what it makes (a fragment, put above the chat in one go)
