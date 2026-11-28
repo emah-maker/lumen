@@ -579,13 +579,22 @@ function findTarget(text, mode) {
     if (!registry) return { error: 'no-registry' };
     const want = ${JSON.stringify(text)}.trim().toLowerCase().replace(/\\s+/g, ' ');
     const isField = (el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName) || el.isContentEditable ||
-      ['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch'].includes(el.getAttribute('role'));
+      ['textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch'].includes(el.getAttribute('role')) || el.getAttribute('aria-haspopup') === 'listbox'; // (a listbox button: Headless UI, MUI)
+    // [select boxes] A dropdown widget standing in for a hidden <select> (Select2, Chosen, Choices.js): the select's label names it.
+    const standIn = (el) => {
+      if (el.getAttribute('role') !== 'combobox' && !/select2|chosen|choices/i.test(typeof el.className === 'string' ? el.className : '')) return null;
+      for (let n = el, depth = 0; n && depth < 4; n = n.parentElement, depth++) {
+        const prev = n.previousElementSibling;
+        if (prev && prev.tagName === 'SELECT' && !isVisible(prev)) return (prev.labels && prev.labels[0] && prev.labels[0].innerText) || prev.getAttribute('aria-label') || prev.name;
+      }
+      return null;
+    };
     let best = null, bestScore = 0, ties = 0;
     registry.forEach((entry, index) => {
       if (!entry.el.isConnected) return;
       if (${JSON.stringify(mode)} === 'field' && !isField(entry.el)) return;
       const legend = ['radio', 'checkbox'].includes(entry.el.type) ? entry.el.closest('fieldset')?.querySelector('legend')?.innerText : null;
-      const names = [entry.label ?? accessibleName(entry.el), entry.el.getAttribute('placeholder'), entry.el.name, secretField(entry.el) ? null : entry.el.value, legend] // never match on a password
+      const names = [entry.label ?? accessibleName(entry.el), entry.el.getAttribute('placeholder'), entry.el.name, secretField(entry.el) ? null : entry.el.value, legend, standIn(entry.el)] // never match on a password
         .filter(Boolean).map((n) => clean(String(n)).toLowerCase());
       let score = 0;
       for (const n of names) {
