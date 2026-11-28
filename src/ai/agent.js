@@ -3666,6 +3666,9 @@ class Agent {
       const caught = [missed ? `${MISSED_NOTE}\n\n${missed}` : '', unanswered].filter(Boolean).join('\n\n');
       if (caught) text = `${interruptedNote(messages)}<earlier_conversation>\n${caught}\n</earlier_conversation>\n\n${prompt}`;
     }
+    const about = require('../features/project-about').refreshFor(settings.projectInstructions, settings.agyAbout, resume); // [about you] a profile changed since the conversation began
+    settings.agyAbout = about.seen;
+    if (about.text) text = about.text + text;
     emit({ type: 'turn_start' });
     if (this.browser.takeNotice?.('antigravityNotice')) emit({ type: 'notice', text: 'Gemini CLI was replaced by Antigravity, Google’s own agent. Your chat now uses it; sign in with your Google account in a terminal (run agy) if it asks.' });
     const engine = this.engineFor('antigravity');
@@ -3756,6 +3759,9 @@ ${caught}
 ${prompt}` : prompt), historyImages: [] };
     };
     const first = resume ? catchUp() : handoff();
+    const about = require('../features/project-about').refreshFor(settings.projectInstructions, settings.cxAbout, resume); // [about you] a profile changed since the thread began
+    settings.cxAbout = about.seen;
+    if (about.text) first.text = about.text + first.text;
     emit({ type: 'turn_start' });
     const engine = this.engineFor('codex');
     const startedAt = Date.now() - 2000; // (see enginePictures)
@@ -5045,7 +5051,7 @@ ${prompt}` : prompt), historyImages: [] };
     }
     if (action === 'remember') { // [about you] a lasting fact the user told the AI, saved to the project's profile (allowProfile asked first when the chat holds outside content)
       if (!t.remember) throw new Error('This project has no profile to save to.');
-      const r = await t.remember(input);
+      const r = await t.remember({ ...input, userText: (scope.chat.saidLately || []).join(' \n ') }); // (never page or tool text: what the user typed)
       if (!r.ok) throw new Error(r.error || 'Could not save it.');
       try { scope.gate?.emit?.({ type: 'notice', text: `Saved to your profile: ${r.said}` }); } catch { /* a closed view: it is saved */ }
       return `Saved to the user's profile: ${r.said}. They can see and change it on the project page (About you).`;
@@ -6626,6 +6632,7 @@ ${list.text}` }]);
   recordTyped(messages, text, emit) {
     try {
       const t = String(text || '').slice(0, 4000);
+      if (t.trim()) { (messages.saidLately ||= []).push(t); if (messages.saidLately.length > 6) messages.saidLately.shift(); } // [about you] the user's own recent words: a sensitive profile answer is saved only from these
       const sending = Boolean(this.browser.connectors?.sendingOn?.());
       if (!t.trim() || !(sending || manners.closeGranted([t]))) return; // (kept for Gmail sending, and for the close guard's "close my tabs without asking")
       (messages.typed ||= []).push(t);
