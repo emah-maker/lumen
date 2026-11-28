@@ -290,10 +290,11 @@ function createPrivateWindows(deps) {
     deps.chromeIdentity?.(wc);
     deps.googleRefusedGuard?.(wc, { inTab: true, win: () => rec.win });
     deps.prepareTab?.(wc); // HTTPS-only, the default zoom, Safe Browsing and certificate warnings, the error page
-    // The new-tab page has no script of its own (and no preload): its words come from locales/ through here.
+    // The new-tab page has no script of its own (and no preload): its words come from locales/ through here. The script checks where it runs: on a
+    // busy computer it ran after the tab had already gone on to a web page typed in at once, and renamed that page "New Tab" (test/e2e/windows.js).
     wc.on('dom-ready', () => {
       if (!isNewTab(wc)) return;
-      wc.executeJavaScript(`(${fillStrings.toString()})(${JSON.stringify(stringTable())})`, false).catch(() => {});
+      wc.executeJavaScript(`(${fillStrings.toString()})(${JSON.stringify(stringTable())}, ${JSON.stringify(new URL(NEWTAB_URL).pathname.toLowerCase())})`, false).catch(() => {});
     });
     wc.on('enter-html-full-screen', () => { tab.fullscreen = true; layout(rec); });
     wc.on('leave-html-full-screen', () => { tab.fullscreen = false; layout(rec); });
@@ -307,8 +308,9 @@ function createPrivateWindows(deps) {
   }
 
   // Runs in the private new-tab page (no access to anything but its own document).
-  function fillStrings(table) {
+  function fillStrings(table, page) {
     const doc = globalThis.document;
+    if (globalThis.location.protocol !== 'file:' || globalThis.location.pathname.toLowerCase() !== page) return; // (only in the new-tab page: the tab may have moved on)
     for (const el of doc.querySelectorAll('[data-i18n]')) {
       const text = table[el.dataset.i18n];
       if (typeof text === 'string' && text) el.textContent = text;
@@ -453,6 +455,16 @@ function createPrivateWindows(deps) {
     rec.activeId = id;
   }
 
+  // A private tab's page closed while its first load was still under way (Ctrl+T then Ctrl+W at once, or the window closed right after a
+  // tab opened) crashed the whole app (0xC0000005 in Chromium, after Lumen's own code had finished; test/e2e/windows.js, about 1 run in 3
+  // on a busy computer). Its load is stopped first and the page closed once that has settled; the view is already off the window by then.
+  function closeContents(wc) {
+    if (wc.isDestroyed()) return;
+    if (!wc.isLoading()) { wc.close(); return; }
+    wc.once('did-stop-loading', () => setImmediate(() => { if (!wc.isDestroyed()) wc.close(); }));
+    wc.stop();
+  }
+
   function closeTab(rec, id, { destroyed = false } = {}) {
     const index = rec.tabs.findIndex((t) => t.id === id);
     if (index < 0) return;
@@ -461,7 +473,7 @@ function createPrivateWindows(deps) {
       const url = shownUrl(tab.view.webContents);
       if (isWebUrl(url)) { rec.closed.push({ url, index }); if (rec.closed.length > CLOSED_KEEP) rec.closed.shift(); } // memory only: gone with the window
       rec.win.contentView.removeChildView(tab.view);
-      tab.view.webContents.close();
+      closeContents(tab.view.webContents);
     }
     if (!alive(rec)) return;
     if (!rec.tabs.length) { rec.win.close(); return; }
@@ -657,7 +669,7 @@ function createPrivateWindows(deps) {
       windows.delete(rec);
       clearImmediate(rec.stateTimer);
       for (const d of rec.downloads) if (d.state === 'progressing') { try { d.item.cancel(); } catch {} }
-      for (const tab of rec.tabs.splice(0)) { try { tab.view.webContents.close(); } catch {} }
+      for (const tab of rec.tabs.splice(0)) { try { closeContents(tab.view.webContents); } catch {} } // (one still loading is stopped first: see closeContents)
       for (const p of rec.popups) if (!p.isDestroyed()) p.destroy(); // its sign-in popups go with it
       rec.downloads = [];
       rec.closed = [];
