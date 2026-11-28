@@ -2635,11 +2635,13 @@ function settleCard(cardEl) {
 const REFRESH_AFTER = { weather: 20 * 60e3, worldclock: 6 * 3600e3, todoist: 5 * 60e3, calendar: 15 * 60e3, spotify: 45e3, applemusic: 30e3, gmail: 5 * 60e3, slack: 5 * 60e3, github: 5 * 60e3, feed: 10 * 60e3 };
 const asked = new Map();
 // A music card saying "Starting Spotify…" (asked while this page was not in front, so nothing started it: music-card-features.js
-// startingRefreshMs) is asked again every few seconds while the page is shown, until it says something else.
+// startingRefreshMs) is asked again every few seconds while the page is shown, until it says something else. Once no card says it (the card
+// moved on, or was removed) a timer still waiting is cancelled: it would only redraw the widgets for nothing.
 function armStarting() {
-  if (lastList.startingTimer || document.hidden) return;
-  const soon = Math.min(...lastList.current.map((w) => MusicCardFeatures.startingRefreshMs(w)).filter(Boolean));
-  if (Number.isFinite(soon)) lastList.startingTimer = setTimeout(() => { lastList.startingTimer = 0; tick(); }, soon);
+  const soon = document.hidden ? Infinity : Math.min(...lastList.current.map((w) => MusicCardFeatures.startingRefreshMs(w)).filter(Boolean));
+  if (!Number.isFinite(soon)) { clearTimeout(lastList.startingTimer); lastList.startingTimer = 0; return; }
+  if (lastList.startingTimer) return;
+  lastList.startingTimer = setTimeout(() => { lastList.startingTimer = 0; tick(); }, soon);
 }
 function tick() {
   if (document.hidden) return;
