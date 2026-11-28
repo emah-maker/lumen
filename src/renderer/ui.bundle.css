@@ -246,6 +246,9 @@ img.tab-favicon{animation:fade-in var(--t-base) ease-out;}
 .tab-favicon.monogram{display:grid;place-items:center;font-size:10px;font-weight:600;line-height:1;border-radius:var(--r-xs);color:var(--on-accent);background:hsl(var(--mono-hue, 210) 42% 40%);user-select:none;}
 .tab-favicon.page-icon{color:var(--muted);}
 .tab.ai-reading .tab-title{animation:ai-reading-pulse 1.4s ease-in-out infinite;}
+.tab.ai-acting .tab-favicon{border-radius:var(--r-xs);box-shadow:0 0 0 2px var(--accent);animation:ai-acting-ring 1.2s ease-in-out infinite;}
+.group-label.collapsed.ai-acting{box-shadow:0 0 0 2px var(--accent);animation:ai-acting-ring 1.2s ease-in-out infinite;}
+@keyframes ai-acting-ring{50%{box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);}}
 .tab-ai-mark{display:none;flex:none;position:relative;width:0;height:0;margin:0 0 0 calc(-1 * var(--sp-4));pointer-events:none;color:var(--accent);opacity:0.95;z-index:1;}
 .tab.ai-opened .tab-ai-mark{display:block;}
 .tab-ai-mark svg{position:absolute;left:-6px;top:-11px;display:block;width:9px;height:9px;fill:currentColor;stroke:var(--bg, transparent);stroke-width:1.4px;paint-order:stroke;overflow:visible;}
@@ -1068,7 +1071,7 @@ textarea.approval-edit{font:12px/1.45 ui-monospace, Consolas, monospace;max-heig
 @media (prefers-reduced-motion:reduce){
 *, *::before, *::after{animation-duration:1ms !important;animation-iteration-count:1 !important;transition-duration:1ms !important;}
 .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill{animation:fade-in 160ms ease-out !important;}
-.tab.ai-reading .tab-title, .step.running::before, .agent-dot::after, .download-btn.progressing .download-arrow{animation:none !important;}
+.tab.ai-reading .tab-title, .tab.ai-acting .tab-favicon, .group-label.ai-acting, .step.running::before, .agent-dot::after, .download-btn.progressing .download-arrow{animation:none !important;}
 .tab-favicon.spinner, .loadbar::before{animation:calm-pulse 1.6s ease-in-out infinite !important;animation-duration:1.6s !important;animation-iteration-count:infinite !important;}
 .working::before{width:100%;transform:none;background:var(--accent);animation:working-pulse 3.2s ease-in-out infinite !important;animation-duration:3.2s !important;animation-iteration-count:infinite !important;}
 .loadbar::before{transform:none;left:0;width:100%;}

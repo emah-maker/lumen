@@ -273,6 +273,10 @@ img.tab-favicon { animation: fade-in var(--t-base) ease-out; }
 .tab-favicon.monogram { display: grid; place-items: center; font-size: 10px; font-weight: 600; line-height: 1; border-radius: var(--r-xs); color: var(--on-accent); background: hsl(var(--mono-hue, 210) 42% 40%); user-select: none; }
 .tab-favicon.page-icon { color: var(--muted); }
 .tab.ai-reading .tab-title { animation: ai-reading-pulse 1.4s ease-in-out infinite; }
+/* [tab acting] an AI step is acting in this tab now (a click, typing, a page load): a ring in the accent around its icon, breathing */
+.tab.ai-acting .tab-favicon { border-radius: var(--r-xs); box-shadow: 0 0 0 2px var(--accent); animation: ai-acting-ring 1.2s ease-in-out infinite; }
+.group-label.collapsed.ai-acting { box-shadow: 0 0 0 2px var(--accent); animation: ai-acting-ring 1.2s ease-in-out infinite; }
+@keyframes ai-acting-ring { 50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); } }
 /* [ai manners] A tab the AI opened: a small sparkle on the favicon's top-right corner. It takes no room in the row (zero width, pulled back over the gap before it), so a pinned tab and an icon-only tab show it too. No motion. It goes when the tab becomes yours (you click or type in it, pin it, move it). */
 .tab-ai-mark { display: none; flex: none; position: relative; width: 0; height: 0; margin: 0 0 0 calc(-1 * var(--sp-4)); pointer-events: none; color: var(--accent); opacity: 0.95; z-index: 1; }
 .tab.ai-opened .tab-ai-mark { display: block; }
@@ -1280,7 +1284,7 @@ textarea.approval-edit { font: 12px/1.45 ui-monospace, Consolas, monospace; max-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
   .msg, .step, details.thinking, .notice, .error, .approval, .empty, .download-btn, .zoom-pill, .agent-pill { animation: fade-in 160ms ease-out !important; }
-  .tab.ai-reading .tab-title, .step.running::before, .agent-dot::after, .download-btn.progressing .download-arrow { animation: none !important; }
+  .tab.ai-reading .tab-title, .tab.ai-acting .tab-favicon, .group-label.ai-acting, .step.running::before, .agent-dot::after, .download-btn.progressing .download-arrow { animation: none !important; }
   /* The tab spinner and the load bar do not spin or sweep: they fade in and out slowly (a static full bar or a frozen ring reads as "done" or "stuck"). */
   .tab-favicon.spinner, .loadbar::before { animation: calm-pulse 1.6s ease-in-out infinite !important; animation-duration: 1.6s !important; animation-iteration-count: infinite !important; }
   /* The working line stays visible: the light stops travelling and the whole bar breathes instead. */

@@ -29,6 +29,8 @@ const OFFERS = [
   // ---- 0.5.115
   // [bookmarks bar] features/bookmark-bar.js: the bar under the toolbar, on the new-tab page only by default (Ctrl+Shift+B)
   { id: 'bookmarksBar', key: 'bookmarksBar', since: '0.5.115', kind: 'choice', choices: ['newtab', 'always', 'never'], section: 'appearance' },
+  // [agent cursors] ai/agent.js pointAt: the AI's own arrow on the page where it clicks, types and scrolls (on by default: the card says it is there)
+  { id: 'aiCursor', key: 'aiCursor', since: '0.5.115', kind: 'toggle', section: 'ai-helpers' },
   // ---- 0.5.97
   // [ai tab tidy] features/ai-tab-tidy.js: Lumen closes the AI's leftover tabs itself, keeps the ones its answer links to for a while, about 8 per chat
   { id: 'aiTabsTidy', key: 'aiTabsTidy', since: '0.5.97', kind: 'toggle', section: 'ai-tabs' },

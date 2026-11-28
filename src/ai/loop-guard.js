@@ -160,7 +160,8 @@ const isParallelRead = (use) => PARALLEL_READS.has(use.name) && !(use.name === '
 // anything else waits for the calls before it. `exec` runs an approved call. Returns one outcome
 // per call, in call order: { ok, value } | { ok: false, error, gated } | { skipped: true }.
 // `halts(outcome)` (e.g. the user stopped, the tab closed) skips every call after that outcome.
-// `onOutcome` fires as each call finishes (for live progress).
+// `onOutcome` fires as each call finishes (for live progress). An outcome that ran carries `ms`: how long `exec` took (not the gate,
+// so not the time an approval card waited for the user).
 async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halts = () => false, onOutcome = () => {} }) {
   const outcomes = new Array(uses.length);
   let group = [];
@@ -169,7 +170,7 @@ async function runToolUses(uses, { isParallel = isParallelRead, gate, exec, halt
   const flush = async () => {
     const indexes = group;
     group = [];
-    await Promise.all(indexes.map((i) => Promise.resolve().then(() => exec(uses[i], i)).then((value) => { settle(i, { ok: true, value }); }, (error) => { settle(i, { ok: false, error }); })));
+    await Promise.all(indexes.map((i) => { const t0 = Date.now(); return Promise.resolve().then(() => exec(uses[i], i)).then((value) => { settle(i, { ok: true, value, ms: Date.now() - t0 }); }, (error) => { settle(i, { ok: false, error, ms: Date.now() - t0 }); }); }));
     if (indexes.some((i) => halts(outcomes[i]))) halted = true;
   };
   for (let i = 0; i < uses.length; i++) {

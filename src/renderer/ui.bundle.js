@@ -1202,145 +1202,6 @@ root.addEventListener('focus', () => load(false));
 }
 })(typeof window !== 'undefined' ? window : globalThis);
 ;
-// ---- usage-popover.js
-
-
-
-
-
-
-
-
-
-
-(function (root) {
-'use strict';
-
-const finite = (n) => typeof n === 'number' && Number.isFinite(n);
-const tr = (key, fallback, vars) => {
-let s = root.t ? root.t(key, vars) : key;
-if (!s || s === key) s = fallback;
-return vars ? s.replace(/\{(\w+)\}/g, (_, k) => (k in vars ? String(vars[k]) : '')) : s;
-};
-const bars = () => (typeof module !== 'undefined' && module.exports ? require('./usage-bars') : root.usageBars);
-
-
-const percentText = (p) => (finite(p) ? `${Math.round(Math.max(0, Math.min(100, p)))}%` : '');
-
-
-function relative(ms, now = Date.now()) {
-if (!finite(ms)) return '';
-const left = ms - now;
-if (left <= 0) return '';
-const s = Math.ceil(left / 1000);
-const d = Math.floor(s / 86400);
-const h = Math.floor((s % 86400) / 3600);
-const m = Math.floor((s % 3600) / 60);
-let t;
-if (d > 0) t = h ? `${d} d ${h} h` : `${d} d`;
-else if (h > 0) t = m ? `${h} h ${m} m` : `${h} h`;
-else if (m > 0) t = `${m} m`;
-else t = `${s} s`;
-return tr('usage.pop.in', 'in {time}', { time: t });
-}
-
-
-function updatedText(ms, now = Date.now()) {
-if (!finite(ms) || ms <= 0) return '';
-const s = Math.max(0, Math.round((now - ms) / 1000));
-if (s < 45) return tr('usage.pop.updated', 'Updated {time}', { time: tr('usage.pop.justNow', 'just now') });
-const t = s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : s < 86400 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} d`;
-return tr('usage.pop.updated', 'Updated {time}', { time: tr('usage.pop.ago', '{time} ago', { time: t }) });
-}
-
-const compact = (n) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n >= 1e3 ? `${+(n / 1e3).toFixed(1)}k` : String(Math.round(n)));
-const money = (n) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
-
-
-
-function countText(c, unit = 'messages') {
-if (!c || !(c.tokens > 0 || c.turns > 0 || c.sessions > 0)) return '';
-const parts = [];
-if (c.tokens > 0) parts.push(tr('usage.tokens', '{tokens} tokens', { tokens: compact(c.tokens) }));
-const n = unit === 'sessions' ? c.sessions : c.turns;
-if (n > 0) parts.push(unit === 'sessions' ? tr('usage.pop.sessions', '{count} sessions', { count: n }) : tr('usage.pop.messages', '{count} messages', { count: n }));
-if (c.costUSD > 0) parts.push(`≈${money(c.costUSD)}`);
-return parts.join(' · ');
-}
-
-const clockOf = (ms, now) => bars().clockOf(ms, now);
-
-function resetLine(source, now = Date.now()) {
-if (source && finite(source.resetsAt) && source.resetsAt > now) {
-return `${tr('usage.resets', 'resets {time}', { time: clockOf(source.resetsAt, now) })}, ${relative(source.resetsAt, now)}`;
-}
-const words = source && typeof source.resetsText === 'string' ? source.resetsText.trim() : '';
-return words ? tr('usage.resets', 'resets {time}', { time: words }) : '';
-}
-
-const cap = (s) => String(s || '').replace(/^./, (c) => c.toUpperCase());
-function planName(key, state) {
-if (key === 'claudecode' && state.plan && state.plan.available && state.plan.subscription) return tr('usage.pop.plan.claude', 'Claude subscription');
-if (key === 'codex' && state.codex && state.codex.planType) return tr('usage.pop.plan.named', '{plan} plan', { plan: cap(state.codex.planType) });
-if (key === 'antigravity' && state.antigravity && state.antigravity.tier) return state.antigravity.tier;
-return '';
-}
-
-
-function updatedAt(key, state) {
-const candidates = [];
-if (key === 'claudecode' && state.meter) candidates.push(state.meter.at);
-if (key === 'codex' && state.codex) candidates.push(state.codex.readAt);
-if (key === 'antigravity' && state.antigravity) candidates.push(state.antigravity.readAt);
-if (state.rate && state.rate[key]) candidates.push(state.rate[key].at);
-const known = candidates.filter((n) => finite(n) && n > 0);
-return known.length ? Math.max(...known) : null;
-}
-
-function countedFor(key, state) {
-if (key === 'codex') {
-const c = state.codex;
-return c && c.available ? { today: c.today, week: c.week, unit: 'sessions' } : null;
-}
-const p = state.providers && state.providers[key];
-if (p) return { today: p.today, week: p.week, unit: 'messages' };
-if (key === 'claudecode' && state.lumen) return { today: state.lumen.today, week: state.lumen.week, unit: 'messages' };
-return null;
-}
-
-
-function view(key, state, { now = Date.now(), name = '', model = null } = {}) {
-if (!key || !state || typeof state !== 'object') return null;
-const bar = bars().barOf ? bars().barOf(key, state, model) : state.bars ? state.bars[key] : null;
-const windows = bars().windowsOf(bar, now).map((w) => ({
-key: w.key, label: w.label, percent: w.percent, level: w.level, percentText: percentText(w.percent),
-text: w.resetsAt ? resetLine({ resetsAt: w.resetsAt }, now) : w.reset,
-}));
-const counted = [];
-const c = countedFor(key, state);
-if (c) {
-const today = countText(c.today, c.unit);
-const week = countText(c.week, c.unit);
-if (today) counted.push({ label: tr('usage.pop.today', 'Today'), text: today });
-if (week) counted.push({ label: tr('usage.pop.week', 'Last 7 days'), text: week });
-}
-const rate = state.rate && state.rate[key];
-const rates = rate && Array.isArray(rate.buckets)
-? rate.buckets.filter((b) => !b.expired && finite(b.percent)).map((b) => ({
-label: b.label, percent: b.percent, percentText: percentText(b.percent),
-text: [finite(b.limit) && finite(b.remaining) ? tr('usage.pop.left', '{left} of {limit} left', { left: compact(b.remaining), limit: compact(b.limit) }) : '', resetLine({ resetsAt: b.resetsAt }, now)].filter(Boolean).join(', '),
-}))
-: [];
-const at = updatedAt(key, state);
-const note = !windows.length && !rates.length ? (state.notes && state.notes[key]) || '' : '';
-return { name, plan: planName(key, state), windows, counted, rates, updatedAt: at, updated: updatedText(at, now), note, message: bar && bar.kind === 'limit' && bar.message ? bar.message : '' };
-}
-
-const api = { view, percentText, relative, updatedText, countText, resetLine };
-if (typeof module !== 'undefined' && module.exports) module.exports = api;
-else root.usagePopover = api;
-})(typeof window !== 'undefined' ? window : globalThis);
-;
 // ---- picker-match.js
 
 
@@ -5960,6 +5821,7 @@ const step = turn.steps.get(event.id);
 if (!step) break;
 step.classList.remove('running', 'done', 'failed', 'stopped');
 step.classList.add(event.ok ? 'done' : event.stopped ? 'stopped' : 'failed');
+if (Number.isFinite(event.ms) && event.ms >= 0 && step.dataset.t0) step.dataset.t0 = String(Date.now() - event.ms);
 showStepTime(step, true);
 const plain = window.stepUI?.done(turn, step, event);
 if (event.ok && step.dataset.tool === 'annotate') annotateChip(step);
@@ -6194,6 +6056,7 @@ const step = t.steps?.get(event.id);
 if (!step) break;
 step.classList.remove('running', 'done', 'failed', 'stopped');
 step.classList.add(event.ok ? 'done' : event.stopped ? 'stopped' : 'failed');
+if (Number.isFinite(event.ms) && event.ms >= 0 && step.dataset.t0) step.dataset.t0 = String(Date.now() - event.ms);
 showStepTime(step, true);
 window.stepUI?.done(t, step, event);
 break;
@@ -10583,7 +10446,8 @@ label.oncontextmenu = (e) => { e.preventDefault(); window.browser.groupMenu(grou
 }
 label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded === 'dot' ? ' dot' : crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '')
 + (drag?.handed && !drag.single && drag.groupId === group.id ? ' handed' : '')
-+ (arriving.size && (lastTabState?.tabs || []).filter((t) => t.groupId === group.id).every((t) => arriving.has(t.id)) ? ' arriving' : '');
++ (arriving.size && (lastTabState?.tabs || []).filter((t) => t.groupId === group.id).every((t) => arriving.has(t.id)) ? ' arriving' : '')
++ (group.collapsed && (lastTabState?.tabs || []).some((t) => t.groupId === group.id && t.aiActing) ? ' ai-acting' : '');
 label.style.setProperty('--group-color', `var(--g-${group.color})`);
 label.setAttribute('aria-expanded', String(!group.collapsed));
 label.setAttribute('aria-label', t(count === 1 ? 'tabs.group.label.one' : 'tabs.group.label.other', { name: group.name, count }));
@@ -10679,7 +10543,7 @@ approval: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle class="cm-on" cx=
 };
 function updateTabEl(el, tab, group, activeId) {
 const active = tab.id === activeId;
-el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '') + (tab.chat ? ` chat-${tab.chat}` : '')
+el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '') + (tab.aiActing ? ' ai-acting' : '') + (tab.chat ? ` chat-${tab.chat}` : '')
 + (selectedTabs.has(tab.id) && !active ? ' selected' : '') + (arriving.has(tab.id) ? ' arriving' : '');
 if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
 else el.style.removeProperty('--group-color');
@@ -10688,7 +10552,7 @@ el.setAttribute('aria-selected', String(active));
 const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
 
 const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : '', tab.account?.name].filter(Boolean).join(', '));
+el.setAttribute('aria-label', [tab.aiActing ? t('tabs.aiActing', { title: tab.title }) : tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : '', tab.account?.name].filter(Boolean).join(', '));
 if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts');
 el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp));
 el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff));
@@ -14253,8 +14117,18 @@ link.addEventListener('click', () => { closePopover(true); extras.openUsage?.();
 foot.append(link);
 pop.append(foot);
 }
+
+
+let popLib = null;
+const loadPopLib = () => (window.usagePopover ? Promise.resolve(true) : (popLib ||= new Promise((done) => {
+const s = Object.assign(document.createElement('script'), { src: 'usage-popover.js', onload: () => done(true), onerror: () => { popLib = null; done(false); } });
+s.dataset.later = '';
+document.body.append(s);
+})));
+setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(() => loadPopLib(), { timeout: 4000 }) : loadPopLib()), 3000);
 function openPopover() {
 if (!pop.hidden || (!usage && !lastContext)) return;
+if (!window.usagePopover && usage) { loadPopLib().then((ok) => { if (ok) openPopover(); }); return; }
 renderPopover();
 if (!pop.childNodes.length) return;
 pop.hidden = false;

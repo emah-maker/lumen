@@ -1,5 +1,7 @@
 // [stable ids] [agent cursors] Several agents on one page: a read of the same page keeps the ids it gave before (one agent's read never
-// renumbers what another is about to click), and a helper's or sub-agent's click shows its own colored cursor with its name. Also:
+// renumbers what another is about to click), and a helper's or sub-agent's click shows its own colored cursor with its name. The lead AI's own
+// click shows its "Lumen" cursor saying what it does (off with the aiCursor setting), its tab is marked in the strip while it acts, and the
+// page reads and screenshots never carry the cursors. Also:
 // acting helpers ship on (0.5.103). Local page, no network. Temp profile, hidden window.
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
@@ -7,6 +9,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const http = require('http');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const waitFor = async (fn, ms = 10000) => { const end = Date.now() + ms; let v; while (Date.now() < end) { try { v = await fn(); if (v) return v; } catch { /* not yet */ } await sleep(80); } return v; };
 
 const PAGE = `<!doctype html><title>shared</title><body>
 <button id="a" onclick="log('a')">Alpha</button> <button id="b" onclick="log('b')">Bravo</button> <button id="c" onclick="log('c')">Charlie</button>
@@ -70,21 +74,48 @@ const PAGE = `<!doctype html><title>shared</title><body>
     r = await tool('click', { element_id: a1 }, tagA);
     await new Promise((res) => setTimeout(res, 300));
     const cursors = () => page(`(() => { const h = document.getElementById('__lumen-agent-cursors'); if (!h || !h.shadowRoot) return []; return [...h.shadowRoot.querySelectorAll('.c')].map((c) => ({ key: c.dataset.key, label: c.querySelector('span').textContent, color: c.querySelector('path').getAttribute('fill'), t: c.style.transform, pe: getComputedStyle(h).pointerEvents })); })()`);
-    let cs = await cursors();
-    check('a helper\'s click shows its cursor with its name and color', r.ok && cs.length === 1 && cs[0].label === 'Helper 1' && cs[0].color === '#ff375f', JSON.stringify(cs));
+    // (the lead AI's own clicks above drew its cursor, key 'lumen': these checks count the helpers' cursors)
+    const helpersOf = (list) => list.filter((c) => c.key !== 'lumen');
+    let cs = helpersOf(await cursors());
+    check('a helper\'s click shows its cursor with its name and color', r.ok && cs.length === 1 && cs[0].label === 'Helper 1 · Clicking' && cs[0].color === '#ff375f', JSON.stringify(cs));
     check('the cursor never takes the page\'s clicks', cs[0]?.pe === 'none');
     r = await tool('type_text', { element_id: idOf((await tool('read_page', { mode: 'compact' })).out, 'Notes'), text: 'hi' }, tagB);
     await new Promise((res) => setTimeout(res, 300));
-    cs = await cursors();
-    check('a second agent gets a second cursor in its own color', r.ok && cs.length === 2 && cs.some((c) => c.label === 'Helper 2' && c.color === '#30d158'), JSON.stringify(cs));
+    cs = helpersOf(await cursors());
+    check('a second agent gets a second cursor in its own color', r.ok && cs.length === 2 && cs.some((c) => c.label === 'Helper 2 · Typing' && c.color === '#30d158'), JSON.stringify(cs));
     const before = cs.find((c) => c.key === tagA.key).t;
     await tool('click', { element_id: c1 }, tagA);
     await new Promise((res) => setTimeout(res, 300));
-    cs = await cursors();
+    cs = helpersOf(await cursors());
     check('the same agent\'s next click moves its one cursor', cs.length === 2 && cs.find((c) => c.key === tagA.key).t !== before, JSON.stringify(cs));
-    await tool('click', { element_id: a1 });
+    // ---- the lead AI's own cursor: "Lumen" in blue, saying what it does there; the tab it acts in is marked in the strip
+    const actingSeen = ui.evaluate(() => new Promise((done) => { // (watched from before the click: the mark is up while the step runs, and a moment after)
+      const seen = () => Boolean(document.querySelector('#tabs .tab.ai-acting'));
+      if (seen()) return done(true);
+      const mo = new MutationObserver(() => { if (seen()) { mo.disconnect(); done(true); } });
+      mo.observe(document.getElementById('tabs') || document.body, { subtree: true, attributes: true, attributeFilter: ['class'], childList: true });
+      setTimeout(() => { mo.disconnect(); done(false); }, 4000);
+    }));
+    r = await tool('click', { element_id: a1 });
+    await new Promise((res) => setTimeout(res, 300));
     cs = await cursors();
-    check('the lead agent\'s own click adds no cursor', cs.length === 2, JSON.stringify(cs));
+    const lead = cs.find((c) => c.key === 'lumen');
+    check('the lead AI\'s click shows its own cursor, "Lumen · Clicking" in blue, beside the helpers\' two', r.ok && cs.length === 3 && lead?.label === 'Lumen · Clicking' && lead?.color === '#0a84ff', JSON.stringify(cs));
+    check('the tab the AI clicked in was marked in the tab strip while it acted', await actingSeen === true);
+    check('…and the mark goes a moment after the step', Boolean(await waitFor(async () => !(await ui.evaluate(() => Boolean(document.querySelector('#tabs .tab.ai-acting')))), 4000)));
+    r = await tool('scroll', { direction: 'down' });
+    await new Promise((res) => setTimeout(res, 300));
+    check('a scroll moves the lead cursor and says so', (await cursors()).find((c) => c.key === 'lumen')?.label === 'Lumen · Scrolling', JSON.stringify(await cursors()));
+    r = await tool('read_page', { mode: 'full' });
+    check('the page reads never see the cursors\' words', r.ok && !/Lumen ·|Helper 1|Helper 2/.test(r.out), String(r.out).slice(0, 400));
+    r = await tool('screenshot', {});
+    check('a screenshot leaves the cursors shown again afterwards', r.ok && (await page(`document.getElementById('__lumen-agent-cursors').style.visibility`)) === '', JSON.stringify(r).slice(0, 200));
+    await app.evaluate(() => global.__patchSettings({ aiCursor: false }));
+    const leadBefore = (await cursors()).find((c) => c.key === 'lumen')?.t;
+    await tool('click', { element_id: c1 });
+    await new Promise((res) => setTimeout(res, 300));
+    check('with "Show the AI\'s cursor" off, the lead\'s click does not move its cursor', (await cursors()).find((c) => c.key === 'lumen')?.t === leadBefore, JSON.stringify(await cursors()));
+    await app.evaluate(() => global.__patchSettings({ aiCursor: true }));
   } catch (e) {
     failures++;
     console.log(`FAIL  threw: ${e.stack || e}`);

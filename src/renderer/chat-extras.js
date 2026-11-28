@@ -247,8 +247,18 @@
     foot.append(link);
     pop.append(foot);
   }
+  // The popover's wording (usage-popover.js, 6 KB) loads the first time it opens in the main window, not with the bundle every window
+  // parses (marked data-later: test/e2e/perf-budget.js leaves it out of the startup size). The full-page chat lists it itself.
+  let popLib = null;
+  const loadPopLib = () => (window.usagePopover ? Promise.resolve(true) : (popLib ||= new Promise((done) => {
+    const s = Object.assign(document.createElement('script'), { src: 'usage-popover.js', onload: () => done(true), onerror: () => { popLib = null; done(false); } });
+    s.dataset.later = '';
+    document.body.append(s);
+  })));
+  setTimeout(() => (window.requestIdleCallback ? requestIdleCallback(() => loadPopLib(), { timeout: 4000 }) : loadPopLib()), 3000); // (fetched in an idle moment after start, so the first open is instant)
   function openPopover() {
     if (!pop.hidden || (!usage && !lastContext)) return;
+    if (!window.usagePopover && usage) { loadPopLib().then((ok) => { if (ok) openPopover(); }); return; } // (a context-only popover needs none of it)
     renderPopover();
     if (!pop.childNodes.length) return;
     pop.hidden = false;

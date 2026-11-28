@@ -1161,7 +1161,8 @@ function groupLabel(group, count, crowded, label = null) {
   }
   label.className = 'group-label' + (group.collapsed ? ' collapsed' : '') + (crowded === 'dot' ? ' dot' : crowded ? ' crowded' : '') + (label.classList.contains('held') && heldTab ? ' held' : '')
     + (drag?.handed && !drag.single && drag.groupId === group.id ? ' handed' : '')
-    + (arriving.size && (lastTabState?.tabs || []).filter((t) => t.groupId === group.id).every((t) => arriving.has(t.id)) ? ' arriving' : '');
+    + (arriving.size && (lastTabState?.tabs || []).filter((t) => t.groupId === group.id).every((t) => arriving.has(t.id)) ? ' arriving' : '')
+    + (group.collapsed && (lastTabState?.tabs || []).some((t) => t.groupId === group.id && t.aiActing) ? ' ai-acting' : ''); // [tab acting] a folded group whose tab the AI acts in now: its label shows it (the tab itself is hidden)
   label.style.setProperty('--group-color', `var(--g-${group.color})`);
   label.setAttribute('aria-expanded', String(!group.collapsed));
   label.setAttribute('aria-label', t(count === 1 ? 'tabs.group.label.one' : 'tabs.group.label.other', { name: group.name, count }));
@@ -1257,7 +1258,7 @@ const CHAT_MARKS = {
 };
 function updateTabEl(el, tab, group, activeId) {
   const active = tab.id === activeId;
-  el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '') + (tab.chat ? ` chat-${tab.chat}` : '')
+  el.className = 'tab' + (heldTab?.ids.includes(tab.id) ? ' held' : '') + (drag?.handed && !drag.single && drag.group?.includes(tab.id) ? ' handed' : '') + (active ? ' active' : '') + (group ? ' grouped' : '') + (tab.sleeping ? ' sleeping' : '') + (tab.pinned ? ' pinned' : '') + (tab.alert ? ' alert' : '') + (tab.aiReading ? ' ai-reading' : '') + (tab.aiActing ? ' ai-acting' : '') + (tab.chat ? ` chat-${tab.chat}` : '')
     + (selectedTabs.has(tab.id) && !active ? ' selected' : '') + (arriving.has(tab.id) ? ' arriving' : '');
   if (group) el.style.setProperty('--group-color', `var(--g-${group.color})`);
   else el.style.removeProperty('--group-color');
@@ -1266,7 +1267,7 @@ function updateTabEl(el, tab, group, activeId) {
   const chatNote = tab.chat ? { running: t('tabs.chat.running'), waiting: t('tabs.chat.waiting'), approval: t('tabs.chat.approval'), done: t('tabs.chat.done') }[tab.chat] : '';
   // The tab's state is part of its name, not only a look: pinned, asleep, muted or playing sound, then the chat and AI notes.
   const stateNote = [tab.pinned ? t('tabs.state.pinned') : '', tab.sleeping ? t('tabs.state.sleeping') : '', tab.split ? t('tabs.state.split') : '', tab.muted ? t('tabs.state.muted') : tab.audible ? t('tabs.state.playing') : ''].filter(Boolean);
-  el.setAttribute('aria-label', [tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : '', tab.account?.name].filter(Boolean).join(', '));
+  el.setAttribute('aria-label', [tab.aiActing ? t('tabs.aiActing', { title: tab.title }) : tab.aiReading ? t('tabs.aiReading', { title: tab.title }) : tab.title, ...stateNote, chatNote, tab.aiOpened || tab.openedByApp ? openedNote(tab) : '', tab.aiKeepOff ? t('tabs.aiKeptOff') : '', tab.account?.name].filter(Boolean).join(', '));
   if (tab.audible || tab.muted) el.setAttribute('aria-keyshortcuts', 'M'); else el.removeAttribute('aria-keyshortcuts'); // the strip's M key (below) mutes or unmutes it
   el.classList.toggle('ai-opened', Boolean(tab.aiOpened || tab.openedByApp)); // [ai manners] (an outside app's tab is marked the same way)
   el.classList.toggle('ai-kept-off', Boolean(tab.aiKeepOff)); // [ai off-tab]

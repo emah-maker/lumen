@@ -2549,6 +2549,7 @@ function tabState() {
         isolated: Boolean(t.isolated), // [research tabs] its own cookie-less session
         account: t.account ? accounts().badge(t.account) : null, // [account tabs] { id, name, color }: the strip's colored mark
         aiReading: Boolean(t.aiReading), // [research tabs] the AI is reading this page right now
+        aiActing: Boolean(t.aiActing), // [tab acting] an AI step is acting in this tab right now (setTabActing)
         chat: tabChatMark(t.id), // [chat per tab] 'running' | 'waiting' | 'approval' | 'done' | null
         aiOpened: manners.isAiTab(t), aiForUser: manners.forUser(t), aiShown: aiTabShown(t), aiChat: t.fromChat != null ? aiChatTitle(t.fromChat) : null, // [ai tab finder] the chat that opened it ('' while it has no title; kept after the user takes the tab over)
           // [ai manners] the AI opened this tab (a mark in the strip, "Opened by the AI" in its card; aiShown: see aiTabShown)
@@ -9999,6 +10000,18 @@ const researchTabs = require('./features/research-tabs').createResearchTabs({
   groupExists: inRun((groupId) => tabGroups.groups.has(groupId)),
   setReading: inRun((id, on) => { const t = tabs.find((x) => x.id === id); if (t && Boolean(t.aiReading) !== on) { t.aiReading = on; sendTabs(); } }),
 });
+// [tab acting] The tab an AI step acts in (a click, typing, a page load) is marked in the strip while the step runs, and for a moment after, so a
+// run of quick steps reads as one steady mark instead of a flicker (agent.js execute -> browser.setActing).
+const ACTING_LINGER_MS = 900;
+function setTabActing(id, on) {
+  const found = tabAnywhere(id);
+  const t = found?.t;
+  if (!t) return;
+  clearTimeout(t.aiActingTimer);
+  const apply = (v) => { if (Boolean(t.aiActing) === v) return; t.aiActing = v; withWindow(found.rec, () => sendTabs()); };
+  if (on) apply(true);
+  else t.aiActingTimer = setTimeout(() => apply(false), ACTING_LINGER_MS);
+}
 // [signed-in sites] read_urls as_user (features/signed-in-sites.js): with the user's OK per host, the
 // sidebar's AI reads a page with the user's own session, in a background tab of the run's window grouped
 // "AI: <host> (signed in)". Locked (no popups) while it is read; closed when the run ends unless the user
@@ -10185,6 +10198,8 @@ const agent = new Agent({
   handsOff: () => readSettings().aiHandsOff === true, isAiTab: (id) => { const found = tabAnywhere(id); return Boolean(found && (found.rec.agent || manners.isAiTab(found.t))); }, typingText: () => t('agent.waitTyping'), // [ai manners]
   maxSteps: () => readSettings().maxSteps, // Settings > Max steps per task (agent.js: stepLimit)
   subagents: () => readSettings().aiSubagents, subagentModel: () => readSettings().aiSubagentModel, // [subagents] Settings → AI → helpers: the delegate tool is offered; which model they use (agent.js delegate)
+  setActing: (id, on) => setTabActing(id, on), // [tab acting]
+  aiCursor: () => readSettings().aiCursor !== false, cursorWords: () => ({ click: t('agent.cursor.click'), type: t('agent.cursor.type'), hover: t('agent.cursor.hover'), scroll: t('agent.cursor.scroll') }), // [agent cursors] agent.js pointAt
   actingHelpers: () => readSettings().actingHelpers !== false, // [acting helpers] Settings → AI → "Let helpers act in tabs": the parallel_tasks tool is offered (agent.js parallelTasks)
   idleAiTab: inRun((url, { chatId = null, exclude = new Set() } = {}) => { // [ai tabs] a helper's site already open in a tab this chat opened and no longer works in: the helper uses that one (agent.js parallelTasks)
     const hostOf = (u) => { try { return new URL(u).host; } catch { return ''; } };

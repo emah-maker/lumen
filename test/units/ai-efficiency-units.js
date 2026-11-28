@@ -247,6 +247,36 @@ const size = (x) => JSON.stringify(x).length;
     console.log(`INFO  markdown: ${Math.round(big.length / 400)} frames over ${big.length} chars: full rescans ${full.toFixed(1)} ms, resumed ${resumed.toFixed(1)} ms`);
   }
 
+  // ---- [step time] every call that ran says how long it ran (the tool alone: never its gate, where an approval waits)
+  {
+    const { runToolUses } = require('../../src/ai/loop-guard');
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const uses = [{ name: 'click', input: {} }, { name: 'read_page', input: {} }, { name: 'find', input: {} }, { name: 'navigate', input: {} }];
+    const outcomes = await runToolUses(uses, {
+      gate: async (use) => { if (use.name === 'click') await wait(120); if (use.name === 'navigate') throw new Error('refused'); }, // (an approval that takes a while; a refusal)
+      exec: async (use) => { await wait(use.name === 'click' ? 30 : 60); if (use.name === 'find') throw new Error('no match'); return 'ok'; },
+    });
+    check('step time: a call that ran carries ms, its own run only (not the 120 ms its gate waited)', Number.isFinite(outcomes[0].ms) && outcomes[0].ms >= 25 && outcomes[0].ms < 110, JSON.stringify(outcomes[0]));
+    check('step time: parallel reads each carry their own ms, a failed one too', outcomes[1].ok && outcomes[1].ms >= 50 && outcomes[2].ok === false && outcomes[2].ms >= 50, JSON.stringify(outcomes.slice(1, 3)));
+    check('step time: a call refused at its gate never ran, so it has no ms', outcomes[3].gated === true && outcomes[3].ms === undefined, JSON.stringify(outcomes[3]));
+  }
+
+  // ---- [agent cursors] the cursor script, for the lead AI and a helper, with what it does there; the screenshot's hide / show
+  {
+    const scripts = require('../../src/ai/page-scripts');
+    let ok = true;
+    try {
+      for (const kind of ['click', 'type', 'hover', 'scroll', '', 'bogus']) new Function(scripts.agentCursor(kind === 'scroll' ? null : 7, { key: 'lumen', label: 'Lumen', color: '#0a84ff' }, { action: 'Clicking', kind }));
+      new Function(scripts.cursorsHidden(true)); new Function(scripts.cursorsHidden(false));
+    } catch (e) { ok = false; console.log(e.message); }
+    check('agent cursors: every kind of cursor script, and the screenshot hide / show, are valid scripts', ok);
+    const src = scripts.agentCursor(7, { key: 'k', label: 'Lumen', color: '#0a84ff' }, { action: 'Typing', kind: 'type' });
+    check('agent cursors: the label names the agent and what it does ("Lumen · Typing")', src.includes(JSON.stringify('Lumen · Typing')), src.slice(0, 200));
+    check('agent cursors: a kind it does not know draws no ripple or outline', scripts.agentCursor(7, { key: 'k' }, { kind: '"><img>' }).includes('const kind = "";'));
+    check('agent cursors: a scroll (no element) points at the page itself', scripts.agentCursor(null, { key: 'k' }, { kind: 'scroll' }).includes('if (false)'));
+    check('agent cursors: the page reads skip the cursors\' own words', scripts.PAGE_TEXT.includes("el.id !== '__lumen-agent-cursors'") && scripts.readPage(0, 0).includes("el.id !== '__lumen-agent-cursors'"));
+  }
+
   console.log(failures ? `\n${failures} FAILED` : '\nAll passed');
   process.exit(failures ? 1 : 0);
 })();

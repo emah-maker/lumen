@@ -209,7 +209,7 @@ process.stdin.on('data', async (d) => {
   const barSeq = await ui.evaluate(() => window.__bar);
   const stateSeq = await ui.evaluate(() => window.__states);
   const gaps = statusSeq.slice(1, -1).map((x, i) => Math.round(x.at - statusSeq[i].at)); // (between announcements, the last one being the Done, which is not held back)
-  check('the status bar follows the current step and ends as "Done: <result>"', barSeq.length >= 3 && barSeq.some((t) => /^Opening 127\.0\.0\.1/.test(t)) && barSeq.slice(0, -1).every((t) => !/^Done/.test(t)) && /^Done: Found it on the second page$/.test(barSeq[barSeq.length - 1]) && !/^Done: (Opening|Waiting|Clicking)/.test(barSeq[barSeq.length - 1]), J(barSeq));
+  check('the status bar follows the current step and ends as "Done: <result>"', barSeq.length >= 3 && barSeq.some((t) => /^Opening 127\.0\.0\.1/.test(t)) && barSeq.slice(0, -1).every((t) => !/^Done/.test(t)) && /^Done: Found it on the second page( · \d+(\.\d)?s)?$/.test(barSeq[barSeq.length - 1]) && !/^Done: (Opening|Waiting|Clicking)/.test(barSeq[barSeq.length - 1]), J(barSeq));
   check('the card is "working" for the whole turn and "completed" only at its end', J(stateSeq) === '["working","completed"]', J(stateSeq));
   check('one polite live region announces the bar, throttled (≥ 1.4 s apart), and Done at the end', liveShape.aria === 1 && liveShape.status === 1 && statusSeq.length >= 2 && /^Done: /.test(statusSeq[statusSeq.length - 1].t) && gaps.every((g) => g >= 1400), J([statusSeq, liveShape, gaps]));
   check('when the run ends the card says "Done · <task>"', doneSub === 'Done · Find lab TA', doneSub);
@@ -841,7 +841,7 @@ process.stdin.on('data', async (d) => {
   const endRow = await waitFor(async () => { const r = await rowOf(card()); return r && r.name === 'Reading Blue page' && r; }, 12000);
   const endUrl = await ui.evaluate((s) => document.querySelector(`${s} .act-tabref .tab-ref-title`)?.textContent || '', card());
   check('the name row is the page the run ended on once it had loaded ("Reading Blue page"), not the page before it ("Red page"), and no picture', Boolean(endRow) && endRow.src === false, J([await rowOf(card()), endUrl]));
-  check('the final status says what came of it, not the last step ("Done: Opened the page")', endBar === 'Done: Opened the page', endBar);
+  check('the final status says what came of it, not the last step ("Done: Opened the page")', /^Done: Opened the page( · \d+(\.\d)?s)?$/.test(endBar), endBar); // ([step time] the run's time follows from a second up: renderer/step-time.js)
   const widths = await ui.evaluate((s) => { const c = document.querySelector(s); const sh = c.querySelector('.act-shot'); const cr = c.getBoundingClientRect(); const sr = sh.getBoundingClientRect(); const msgs = document.getElementById('messages').getBoundingClientRect(); return { card: Math.round(cr.width), shot: Math.round(sr.width), msgs: Math.round(msgs.width), left: Math.round(cr.left - msgs.left), over: c.scrollWidth - c.clientWidth, kids: [...c.children].map((k) => Math.round(k.getBoundingClientRect().right - cr.right)).filter((d) => d > 0) }; }, card());
   check('the whole card is as wide as its preview (plus its padding), left-aligned, with nothing sticking out', widths.shot > 100 && Math.abs(widths.card - widths.shot - 26) <= 4 && widths.card < widths.msgs && widths.left <= 24 && widths.over <= 0 && widths.kids.length === 0, J(widths));
 
