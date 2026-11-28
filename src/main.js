@@ -2642,6 +2642,11 @@ let chatFullTab = null;
 // What a Lumen page (the new-tab page above all) is painted on before, and wherever, its renderer has not drawn: the page's own background in
 // the current theme, never the default black. Set on the tab views, the window and its content view (the UI's colour), kept up with the theme.
 const pageBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#ffffff');
+// [page background] a web page is drawn on white once it commits (a site with no background of its own relied on it, and showed dark text on #1c1c1e
+// in a tab that had started as the New Tab page); Lumen's own pages keep the theme's colour (browser/page-background.js)
+const OWN_PAGES = (pathToFileURL(path.join(__dirname, 'renderer')).href + '/').toLowerCase();
+const ownPage = (url) => url.toLowerCase().startsWith(OWN_PAGES) || isInternal(url);
+const followPageBackground = (view, url) => { const c = require('./browser/page-background').backgroundFor(url, { internal: ownPage, theme: pageBackground }); if (c) { try { view.setBackgroundColor(c); } catch { /* gone */ } } };
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1c1c1e' : '#f5f5f7');
 function paintBackgrounds(rec) {
   try { rec.win.setBackgroundColor(windowBackground()); } catch { /* gone */ }
@@ -3390,6 +3395,7 @@ function wireView(tab, url, history = null, { loaded = false } = {}) {
     sendTabsSoon();
     if (tab.favicons.length && !tab.isolated) cacheFavicon(wc.getURL(), tab.favicons);
   });
+  wc.on('did-navigate', (_e, url) => followPageBackground(tab.view, url));
   wc.on('did-navigate', (_e, url) => {
     if (url.startsWith(UNLOADED_URL)) return; // (the placeholder of an unloaded tab keeps the tab's icon)
     tab.favicons = isWebUrl(url) ? tab.faviconUrls : [];
