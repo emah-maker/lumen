@@ -1,5 +1,6 @@
 // [humanize] The chat's side of Humanize, loaded with the first use (renderer/chat-actions.js loadHumanize), in the sidebar and on the
-// chat page alike. The rewrite itself is main's (agent:humanize, features/humanize-page.js, ai/humanize.js).
+// chat page alike. The rewrite itself is main's: the user's humanizer skill run on the text (agent:humanize, features/humanize-page.js,
+// ai/humanize.js). Without that skill it says so, with a button to Settings → Skills.
 //   reply(bubble, source, button)  the "Humanize" action under a reply: the reply's text is rewritten on the chat's AI and shown in
 //                                  place of the reply, with "Show original" to switch back; Copy then copies the version on screen.
 //                                  The chat's history keeps the reply as it was written (what the AI reads next is unchanged).
@@ -18,6 +19,8 @@
 
   function errorText(r) {
     const code = r?.error;
+    if (code === 'no-skill') return tr('humanize.noSkill', 'Humanize needs the humanizer skill: add it under Settings → Skills.');
+    if (code === 'skills-off') return tr('humanize.skillsOff', 'Humanize needs the humanizer skill. It is in your Claude Code skills: turn on Settings → Skills → Use my Claude Code skills.');
     if (code === 'no-provider') return tr('humanize.noProvider', 'No AI can rewrite this. Add an API key in Settings → AI, or install Claude Code and sign in.');
     if (code === 'too-long') return tr('humanize.tooLong', 'That’s too long to rewrite at once (more than {max} characters). Select less.', { max: Number(r.max || 12000).toLocaleString() });
     if (code === 'timeout') return tr('humanize.timeout', 'That took too long. Try again.');
@@ -25,7 +28,15 @@
     if (code === 'stopped') return '';
     return tr('humanize.failed', 'Humanize failed: {error}', { error: String(code || '').slice(0, 200) });
   }
-  const noteText = (r) => [r.name ? tr('humanize.note', 'Humanized by {model}', { model: r.name }) : tr('humanize.noteOnly', 'Humanized'), r.unchanged ? tr('humanize.unchanged', 'It already reads as written by a person.') : r.removed?.length ? tr('humanize.removed', 'Took out: {list}', { list: r.removed.join(', ') }) : ''].filter(Boolean).join(' · ');
+  const noteText = (r) => [r.name ? tr('humanize.note', 'Humanized by {model}', { model: r.name }) : tr('humanize.noteOnly', 'Humanized'), r.unchanged ? tr('humanize.unchanged', 'It already reads as written by a person.') : ''].filter(Boolean).join(' · ');
+  const skillMissing = (r) => r?.error === 'no-skill' || r?.error === 'skills-off';
+  // "Open Settings → Skills", under a message that the skill is missing.
+  function skillsButton() {
+    const b = el('button', 'hz-swap hz-skills', tr('humanize.openSkills', 'Open Settings → Skills'));
+    b.type = 'button';
+    b.addEventListener('click', () => window.lumenPrefs?.openSettingsPage?.('skills'));
+    return b;
+  }
   const missingText = (r) => (r.missing?.length ? tr('humanize.missing', 'Check the rewrite: it no longer has {list}.', { list: r.missing.slice(0, 6).join(', ') }) : '');
 
   // The reply's own words (what renderMarkdown drew), not its buttons and strip.
@@ -47,7 +58,7 @@
     if (!r?.ok) {
       button.title = tr('humanize.action.title', 'Rewrite this reply so it reads like a person wrote it');
       const msg = errorText(r);
-      if (msg) flash(bubble, msg);
+      if (msg) flash(bubble, msg, skillMissing(r));
       return;
     }
     const original = el('div', 'hz-original');
@@ -90,12 +101,13 @@
     st.button.setAttribute('aria-label', word);
   }
 
-  function flash(bubble, text) {
+  function flash(bubble, text, withSkills = false) {
     bubble.querySelector(':scope > .hz-error')?.remove();
     const line = el('div', 'hz-note hz-error', text);
     line.setAttribute('role', 'alert');
+    if (withSkills) line.append(skillsButton());
     bubble.prepend(line);
-    setTimeout(() => line.remove(), 8000);
+    setTimeout(() => line.remove(), withSkills ? 20000 : 8000);
   }
 
   // A card under the conversation with the rewrite of pasted text. `append`: chat-core's way to add a node to the messages list.
@@ -113,7 +125,12 @@
     try { r = await window.assistant.humanize(text, 'paste'); } catch (err) { r = { ok: false, error: String(err?.message || err) }; }
     card.setAttribute('aria-busy', 'false');
     body.classList.remove('hz-waiting');
-    if (!r?.ok) { body.textContent = errorText(r) || tr('humanize.timeout', 'That took too long. Try again.'); body.classList.add('hz-error'); return card; }
+    if (!r?.ok) {
+      body.textContent = errorText(r) || tr('humanize.timeout', 'That took too long. Try again.');
+      body.classList.add('hz-error');
+      if (skillMissing(r)) foot.append(skillsButton());
+      return card;
+    }
     const html = render(r.text);
     if (html != null) body.innerHTML = html; else body.textContent = r.text;
     decorate(body);

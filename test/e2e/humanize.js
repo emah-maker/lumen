@@ -4,7 +4,8 @@
 //   - read-only text: the card has Copy (no Replace) and Copy puts the rewrite on the clipboard
 //   - a reply's "Humanize" action shows the rewrite in its place with "Show original"; the chat's history keeps the original
 //   - /humanize <text> and "humanize this:" with text show a card with the rewrite, and send nothing to the chat
-//   - every rewrite goes to the chat's own provider, on its cheaper model, with the humanizer's rules as the system prompt
+//   - without a humanizer skill the card says Humanize needs it, with Open Settings → Skills
+//   - every rewrite goes to the chat's own provider, on its cheaper model, with the humanizer skill's own instructions as the system prompt
 require('../helpers/_tmp-cleanup');
 const { _electron: electron } = require('playwright-core');
 const path = require('path'); const fs = require('fs'); const os = require('os'); const http = require('http');
@@ -46,7 +47,7 @@ const PASTE_REWRITE = 'The launch went well, thanks to the team.';
       const create = async (params) => {
         const user = String(params.messages?.[0]?.content || '');
         global.__hz.push({ model: params.model, system: String(params.system || ''), user, tools: params.tools ? params.tools.length : 0 });
-        if (!/You are an editor/.test(String(params.system || ''))) return { role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } };
+        if (!/<skill name="humanizer"/.test(String(params.system || ''))) return { role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, output_tokens: 1 } };
         return { role: 'assistant', model: params.model, stop_reason: 'end_turn', content: [{ type: 'text', text: `<rewrite>${rewrite(user)}</rewrite>` }], usage: { input_tokens: 30, output_tokens: 8 } };
       };
       const stream = (params) => {
@@ -85,6 +86,20 @@ const PASTE_REWRITE = 'The launch went well, thanks to the team.';
     }, [tab, params]);
     const clickItem = (label) => app.evaluate((_e, l) => { global.__menu.find((i) => i.label === l).click(); }, label);
 
+    // ======== no humanizer skill yet: the card says so (this machine's ~/.claude/skills may hold one with the switch off: then it says to turn it on)
+    await app.evaluate(() => { for (const s of global.__skills.store.list()) if (s.name === 'humanizer' || s.name === 'humanize') global.__skills.store.remove(s.id); });
+    await page("(() => { const p = document.getElementById('para'); const r = document.createRange(); r.selectNodeContents(p); const s = getSelection(); s.removeAllRanges(); s.addRange(r); return 1; })()");
+    await menuFor({ isEditable: false, selectionText: PAGE_TEXT });
+    await clickItem('Humanize');
+    const needs = await waitFor(async () => (await mode()) === 'humanize' && /Humanize needs the humanizer skill/.test(await overlay("document.getElementById('m-sub').textContent")), 6000);
+    const needButtons = await overlay("[...document.querySelectorAll('#m-buttons button')].map((b) => b.textContent).join('|')");
+    check('no skill: the card says Humanize needs the humanizer skill, with Open Settings → Skills', needs && needButtons === 'Open Settings → Skills|Close', `${await overlay("document.getElementById('m-sub').textContent")} / ${needButtons}`);
+    check('no skill: nothing was sent to a model', (await app.evaluate(() => global.__hz.length)) === 0, await app.evaluate(() => global.__hz.length));
+    await overlay("document.querySelector('#m-buttons [data-id=close]').click()");
+    await waitFor(async () => (await mode()) === null, 3000);
+    // The user's skill, as Settings → Skills holds it: Humanize runs it as written.
+    await app.evaluate(() => global.__skills.store.save({ name: 'humanizer', title: 'Humanizer', description: 'Rewrite AI-sounding text.', prompt: 'E2E-SKILL-MARKER: rewrite the text so it reads like the writer; keep every fact.', inputs: [] }));
+
     await page(`(() => { const b = document.getElementById('box'); b.focus(); b.setSelectionRange(0, ${BOX_TEXT.length}); return b.selectionEnd; })()`);
     const boxMenu = await menuFor({ isEditable: true, selectionText: BOX_TEXT });
     check('box: the menu has Humanize, with the editing items', boxMenu.includes('Humanize') && boxMenu.includes('paste'), boxMenu.join(' | '));
@@ -94,9 +109,9 @@ const PASTE_REWRITE = 'The launch went well, thanks to the team.';
     const boxButtons = await overlay("[...document.querySelectorAll('#m-buttons button')].map((b) => b.textContent).join('|')");
     check('box: Replace (first), Copy and Cancel', boxButtons === 'Replace|Copy|Cancel', boxButtons);
     const sub = await overlay("document.getElementById('m-sub').textContent");
-    check('box: the card names the model and what it took out', /By Claude Haiku/i.test(sub) && /“not X but Y”/.test(sub) && /dashes/.test(sub) && /stock AI words/.test(sub) && /chatbot wrappers/.test(sub), sub);
-    const req = (await app.evaluate(() => global.__hz)).filter((r) => /You are an editor/.test(r.system));
-    check('model: the rewrite went to the chat\'s provider on its cheaper model, no tools, the rules as the system prompt', req.length === 1 && req[0].model === 'claude-haiku-5-5' && req[0].tools === 0 && /Not X but Y/.test(req[0].system) && /no em dashes/.test(req[0].system) && req[0].user.includes(BOX_TEXT), JSON.stringify(req.map((r) => ({ model: r.model, tools: r.tools }))));
+    check('box: the card says it ran your humanizer skill, and which model', /Your humanizer skill/.test(sub) && /By Claude Haiku/i.test(sub), sub);
+    const req = (await app.evaluate(() => global.__hz)).filter((r) => /<skill name="humanizer"/.test(r.system));
+    check('model: the rewrite went to the chat\'s provider on its cheaper model, no tools, the skill\'s own instructions as the system prompt', req.length === 1 && req[0].model === 'claude-haiku-5-5' && req[0].tools === 0 && /E2E-SKILL-MARKER: rewrite the text/.test(req[0].system) && req[0].user.includes(BOX_TEXT), JSON.stringify(req.map((r) => ({ model: r.model, tools: r.tools }))));
     await overlay("document.querySelector('#m-buttons [data-id=replace]').click()");
     const replaced = await waitFor(async () => (await page("document.getElementById('box').value")) === `${BOX_REWRITE} Thanks, Ana`, 5000);
     check('box: Replace puts the rewrite in place of the selection only', replaced, await page("document.getElementById('box').value"));
@@ -147,7 +162,7 @@ const PASTE_REWRITE = 'The launch went well, thanks to the team.';
     await ui.press('#prompt', 'Enter');
     const card = await waitFor(() => ui.evaluate((want) => [...document.querySelectorAll('#messages .hz-card')].some((c) => c.querySelector('.hz-card-body')?.textContent.trim() === want), PASTE_REWRITE), 8000);
     check('/humanize: a card with the rewrite and Copy', card && await ui.evaluate(() => Boolean(document.querySelector('#messages .hz-card .hz-copy'))), await ui.evaluate(() => document.querySelector('#messages .hz-card')?.innerText));
-    const pasteReq = (await app.evaluate(() => global.__hz)).filter((r) => /You are an editor/.test(r.system)).pop();
+    const pasteReq = (await app.evaluate(() => global.__hz)).filter((r) => /<skill name="humanizer"/.test(r.system)).pop();
     check('/humanize: the pasted text was sent as pasted text', pasteReq && pasteReq.user.includes(PASTE) && /pasted by the user/.test(pasteReq.system));
 
     // ======== "humanize this:" with the text on the next line

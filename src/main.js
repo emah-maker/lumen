@@ -939,10 +939,11 @@ function pageToolCtx(wc = activeTab()?.webContents) {
 const takeScreenshot = (wc) => { const ctx = pageToolCtx(wc); if (ctx) screenshotTool.open(ctx).catch(() => {}); };
 const showQrCode = (wc, text, kind) => { const ctx = pageToolCtx(wc); if (ctx) qrTool.open(ctx, text ?? ctx.wc.getURL(), kind).catch(() => {}); };
 if (TEST) global.__screenshot = { tool: screenshotTool, qr: qrTool, overlay: toolOverlay, ctx: pageToolCtx };
-// [humanize] Rewrites AI-sounding text on the user's own AI (features/humanize-page.js, ai/humanize.js): the page's right-click "Humanize",
+// [humanize] Runs the user's humanizer skill on text, on the user's own AI (features/humanize-page.js, ai/humanize.js): the page's right-click "Humanize",
 // the "Humanize" action under a reply and /humanize (agent:humanize). Loaded on first use.
 const humanizeRt = lazy(() => require('./features/humanize-page').create({
   agent, cliJson, providers, t, overlay: toolOverlay, userData: () => app.getPath('userData'),
+  skill: () => skillsFeature.humanizer(), openSkills: () => openSettingsPage('skills'), // the user's own humanizer skill (features/skills.js)
   copy: async (text) => clipboard.writeText(text),
   win: (wc) => pageToolCtx(wc)?.win || null,
   restoreFocus: (wc) => { if (!wc.isDestroyed()) wc.focus(); },
@@ -10302,7 +10303,7 @@ const agent = new Agent({
       return { list: () => rt.applications(p.id), add: (input) => after(rt.logApplication(p.id, { ...input, from: '' })), update: (input) => after(rt.updateApplication(p.id, input)), about: () => aboutFor(projectById(p.id) || p), remember: (input) => rememberAbout(projectById(p.id) || p, input), ...(jobSearchReady() ? { search: (input) => runJobSearch(input) } : {}) };
     },
   },
-}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, naturalVoice: readSettings().aiNaturalVoice === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
+}, getClient, () => ({ adhdMode: readSettings().adhdMode !== false, handsOff: readSettings().aiHandsOff === true, preferFractions: readSettings().aiPreferFractions === true, customInstructions: require('./ai/custom-instructions').block(readSettings()), skillsList: skillsListNow(), ...projectSettingsFor(chatId), model: effectiveModel() || DEFAULT_MODEL, ...(temporaryChats.has(chatId) ? { noMemory: true } : {}) }), providerKey); // ([memory] a temporary chat never reads or writes memory)
 // The sidebar's "Working in: <tab>" line: which tab the running task works in (it stays there when
 // the user switches away), pushed on run start/end and whenever tabs change (a title, a switch).
 let lastAgentTarget = '';
@@ -12774,7 +12775,7 @@ ipcMain.handle('agent:humanize', async (event, text, kind) => {
   const { messages } = readForSender(event, () => ({ messages: agent.messages, id: chatId }));
   try {
     const r = await humanizeRt.rewrite(text, { kind: kind === 'paste' ? 'paste' : 'reply', key: `view:${event.sender.id}`, messages });
-    return { ok: r.ok, text: r.text || '', name: r.name || '', missing: r.missing || [], removed: (r.removed || []).map((id) => t(`humanize.tell.${id}`)), unchanged: Boolean(r.unchanged), error: r.error, max: r.max };
+    return { ok: r.ok, text: r.text || '', name: r.name || '', missing: r.missing || [], unchanged: Boolean(r.unchanged), error: r.error, max: r.max };
   } catch (err) {
     return { ok: false, error: String(err?.message || err).slice(0, 200) };
   }

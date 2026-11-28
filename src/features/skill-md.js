@@ -214,7 +214,9 @@ function readSkillFolder(target, { fsMod = fs } = {}) {
 // Claude Code's personal skills: <home>/.claude/skills/<name>/SKILL.md, read-only. -> [{ ok, skill, folder } | { ok: false, folder, error }]
 // A skill folder (or its SKILL.md) is often a symlink into a repository: it is followed (realpath) and read the same way,
 // SKILL.md only; a link that points nowhere, or at something that is not a folder, is listed with the reason.
-function listClaudeCodeSkills(home, { fsMod = fs, max = 50, maxPrompt = 20000 } = {}) {
+// maxPrompt: a Claude Code skill is read-only and only its name and description go in the system prompt (its body loads when used), so it may be
+// longer than a Lumen skill: 40,000 characters (the humanizer skill, which Humanize runs, is about 33,000).
+function listClaudeCodeSkills(home, { fsMod = fs, max = 50, maxPrompt = 40000 } = {}) {
   const root = path.join(home, '.claude', 'skills');
   let entries;
   try { entries = fsMod.readdirSync(root, { withFileTypes: true }); } catch { return []; }

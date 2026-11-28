@@ -1,5 +1,5 @@
-// [humanize] The main process's side of Humanize (the rules and the model choice are in ai/humanize.js):
-//   rewrite(text, { kind })  one rewrite on the user's own AI: the open chat's model (else the default), through the same route the
+// [humanize] The main process's side of Humanize: the user's humanizer skill (features/skills.js humanizer) run on a text (ai/humanize.js):
+//   rewrite(text, { kind })  one rewrite, with the skill's own instructions, on the user's own AI: the open chat's model (else the default), through the same route the
 //                            AI uses: the provider's API with the user's key, or the engine's CLI with no tools. Nothing else is called.
 //   fromMenu(wc, params)     the page's right-click "Humanize" on selected text. The selection is noted in the page first (which box,
 //                            where in it), then a card over the window shows the text before and after. In a text box (an email, a
@@ -80,8 +80,8 @@ const UNDO = `(() => {
   return { ok: back };
 })()`;
 
-// deps: { agent, cliJson, providers, userData(), overlay (features/tool-overlay.js), t, copy(text), win(wc) -> BrowserWindow,
-//   restoreFocus(wc), aiOff(url) -> boolean, modelName(id) -> string, subagentModel() -> 'same' | 'auto' }
+// deps: { agent, cliJson, providers, skill() -> skills.humanizer()'s answer, userData(), overlay (features/tool-overlay.js), t, copy(text), win(wc) -> BrowserWindow,
+//   restoreFocus(wc), openSkills() (Settings → Skills), aiOff(url) -> boolean, modelName(id) -> string, subagentModel() -> 'same' | 'auto' }
 function create(deps) {
   const { t } = deps;
   const runs = new Map(); // a key (a view's id, or 'page') -> AbortController: a new rewrite from the same place stops the old one
@@ -123,7 +123,7 @@ function create(deps) {
       const local = !lib.plan({ chatModel: model, defaultModel, options })
         && Boolean(await a.engines?.claudecode?.status?.().then((st) => st?.installed && st.signedIn !== false).catch(() => false));
       const r = await lib.run({
-        text, kind, chatModel: model, defaultModel, options, local, signal: ctrl.signal,
+        text, kind, skill: deps.skill(), chatModel: model, defaultModel, options, local, signal: ctrl.signal,
         mode: deps.subagentModel?.() === 'same' ? 'same' : 'auto',
         api: apiCall, cli: cliCall,
         onUsage: (message, used) => { if (message?.usage) a.reportApi(deps.providers.splitModel(used).provider, { model: used, usage: message.usage }); },
@@ -137,6 +137,8 @@ function create(deps) {
   const cancel = (key) => { runs.get(key)?.abort(); };
 
   const errorText = (r) => {
+    if (r.error === 'no-skill') return t('humanize.noSkill');
+    if (r.error === 'skills-off') return t('humanize.skillsOff');
     if (r.error === 'no-provider') return t('humanize.noProvider');
     if (r.error === 'too-long') return t('humanize.tooLong', { max: lib.MAX_CHARS.toLocaleString('en-US') });
     if (r.error === 'timeout') return t('humanize.timeout');
@@ -144,7 +146,6 @@ function create(deps) {
     return t('humanize.failed', { error: String(r.error || '').slice(0, 200) });
   };
   const clip = (s) => (s.length > SHOWN_CHARS ? `${s.slice(0, SHOWN_CHARS)}…` : s);
-  const removedText = (ids) => (ids?.length ? t('humanize.removed', { list: ids.map((id) => t(`humanize.tell.${id}`)).join(', ') }) : '');
 
   // The page's right-click "Humanize". p: Electron's context-menu params.
   async function fromMenu(wc, p) {
@@ -168,6 +169,7 @@ function create(deps) {
       payload: { ...base, sub: t('humanize.working'), busy: true, buttons: [{ id: 'close', label: t('humanize.cancel') }] },
       onClose: () => { closed = true; cancel('page'); },
       onAction: async (action, data, sess) => {
+        if (action === 'button' && data.id === 'skills') { deps.overlay.hide(win, sess); deps.openSkills?.(); return; } // the skill is missing: Settings → Skills
         if (action !== 'button' || !result?.ok) return;
         if (data.id === 'copy') {
           try { await deps.copy(result.text); deps.overlay.update(win, sess, { status: t('humanize.copied') }); } catch { deps.overlay.update(win, sess, { status: t('humanize.copyFailed') }); }
@@ -193,10 +195,11 @@ function create(deps) {
     result = await rewrite(original, { kind: 'selection', key: 'page' });
     if (closed || !session || deps.overlay.currentFor(win) !== session) return { ok: false, error: 'closed' };
     if (!result.ok) {
-      deps.overlay.update(win, session, { payload: { ...base, sub: errorText(result), error: true, buttons: [{ id: 'close', label: t('humanize.close') }] } });
+      const skillMissing = result.error === 'no-skill' || result.error === 'skills-off';
+      deps.overlay.update(win, session, { payload: { ...base, sub: errorText(result), error: true, buttons: [...(skillMissing ? [{ id: 'skills', label: t('humanize.openSkills'), primary: true }] : []), { id: 'close', label: t('humanize.close') }] } });
       return result;
     }
-    const notes = [result.name ? t('humanize.by', { model: result.name }) : '', result.unchanged ? t('humanize.unchanged') : removedText(result.removed)].filter(Boolean).join(' · ');
+    const notes = [t('humanize.skill'), result.name ? t('humanize.by', { model: result.name }) : '', result.unchanged ? t('humanize.unchanged') : ''].filter(Boolean).join(' · ');
     const buttons = editable
       ? [{ id: 'replace', label: t('humanize.replace'), primary: true }, { id: 'copy', label: t('humanize.copy') }, { id: 'close', label: t('humanize.cancel') }]
       : [{ id: 'copy', label: t('humanize.copy'), primary: true }, { id: 'close', label: t('humanize.close') }];

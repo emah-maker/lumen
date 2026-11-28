@@ -16,7 +16,7 @@ const root = path.join(__dirname, '..', '..');
 const FO = require('../../src/features/feature-offers');
 const ALL = FO.OFFERS.map(FO.seenKey); // a fresh install records every line as seen
 const SIX = ['aiMemory', 'planModeDefault', 'skillsFromClaudeCode', 'telegramChannel', 'dictation', 'actingHelpers']; // the first batch
-const SEEN = [...SIX, 'aiNaturalVoice', 'bookmarksBar', 'aiCursor', 'automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace']; // ...and the newest lines (the 0.5.119, 0.5.115, 0.5.96 and 0.5.97 ones; aiCursor ships on but is newer than autoNewChat, so it is seen here), so the card's first six still hold a switch that ships on (autoNewChat)
+const SEEN = [...SIX, 'bookmarksBar', 'aiCursor', 'automationsKeepTabs', 'aiTabsTidy', 'aiTabsGrace']; // ...and the newest lines (the 0.5.115, 0.5.96 and 0.5.97 ones; aiCursor ships on but is newer than autoNewChat, so it is seen here), so the card's first six still hold a switch that ships on (autoNewChat)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sorted = (a) => JSON.stringify([...(a || [])].sort());
 

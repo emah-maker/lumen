@@ -814,6 +814,20 @@ function create(deps) {
     return u;
   }
 
+  // [humanize] The skill Humanize runs (features/humanize-page.js): the user's own "humanizer" skill, a Lumen skill of that name or the
+  // Claude Code one (~/.claude/skills/humanizer/SKILL.md, read while Settings → Skills → "Use my Claude Code skills" is on). Never a copy
+  // of Lumen's own. -> { skill, text } (text: forAI's block, the skill's instructions as written), or { error: 'skills-off' } when the
+  // Claude Code skill is there but that switch is off, or { error: 'missing' }.
+  function humanizer() {
+    const pick = (list) => list.find((s) => s.name === 'humanizer') || list.find((s) => s.name === 'humanize') || null;
+    const skill = pick(store.list()) || pick(claudeCode());
+    if (skill) return { skill: { id: skill.id, name: skill.name, title: skill.title, source: skill.source }, text: forAI(skill) };
+    if (prefs().skillsFromClaudeCode !== true && deps.homeDir) {
+      try { if (pick(skillMd().listClaudeCodeSkills(deps.homeDir()).filter((e) => e.ok).map((e) => e.skill))) return { error: 'skills-off' }; } catch { /* unreadable: missing */ }
+    }
+    return { error: 'missing' };
+  }
+
   // agent:ask asks this with the text it was sent: the options a prepared skill run carries, once.
   function takeRun(text) {
     const run = runs.get(text);
@@ -828,7 +842,7 @@ function create(deps) {
     return usable.slice(0, 15).map((s) => ({ label: `${s.title}${takesInput(s) ? '…' : ''}`, click: () => run(s.id, selection) }));
   }
 
-  return { register, store, takeRun, menuTemplate, proposeFromChat, proposeUpdate, expand, summary, learning, promptBlock, useForAI, autoSkills, findAny, all: () => [...store.list(), ...claudeCode()], changed }; // all, changed: [project templates] Find jobs looks for a job skill and installs one
+  return { register, store, takeRun, menuTemplate, humanizer, proposeFromChat, proposeUpdate, expand, summary, learning, promptBlock, useForAI, autoSkills, findAny, all: () => [...store.list(), ...claudeCode()], changed }; // all, changed: [project templates] Find jobs looks for a job skill and installs one
 }
 
 module.exports = {
