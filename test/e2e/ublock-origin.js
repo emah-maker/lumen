@@ -3,7 +3,7 @@
 // start-up, and blocks /standin-ad.js with a blocking webRequest listener only for requests that come with their tab) is packed into a CRX on
 // the spot and served from 127.0.0.1 with a release list in place of GitHub's (LUMEN_TEST_UBO_RELEASES, LUMEN_TEST_UBO_ID: honoured only in a test run).
 // Covers: the one-step switch from Settings (release list, download, signature, install, Lumen steps aside), that the extension starts and its
-// blocking reaches a real tab (its `browser` completed by preload/extensions-mv2-preload.js; each request's tab from Electron itself since 45.1), a restart in that mode, a release refused for
+// blocking reaches a real tab (the two Electron gaps castlabs 45.2.1 still has, preload/extensions-mv2-preload.js), a restart in that mode, a release refused for
 // its signature, and switching back (removed, Lumen's blocker back).
 // Also its element hiding (chrome.tabs.insertCSS/removeCSS, browser/extension-css.js): a YouTube-like grid whose ad item collapses, a frame's own
 // rule kept to that frame, the rule taken back, and the page told dark in a dark theme while uBlock Origin runs.

@@ -53,7 +53,9 @@ const widgets = [
     const geometry = async () => {
       const dom = await ui.evaluate(() => {
         const r = (el) => { const b = el.getBoundingClientRect(); return { x: Math.round(b.left), y: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height) }; };
-        return { body: r(document.querySelector('.body')), viewport: r(document.getElementById('viewport')), sidebar: document.body.classList.contains('sidebar-hidden') ? null : r(document.getElementById('sidebar')), moving: document.body.classList.contains('sidebar-moving'), snapshot: Boolean(document.querySelector('.page-snapshot')) };
+        return { body: r(document.querySelector('.body')), viewport: r(document.getElementById('viewport')), sidebar: document.body.classList.contains('sidebar-hidden') ? null : r(document.getElementById('sidebar')), moving: document.body.classList.contains('sidebar-moving'), snapshot: Boolean(document.querySelector('.page-snapshot')),
+          // [bookmarks bar] shown on the new-tab page only, it sits over the top of the page area and only that page's view makes room
+          bar: (() => { const el = document.getElementById('bookmarks-bar'); const body = document.querySelector('.body').getBoundingClientRect(); if (!el || el.hidden) return 0; const b = el.getBoundingClientRect(); return b.height > 0 && Math.round(b.top) === Math.round(body.top) ? Math.round(b.height) : 0; })() };
       });
       const view = await app.evaluate(() => { const t = global.__agent.browser.activeTab(); const v = t && global.__tabViews?.(t.id); return v || null; });
       return { ...dom, view };
@@ -62,7 +64,7 @@ const widgets = [
     const tiles = (g, open) => {
       if (!g.view || !g.view.visible) return `view not showing: ${JSON.stringify(g.view)}`;
       const v = g.view;
-      if (v.x !== g.body.x || v.y !== g.body.y || v.h !== g.body.h) return `view ${JSON.stringify(v)} vs body ${JSON.stringify(g.body)}`;
+      if (v.x !== g.body.x || v.y !== g.body.y + g.bar || v.h !== g.body.h - g.bar) return `view ${JSON.stringify(v)} vs body ${JSON.stringify(g.body)}`;
       if (!open) return g.sidebar === null && v.w === g.body.w ? '' : `closed: view ${v.w} body ${g.body.w} sidebar ${JSON.stringify(g.sidebar)}`;
       if (!g.sidebar) return 'open but no sidebar box';
       if (v.x + v.w !== g.sidebar.x) return `gap or overlap: view ends ${v.x + v.w}, sidebar starts ${g.sidebar.x}`;

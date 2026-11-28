@@ -164,7 +164,8 @@ function png(r, g, b, size = 8) {
     const wc = tab.webContents;
     const uiWc = [...BrowserWindow.getAllWindows()].sort((a, b) => a.id - b.id)[0].webContents;
     const before = global.__chatPage.tabs().filter((t) => t.chat).length;
-    const call = (channel, event, ...args) => ipcMain._invokeHandlers.get(channel)(event, ...args);
+    // (since the IPC sender gate, main.js refuses these before the handler runs: it throws "Not allowed", recorded as 'refused')
+    const call = async (channel, event, ...args) => { try { return await ipcMain._invokeHandlers.get(channel)(event, ...args); } catch (err) { if (/Not allowed/.test(err?.message)) return 'refused'; throw err; } };
     const out = {
       bridge: await wc.executeJavaScript('typeof window.lumenNewtab'),
       ask: await call('newtab-ai:ask', { sender: wc, senderFrame: wc.mainFrame }, { text: 'hi', images: [] }),
@@ -174,7 +175,7 @@ function png(r, g, b, size = 8) {
     out.chatTabsOpened = global.__chatPage.tabs().filter((t) => t.chat).length - before;
     return out;
   }, web);
-  check('a web page has no lumenNewtab, and its calls are refused (ask and pick), opening nothing', refused.bridge === 'undefined' && refused.ask === false && refused.pick === null && refused.uiAsk === false && refused.chatTabsOpened === 0, JSON.stringify(refused));
+  check('a web page has no lumenNewtab, and its calls are refused (ask and pick), opening nothing', refused.bridge === 'undefined' && [false, 'refused'].includes(refused.ask) && [null, 'refused'].includes(refused.pick) && [false, 'refused'].includes(refused.uiAsk) && refused.chatTabsOpened === 0, JSON.stringify(refused));
 
   check('no page errors', errors.length === 0, errors.join(' | '));
   await app.close();
