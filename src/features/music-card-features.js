@@ -71,7 +71,16 @@ function nextRepeat(mode, modes = ['off', 'all', 'one']) {
   return modes[(i + 1) % modes.length] || 'off';
 }
 
-const api = { TIERS, TIER_MIN, FEATURES, ENGINES, tierOf, featuresAt, engineOf, caps, shown, nextRepeat };
+// The engine card's "Starting Spotify…" / "Starting Apple Music…" (the engine said reason 'loading'): how soon a visible new-tab page asks
+// again, 0 for any other card or state. A page that was not in front asked with wake:false (main.js engineFacade), which starts nothing, so
+// the visible page has to ask again itself; at the usual 45 s refresh the card sat on "Starting…" long after the page came to the front.
+const STARTING_REFRESH_MS = 3000;
+function startingRefreshMs(w) {
+  const d = w && w.data;
+  return w && (w.type === 'spotify' || w.type === 'applemusic') && d && d.mode === 'status' && d.reason === 'loading' ? STARTING_REFRESH_MS : 0;
+}
+
+const api = { TIERS, TIER_MIN, FEATURES, ENGINES, tierOf, featuresAt, engineOf, caps, shown, nextRepeat, startingRefreshMs, STARTING_REFRESH_MS };
 if (typeof module !== 'undefined' && module.exports) module.exports = api;
 else globalThis.MusicCardFeatures = api;
 })();

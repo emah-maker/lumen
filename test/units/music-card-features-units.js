@@ -618,8 +618,30 @@ async function appleChecks(check) {
   check('spotify bridge: lyrics lines are bounded text; non-text and empty lines are dropped', sl.lines.length === 2 && sl.lines[1].length === 200, JSON.stringify(sl));
 }
 
+// The card stuck on "Starting Spotify…" (PR #1122's finding): a new-tab page that is not in front asks with wake:false (main.js engineFacade),
+// so the engine answers "loading" and starts nothing. When that page comes to the front, it must ask again soon (not after the 45 s an
+// ordinary card waits), and that read starts the player.
+async function startingChecks(check) {
+  for (const [type, create] of [['spotify', createSpotifyEngine], ['applemusic', createAppleEngine]]) {
+    const player = fakePlayer();
+    const e = create({ player, now: () => 1e12, fetchBytes: async () => null, hasCard: () => true, onChange() {}, setInterval: () => ({ unref() {} }), setTimeout: () => ({ unref() {} }) });
+    const hidden = await e.read({ wake: false });
+    const w = { id: 'w1', type, data: hidden, updated: 1 };
+    const ms = typeof MCF.startingRefreshMs === 'function' ? MCF.startingRefreshMs(w) : 0;
+    check(`${type} card: a read asked by a page not in front says "loading" and starts nothing, and the card asks again within 5 s`, hidden.reason === 'loading' && !player.wc && ms > 0 && ms <= 5000, JSON.stringify({ reason: hidden.reason, started: Boolean(player.wc), ms }));
+    await e.read();
+    check(`${type} card: …and that next read (the page in front) starts the player`, Boolean(player.wc), '');
+    e.onMessage('{"t":"ready"}');
+    const ready = await e.read();
+    check(`${type} card: once the page is ready the card is not "Starting…" and goes back to the usual refresh`, ready.reason === '' && MCF.startingRefreshMs({ type, data: ready }) === 0 && MCF.startingRefreshMs({ type: 'weather', data: { mode: 'status', reason: 'loading' } }) === 0 && MCF.startingRefreshMs({ type, data: { ...hidden, mode: 'api' } }) === 0 && MCF.startingRefreshMs(null) === 0, JSON.stringify(ready.reason));
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../../src/renderer/newtab-widgets.js'), 'utf8');
+  check('new-tab page: the refresh tick uses the short "Starting…" retry and arms a timer for it (the minute tick alone left the card on Starting… after the page came to the front)', /MusicCardFeatures\.startingRefreshMs\(w\)/.test(src) && /function armStarting\(/.test(src) && /armStarting\(\)/.test(src.slice(src.indexOf('lastList.current = valid'))), '');
+}
+
 module.exports = async function musicCardFeaturesUnits(check) {
   featureChecks(check);
+  await startingChecks(check);
   keyChecks(check);
   await apiChecks(check);
   await engineChecks(check);
