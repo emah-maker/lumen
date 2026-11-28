@@ -218,7 +218,7 @@ const TOOLS = [
   },
   {
     name: 'click',
-    description: 'Click by [id] or visible text (a dropdown option too); observe:true returns what changed.',
+    description: 'Click by [id] or visible text; observe:true returns what changed.',
     input_schema: {
       type: 'object',
       properties: {
@@ -229,7 +229,7 @@ const TOOLS = [
   },
   {
     name: 'fill_form',
-    description: 'Fill fields [{label,value}] (checkbox "true"/"false"; dropdown: the option text); submit:true only if the user approved.',
+    description: 'Fill fields [{label,value}] (checkbox "true"/"false"); submit:true only if the user approved.',
     input_schema: {
       type: 'object',
       properties: {
